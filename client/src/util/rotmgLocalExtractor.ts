@@ -482,6 +482,9 @@ export function isLocalCacheFresh(gameDataDir: string, outDir: string): boolean 
   if (!existsSync(join(outDir, 'objects.xml'))) return false;
   if (!existsSync(join(outDir, 'tiles.xml'))) return false;
   if (!existsSync(join(outDir, 'spritesheet.xml'))) return false;
+  if (!existsSync(join(outDir, 'enchantments.xml'))) return false;
+  if (!existsSync(join(outDir, 'enchantmentLists.xml'))) return false;
+  if (!existsSync(join(outDir, 'enchanterSettings.xml'))) return false;
   try {
     const stored = readFileSync(join(outDir, '.local-build-hash'), 'utf8').trim();
     const current = `${statSync(join(gameDataDir, 'resources.assets')).mtimeMs}:v${SPRITESHEET_PARSER_VERSION}`;
