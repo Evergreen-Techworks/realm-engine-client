@@ -29,9 +29,11 @@ AimMode GetAimMode();
 void SetShootInvulnerable(bool on);
 bool IsShootInvulnerable();
 
-// Multitool AutoAimFocusBoss. When true, only quest/boss objectTypes (kQuestObjectTypes) are targeted.
-void SetFocusBossOnly(bool on);
-bool IsFocusBossOnly();
+// Multitool AutoAimFocusBoss / PrioritizeBosses. When true, quest/boss objectTypes
+// (kQuestObjectTypes) are prioritised as first-pass targets. If no boss is in range,
+// normal enemies become valid targets instead of being skipped entirely.
+void SetPrioritizeBosses(bool on);
+bool IsPrioritizeBosses();
 
 // xrDriver MouseBoundingEnabled + MouseBoundingRange (_DAT_18057a878 / _DAT_18057a874). Clamps
 // ClosestToMouse-mode candidate distance to this radius around the mouse world position.

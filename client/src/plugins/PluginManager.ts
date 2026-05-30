@@ -139,17 +139,17 @@ export class PluginManager {
   private dashboardLogListeners = new Set<(pluginName: string, message: string) => void>();
   private broadcastDataListeners = new Set<(pluginId: string, type: string, data: any) => void>();
 
-  /** When false, plugins cannot be enabled because the user is not logged in. */
-  loginGateActive = false;
+  /** Admin dev: always true — plugins usable without sign-in. */
+  loginGateActive = true;
 
   /**
    * Currently active plan names (normalized to lowercase).
    * 'combined' is expanded to both 'dodge' and 'developer' via setActivePlans().
    */
-  activePlans = new Set<string>();
+  activePlans = new Set<string>(['free', 'dodge', 'developer', 'pro', 'elite', 'combined']);
 
-  /** When false, admin-gated plugins are hidden from the plugin list entirely. */
-  adminMode = false;
+  /** Admin dev: always true — admin-gated plugins always visible and usable. */
+  adminMode = true;
 
   constructor(
     private proxy: Proxy,
@@ -208,12 +208,8 @@ export class PluginManager {
   }
 
   /** Returns the plan name required to use this plugin, or null if freely available. */
-  getRequiredPlan(pluginId: string): string | null {
-    if (this.isAlwaysEnabled(pluginId)) return null;
-    if (this.adminMode) return null;
-    for (const [plan, ids] of Object.entries(PluginManager.planGatedPlugins)) {
-      if (ids.includes(pluginId)) return plan;
-    }
+  getRequiredPlan(_pluginId: string): string | null {
+    // Admin dev: no plan required for any plugin.
     return null;
   }
 
@@ -268,17 +264,7 @@ export class PluginManager {
       return { ok: true };
     }
     const gated = plugin.source === 'bundled';
-    if (enabled && gated && !this.loginGateActive) {
-      return { ok: false, reason: 'Sign in to use plugins.' };
-    }
-    const requiredPlan = this.getRequiredPlan(pluginId);
-    if (enabled && gated && requiredPlan && !this.activePlans.has(requiredPlan) && !this.adminMode) {
-      const display = requiredPlan.charAt(0).toUpperCase() + requiredPlan.slice(1);
-      return { ok: false, reason: `Requires ${display} plan — upgrade in Manage Plan.`, requiredPlan };
-    }
-    if (enabled && gated && this.isAdminGated(pluginId) && !this.adminMode) {
-      return { ok: false, reason: 'Admin access required for this plugin.' };
-    }
+    // Admin dev: all gate checks removed — every plugin can be toggled freely.
     plugin.context.enabled = enabled;
     return { ok: true };
   }

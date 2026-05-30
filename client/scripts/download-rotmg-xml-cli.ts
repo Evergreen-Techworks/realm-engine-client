@@ -1,9 +1,9 @@
 /**
  * CLI for extractGameXmls — extracts objects.xml and tiles.xml from the RotMG CDN.
  *
- *   npm run extract-game-xml
- *   npm run extract-game-xml -- --force   (re-extract even if build hash matches)
- *   npm run extract-game-xml -- --dir /custom/path
+ *   npm run download-game-xml
+ *   npm run download-game-xml -- --force   (re-extract even if build hash matches)
+ *   npm run download-game-xml -- --dir /custom/path
  */
 
 import { resolve } from 'path';

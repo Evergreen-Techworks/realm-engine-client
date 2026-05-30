@@ -13,7 +13,7 @@ static bool  s_aimEnabled           = false;
 static int   s_aimMode              = 0;
 static bool  s_noclipEnabled        = false;
 static bool  s_shootInvulnerable    = false;
-static bool  s_focusBossOnly        = false;
+static bool  s_prioritizeBosses     = false;
 static bool  s_ignoreWalls          = true;
 static bool  s_reverseCultStaff     = true;
 static bool  s_offsetColossusSword  = false;
@@ -29,7 +29,7 @@ void Tick(bool /*menuOpen*/)
     s_noclipEnabled = ProjNoclip::IsEnabled();
 
     s_shootInvulnerable   = AutoAim::IsShootInvulnerable();
-    s_focusBossOnly       = AutoAim::IsFocusBossOnly();
+    s_prioritizeBosses    = AutoAim::IsPrioritizeBosses();
     s_ignoreWalls         = AutoAim::IsIgnoreWalls();
     s_reverseCultStaff    = AutoAim::IsReverseCultStaff();
     s_offsetColossusSword = AutoAim::IsOffsetColossusSword();
@@ -77,12 +77,12 @@ void Render()
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Aims at invulnerable enemies (XML <Invincible/>). They stay below\nregular enemies in priority so non-invuln targets are still picked first.");
 
-    if (ImGui::Checkbox("Boss focus only##aaBossOnly", &s_focusBossOnly))
-        AutoAim::SetFocusBossOnly(s_focusBossOnly);
+    if (ImGui::Checkbox("Prioritize bosses##aaBossOnly", &s_prioritizeBosses))
+        AutoAim::SetPrioritizeBosses(s_prioritizeBosses);
     ImGui::SameLine();
     ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Restrict targeting to quest/boss objectTypes (kQuestObjectTypes).\nAll other enemies are ignored while this is on.");
+        ImGui::SetTooltip("Quest/boss targets are aimed at first. If no boss is in range,\nregular enemies become valid targets (they are no longer skipped).");
 
     if (ImGui::Checkbox("Ignore walls / no-HP-bar##aaIgnoreWalls", &s_ignoreWalls))
         AutoAim::SetIgnoreWalls(s_ignoreWalls);

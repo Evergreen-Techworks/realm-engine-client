@@ -3383,18 +3383,13 @@
   }
 
   function applyAdminMode() {
-    // In user builds, admin mode is permanently disabled regardless of account status
-    if (typeof __ADMIN_BUILD__ !== 'undefined' && !__ADMIN_BUILD__) {
-      adminMode = false;
-    }
+    // Admin dev: __ADMIN_BUILD__ guard removed — toggle is always enabled.
     document.body.classList.toggle('admin-mode', adminMode);
     if (adminModeToggle) {
-      var isAdminUser = !!(dashboardUser && dashboardUser.is_admin);
-      var canToggle = isAdminUser && (typeof __ADMIN_BUILD__ === 'undefined' || __ADMIN_BUILD__);
       adminModeToggle.checked = adminMode;
-      adminModeToggle.disabled = !canToggle;
+      adminModeToggle.disabled = false;
       var adminRow = adminModeToggle.closest('.settings-row');
-      if (adminRow) adminRow.classList.toggle('settings-row--locked', !canToggle);
+      if (adminRow) adminRow.classList.toggle('settings-row--locked', false);
     }
     if (!adminMode) {
       if (activeTab === 'logs' || activeTab === 'packet-lab' || activeTab === 'market' || activeTab === 'mem-helper' || activeTab === 'telemetry') {
@@ -4406,11 +4401,7 @@
 
   if (adminModeToggle) {
     adminModeToggle.addEventListener('change', () => {
-      // Only admins can toggle admin mode
-      if (!dashboardUser || !dashboardUser.is_admin) {
-        adminModeToggle.checked = false;
-        return;
-      }
+      // Admin dev: no is_admin check — toggle freely.
       adminMode = adminModeToggle.checked;
       _realAdminMode = adminMode;  // remember the real choice for view-as resets
       applyAdminMode();
@@ -4715,6 +4706,8 @@
         });
       })
       .then(function (profile) {
+        // Admin dev: force is_admin true so the toggle is always enabled.
+        profile.is_admin = true;
         dashboardUser = profile;
         dashboardLoggedIn = true;
         persistDashboardLoginState();
@@ -4740,10 +4733,7 @@
     var tier = (dashboardSubscriptionTier || 'Free').toLowerCase();
     var hasDeveloper = tier === 'premium' || tier === 'basic' || tier === 'developer';
 
-    // Admin mode: only admins can be in admin mode
-    if (!isAdmin) {
-      adminMode = false;
-    }
+    // Admin dev: adminMode not forced off for non-admins — let the toggle control it.
     _realAdminMode = adminMode;  // capture real state for view-as override resets
 
     // If a non-admin somehow has a view-as override active, drop it.

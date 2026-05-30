@@ -280,6 +280,7 @@ namespace RuntimeOffsets {
 
     // ── ProjectileProperties continued ───────────────────────────────────────
     extern uint32_t PP_CustomHitbox;       // "CustomHitbox"  fallback 0x148  (ProjectileCustomHitbox* reference)
+    extern uint32_t PP_IsArmorPiercing;    // "IsArmorPiercing"  fallback 0x138
 
     // ── ProjectileCustomHitbox (real field names, no shift) ──────────────────
     extern uint32_t CH_OffsetX;    // "offsetX"      fallback 0x10

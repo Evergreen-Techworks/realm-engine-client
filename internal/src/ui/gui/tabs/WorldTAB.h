@@ -84,6 +84,7 @@ struct WorldProjectile
     float    lifetime       = 0.f;   // ms (ProjectileProperties: seconds normalized via NormalizeProjectileLifetimeMs)
     int32_t  minDamage      = 0;
     int32_t  damage         = 0;   // max damage (ProjectileMaxDamage @ 0x1A8)
+    bool     armorPiercing  = false;
     int32_t  bulletId       = 0;
     /// Runtime Chebyshev half-edge T from live HBEAKBIHANL+0x1D4 (Exalt IsHit). 0 = unread / use projHalfSize.
     float    runtimeChebyshevHalf = 0.f;

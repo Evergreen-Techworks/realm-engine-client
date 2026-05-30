@@ -184,7 +184,7 @@ static float FindFirstProjHitTimeMs(
 
 static void DbgNexus(const char* msg, const char* hyp, const char* data) {
     FILE* f = nullptr;
-    fopen_s(&f, "C:\\Users\\trump\\Desktop\\Current\\debug-489c1d.log", "a");
+    fopen_s(&f, "C:\\Users\\rrizz\\Desktop\\debug-489c1d.log", "a");
     if (f) {
         fprintf(f,
             "{\"sessionId\":\"489c1d\",\"location\":\"AutoNexus/AutoNexus.cpp\",\"message\":\"%s\","

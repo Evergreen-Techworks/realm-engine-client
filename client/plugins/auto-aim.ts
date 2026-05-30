@@ -46,12 +46,12 @@ export function register(ctx: PluginContext) {
     syncControlState();
   });
 
-  ctx.registerSetting('focusBossOnly', {
-    label: 'Boss focus only',
+  ctx.registerSetting('prioritizeBosses', {
+    label: 'Prioritize bosses',
     type: 'boolean',
     value: false,
   }, (val: boolean) => {
-    sendDllFeature('autoAimFocusBoss', val);
+    sendDllFeature('autoAimPrioritizeBosses', val);
   });
 
   ctx.registerSetting('ignoreWalls', {
@@ -120,7 +120,7 @@ export function register(ctx: PluginContext) {
   });
 
   function syncFilterState() {
-    sendDllFeature('autoAimFocusBoss', ctx.getSetting<boolean>('focusBossOnly'));
+    sendDllFeature('autoAimPrioritizeBosses', ctx.getSetting<boolean>('prioritizeBosses'));
     sendDllFeature('autoAimIgnoreWalls', ctx.getSetting<boolean>('ignoreWalls'));
   }
 

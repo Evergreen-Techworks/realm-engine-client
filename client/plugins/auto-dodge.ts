@@ -106,7 +106,7 @@ export function register(ctx: PluginContext) {
 
   ctx.registerSetting('gameHitboxMult', {
     label: 'Game hitbox override', advanced: true,
-    type: 'range', value: 1.0, min: 0.8, max: 1.0, step: 0.01,
+    type: 'range', value: 1.0, min: 0.5, max: 1.0, step: 0.01,
   }, (v: number) => sendDllFeature('gameHitboxMult', v));
 
   // ── Weighted-field + A* goal tier (additive over the immediate BFS) ───────

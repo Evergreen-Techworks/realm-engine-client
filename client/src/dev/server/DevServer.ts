@@ -1248,14 +1248,23 @@ export class DevServer {
     Logger.log('DevServer', `botApiUrl: ${BOT_API_URL}`);
     Logger.log('DevServer', `configPath: ${this.configPath} (exists: ${existsSync(this.configPath)})`);
     this.botApiClient = new BotApiClient(BOT_API_URL);
-    // Dev override: stub checkGems so plan-gating always resolves to Developer
-    // without requiring a real server subscription.
-    this.botApiClient.checkGems = async () => ({
-      gem_balance: 0,
+    // Admin dev: pre-seed tokens so loggedIn === true immediately, no sign-in needed.
+    (this.botApiClient as any).accessToken  = 'admin-dev-access-token';
+    (this.botApiClient as any).refreshToken = 'admin-dev-refresh-token';
+    // Admin dev: stub checkGems to always return unlimited gems + all plans active.
+    const _adminGemStatus: GemStatusResponse = {
+      gem_balance: 999999,
       active: true,
       next_deduction_at: null,
-      active_subs: [{ plan_name: 'Developer', status: 'active', expires_at: null }],
-    });
+      active_subs: [
+        { plan_name: 'Developer', status: 'active', expires_at: null },
+        { plan_name: 'dodge',     status: 'active', expires_at: null },
+        { plan_name: 'pro',       status: 'active', expires_at: null },
+        { plan_name: 'elite',     status: 'active', expires_at: null },
+      ],
+    };
+    this.botApiClient.checkGems = async () => _adminGemStatus;
+    this.botApiClient.login     = async (_e: string, _p: string) => _adminGemStatus;
     this.telemetryEmitter = new TelemetryEmitter({
       botApi: this.botApiClient,
       getSnapshot: () => this.collectTelemetrySnapshot(),
@@ -2800,11 +2809,12 @@ export class DevServer {
 
     // ── Bot API auth proxy (dashboard uses /api/auth/* on DevServer origin) ──
     if (req.url === '/api/auth/login' && req.method === 'POST') {
-      let authBody = '';
-      req.on('data', (chunk) => {
-        authBody += chunk;
-      });
-      req.on('end', () => this.proxyRequestToBotApi(res, '/api/auth/login', { method: 'POST', body: authBody }));
+      // Admin dev: always return a successful login response.
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        access_token: 'admin-dev-access-token',
+        refresh_token: 'admin-dev-refresh-token',
+      }));
       return;
     }
     if (req.url === '/api/auth/register' && req.method === 'POST') {
@@ -2816,21 +2826,18 @@ export class DevServer {
       return;
     }
     if (req.url === '/api/auth/refresh' && req.method === 'POST') {
-      let authBody = '';
-      req.on('data', (chunk) => {
-        authBody += chunk;
-      });
-      req.on('end', () => this.proxyRequestToBotApi(res, '/api/auth/refresh', { method: 'POST', body: authBody }));
+      // Admin dev: always return refreshed tokens.
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        access_token: 'admin-dev-access-token',
+        refresh_token: 'admin-dev-refresh-token',
+      }));
       return;
     }
     if (req.url === '/api/auth/me' && req.method === 'GET') {
-      const auth = req.headers.authorization;
-      if (!auth) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ detail: 'Not authenticated' }));
-        return;
-      }
-      this.proxyRequestToBotApi(res, '/api/auth/me', { method: 'GET', authorization: auth });
+      // Admin dev: always return a valid admin user.
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: 'admin-dev', email: 'admin@dev.local', is_admin: true }));
       return;
     }
     if (req.url === '/api/auth/signout' && req.method === 'POST') {
@@ -4566,18 +4573,18 @@ export class DevServer {
     // Send current Packet Lab state
     ws.send(JSON.stringify({ type: 'labUpdate', unknowns: this.lab.getUnknowns() }));
 
-    // Send current gem/login status
+    // Admin dev: always report logged-in with all plans active.
     ws.send(JSON.stringify({
       type: 'gemStatus',
-      loggedIn: this.botApiClient.loggedIn,
-      gem_balance: 0,
-      active: this.pluginManager.activePlans.size > 0,
-      active_plans: Array.from(this.pluginManager.activePlans),
+      loggedIn: true,
+      gem_balance: 999999,
+      active: true,
+      active_plans: ['free', 'dodge', 'developer', 'pro', 'elite'],
       next_deduction_at: null,
     }));
 
     // Handle incoming messages from dashboard
-    ws.on('message', (raw) => {
+    ws.on('message', async (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
         if (msg.type === 'togglePlugin') {
@@ -4991,33 +4998,17 @@ export class DevServer {
             this.eventTracker?.track('client_sign_in', { method: 'token_seed' });
           }
         } else if (msg.type === 'botApiLogin') {
-          const email = String(msg.email ?? '').trim();
-          const password = String(msg.password ?? '');
-          this.botApiClient.login(email, password).then(async (status) => {
-            const tok = this.botApiClient.getAccessToken();
-            if (tok) {
-              // Send token to UI so it can make direct bot-api requests (e.g., script upload)
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'botApiTokenGranted', access_token: tok }));
-              }
-              // Fetch plugins from API (in-memory only)
-              const apiBase = this.getBotApiBase();
-              if (apiBase) {
-                await this.pluginManager.loadFromApi(apiBase, tok).catch(() => {});
-              }
-            }
-            this.pluginManager.loginGateActive = true;
-            this.pluginManager.setActivePlans(status.active_subs?.map(s => s.plan_name) ?? []);
-            this.recordPlanTierFromStatus(status);
-            this.broadcastGemStatus(status);
-            this.broadcastPluginState();
-            this.startTelemetryEmitter();
-            this.eventTracker?.track('client_sign_in', { method: 'direct' });
-          }).catch((err) => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'botApiError', error: (err as Error).message }));
-            }
-          });
+          // Admin dev: always succeed regardless of credentials.
+          const status = await this.botApiClient.checkGems();
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'botApiTokenGranted', access_token: 'admin-dev-access-token' }));
+          }
+          this.pluginManager.loginGateActive = true;
+          this.pluginManager.setActivePlans(status.active_subs?.map(s => s.plan_name) ?? []);
+          this.pluginManager.adminMode = true;
+          this.recordPlanTierFromStatus(status);
+          this.broadcastGemStatus(status);
+          this.broadcastPluginState();
         } else if (msg.type === 'botApiLogout') {
           // Fire the sign-out event BEFORE stopping the emitter — once we
           // call stop(), the tracker's flush queue is paused and the event

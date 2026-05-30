@@ -165,7 +165,7 @@ std::atomic<bool>        g_hasAimTarget{ false };
 
 // Feature toggles (Multitool AutoAim* config + xrDriver DAT_* globals).
 std::atomic<bool>        g_shootInvulnerable{ false };     // AutoAimShootInvulnerable
-std::atomic<bool>        g_focusBossOnly{ false };         // AutoAimFocusBoss — off by default so normal enemies are targeted
+std::atomic<bool>        g_prioritizeBosses{ false };   // PrioritizeBosses — quest/boss targets prioritised; normal enemies still valid
 std::atomic<bool>        g_ignoreWalls{ true };            // AutoAimIgnoreWalls
 std::atomic<bool>        g_reverseCultStaff{ true };       // AutoAimReverseCultStaff
 std::atomic<bool>        g_offsetColossusSword{ false };   // AutoAimOffsetColossusSword
@@ -773,36 +773,25 @@ static bool SehReadEnemyCandidate(
             }
         }
 
-        // Runtime condition check â€” COHCKAPOLCA UInt32[2].
-        // Guard: maxLen must be exactly 2 to avoid reading garbage from wrong entity classes.
-        // NOTE: enemy entities store float 1.0f (0x3F800000) at the MoConds offset â€” this passes
-        // AddrOk() but is not a mapped address. Each dereference is wrapped in its own __try so
-        // an AV there does NOT propagate to the outer handler and reject the entity.
+        // Runtime condition check: use TryReadMapObjectConditions which has correct SEH
+        // handling and the same maxLen==2 guard.
+        // Root cause of the bug: the old manual array walk left cond0=cond1=0 whenever
+        // maxLen != 2 (which is always true for enemy entities, since COHCKAPOLCA is a
+        // player-class field and enemies store a float 1.0f there instead of an array
+        // pointer). MapObjectConditionsMakeUntargetable(0,0) always returned false, so
+        // invulnerable enemies were never rejected by the runtime condition check.
+        // Fix: delegate to TryReadMapObjectConditions and only apply the untargetable
+        // check when it successfully reads a valid UInt32[2] array (condReadOk==true
+        // and at least one word is non-zero). If the read fails or returns zero words
+        // (wrong entity class), we skip the runtime check and rely solely on the XML
+        // InvincibleElement check above, which already handles static invincibility.
         uint32_t cond0 = 0, cond1 = 0;
-        if (kOffMoConds != 0) {
-            void* arr = nullptr;
-            __try { arr = *reinterpret_cast<void**>(ent + kOffMoConds); } __except(EXCEPTION_EXECUTE_HANDLER) { arr = nullptr; }
-            if (arr && AddrOk(arr)) {
-                int32_t maxLen = -1;
-                __try {
-                    maxLen = *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(arr) + kIl2CppArrMaxLen);
-                } __except(EXCEPTION_EXECUTE_HANDLER) { maxLen = -1; }
-                if (maxLen == 2) {
-                    __try {
-                        auto* data = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(arr) + kIl2CppArrData);
-                        cond0 = data[0];
-                        cond1 = data[1];
-                    } __except(EXCEPTION_EXECUTE_HANDLER) { cond0 = 0; cond1 = 0; }
-                } else if (doLog) {
-                    char l[128]; snprintf(l,sizeof(l),"  MoConds: maxLen=%d (not 2, skipping)", maxLen); AimLog(l);
-                }
-            }
-        }
-        if (RuntimeOffsets::MapObjectConditionsMakeUntargetable(cond0, cond1)) {
+        const bool condReadOk = RuntimeOffsets::TryReadMapObjectConditions(entity, &cond0, &cond1);
+        if (condReadOk && (cond0 | cond1) != 0 && RuntimeOffsets::MapObjectConditionsMakeUntargetable(cond0, cond1)) {
             if (doLog) { char l[128]; snprintf(l,sizeof(l),"  -> REJECTED: untargetable cond0=0x%08X cond1=0x%08X", cond0, cond1); AimLog(l); }
             return false;
         }
-        if (doLog) { char l[128]; snprintf(l,sizeof(l),"  -> PASSED all filters (cond0=0x%08X)", cond0); AimLog(l); }
+        if (doLog) { char l[128]; snprintf(l,sizeof(l),"  -> PASSED all filters (condReadOk=%d cond0=0x%08X)", (int)condReadOk, cond0); AimLog(l); }
 
         *outX = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(entity) + kOffPosX);
         *outY = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(entity) + kOffPosY);
@@ -1017,7 +1006,7 @@ static void RunAutoAimTickBody()
     const bool useMouseRef   = (aimModeInt == static_cast<int>(AutoAim::AimMode::ClosestToMouse));
     const bool mouseBoundOn  = g_mouseBoundingEnabled.load(std::memory_order_relaxed);
     const float mouseBoundR  = g_mouseBoundingRange.load(std::memory_order_relaxed);
-    const bool bossOnly      = g_focusBossOnly.load(std::memory_order_relaxed);
+    const bool prioritizeBosses = g_prioritizeBosses.load(std::memory_order_relaxed);
     const float leadBias     = g_rangeLeadBias.load(std::memory_order_relaxed);
 
     // Reference point for "closest enemy" â€” player position normally, or mouse world pos in ClosestToMouse mode.
@@ -1087,9 +1076,10 @@ static void RunAutoAimTickBody()
         if (!wantAim)
             continue;
 
-        // Boss Focus Only: skip anything not in the quest/boss list.
-        if (bossOnly && !isQuest)
-            continue;
+        // Boss Prioritisation: when enabled, isQuest entities go to the quest tier
+        // (prioritised over normal enemies). When disabled, quest entities compete
+        // in the normal tier alongside other enemies. No entity is skipped — the
+        // toggle only controls which tier quest entities land in.
 
         const float dx = ex - refX;
         const float dy = ey - refY;
@@ -1104,7 +1094,11 @@ static void RunAutoAimTickBody()
             return newDist < curDist;
         };
 
-        if (isQuest) {
+        // Whitelisted entities always go to the normal tier (never prioritised).
+        const bool whitelisted = IsWhitelistedEnemyObjectType(objType);
+
+        if (prioritizeBosses && isQuest && !whitelisted) {
+            // Boss priority on: quest entities land in the quest tier (high priority).
             if (beats(questScoreDist, questScoreHp, distSq, candHp)) {
                 questScoreDist = distSq;
                 questScoreHp   = candHp;
@@ -1121,6 +1115,15 @@ static void RunAutoAimTickBody()
                 invBestId = eid; invBestEntity = eptr;
                 invFound = true;
             }
+        } else if (prioritizeBosses && isQuest) {
+            // Boss priority on but whitelisted: quest entity goes to normal tier.
+            if (beats(bestScoreDist, bestScoreHp, distSq, candHp)) {
+                bestScoreDist = distSq;
+                bestScoreHp   = candHp;
+                bestX = ex; bestY = ey;
+                bestId = eid; bestEntity = eptr;
+                found = true;
+            }
         } else if (IsFallbackEnemyObjectType(objType)) {
             if (beats(fbScoreDist, fbScoreHp, distSq, candHp)) {
                 fbScoreDist = distSq;
@@ -1130,6 +1133,7 @@ static void RunAutoAimTickBody()
                 fallbackFound = true;
             }
         } else {
+            // Boss priority off (or non-quest): quest entities compete in normal tier.
             if (beats(bestScoreDist, bestScoreHp, distSq, candHp)) {
                 bestScoreDist = distSq;
                 bestScoreHp   = candHp;
@@ -1325,14 +1329,14 @@ bool IsShootInvulnerable()
     return g_shootInvulnerable.load(std::memory_order_relaxed);
 }
 
-void SetFocusBossOnly(bool on)
+void SetPrioritizeBosses(bool on)
 {
-    g_focusBossOnly.store(on, std::memory_order_relaxed);
+    g_prioritizeBosses.store(on, std::memory_order_relaxed);
 }
 
-bool IsFocusBossOnly()
+bool IsPrioritizeBosses()
 {
-    return g_focusBossOnly.load(std::memory_order_relaxed);
+    return g_prioritizeBosses.load(std::memory_order_relaxed);
 }
 
 void SetMouseBoundingEnabled(bool on)

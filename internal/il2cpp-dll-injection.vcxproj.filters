@@ -1,288 +1,176 @@
 <?xml version="1.0" encoding="utf-8"?>
-      <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-      <ItemGroup>
-      <None Include="definitions\version.def">
-      <Filter>definitions</Filter>
-      </None>
-      </ItemGroup>
-      <ItemGroup>
-      <ClCompile Include="user\main.cpp">
-      <Filter>user</Filter>
-      </ClCompile>
-      <ClCompile Include="framework\dllmain.cpp">
-      <Filter>framework</Filter>
-      </ClCompile>
-      <ClCompile Include="framework\helpers.cpp">
-      <Filter>framework</Filter>
-      </ClCompile>
-      <ClCompile Include="framework\il2cpp-init.cpp">
-      <Filter>framework</Filter>
-      </ClCompile>
-      <ClCompile Include="framework\pch-il2cpp.cpp">
-      <Filter>framework</Filter>
-      </ClCompile>
-      <ClCompile Include="framework\version.cpp">
-      <Filter>framework</Filter>
-      </ClCompile>
-      <ClCompile Include="libraries\detours\detours.cpp">
-      <Filter>libraries\detours</Filter>
-      </ClCompile>
-      <ClCompile Include="libraries\detours\disasm.cpp">
-      <Filter>libraries\detours</Filter>
-      </ClCompile>
-      <ClCompile Include="libraries\detours\modules.cpp">
-      <Filter>libraries\detours</Filter>
-      </ClCompile>
-      <ClCompile Include="libraries\imgui\imgui.cpp">
-      <Filter>libraries\imgui</Filter>
-      </ClCompile>
-      <ClCompile Include="libraries\imgui\imgui_draw.cpp">
-      <Filter>libraries\imgui</Filter>
-      </ClCompile>
-      <ClCompile Include="libraries\imgui\imgui_impl_dx11.cpp">
-      <Filter>libraries\imgui</Filter>
-      </ClCompile>
-      <ClCompile Include="libraries\imgui\imgui_impl_win32.cpp">
-      <Filter>libraries\imgui</Filter>
-      </ClCompile>
-      <ClCompile Include="libraries\imgui\imgui_tables.cpp">
-      <Filter>libraries\imgui</Filter>
-      </ClCompile>
-      <ClCompile Include="libraries\imgui\imgui_widgets.cpp">
-      <Filter>libraries\imgui</Filter>
-      </ClCompile>
-      <ClCompile Include="user\settings.cpp">
-      <Filter>user</Filter>
-      </ClCompile>
-      <ClCompile Include="handlers\gui\GUITheme.cpp">
-      <Filter>handlers\gui</Filter>
-      </ClCompile>
-      <ClCompile Include="handlers\gui\menu.cpp">
-      <Filter>handlers\gui</Filter>
-      </ClCompile>
-      <ClCompile Include="handlers\gui\tabs\SettingsTAB.cpp">
-      <Filter>handlers\gui\tabs</Filter>
-      </ClCompile>
-   <ClCompile Include="handlers\gui\tabs\UnityExplorerTAB.cpp">
-      <Filter>handlers\gui\tabs</Filter>
-      </ClCompile>
-   <ClCompile Include="handlers\gui\tabs\ScannerTAB.cpp">
-      <Filter>handlers\gui\tabs</Filter>
-      </ClCompile>
-      <ClCompile Include="handlers\Dx11.cpp">
-      <Filter>handlers</Filter>
-      </ClCompile>
-      <ClCompile Include="handlers\keybinds.cpp">
-      <Filter>handlers</Filter>
-      </ClCompile>
-   <ClCompile Include="handlers\Il2CppResolver.cpp">
-      <Filter>handlers</Filter>
-      </ClCompile>
-      <ClCompile Include="handlers\hooks\DirectX.cpp">
-      <Filter>handlers\hooks</Filter>
-      </ClCompile>
-      <ClCompile Include="handlers\hooks\MenuBackdropBlur.cpp">
-      <Filter>handlers\hooks</Filter>
-      </ClCompile>
-      <ClCompile Include="handlers\hooks\InitHooks.cpp">
-      <Filter>handlers\hooks</Filter>
-      </ClCompile>
-      <ClCompile Include="handlers\hooks\ProjectileTracking.cpp">
-      <Filter>handlers\hooks</Filter>
-      </ClCompile>
-      </ItemGroup>
-      <ItemGroup>
-      <ClInclude Include="user\main.h">
-      <Filter>user</Filter>
-      </ClInclude>
-      <ClInclude Include="appdata\il2cpp-api-functions.h">
-      <Filter>appdata</Filter>
-      </ClInclude>
-      <ClInclude Include="appdata\il2cpp-api-functions-ptr.h">
-      <Filter>appdata</Filter>
-      </ClInclude>
-      <ClInclude Include="appdata\il2cpp-functions.h">
-      <Filter>appdata</Filter>
-      </ClInclude>
-      <ClInclude Include="appdata\il2cpp-metadata-version.h">
-      <Filter>appdata</Filter>
-      </ClInclude>
-      <ClInclude Include="appdata\il2cpp-types.h">
-      <Filter>appdata</Filter>
-      </ClInclude>
-      <ClInclude Include="appdata\il2cpp-types-ptr.h">
-      <Filter>appdata</Filter>
-      </ClInclude>
-      <ClInclude Include="framework\helpers.h">
-      <Filter>framework</Filter>
-      </ClInclude>
-      <ClInclude Include="framework\il2cpp-appdata.h">
-      <Filter>framework</Filter>
-      </ClInclude>
-      <ClInclude Include="framework\il2cpp-init.h">
-      <Filter>framework</Filter>
-      </ClInclude>
-      <ClInclude Include="framework\pch-il2cpp.h">
-      <Filter>framework</Filter>
-      </ClInclude>
-      <ClInclude Include="framework\version.h">
-      <Filter>framework</Filter>
-      </ClInclude>
-      <ClInclude Include="libraries\detours\detours.h">
-      <Filter>libraries\detours</Filter>
-      </ClInclude>
-      <ClInclude Include="libraries\imgui\imconfig.h">
-      <Filter>libraries\imgui</Filter>
-      </ClInclude>
-      <ClInclude Include="libraries\imgui\imgui.h">
-      <Filter>libraries\imgui</Filter>
-      </ClInclude>
-      <ClInclude Include="libraries\imgui\imgui_impl_dx11.h">
-      <Filter>libraries\imgui</Filter>
-      </ClInclude>
-      <ClInclude Include="libraries\imgui\imgui_impl_win32.h">
-      <Filter>libraries\imgui</Filter>
-      </ClInclude>
-      <ClInclude Include="libraries\imgui\imgui_internal.h">
-      <Filter>libraries\imgui</Filter>
-      </ClInclude>
-      <ClInclude Include="libraries\imgui\imstb_rectpack.h">
-      <Filter>libraries\imgui</Filter>
-      </ClInclude>
-      <ClInclude Include="libraries\imgui\imstb_textedit.h">
-      <Filter>libraries\imgui</Filter>
-      </ClInclude>
-      <ClInclude Include="libraries\imgui\imstb_truetype.h">
-      <Filter>libraries\imgui</Filter>
-      </ClInclude>
-      <ClInclude Include="user\settings.h">
-      <Filter>user</Filter>
-      </ClInclude>
-      <ClInclude Include="handlers\gui\GUITheme.h">
-      <Filter>handlers\gui</Filter>
-      </ClInclude>
-      <ClInclude Include="handlers\gui\menu.h">
-      <Filter>handlers\gui</Filter>
-      </ClInclude>
-      <ClInclude Include="handlers\gui\tabs\SettingsTAB.h">
-      <Filter>handlers\gui\tabs</Filter>
-      </ClInclude>
-   <ClInclude Include="handlers\gui\tabs\UnityExplorerTAB.h">
-      <Filter>handlers\gui\tabs</Filter>
-      </ClInclude>
-   <ClInclude Include="handlers\gui\tabs\ScannerTAB.h">
-      <Filter>handlers\gui\tabs</Filter>
-      </ClInclude>
-      <ClInclude Include="handlers\Dx11.h">
-      <Filter>handlers</Filter>
-      </ClInclude>
-      <ClInclude Include="handlers\keybinds.h">
-      <Filter>handlers</Filter>
-      </ClInclude>
-   <ClInclude Include="handlers\Il2CppResolver.h">
-      <Filter>handlers</Filter>
-      </ClInclude>
-      <ClInclude Include="handlers\hooks\DirectX.h">
-      <Filter>handlers\hooks</Filter>
-      </ClInclude>
-      <ClInclude Include="handlers\hooks\MenuBackdropBlur.h">
-      <Filter>handlers\hooks</Filter>
-      </ClInclude>
-      <ClInclude Include="handlers\hooks\InitHooks.h">
-      <Filter>handlers\hooks</Filter>
-      </ClInclude>
-      <ClInclude Include="handlers\hooks\ProjectileTracking.h">
-      <Filter>handlers\hooks</Filter>
-      </ClInclude>
-      </ItemGroup>
-      <ItemGroup>
-      <ClCompile Include="src\features\movement\dodge\AStarDodge.cpp">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClCompile>
-      <ClCompile Include="src\features\movement\dodge\ChatToast.cpp">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClCompile>
-      <ClCompile Include="src\features\movement\dodge\DangerPlanner.cpp">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClCompile>
-      <ClCompile Include="src\features\movement\dodge\MovementRuntime.cpp">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClCompile>
-      <ClCompile Include="src\features\movement\dodge\ProjectileCatalog.cpp">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClCompile>
-      <ClCompile Include="src\features\movement\dodge\RectDodge.cpp">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClCompile>
-      <ClCompile Include="src\features\movement\dodge\SIPPDodge.cpp">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClCompile>
-      <ClCompile Include="src\features\movement\dodge\SteerInput.cpp">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClCompile>
-      </ItemGroup>
-      <ItemGroup>
-      <ClInclude Include="src\features\movement\dodge\AStarDodge.h">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClInclude>
-      <ClInclude Include="src\features\movement\dodge\ChatToast.h">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClInclude>
-      <ClInclude Include="src\features\movement\dodge\DangerPlanner.h">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClInclude>
-      <ClInclude Include="src\features\movement\dodge\MovementRuntime.h">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClInclude>
-      <ClInclude Include="src\features\movement\dodge\ProjectileCatalog.h">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClInclude>
-      <ClInclude Include="src\features\movement\dodge\RectDodge.h">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClInclude>
-      <ClInclude Include="src\features\movement\dodge\SIPPDodge.h">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClInclude>
-      <ClInclude Include="src\features\movement\dodge\SteerInput.h">
-      <Filter>src\features\movement\dodge</Filter>
-      </ClInclude>
-      </ItemGroup>
-      <ItemGroup>
-      <Filter Include="appdata">
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <None Include="defs\version.def" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\bootstrap\dllmain.cpp" />
+    <ClCompile Include="src\core\logging\helpers.cpp" />
+    <ClCompile Include="src\core\il2cpp\il2cpp-init.cpp" />
+    <ClCompile Include="src\core\il2cpp\pch-il2cpp.cpp" />
+    <ClCompile Include="src\bootstrap\version.cpp" />
+    <ClCompile Include="src\platform\dx11\Dx11.cpp" />
+    <ClCompile Include="src\ui\IpcBridge.cpp" />
+    <ClCompile Include="src\ui\Handshake.cpp" />
+    <ClCompile Include="src\ui\gui\tabs\CameraTAB.cpp" />
+    <ClCompile Include="src\ui\gui\tabs\WorldTAB.cpp" />
+    <ClCompile Include="src\ui\gui\tabs\PlayerTAB.cpp" />
+    <ClCompile Include="src\ui\gui\tabs\TestTAB.cpp" />
+    <ClCompile Include="src\features\movement\dodge\ChatToast.cpp" />
+    <ClCompile Include="src\features\movement\dodge\XDodge.cpp" />
+    <ClCompile Include="src\features\movement\dodge\DangerPlanner.cpp" />
+    <ClCompile Include="src\features\movement\dodge\MovementRuntime.cpp" />
+    <ClCompile Include="src\features\movement\dodge\ProjectileCatalog.cpp" />
+    <ClCompile Include="src\features\movement\dodge\SteerInput.cpp" />
+    <ClCompile Include="src\ui\gui\tabs\CombatTab\CombatTAB.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\FeatAutoAim.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\FeatMagnetAim.cpp" />
+    <ClCompile Include="src\features\loot\BagLooter.cpp" />
+    <ClCompile Include="src\features\combat\autonexus\AutoNexus.cpp" />
+    <ClCompile Include="src\features\combat\ghostHit\GhostHit.cpp" />
+    <ClCompile Include="src\ui\gui\tabs\VisualsTAB.cpp" />
+    <ClCompile Include="src\platform\hooks\DirectX.cpp" />
+    <ClCompile Include="src\platform\hooks\InitHooks.cpp" />
+    <ClCompile Include="src\features\movement\dodge\ProjectileTracking.cpp" />
+    <ClCompile Include="src\features\account\HwidCapture.cpp" />
+    <ClCompile Include="src\features\account\CharSelect.cpp" />
+    <ClCompile Include="src\features\account\CredentialCapture.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\AutoAim.cpp" />
+    <ClCompile Include="src\features\combat\autoability\AutoAbility.cpp" />
+    <ClCompile Include="src\features\movement\dodge\AoeTracking.cpp" />
+    <ClCompile Include="src\features\visuals\skins\character\SkinChanger.cpp" />
+    <ClCompile Include="src\features\visuals\skins\SkinDatabase.cpp" />
+    <ClCompile Include="src\features\movement\speedhack\SpeedHack.cpp" />
+    <ClCompile Include="src\features\misc\FpsSetter.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\ProjNoclip.cpp" />
+    <ClCompile Include="src\features\movement\noclip\Noclip.cpp" />
+    <ClCompile Include="src\features\movement\noclip\NoclipHook.cpp" />
+    <ClCompile Include="vendor\minhook\hook.c" />
+    <ClCompile Include="vendor\minhook\buffer.c" />
+    <ClCompile Include="vendor\minhook\trampoline.c" />
+    <ClCompile Include="vendor\minhook\hde\hde64.c" />
+    <ClCompile Include="src\core\config\keybinds.cpp" />
+    <ClCompile Include="src\core\runtime\Il2CppResolver.cpp" />
+    <ClCompile Include="src\core\runtime\RuntimeOffsets.cpp" />
+    <ClCompile Include="src\core\runtime\GameState.cpp" />
+    <ClCompile Include="src\core\runtime\LocalPlayer.cpp" />
+    <ClCompile Include="src\core\runtime\SharedMemory.cpp" />
+    <ClCompile Include="vendor\detours\detours.cpp" />
+    <ClCompile Include="vendor\detours\disasm.cpp" />
+    <ClCompile Include="vendor\detours\modules.cpp" />
+    <ClCompile Include="vendor\imgui\imgui.cpp" />
+    <ClCompile Include="vendor\imgui\imgui_draw.cpp" />
+    <ClCompile Include="vendor\imgui\imgui_impl_dx11.cpp" />
+    <ClCompile Include="vendor\imgui\imgui_impl_win32.cpp" />
+    <ClCompile Include="vendor\imgui\imgui_tables.cpp" />
+    <ClCompile Include="vendor\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="src\bootstrap\main.cpp" />
+    <ClCompile Include="src\core\config\settings.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\game\generated\il2cpp-api-functions.h" />
+    <ClInclude Include="src\game\generated\il2cpp-api-functions-ptr.h" />
+    <ClInclude Include="src\game\generated\il2cpp-functions.h" />
+    <ClInclude Include="src\game\generated\il2cpp-metadata-version.h" />
+    <ClInclude Include="src\game\generated\il2cpp-types-ptr.h" />
+    <ClInclude Include="src\game\generated\il2cpp-types.h" />
+    <ClInclude Include="src\core\logging\helpers.h" />
+    <ClInclude Include="src\core\il2cpp\il2cpp-appdata.h" />
+    <ClInclude Include="src\core\il2cpp\il2cpp-init.h" />
+    <ClInclude Include="src\core\il2cpp\pch-il2cpp.h" />
+    <ClInclude Include="src\bootstrap\version.h" />
+    <ClInclude Include="src\platform\dx11\Dx11.h" />
+    <ClInclude Include="src\ui\IpcBridge.h" />
+    <ClInclude Include="src\ui\Handshake.h" />
+    <ClInclude Include="src\ui\gui\tabs\CameraTAB.h" />
+    <ClInclude Include="src\ui\gui\tabs\WorldTAB.h" />
+    <ClInclude Include="src\ui\gui\tabs\PlayerTAB.h" />
+    <ClInclude Include="src\ui\gui\tabs\TestTAB.h" />
+    <ClInclude Include="src\ui\gui\tabs\CombatTab\CombatTAB.h" />
+    <ClInclude Include="src\ui\gui\tabs\VisualsTAB.h" />
+    <ClInclude Include="src\game\math\W2S.h" />
+    <ClInclude Include="src\platform\hooks\DirectX.h" />
+    <ClInclude Include="src\platform\hooks\InitHooks.h" />
+    <ClInclude Include="src\features\movement\dodge\ProjectileTracking.h" />
+    <ClInclude Include="src\features\account\HwidCapture.h" />
+    <ClInclude Include="src\features\account\CharSelect.h" />
+    <ClInclude Include="src\features\account\CredentialCapture.h" />
+    <ClInclude Include="src\features\combat\autoaim\AutoAim.h" />
+    <ClInclude Include="src\features\combat\autoability\AutoAbility.h" />
+    <ClInclude Include="src\features\movement\dodge\AoeTracking.h" />
+    <ClInclude Include="src\features\visuals\skins\character\SkinChanger.h" />
+    <ClInclude Include="src\features\visuals\skins\SkinDatabase.h" />
+    <ClInclude Include="src\features\movement\speedhack\SpeedHack.h" />
+    <ClInclude Include="src\features\misc\FpsSetter.h" />
+    <ClInclude Include="src\features\movement\dodge\ChatToast.h" />
+    <ClInclude Include="src\features\movement\dodge\XDodge.h" />
+    <ClInclude Include="src\features\movement\dodge\DangerPlanner.h" />
+    <ClInclude Include="src\features\movement\dodge\DodgeGeometry.h" />
+    <ClInclude Include="src\features\movement\dodge\MovementRuntime.h" />
+    <ClInclude Include="src\features\movement\dodge\ProjectileCatalog.h" />
+    <ClInclude Include="src\features\movement\dodge\SteerInput.h" />
+    <ClInclude Include="vendor\minhook\MinHook.h" />
+    <ClInclude Include="src\core\config\keybinds.h" />
+    <ClInclude Include="src\core\runtime\Il2CppResolver.h" />
+    <ClInclude Include="src\core\runtime\RuntimeOffsets.h" />
+    <ClInclude Include="src\core\runtime\GameState.h" />
+    <ClInclude Include="src\core\runtime\LocalPlayer.h" />
+    <ClInclude Include="src\core\runtime\SharedMemory.h" />
+    <ClInclude Include="src\features\combat\autoaim\FeatAutoAim.h" />
+    <ClInclude Include="src\features\combat\autoaim\FeatMagnetAim.h" />
+    <ClInclude Include="src\features\loot\BagLooter.h" />
+    <ClInclude Include="src\features\loot\LootData.h" />
+    <ClInclude Include="src\features\combat\autonexus\AutoNexus.h" />
+    <ClInclude Include="src\features\combat\ghostHit\GhostHit.h" />
+    <ClInclude Include="src\features\combat\autoaim\ProjNoclip.h" />
+    <ClInclude Include="src\features\movement\noclip\Noclip.h" />
+    <ClInclude Include="src\features\movement\noclip\NoclipHook.h" />
+    <ClInclude Include="src\game\symbols\BeebyteName.h" />
+    <ClInclude Include="vendor\detours\detours.h" />
+    <ClInclude Include="vendor\imgui\imconfig.h" />
+    <ClInclude Include="vendor\imgui\imgui.h" />
+    <ClInclude Include="vendor\imgui\imgui_impl_dx11.h" />
+    <ClInclude Include="vendor\imgui\imgui_impl_win32.h" />
+    <ClInclude Include="vendor\imgui\imgui_internal.h" />
+    <ClInclude Include="vendor\imgui\imstb_rectpack.h" />
+    <ClInclude Include="vendor\imgui\imstb_textedit.h" />
+    <ClInclude Include="vendor\imgui\imstb_truetype.h" />
+    <ClInclude Include="src\bootstrap\main.h" />
+    <ClInclude Include="src\core\config\settings.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="appdata">
       <UniqueIdentifier>{c05ecbb0-c329-4bbb-862f-42d09b3f2344}</UniqueIdentifier>
-      </Filter>
-      <Filter Include="framework">
+    </Filter>
+    <Filter Include="framework">
       <UniqueIdentifier>{37686ba7-a34d-4a2c-875f-76ea7c2966aa}</UniqueIdentifier>
-      </Filter>
-      <Filter Include="user">
+    </Filter>
+    <Filter Include="user">
       <UniqueIdentifier>{8d012957-e190-421f-97a8-a20bdede5876}</UniqueIdentifier>
-      </Filter>
-      <Filter Include="libraries">
+    </Filter>
+    <Filter Include="libraries">
       <UniqueIdentifier>{9f9c6c12-6f55-4ba4-a15d-7311ef7a5401}</UniqueIdentifier>
-      </Filter>
-      <Filter Include="libraries\detours">
+    </Filter>
+    <Filter Include="libraries\detours">
       <UniqueIdentifier>{53655ce9-9b58-4e51-a814-50520f1eedf9}</UniqueIdentifier>
-      </Filter>
-      <Filter Include="libraries\imgui">
+    </Filter>
+    <Filter Include="libraries\imgui">
       <UniqueIdentifier>{5ad64231-b799-4070-a7eb-5142673fec19}</UniqueIdentifier>
-      </Filter>
-      <Filter Include="handlers">
+    </Filter>
+    <Filter Include="handlers">
       <UniqueIdentifier>{7e4762a3-b79b-4ff8-84d6-f6c6992ad21f}</UniqueIdentifier>
-      </Filter>
-      <Filter Include="handlers\gui">
+    </Filter>
+    <Filter Include="handlers\gui">
       <UniqueIdentifier>{34cbddef-5448-472b-b7f1-1ff40c8761e4}</UniqueIdentifier>
-      </Filter>
-      <Filter Include="handlers\gui\tabs">
+    </Filter>
+    <Filter Include="handlers\gui\tabs">
       <UniqueIdentifier>{bad24293-8698-4647-ba7b-ea4869111055}</UniqueIdentifier>
-      </Filter>
-      <Filter Include="handlers\hooks">
+    </Filter>
+    <Filter Include="handlers\hooks">
       <UniqueIdentifier>{805e5f6b-185c-4c5e-b49b-63778f7e3929}</UniqueIdentifier>
-      </Filter>
-      <Filter Include="definitions">
+    </Filter>
+    <Filter Include="definitions">
       <UniqueIdentifier>{7d917a43-6f31-4ba9-8ef2-4ce46ddeb7df}</UniqueIdentifier>
-      </Filter>
-      <Filter Include="src\features\movement\dodge">
-      <UniqueIdentifier>{8f3a1b2c-4d5e-6f7a-8b9c-0d1e2f3a4b5c}</UniqueIdentifier>
-      </Filter>
-      </ItemGroup>
-      </Project>
+    </Filter>
+  </ItemGroup>
+</Project>

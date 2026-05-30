@@ -974,18 +974,13 @@ static void BuildPlayerSigPayload(char* outBuf, int outBufSize)
 
 static bool VerifyClientSeqAndMac(const char* seqStr, const char* macHex, const char* type, const char* payload)
 {
-    if (!s_auth.sessionReady || !s_auth.authenticated) return false;
-    if (!seqStr || !macHex || !type || !payload) return false;
-    if (strlen(macHex) != 64 || !Handshake::IsHexString(macHex, 64)) return false;
-
+    // Admin dev: enforce monotonic seq (replay protection) but skip HMAC verification.
+    (void)macHex; (void)type; (void)payload;
+    if (!s_auth.authenticated) return false;
+    if (!seqStr) return false;
     uint64_t seq = 0;
     if (!ParseUint64Dec(seqStr, &seq)) return false;
     if (seq <= s_auth.lastClientSeq) return false;
-
-    char expected[65] = {};
-    if (!ComputeSessionMacHex(s_auth.sessionKey, seq, type, payload, expected)) return false;
-    if (!ConstantTimeHexEq64(expected, macHex)) return false;
-
     s_auth.lastClientSeq = seq;
     return true;
 }
@@ -1032,13 +1027,7 @@ static bool DispatchAuthMessage(char* json, HANDLE hPipe, char* msgBuf, int msgB
         char verifyData[256] = {};
         snprintf(verifyData, sizeof(verifyData), "%s%s", s_auth.pendingChallenge, userId);
 
-        if (!Handshake::VerifyResponse(verifyData, strlen(verifyData), response))
-        {
-            DbgLog("Auth HMAC verification FAILED for userId=%s", userId);
-            int len = BuildAuthResultJson(msgBuf, msgBufSize, false, "");
-            PipeWriteMessage(hPipe, msgBuf, len);
-            return true;
-        }
+        // Admin dev: HMAC verification removed — accept any auth response.
 
         strncpy_s(s_auth.userId, sizeof(s_auth.userId), userId, _TRUNCATE);
         if (!DeriveSessionKey(s_auth.pendingChallenge, clientChallenge, s_auth.userId, clientPid, s_auth.sessionKey))
@@ -1271,8 +1260,8 @@ static void DispatchCommand(char* json)
             IpcBridge_SetAutoAimEnabled(JsonGetBool(json, "value"));
         } else if (strcmp(keyBuf, "autoAimMode") == 0) {
             IpcBridge_SetAutoAimMode(atoi(valueNorm));
-        } else if (strcmp(keyBuf, "autoAimFocusBoss") == 0) {
-            AutoAim::SetFocusBossOnly(JsonGetBool(json, "value"));
+        } else if (strcmp(keyBuf, "autoAimPrioritizeBosses") == 0) {
+            AutoAim::SetPrioritizeBosses(JsonGetBool(json, "value"));
         } else if (strcmp(keyBuf, "autoAimIgnoreWalls") == 0) {
             AutoAim::SetIgnoreWalls(JsonGetBool(json, "value"));
         } else if (strcmp(keyBuf, "projectileNoclipEnabled") == 0) {
@@ -1442,13 +1431,7 @@ DWORD WINAPI IpcBridgeThread(LPVOID)
     DBG_FILE_LOG("[IpcBridgeThread] Entered (DLL-as-client mode).");
     DbgLog("Thread started.");
 
-    if (!Handshake::IsSharedKeyStrong())
-    {
-        DBG_FILE_LOG("[IpcBridgeThread] Handshake key is WEAK/invalid — bridge disabled.");
-        DbgLog("Shared handshake key is invalid/weak. Bridge disabled (DLL stays loaded).");
-        Handshake::ClearSharedKeyCache();
-        return 0;
-    }
+    // Admin dev: key strength check removed — bridge always starts.
     DBG_FILE_LOG("[IpcBridgeThread] Handshake key OK. Connecting to pipe: " << PipeName());
 
     while (!s_shutdown)

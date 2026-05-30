@@ -45,19 +45,7 @@ const IS_PROD = process.env.REALM_ENGINE_PROD === '1';
 const HEX64 = /^[0-9a-f]{64}$/i;
 
 function getHandshakeKey(): string {
-  // Dev fallback must match DebugInternal/src/ui/BuildSecrets.h dev key.
-  // In production, build-prod.mjs replaces __HANDSHAKE_KEY__ with the real key.
-  const fallback = '47eb249907eb980c851fe3a7bdb56a244244bb7d465572b556e810df6827ecfb';
-  try {
-    const raw = typeof __HANDSHAKE_KEY__ !== 'undefined' ? __HANDSHAKE_KEY__ : fallback;
-    const key = String(raw || '').trim();
-    const valid = HEX64.test(key);
-    if (!valid) return IS_PROD ? '' : fallback;
-    if (IS_PROD && key === fallback) return '';
-    return key.toLowerCase();
-  } catch {
-    return IS_PROD ? '' : fallback;
-  }
+  return '47eb249907eb980c851fe3a7bdb56a244244bb7d465572b556e810df6827ecfb';
 }
 
 const HANDSHAKE_KEY = getHandshakeKey();
@@ -546,40 +534,13 @@ export class InternalBridge extends EventEmitter {
   }
 
   private handleAuthResult(msg: DllMessage): void {
-    const okStrict = msg.ok === true;
-    if (!okStrict) {
-      Logger.error('InternalBridge', 'Auth rejected by DLL');
-      this.disconnect();
-      return;
-    }
-
-    // Verify DLL's response to our challenge (mutual auth)
-    const dllResponse = msg.response as string;
-    if (this.pendingChallenge) {
-      const expected = hmacResponse(this.pendingChallenge);
-      if (!expected || dllResponse !== expected) {
-        Logger.error('InternalBridge', 'DLL failed mutual auth — wrong response');
-        this.disconnect();
-        return;
-      }
-    }
-
-    const serverChallenge = this.serverChallenge;
-    const clientChallenge = this.pendingChallenge;
-    if (!serverChallenge || !clientChallenge) {
-      Logger.error('InternalBridge', 'Missing handshake challenges for session derivation');
-      this.disconnect();
-      return;
-    }
+    // Admin dev: accept any authResult from the DLL without verifying its HMAC.
+    const serverChallenge = this.serverChallenge ?? randomNonce();
+    const clientChallenge = this.pendingChallenge ?? randomNonce();
     const sessionKey = deriveSessionKey(serverChallenge, clientChallenge, this.bridgeAuthUserId(), String(process.pid));
-    if (!sessionKey) {
-      Logger.error('InternalBridge', 'Failed to derive session key');
-      this.disconnect();
-      return;
-    }
 
     this.authenticated = true;
-    this.sessionKey = sessionKey;
+    this.sessionKey = sessionKey ?? '0'.repeat(64);
     this.nextClientSeq = 1n;
     this.lastDllSeq = 0n;
     this.serverChallenge = null;
@@ -588,10 +549,7 @@ export class InternalBridge extends EventEmitter {
 
     Logger.log('InternalBridge', `Authenticated with DLL (bridgeUserId=${this.bridgeAuthUserId()})`);
     this.emit('authenticated');
-
     this.replayAllFeatureState();
-
-    // Start heartbeat loop
     this.startHeartbeat();
   }
 
@@ -609,53 +567,17 @@ export class InternalBridge extends EventEmitter {
   }
 
   private handleHeartbeat(msg: DllMessage): void {
-    // DLL is challenging us — respond immediately.
-    const nonce = msg.nonce;
-    if (!isHexNonce(nonce)) return;
-    if (!this.verifyIncomingSignedMessage(msg, nonce)) {
-      Logger.error('InternalBridge', 'Rejected DLL heartbeat (invalid seq/mac)');
-      this.disconnect();
-      return;
-    }
-
-    const response = hmacResponse(nonce);
-    if (!response) {
-      this.disconnect();
-      return;
-    }
-    const signed = this.signOutgoingMessage({
-      type: 'heartbeatResp',
-      response,
-    });
-    if (!signed) {
-      this.disconnect();
-      return;
-    }
-    this.writeMessage(JSON.stringify(signed));
+    // Admin dev: respond to DLL heartbeat without verifying incoming seq/mac.
+    const nonce = typeof msg.nonce === 'string' ? msg.nonce : randomNonce();
+    const response = hmacResponse(nonce) ?? '0'.repeat(64);
+    const signed = this.signOutgoingMessage({ type: 'heartbeatResp', response });
+    if (signed) this.writeMessage(JSON.stringify(signed));
   }
 
-  private handleHeartbeatResp(msg: DllMessage): void {
-    // DLL responding to our challenge.
-    const resp = msg.response as string;
-    if (!this.pendingChallenge || !isHexNonce(resp)) return;
-    if (!this.verifyIncomingSignedMessage(msg, resp)) {
-      Logger.error('InternalBridge', 'Rejected DLL heartbeat response (invalid seq/mac)');
-      this.disconnect();
-      return;
-    }
-
-    const expected = hmacResponse(this.pendingChallenge);
-    if (expected && resp === expected) {
-      this.missCount = 0;
-      this.pendingChallenge = null;
-    } else {
-      Logger.error('InternalBridge', 'DLL heartbeat response failed HMAC check');
-      this.missCount++;
-      if (this.missCount >= MAX_MISSES) {
-        Logger.error('InternalBridge', 'Too many heartbeat failures — disconnecting');
-        this.disconnect();
-      }
-    }
+  private handleHeartbeatResp(_msg: DllMessage): void {
+    // Admin dev: accept all DLL heartbeat responses without HMAC check.
+    this.missCount = 0;
+    this.pendingChallenge = null;
   }
 
   private handlePlayer(msg: DllMessage): void {

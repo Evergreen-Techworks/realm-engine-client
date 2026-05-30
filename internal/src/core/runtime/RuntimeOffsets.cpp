@@ -146,6 +146,7 @@ uint32_t Hbeak_ProjPropsPtr       = 0x118;  // FOMOIBCKIFP — per-shot Projecti
 uint32_t Hbeak_Angle              = 0x148;  // FFFFKPDHEFP — spawn angle Single
 uint32_t Hbeak_InstanceDamage     = 0x174;  // DBNNDLKNECM — per-instance damage Int32
 uint32_t PP_CustomHitbox          = 0x148;  // "CustomHitbox" — ProjectileCustomHitbox* reference
+uint32_t PP_IsArmorPiercing       = 0x138;  // "IsArmorPiercing"
 uint32_t CH_OffsetX               = 0x10;   // "offsetX" — custom hitbox X offset Single
 uint32_t CH_OffsetY               = 0x14;   // "offsetY" — custom hitbox Y offset Single
 uint32_t VH_SpriteShader          = 0x60;   // "spriteShader" — SpriteShader on ViewHandler
@@ -367,6 +368,7 @@ static Entry s_entries[] = {
 
     // ── ProjectileProperties continued ────────────────────────────────────────
     { "ProjectileProperties", { "CustomHitbox", "customHitbox" },                 2, 0, &PP_CustomHitbox,       false },
+    { "ProjectileProperties", { "IsArmorPiercing", "armorPiercing" },             2, 0, &PP_IsArmorPiercing,    false },
 
     // ── ProjectileCustomHitbox (real names, no shift) ──────────────────────────
     { "ProjectileCustomHitbox", { "offsetX" },                                    1, 0, &CH_OffsetX,            false },
