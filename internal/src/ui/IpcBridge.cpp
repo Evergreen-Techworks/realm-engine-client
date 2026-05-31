@@ -31,6 +31,7 @@
 #include "XDodge.h"
 #include "RolloutDodge.h"
 #include "SpeedHack.h"
+#include "Il2CppResolver.h"
 
 #include <cstdio>
 #include <cstring>
@@ -84,6 +85,10 @@ static void DebugSessionLogSetFeature(const char* key, const char* valueType)
 
 static const char* PipeName()    { return BUILD_PIPE_NAME; }
 static const DWORD PIPE_BUFFER_SIZE = 65536;
+
+static std::mutex s_pluginFloatingTextMutex;
+static char s_pluginFloatingText[128] = {};
+static bool s_pluginFloatingTextPending = false;
 
 
 // ── Tile map (from bot-client tileUpdate / noWalkInit packets) ────────────────
@@ -804,6 +809,71 @@ int32_t IpcBridge_GetClientClassType()
     return s_featClientClassType.load(std::memory_order_relaxed);
 }
 
+static void ApplyPluginFloatingTextFeatureState()
+{
+    char text[128] = {};
+    {
+        std::lock_guard<std::mutex> lk(s_pluginFloatingTextMutex);
+        if (!s_pluginFloatingTextPending) return;
+        strncpy_s(text, sizeof(text), s_pluginFloatingText, _TRUNCATE);
+        s_pluginFloatingTextPending = false;
+    }
+
+    DbgLog("[FloatText] processing text='%s'", text);
+
+    Il2CppClass* klass = Resolver::FindClassLoose("MapObjectUIManager");
+    DbgLog("[FloatText] class MapObjectUIManager=%p", (void*)klass);
+
+    app::MapObjectUIManager* localMgr = nullptr;
+    app::ViewHandler* localView = nullptr;
+    void* local = GameState::GetLocalPtr();
+    const bool localOk = Resolver::Protection::safe_call([&]() {
+        localView = *reinterpret_cast<app::ViewHandler**>(reinterpret_cast<uintptr_t>(local) + RuntimeOffsets::KJ_ViewHandler);
+        if (localView) localMgr = localView->fields.GUIManager;
+    });
+    DbgLog("[FloatText] local=%p view=%p gui=%p localOk=%d", local, (void*)localView, (void*)localMgr, localOk ? 1 : 0);
+
+    auto objs = klass ? Resolver::FindObjectsByType(klass) : std::vector<Il2CppObject*>{};
+    DbgLog("[FloatText] FindObjectsByType count=%zu", objs.size());
+    const MethodInfo* mi = klass ? il2cpp_class_get_method_from_name(klass, "ShowFloatingText", 6) : nullptr;
+    DbgLog("[FloatText] ShowFloatingText method=%p ptr=%p", (void*)mi, mi ? (void*)mi->methodPointer : nullptr);
+    void* receiver = localMgr ? static_cast<void*>(localMgr) : (!objs.empty() ? static_cast<void*>(objs[0]) : nullptr);
+    if (!receiver || !mi || !mi->methodPointer) {
+        DbgLog("[FloatText] unavailable: receiver=%p klass=%p objects=%zu method=%p", receiver, (void*)klass, objs.size(), (void*)mi);
+        return;
+    }
+
+    auto* receiverMgr = reinterpret_cast<app::MapObjectUIManager*>(receiver);
+    DbgLog("[FloatText] receiver=%p source=%s container=%p pool=%p", receiver, localMgr ? "localView.GUIManager" : "FindObjectsByType[0]", (void*)receiverMgr->fields.floatingTextsContainer, (void*)receiverMgr->fields.floatingTextPool);
+
+    using Fn = void(*)(void*, app::DGKAANOAENH__Enum, app::String*, app::Nullable_1_UnityEngine_Color32_, float, float, float, const MethodInfo*);
+    const bool off = strstr(text, "Disabled") != nullptr;
+    app::Nullable_1_UnityEngine_Color32_ col{};
+    col.hasValue = true;
+    col.value.r = off ? 255 : 32;
+    col.value.g = off ? 0 : 220;
+    col.value.b = off ? 25 : 0;
+    col.value.a = 255;
+    col.value.rgba = static_cast<int32_t>(static_cast<uint32_t>(col.value.r) | (static_cast<uint32_t>(col.value.g) << 8) | (static_cast<uint32_t>(col.value.b) << 16) | (static_cast<uint32_t>(col.value.a) << 24));
+
+    static void* s_primedReceiver = nullptr;
+    if (s_primedReceiver != receiver) {
+        app::String* emptyText = reinterpret_cast<app::String*>(il2cpp_string_new(""));
+        const bool primeOk = Resolver::Protection::safe_call([&]() {
+            for (int i = 0; i < 12; ++i)
+                reinterpret_cast<Fn>(mi->methodPointer)(receiver, app::DGKAANOAENH__Enum::Xp, emptyText, col, 0.f, 0.f, 0.f, mi);
+        });
+        if (primeOk) s_primedReceiver = receiver;
+        DbgLog("[FloatText] prime %s receiver=%p", primeOk ? "ok" : "failed", receiver);
+    }
+
+    app::String* ilText = reinterpret_cast<app::String*>(il2cpp_string_new(text));
+    const bool ok = Resolver::Protection::safe_call([&]() {
+        reinterpret_cast<Fn>(mi->methodPointer)(receiver, app::DGKAANOAENH__Enum::Xp, ilText, col, 0.f, 0.f, 0.f, mi);
+    });
+    DbgLog("[FloatText] ShowFloatingText %s text='%s' obj=%p", ok ? "called" : "failed", text, receiver);
+}
+
 void IpcBridge_ApplyFeatureOverrides()
 {
     // Player noclip is pure feature state plus keyboard polling. Apply it even
@@ -822,6 +892,7 @@ void IpcBridge_ApplyFeatureOverrides()
     ApplyAutoAbilityFeatureState();
     ApplyWalkTargetFeatureState();
     ApplyCameraFeatureState();
+    ApplyPluginFloatingTextFeatureState();
 }
 
 // ── Shutdown flag ─────────────────────────────────────────────────────────────
@@ -1585,6 +1656,11 @@ static void DispatchCommand(char* json)
             DangerPlanner::SetDodgeHitScale(static_cast<float>(atof(valueNorm)));
         } else if (strcmp(keyBuf, "targetFrameRate") == 0) {
             FpsSetter::SetTargetFps(atoi(valueNorm));
+        } else if (strcmp(keyBuf, "showPluginFloatingText") == 0) {
+            std::lock_guard<std::mutex> lk(s_pluginFloatingTextMutex);
+            strncpy_s(s_pluginFloatingText, sizeof(s_pluginFloatingText), valueNorm, _TRUNCATE);
+            s_pluginFloatingTextPending = true;
+            DbgLog("[FloatText] queued text='%s'", s_pluginFloatingText);
         }
     }
 }

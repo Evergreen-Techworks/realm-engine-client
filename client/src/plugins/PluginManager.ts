@@ -10,6 +10,7 @@ import type { GameDataLoader } from '../game-data/GameDataLoader.js';
 import type { GameWorldState } from '../state/GameWorldState.js';
 import type { ProjectileTracker } from '../state/ProjectileTracker.js';
 import { Logger } from '../util/Logger.js';
+import { sendDllFeature } from '../bridge/DllFeatureBus.js';
 
 declare const __PLUGIN_BUNDLE_SIGNING_PUBLIC_KEY__: string | undefined;
 declare const __PLUGIN_BUNDLE_ENC_KEY__: string | undefined;
@@ -347,6 +348,7 @@ export class PluginManager {
     const gated = plugin.source === 'bundled';
     // Admin dev: all gate checks removed — every plugin can be toggled freely.
     plugin.context.enabled = enabled;
+    sendDllFeature('showPluginFloatingText', `${plugin.name}: ${enabled ? 'Enabled' : 'Disabled'}`);
     return { ok: true };
   }
 
