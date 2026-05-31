@@ -421,13 +421,6 @@ async function main() {
     () => ({ worldState, projectileTracker }),
   );
 
-  // Dev override: grant all plans locally so gated plugins (auto-dodge, safe-walk,
-  // spoof-push-tiles, etc.) are usable without a server subscription.
-  if (devMode) {
-    pluginManager.loginGateActive = true;
-    pluginManager.setActivePlans(['dodge', 'developer']);
-  }
-
   // 6. Dev dashboard FIRST — Electron only waits ~10s for http://localhost:3000; metadata fetch can be slow
   let devServer: DevServer | undefined;
   let scriptHost: ScriptHost | undefined;

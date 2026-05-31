@@ -5,54 +5,19 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlink
 import { join, extname, dirname, basename, resolve } from 'path';
 import sharp from 'sharp';
 import { execFileSync, spawn } from 'child_process';
-// NOTE: DevServer runs in a forked Node child process (electron/main.cjs
-// → fork(distApp, ...)), NOT in the Electron main process. So
-// `require('electron')` is unavailable here — opening folders must go
-// through child_process directly. The `cmd /c start "" "<path>"` shape
-// is the reliable Windows pattern (delegates to the shell which knows
-// how to open folders); macOS / Linux have their own openers.
 import { WebSocketServer, WebSocket } from 'ws';
 import { XMLParser } from 'fast-xml-parser';
 import { PacketInspector, type CapturedPacket } from './PacketInspector.js';
 import { PacketLab } from './PacketLab.js';
 import type { PluginManager } from '../../plugins/PluginManager.js';
-import { BotApiClient, type GemStatusResponse } from '../../services/BotApiClient.js';
-import { TelemetryEmitter, fingerprintObject, type TelemetrySnapshot } from '../../services/TelemetryEmitter.js';
-import { EventTracker, type EventContext } from '../../services/EventTracker.js';
 import type { Proxy } from '../../proxy/Proxy.js';
 import type { GameWorldState } from '../../state/GameWorldState.js';
 import type { GameDataLoader } from '../../game-data/GameDataLoader.js';
 import { Logger } from '../../util/Logger.js';
 import { RuntimeScheduler } from '../../util/RuntimeScheduler.js';
 import { getRealmengineDataDir, getRealmengineDocumentsDir } from '../../util/rotmgAssetExtractor.js';
-
-// ── Debug logging ─────────────────────────────────────────────────────────────
-const DEBUG_LOG_PATH = join(process.env.USERPROFILE || '', 'Documents', 'Realmengine', 'debug.log');
-function debugLog(msg: string): void {
-  const line = `[${new Date().toISOString()}] ${msg}\n`;
-  process.stdout.write(line);
-  try { writeFileSync(DEBUG_LOG_PATH, line, { flag: 'a' }); } catch { /* ignore */ }
-}
-
-function extractUserIdFromJwt(accessToken: string): string | undefined {
-  try {
-    const parts = accessToken.split('.');
-    if (parts.length < 2) return undefined;
-    const payload = parts[1];
-    const b64 = payload.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), '=');
-    const json = Buffer.from(padded, 'base64').toString('utf8');
-    const o = JSON.parse(json) as { sub?: string; userId?: string };
-    const id = o.sub ?? o.userId;
-    return typeof id === 'string' && id ? id : undefined;
-  } catch {
-    return undefined;
-  }
-}
-// ─────────────────────────────────────────────────────────────────────────────
 import { getClientToken, clearCachedHwid } from '../../util/Hwid.js';
 import { ConditionEffect } from '../../constants/ConditionEffect.js';
-import { getMarketCatalogStub } from '../marketCatalogStub.js';
 import type { ScriptHost } from '../../scripts/ScriptHost.js';
 import type { InternalBridge } from '../../bridge/InternalBridge.js';
 import type {
@@ -157,7 +122,19 @@ function killMicrosoftEdgeProcessesBestEffort(): {
   }
 }
 
-const BOT_API_URL = 'https://api.realmengine.org';
+const DEBUG_LOG_PATH = join(process.env.USERPROFILE || '', 'Documents', 'Realmengine', 'debug.log');
+
+function debugLog(msg: string): void {
+  const line = `[${new Date().toISOString()}] ${msg}
+`;
+  process.stdout.write(line);
+  try {
+    writeFileSync(DEBUG_LOG_PATH, line, { flag: 'a' });
+  } catch {
+    /* ignore */
+  }
+}
+
 const DEFAULT_PLUGIN_CONFIG_ID = 'default';
 const DEFAULT_PLUGIN_CONFIG_NAME = 'default';
 
@@ -363,34 +340,13 @@ export class DevServer {
     rotmgExtractorGameDataPath?: string;
     lastPluginConfigId?: string;
     singleClientOnly?: boolean;
-    /** When false, no heartbeats or events leave the machine. Default true. */
-    telemetryEnabled?: boolean;
   } = {
     singleClientOnly: true,
-    telemetryEnabled: true,
   };
   /** Parsed `spritesheet.xml` from extractor dump; invalidated when mtime changes. */
   private wikiSpriteSheetCache: WikiSpriteSheetCache | null = null;
   private serverNames: string[] = [];
   private servers: Record<string, string> = {};
-  private botApiClient: BotApiClient;
-  private telemetryEmitter: TelemetryEmitter | null = null;
-  private eventTracker: EventTracker | null = null;
-  /** Last server name we emitted a telemetry event for, so server_switch only fires on change. */
-  private lastTelemetryServerName = '';
-  /** Highest session fame gained while the current game session was active — used for session_fame on disconnect. */
-  private lastSessionFamePeak = 0;
-  /**
-   * Tracks the last plan tier we saw from /gems/status, so plan_purchase_completed only
-   * fires on a true upgrade transition (free → paid) rather than every refresh. Null until
-   * the first status arrives — we never emit on that first observation.
-   */
-  private lastKnownPlanTier: string | null = null;
-  /** Latest plan tier the dashboard learned ('free' until we hear from /gems/status). */
-  private currentPlanTier: string = 'free';
-  /** Dashboard bot-api session start, in epoch ms. Set on first successful auth seed. */
-  private botApiSessionStartedAt: number | null = null;
-  private lastSeedToken: string | null = null;
 /** Cached `gameWikiCatalog` WebSocket payload (built once per process; omit `force` on client to reuse). */
   private gameWikiCatalogJson: string | null = null;
   /** Spawned muling-headless process (one at a time). */
@@ -414,140 +370,6 @@ export class DevServer {
 
   private getDashboardAccountOverviewCacheFile(accountId: string): string {
     return join(this.getAccountsCacheDir(), `${String(accountId || '').trim()}.json`);
-  }
-
-  // ── Telemetry helpers ─────────────────────────────────────────────────────
-
-  /**
-   * Pick the most relevant plan from /payments/gems/status active_subs so the
-   * telemetry heartbeat reports a useful tier rather than always "free".
-   *
-   * Ranking order matches the marketing tiers; unknown tiers are accepted as-is.
-   */
-  private recordPlanTierFromStatus(status: GemStatusResponse | null): void {
-    const rank: Record<string, number> = { developer: 4, premium: 3, dodge: 2, free: 1 };
-    let best = 'free';
-    if (status && Array.isArray(status.active_subs) && status.active_subs.length > 0) {
-      let bestRank = 0;
-      for (const sub of status.active_subs) {
-        const name = String(sub.plan_name || '').trim().toLowerCase();
-        if (!name) continue;
-        const r = rank[name] ?? 0;
-        if (r > bestRank) {
-          bestRank = r;
-          best = name;
-        }
-      }
-    }
-    const previous = this.lastKnownPlanTier;
-    this.currentPlanTier = best;
-    this.lastKnownPlanTier = best;
-    // Fire conversion event only on a true upgrade transition. Skipping the
-    // first observation prevents a spurious purchase event on every login.
-    if (
-      previous !== null
-      && previous !== best
-      && (rank[best] ?? 0) > (rank[previous] ?? 0)
-    ) {
-      try {
-        this.eventTracker?.track('plan_purchase_completed', {
-          from: previous,
-          to: best,
-        });
-      } catch { /* swallow */ }
-    }
-  }
-
-  private startTelemetryEmitter(): void {
-    if (!this.botApiSessionStartedAt) this.botApiSessionStartedAt = Date.now();
-    this.telemetryEmitter?.start();
-    this.eventTracker?.start();
-  }
-
-  /**
-   * Coarse buckets so the settings popularity breakdown stays readable.
-   * Raw counts make every row almost-unique; buckets make patterns obvious.
-   */
-  private bucketPluginCount(n: number): string {
-    if (n <= 0) return '0';
-    if (n <= 2) return '1-2';
-    if (n <= 5) return '3-5';
-    if (n <= 10) return '6-10';
-    if (n <= 20) return '11-20';
-    return '20+';
-  }
-
-  private collectEventContext(): EventContext {
-    const planTier = this.currentPlanTier || 'free';
-    let serverName = '';
-    let className = '';
-    if (this.currentClient?.playerData) {
-      const pd = this.currentClient.playerData;
-      const serverIp = this.currentClient.state?.conTargetAddress || '';
-      serverName = this.ipToServerName[serverIp] || serverIp || '';
-      const liveType = this.worldState?.getEntityType(this.currentClient.objectId ?? 0);
-      const cid = Number.isFinite(Number(liveType)) && Number(liveType) > 0
-        ? Math.trunc(Number(liveType))
-        : (Number.isFinite(Number(pd.classType)) && Number(pd.classType) > 0 ? Math.trunc(Number(pd.classType)) : 0);
-      if (cid > 0) {
-        try { className = this.getObjectDisplayName(cid) || ''; } catch { className = ''; }
-      }
-    }
-    return { planTier, serverName, className };
-  }
-
-  /**
-   * Build the current telemetry snapshot. Called from inside TelemetryEmitter
-   * once per heartbeat — keep it cheap and side-effect-free.
-   */
-  private collectTelemetrySnapshot(): TelemetrySnapshot | null {
-    const planTier = this.currentPlanTier || 'free';
-    let serverName = '';
-    let classId = 0;
-    let className = '';
-    if (this.currentClient?.playerData) {
-      const pd = this.currentClient.playerData;
-      const serverIp = this.currentClient.state?.conTargetAddress || '';
-      serverName = this.ipToServerName[serverIp] || serverIp || '';
-      const liveType = this.worldState?.getEntityType(this.currentClient.objectId ?? 0);
-      const effective = Number.isFinite(Number(liveType)) && Number(liveType) > 0
-        ? Math.trunc(Number(liveType))
-        : (Number.isFinite(Number(pd.classType)) && Number(pd.classType) > 0 ? Math.trunc(Number(pd.classType)) : 0);
-      classId = effective;
-      if (classId > 0) {
-        try {
-          className = this.getObjectDisplayName(classId) || '';
-        } catch {
-          className = '';
-        }
-      }
-    }
-    const pluginsEnabled = this.pluginManager
-      .getPlugins()
-      .filter((p) => p.enabled)
-      .map((p) => p.id);
-
-    // Per-key settings summary (replaces the hash as the primary signal). The
-    // fingerprint is still computed for backward-compat aggregation if needed.
-    // Keep keys boring + boolean-ish so the admin breakdown reads cleanly.
-    const settingsSummary: Record<string, string> = {
-      single_client_only: this.config.singleClientOnly === false ? 'false' : 'true',
-      plugin_config: this.config.lastPluginConfigId || 'default',
-      plugin_count_bucket: this.bucketPluginCount(pluginsEnabled.length),
-      in_game: classId > 0 ? 'true' : 'false',
-    };
-    const settingsFingerprint = fingerprintObject(settingsSummary);
-
-    return {
-      serverName,
-      classId,
-      className,
-      planTier,
-      pluginsEnabled,
-      settingsFingerprint,
-      settingsSummary,
-      sessionStartedAt: this.botApiSessionStartedAt ? new Date(this.botApiSessionStartedAt) : null,
-    };
   }
 
   private ensureDir(path: string): void {
@@ -1244,31 +1066,7 @@ export class DevServer {
     } catch (err) {
       Logger.warn('DevServer', `Failed to load config.json: ${(err as Error).message}`);
     }
-    // Bot API client for gem-gated plugin system
-    Logger.log('DevServer', `botApiUrl: ${BOT_API_URL}`);
     Logger.log('DevServer', `configPath: ${this.configPath} (exists: ${existsSync(this.configPath)})`);
-    this.botApiClient = new BotApiClient(BOT_API_URL);
-    // Dev override: stub checkGems so plan-gating always resolves to Developer
-    // without requiring a real server subscription.
-    this.botApiClient.checkGems = async () => ({
-      gem_balance: 0,
-      active: true,
-      next_deduction_at: null,
-      active_subs: [{ plan_name: 'Developer', status: 'active', expires_at: null }],
-    });
-    this.telemetryEmitter = new TelemetryEmitter({
-      botApi: this.botApiClient,
-      getSnapshot: () => this.collectTelemetrySnapshot(),
-      isEnabled: () => this.config.telemetryEnabled !== false,
-    });
-    this.eventTracker = new EventTracker({
-      botApi: this.botApiClient,
-      getAnonId: () => this.telemetryEmitter?.getAnonId() ?? null,
-      getContext: () => this.collectEventContext(),
-      isEnabled: () => this.config.telemetryEnabled !== false,
-    });
-    // Defer start() until we know we have a logged-in session — both services are
-    // no-ops when not logged in anyway; we kick them off when the seed token arrives.
 
     // Load server name mappings from data/servers.json
     const serversPath = join(publicDir, '..', '..', '..', 'data', 'servers.json');
@@ -1403,12 +1201,6 @@ export class DevServer {
       if (!wasConnected) {
         this.sessionStartedAt = 0; // restart uptime for this connected segment
         this.startFameSegment();   // commit prior segment; wait for first real fame
-        // Fire-and-forget game event so admins can see connect spikes.
-        try {
-          const serverIp = client?.state?.conTargetAddress || '';
-          const serverName = this.ipToServerName[serverIp] || serverIp || '';
-          this.eventTracker?.track('game_connected', { server: serverName });
-        } catch { /* never let telemetry break the connect path */ }
       }
       this.currentClient = client;
       const clientId: string = client.clientId || 'default';
@@ -1447,24 +1239,10 @@ export class DevServer {
           if (this.fameSectionStart != null) {
             const segGain = Math.max(0, this.lastKnownFame - this.fameSectionStart);
             this.fameAccumulated += segGain;
-            if (this.fameAccumulated > this.lastSessionFamePeak) {
-              this.lastSessionFamePeak = this.fameAccumulated;
-            }
           }
           this.fameSectionStart = null;
           if (this.fameInitTimer) { clearTimeout(this.fameInitTimer); this.fameInitTimer = null; }
           this.sessionStartedAt = 0;
-          // Telemetry — use peak so server-switch reconnects don't zero it out
-          try {
-            if (this.eventTracker && this.lastSessionFamePeak > 0) {
-              this.eventTracker.track('session_fame', {
-                fame: this.lastSessionFamePeak,
-                last_server: this.lastTelemetryServerName || '',
-              });
-            }
-          } catch { /* swallow */ }
-          this.lastSessionFamePeak = 0;
-          this.lastTelemetryServerName = '';
           // Don't wipe fameAccumulated yet — player may reconnect (server change, dungeon).
           // Schedule a hard reset: if they haven't reconnected in FAME_RESET_MS, clear it.
           if (this.fameResetTimer) clearTimeout(this.fameResetTimer);
@@ -1473,50 +1251,10 @@ export class DevServer {
             this.fameAccumulated = 0;
             this.lastKnownFame = 0;
           }, DevServer.FAME_RESET_MS);
-          try { this.eventTracker?.track('game_disconnected'); } catch { /* swallow */ }
         }
         this.broadcastGameClientState();
         this.broadcastClientList();
       }, DevServer.DISCONNECT_GRACE_MS);
-    });
-
-    // ── Game-event telemetry hooks ──────────────────────────────────────────
-    // Death: one event per character death with class + best-effort fame total.
-    proxy.hookPacket('DEATH', (_client: any, packet: any) => {
-      try {
-        if (this.config.telemetryEnabled === false) return;
-        const data = (packet?.data ?? {}) as { killedBy?: string; charId?: number; objectType?: number };
-        const className = this.currentClient?.playerData?.classType
-          ? this.getObjectDisplayName(this.currentClient.playerData.classType)
-          : '';
-        const sessionFame = this.currentClient?.playerData
-          ? this.getSessionStats(this.currentClient.playerData.currentFame ?? 0).fameGained
-          : null;
-        this.eventTracker?.track('character_death', {
-          class: className || '',
-          killed_by: typeof data.killedBy === 'string' ? data.killedBy.slice(0, 64) : '',
-          char_id: typeof data.charId === 'number' ? data.charId : null,
-          session_fame: typeof sessionFame === 'number' ? sessionFame : null,
-        });
-      } catch { /* never let telemetry break the packet path */ }
-    });
-
-    // Map entry: one event per dungeon/realm entry. Skips reconnections to the
-    // same map within 5s (Nexus → server hop chatter).
-    let lastMapName = '';
-    let lastMapAtMs = 0;
-    proxy.hookPacket('MAPINFO', (_client: any, packet: any) => {
-      try {
-        if (this.config.telemetryEnabled === false) return;
-        const data = (packet?.data ?? {}) as { name?: string };
-        const name = String(data.name || '').trim();
-        const now = Date.now();
-        if (!name) return;
-        if (name === lastMapName && (now - lastMapAtMs) < 5000) return;
-        lastMapName = name;
-        lastMapAtMs = now;
-        this.eventTracker?.track('map_enter', { map: name.slice(0, 64) });
-      } catch { /* swallow */ }
     });
 
     // Broadcast player data periodically (2x/sec)
@@ -1528,18 +1266,6 @@ export class DevServer {
         const sessionStats = this.getSessionStats(pd.currentFame);
         const serverIp = this.currentClient.state?.conTargetAddress || '';
         const serverName = this.ipToServerName[serverIp] || serverIp;
-        // Server-switch telemetry: emit only when the name changes. Cheap to
-        // gate on the polling loop — runs 2×/sec and only fires once per hop.
-        if (this.config.telemetryEnabled !== false && serverName && serverName !== this.lastTelemetryServerName) {
-          const prev = this.lastTelemetryServerName;
-          this.lastTelemetryServerName = serverName;
-          if (prev) {
-            this.eventTracker?.track('server_switch', { from: prev, to: serverName });
-          }
-        }
-        if (sessionStats.fameGained > this.lastSessionFamePeak) {
-          this.lastSessionFamePeak = sessionStats.fameGained;
-        }
         const liveObjectType = this.worldState?.getEntityType(this.currentClient.objectId ?? 0);
         const effectiveObjectType = Number.isFinite(Number(liveObjectType)) && Number(liveObjectType) > 0
           ? Math.trunc(Number(liveObjectType))
@@ -2058,17 +1784,17 @@ export class DevServer {
       try {
         if (gameDataDir && index !== null) {
           const ok = await this.tryServeExtractorWikiSprite(gameDataDir, safe, index, res);
-          if (ok) return;
+          if (ok) return true;
         }
         if (gameDataDir && !res.headersSent && this.tryServeWikiExtractorImagesLooseSheet(gameDataDir, safe, res)) {
-          return;
+          return true;
         }
         if (!this.getRotmgPath()) {
           if (!res.headersSent) {
             res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
             res.end('not_found');
           }
-          return;
+          return true;
         }
         if (!res.headersSent) {
           this.serveDrawingsWikiTextureFullSheet(safe, res);
@@ -2385,14 +2111,6 @@ export class DevServer {
           email,
         });
       }
-      // Conversion-funnel signal: how often saved accounts actually launch.
-      // Includes server + steam flag but no email/IGN.
-      this.eventTracker?.track('account_launch', {
-        server: serverName,
-        is_steam: !!opts?.isSteam,
-        compact_window: !!opts?.compactWindow,
-        has_window_rect: !!opts?.windowRect,
-      });
       if (wr && process.platform === 'win32' && launcherPid > 0) {
         window.setTimeout(() => {
           void moveRotmgLaunchedWindowAfterSpawn(launcherPid, wr, { email, launchedAtIso }).then((pos) => {
@@ -2444,7 +2162,6 @@ export class DevServer {
       singleClientOnly: this.isSingleClientOnlyEnabled(),
       pluginConfigId: this.config.lastPluginConfigId || '',
       serverNames: this.serverNames,
-      botApiUrl: BOT_API_URL,
     });
   }
 
@@ -2601,371 +2318,9 @@ export class DevServer {
     });
   }
 
-  /** Base URL for forwarding /api/market/* to the bot API (no trailing slash). */
-  private getMarketApiBase(): string {
-    return BOT_API_URL.replace(/\/$/, '');
-  }
-
-  /** Bot API base URL for auth proxy (no trailing slash). */
-  private getBotApiBase(): string {
-    return BOT_API_URL.replace(/\/$/, '');
-  }
-
-  /** Proxy dashboard auth requests to bot-api (renderer uses same origin as DevServer). */
-  private proxyRequestToBotApi(
-    res: http.ServerResponse,
-    backendPath: string,
-    init: { method: string; body?: string | null; authorization?: string },
-  ): void {
-    const base = this.getBotApiBase();
-    if (!base) {
-      res.writeHead(503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ detail: 'botApiUrl not configured' }));
-      return;
-    }
-    const headers: Record<string, string> = {};
-    if (init.body != null && init.body !== undefined) {
-      headers['Content-Type'] = 'application/json';
-    }
-    if (init.authorization) {
-      headers['Authorization'] = init.authorization;
-    }
-    const ac = new AbortController();
-    const to = setTimeout(() => ac.abort(), 15000);
-    fetch(`${base}${backendPath}`, {
-      method: init.method,
-      headers,
-      body: init.body == null || init.body === undefined ? undefined : init.body,
-      signal: ac.signal,
-    })
-      .then(async (r) => {
-        clearTimeout(to);
-        const text = await r.text();
-        res.writeHead(r.status, { 'Content-Type': 'application/json' });
-        res.end(text.length ? text : '{}');
-      })
-      .catch((err) => {
-        clearTimeout(to);
-        const msg = (err as Error).message || String(err);
-        Logger.warn('DevServer', `Bot API proxy ${base}${backendPath} failed: ${msg}`);
-        res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ detail: `Bot API unreachable: ${msg}` }));
-      });
-  }
-
-  private handleMarketCatalogGet(res: http.ServerResponse): void {
-    const base = this.getMarketApiBase();
-    if (base) {
-      const ac = new AbortController();
-      const to = setTimeout(() => ac.abort(), 10000);
-      fetch(`${base}/api/market/catalog`, { signal: ac.signal })
-        .then((r) => {
-          clearTimeout(to);
-          if (!r.ok) throw new Error(String(r.status));
-          return r.json();
-        })
-        .then((data) => {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(data));
-        })
-        .catch((e) => {
-          clearTimeout(to);
-          Logger.warn('DevServer', `Market catalog upstream failed (${base}): ${(e as Error).message}`);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(getMarketCatalogStub()));
-        });
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(getMarketCatalogStub()));
-  }
-
-  private handleMarketCheckoutPost(body: string, res: http.ServerResponse): void {
-    let parsed: unknown;
-    try {
-      parsed = body ? JSON.parse(body) : {};
-    } catch {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, error: 'Invalid JSON' }));
-      return;
-    }
-    const base = this.getMarketApiBase();
-    if (base) {
-      const ac = new AbortController();
-      const to = setTimeout(() => ac.abort(), 15000);
-      fetch(`${base}/api/market/checkout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsed),
-        signal: ac.signal,
-      })
-        .then(async (r) => {
-          clearTimeout(to);
-          const text = await r.text();
-          res.writeHead(r.status, { 'Content-Type': 'application/json' });
-          res.end(text || '{}');
-        })
-        .catch((e) => {
-          clearTimeout(to);
-          Logger.warn('DevServer', `Market checkout upstream failed: ${(e as Error).message}`);
-          res.writeHead(502, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: 'Upstream unavailable' }));
-        });
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        ok: true,
-        stub: true,
-        message: 'Checkout stub — market API forwarding is not configured.',
-      }),
-    );
-  }
-
-  private handleMarketScriptSubmitPost(body: string, res: http.ServerResponse): void {
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = body ? (JSON.parse(body) as Record<string, unknown>) : {};
-    } catch {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, error: 'Invalid JSON' }));
-      return;
-    }
-    const base = this.getMarketApiBase();
-    if (base) {
-      const ac = new AbortController();
-      const to = setTimeout(() => ac.abort(), 15000);
-      fetch(`${base}/api/market/script-submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsed),
-        signal: ac.signal,
-      })
-        .then(async (r) => {
-          clearTimeout(to);
-          const text = await r.text();
-          res.writeHead(r.status, { 'Content-Type': 'application/json' });
-          res.end(text || '{}');
-        })
-        .catch((e) => {
-          clearTimeout(to);
-          Logger.warn('DevServer', `Market script-submit upstream failed: ${(e as Error).message}`);
-          res.writeHead(502, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: 'Upstream unavailable' }));
-        });
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        ok: true,
-        stub: true,
-        message:
-          'Submission received (stub). File content is not uploaded yet — wire your API to accept multipart or storage.',
-        received: {
-          name: parsed.name,
-          category: parsed.category,
-          pricing: parsed.pricing,
-          fileName: parsed.fileName,
-          fileSize: parsed.fileSize,
-        },
-      }),
-    );
-  }
-
   private handleHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
     if (this.tryServeWikiTextureFile(req, res)) return;
     // API endpoints
-    if (req.url === '/api/market/catalog' && req.method === 'GET') {
-      this.handleMarketCatalogGet(res);
-      return;
-    }
-    if (req.url === '/api/market/checkout' && req.method === 'POST') {
-      let checkoutBody = '';
-      req.on('data', (chunk) => {
-        checkoutBody += chunk;
-      });
-      req.on('end', () => this.handleMarketCheckoutPost(checkoutBody, res));
-      return;
-    }
-    if (req.url === '/api/market/script-submit' && req.method === 'POST') {
-      let submitBody = '';
-      req.on('data', (chunk) => {
-        submitBody += chunk;
-      });
-      req.on('end', () => this.handleMarketScriptSubmitPost(submitBody, res));
-      return;
-    }
-
-    // ── Bot API auth proxy (dashboard uses /api/auth/* on DevServer origin) ──
-    if (req.url === '/api/auth/login' && req.method === 'POST') {
-      let authBody = '';
-      req.on('data', (chunk) => {
-        authBody += chunk;
-      });
-      req.on('end', () => this.proxyRequestToBotApi(res, '/api/auth/login', { method: 'POST', body: authBody }));
-      return;
-    }
-    if (req.url === '/api/auth/register' && req.method === 'POST') {
-      let authBody = '';
-      req.on('data', (chunk) => {
-        authBody += chunk;
-      });
-      req.on('end', () => this.proxyRequestToBotApi(res, '/api/auth/register', { method: 'POST', body: authBody }));
-      return;
-    }
-    if (req.url === '/api/auth/refresh' && req.method === 'POST') {
-      let authBody = '';
-      req.on('data', (chunk) => {
-        authBody += chunk;
-      });
-      req.on('end', () => this.proxyRequestToBotApi(res, '/api/auth/refresh', { method: 'POST', body: authBody }));
-      return;
-    }
-    if (req.url === '/api/auth/me' && req.method === 'GET') {
-      const auth = req.headers.authorization;
-      if (!auth) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ detail: 'Not authenticated' }));
-        return;
-      }
-      this.proxyRequestToBotApi(res, '/api/auth/me', { method: 'GET', authorization: auth });
-      return;
-    }
-    if (req.url === '/api/auth/signout' && req.method === 'POST') {
-      const auth = req.headers.authorization;
-      if (!auth) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ detail: 'Not authenticated' }));
-        return;
-      }
-      this.proxyRequestToBotApi(res, '/api/auth/signout', { method: 'POST', authorization: auth });
-      return;
-    }
-
-    if (req.url === '/api/payments/subscription' && req.method === 'GET') {
-      // Dev override: always report an active Developer plan so the UI shows the
-      // correct plan name without needing a real server subscription.
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        ok: true,
-        data: {
-          plan_name: 'Developer',
-          status: 'active',
-          expires_at: null,
-        },
-      }));
-      return;
-    }
-    if (req.url === '/api/payments/gems/status' && req.method === 'GET') {
-      const auth = req.headers.authorization;
-      if (!auth) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ detail: 'Not authenticated' }));
-        return;
-      }
-      this.proxyRequestToBotApi(res, '/api/payments/gems/status', { method: 'GET', authorization: auth });
-      return;
-    }
-
-    if (req.url === '/api/payments/plans' && req.method === 'GET') {
-      const auth = req.headers.authorization;
-      if (!auth) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ detail: 'Not authenticated' }));
-        return;
-      }
-      this.proxyRequestToBotApi(res, '/api/payments/plans', { method: 'GET', authorization: auth });
-      return;
-    }
-
-    if (req.url === '/api/payments/subscriptions' && req.method === 'GET') {
-      const auth = req.headers.authorization;
-      if (!auth) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ detail: 'Not authenticated' }));
-        return;
-      }
-      this.proxyRequestToBotApi(res, '/api/payments/subscriptions', { method: 'GET', authorization: auth });
-      return;
-    }
-
-    if (req.url === '/api/payments/stripe/create-checkout' && req.method === 'POST') {
-      const auth = req.headers.authorization;
-      if (!auth) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ detail: 'Not authenticated' }));
-        return;
-      }
-      let body = '';
-      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-      req.on('end', () => this.proxyRequestToBotApi(res, '/api/payments/stripe/create-checkout', { method: 'POST', body, authorization: auth }));
-      return;
-    }
-
-    if (req.url === '/api/payments/create-bundle' && req.method === 'POST') {
-      const auth = req.headers.authorization;
-      if (!auth) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ detail: 'Not authenticated' }));
-        return;
-      }
-      let body = '';
-      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-      req.on('end', () => this.proxyRequestToBotApi(res, '/api/payments/create-bundle', { method: 'POST', body, authorization: auth }));
-      return;
-    }
-
-    if (req.url === '/api/payments/stripe/create-checkout-dynamic' && req.method === 'POST') {
-      const auth = req.headers.authorization;
-      if (!auth) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ detail: 'Not authenticated' }));
-        return;
-      }
-      let body = '';
-      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-      req.on('end', () => this.proxyRequestToBotApi(res, '/api/payments/stripe/create-checkout-dynamic', { method: 'POST', body, authorization: auth }));
-      return;
-    }
-
-    if (req.url === '/api/payments/create-bundle-dynamic' && req.method === 'POST') {
-      const auth = req.headers.authorization;
-      if (!auth) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ detail: 'Not authenticated' }));
-        return;
-      }
-      let body = '';
-      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-      req.on('end', () => this.proxyRequestToBotApi(res, '/api/payments/create-bundle-dynamic', { method: 'POST', body, authorization: auth }));
-      return;
-    }
-
-    if (req.url === '/api/payments/subscription/gem-purchase' && req.method === 'POST') {
-      const auth = req.headers.authorization;
-      if (!auth) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ detail: 'Not authenticated' }));
-        return;
-      }
-      let body = '';
-      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-      req.on('end', () => this.proxyRequestToBotApi(res, '/api/payments/subscription/gem-purchase', { method: 'POST', body, authorization: auth }));
-      return;
-    }
-
-    if (req.url?.match(/^\/api\/payments\/subscription\/[^/]+\/cancel-autopay$/) && req.method === 'POST') {
-      const auth = req.headers.authorization;
-      if (!auth) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ detail: 'Not authenticated' }));
-        return;
-      }
-      this.proxyRequestToBotApi(res, req.url, { method: 'POST', authorization: auth });
-      return;
-    }
 
     if (req.url === '/api/plugins' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -4566,16 +3921,6 @@ export class DevServer {
     // Send current Packet Lab state
     ws.send(JSON.stringify({ type: 'labUpdate', unknowns: this.lab.getUnknowns() }));
 
-    // Send current gem/login status
-    ws.send(JSON.stringify({
-      type: 'gemStatus',
-      loggedIn: this.botApiClient.loggedIn,
-      gem_balance: 0,
-      active: this.pluginManager.activePlans.size > 0,
-      active_plans: Array.from(this.pluginManager.activePlans),
-      next_deduction_at: null,
-    }));
-
     // Handle incoming messages from dashboard
     ws.on('message', (raw) => {
       try {
@@ -4583,15 +3928,7 @@ export class DevServer {
         if (msg.type === 'togglePlugin') {
           const result = this.pluginManager.togglePlugin(msg.pluginId, msg.enabled);
           if (!result.ok && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'pluginToggleError', pluginId: msg.pluginId, reason: result.reason, requiredPlan: result.requiredPlan ?? null }));
-          }
-          // Only emit on accepted toggles — denied attempts (gem-gated etc.)
-          // are spam and would skew the "popularity" interpretation.
-          if (result.ok) {
-            this.eventTracker?.track('plugin_toggle', {
-              plugin: String(msg.pluginId || ''),
-              enabled: !!msg.enabled,
-            });
+            ws.send(JSON.stringify({ type: 'pluginToggleError', pluginId: msg.pluginId, reason: result.reason }));
           }
           this.broadcastPluginState();
           this.scheduleAutosave();
@@ -4629,70 +3966,6 @@ export class DevServer {
           }
           this.broadcastPluginState();
           this.scheduleAutosave();
-        } else if (msg.type === 'requestTelemetryStats') {
-          // Admin Telemetry tab → fetch from bot-api on the dashboard's behalf.
-          // We proxy through the DevServer so the access token never leaves the
-          // local machine via the browser.
-          const kind = String((msg as { kind?: unknown }).kind || '').trim();
-          const windowMinutes = Math.max(1, Math.min(7 * 24 * 60, Number((msg as { window?: unknown }).window) || 5));
-          const bucketSeconds = Math.max(60, Math.min(3600, Number((msg as { bucket?: unknown }).bucket) || 300));
-          const eventName = String((msg as { eventName?: unknown }).eventName || '').trim();
-          if (!this.botApiClient.loggedIn) {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'telemetryStatsError', kind, error: 'Sign in to view telemetry.' }));
-            }
-          } else {
-            const fetcher: Promise<unknown> | null =
-              kind === 'overview'        ? this.botApiClient.getTelemetryOverview()
-              : kind === 'servers'       ? this.botApiClient.getTelemetryServers(windowMinutes)
-              : kind === 'classes'       ? this.botApiClient.getTelemetryClasses(windowMinutes)
-              : kind === 'plugins'       ? this.botApiClient.getTelemetryPlugins(windowMinutes)
-              : kind === 'settings'      ? this.botApiClient.getTelemetrySettings(windowMinutes)
-              : kind === 'timeline'      ? this.botApiClient.getTelemetryTimeline(windowMinutes, bucketSeconds)
-              : kind === 'eventsTop'     ? this.botApiClient.getTelemetryTopEvents(windowMinutes)
-              : kind === 'eventTimeline' && eventName
-                ? this.botApiClient.getTelemetryEventTimeline(eventName, windowMinutes, bucketSeconds)
-              : null;
-            if (!fetcher) {
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'telemetryStatsError', kind, error: `Unknown telemetry kind: ${kind}` }));
-              }
-            } else {
-              fetcher.then((data) => {
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({ type: 'telemetryStats', kind, data }));
-                }
-              }).catch((err: Error) => {
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({ type: 'telemetryStatsError', kind, error: err.message }));
-                }
-              });
-            }
-          }
-        } else if (msg.type === 'trackEvent') {
-          // Dashboard-emitted product events (tab views, plan clicks, etc.).
-          // We deliberately ignore unauthenticated emits so opt-out actually opts out.
-          if (this.config.telemetryEnabled !== false && this.eventTracker) {
-            const name = String((msg as { event?: unknown }).event || '').trim();
-            const rawProps = (msg as { props?: unknown }).props;
-            const props =
-              rawProps && typeof rawProps === 'object' && !Array.isArray(rawProps)
-                ? (rawProps as Record<string, unknown>)
-                : undefined;
-            if (name) this.eventTracker.track(name, props);
-          }
-        } else if (msg.type === 'setTelemetryEnabled') {
-          const enabled = !!(msg as { enabled?: boolean }).enabled;
-          this.config.telemetryEnabled = enabled;
-          this.saveConfig();
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'telemetryEnabledState', enabled }));
-          }
-          Logger.log('DevServer', `Telemetry ${enabled ? 'enabled' : 'disabled'} by user`);
-        } else if (msg.type === 'getTelemetryEnabled') {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'telemetryEnabledState', enabled: this.config.telemetryEnabled !== false }));
-          }
         } else if (msg.type === 'launchGame') {
           const result = this.launchGame();
           ws.send(JSON.stringify({ type: 'launchGameResult', ...result }));
@@ -4945,206 +4218,6 @@ export class DevServer {
           this.wikiSpriteSheetCache = null;
           this.saveConfig();
           this.broadcastConfig();
-        } else if (msg.type === 'updateSingleClientOnly') {
-          this.config.singleClientOnly = msg.value !== false;
-          this.broadcastConfig();
-        } else if (msg.type === 'dashboardToken') {
-          // Dashboard sends its access+refresh tokens so plugins use the same session
-          const at = String(msg.access_token ?? '').trim();
-          const rt = String(msg.refresh_token ?? '').trim() || null;
-          const isAdmin = msg.is_admin === true;
-          const developerMode = msg.developer_mode === true;
-          if (at && at !== this.lastSeedToken) {
-            this.lastSeedToken = at;
-            this.botApiClient.loginWithTokens(at, rt);
-            // Echo token to UI so it can make direct bot-api requests (e.g., script upload)
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'botApiTokenGranted', access_token: at }));
-            }
-            // Apply admin mode before broadcasting plugin state
-            const prevAdmin = this.pluginManager.adminMode;
-            this.pluginManager.adminMode = isAdmin;
-            if (!isAdmin && prevAdmin) this.pluginManager.disableAdminGatedPlugins();
-            if (!isAdmin) this.pluginManager.enforceNonAdminSettingCaps();
-            // Fetch plugins from API (in-memory only — never on disk)
-            const apiBase = this.getBotApiBase();
-            if (apiBase) {
-              this.pluginManager.loadFromApi(apiBase, at).then(() => {
-                this.broadcastPluginState();
-              }).catch(() => {});
-            }
-            this.botApiClient.checkGems().then((status) => {
-              this.pluginManager.loginGateActive = true;
-              this.pluginManager.setActivePlans(status.active_subs?.map(s => s.plan_name) ?? []);
-              this.recordPlanTierFromStatus(status);
-              this.broadcastGemStatus(status);
-              this.broadcastPluginState();
-            }).catch(() => {
-              // Gem check failed but still allow session — don't force logout
-              this.pluginManager.loginGateActive = true;
-              this.broadcastPluginState();
-            });
-            // Token seeded → kick off telemetry heartbeats and record the
-            // sign-in event. `method: token_seed` distinguishes a dashboard-
-            // brokered login (most common) from a direct desktop login.
-            this.startTelemetryEmitter();
-            this.eventTracker?.track('client_sign_in', { method: 'token_seed' });
-          }
-        } else if (msg.type === 'botApiLogin') {
-          const email = String(msg.email ?? '').trim();
-          const password = String(msg.password ?? '');
-          this.botApiClient.login(email, password).then(async (status) => {
-            const tok = this.botApiClient.getAccessToken();
-            if (tok) {
-              // Send token to UI so it can make direct bot-api requests (e.g., script upload)
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'botApiTokenGranted', access_token: tok }));
-              }
-              // Fetch plugins from API (in-memory only)
-              const apiBase = this.getBotApiBase();
-              if (apiBase) {
-                await this.pluginManager.loadFromApi(apiBase, tok).catch(() => {});
-              }
-            }
-            this.pluginManager.loginGateActive = true;
-            this.pluginManager.setActivePlans(status.active_subs?.map(s => s.plan_name) ?? []);
-            this.recordPlanTierFromStatus(status);
-            this.broadcastGemStatus(status);
-            this.broadcastPluginState();
-            this.startTelemetryEmitter();
-            this.eventTracker?.track('client_sign_in', { method: 'direct' });
-          }).catch((err) => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'botApiError', error: (err as Error).message }));
-            }
-          });
-        } else if (msg.type === 'botApiLogout') {
-          // Fire the sign-out event BEFORE stopping the emitter — once we
-          // call stop(), the tracker's flush queue is paused and the event
-          // would never reach the server.
-          this.eventTracker?.track('client_sign_out');
-          this.botApiClient.logout();
-          this.lastSeedToken = null;
-          this.pluginManager.loginGateActive = false;
-          this.pluginManager.setActivePlans([]);
-          this.pluginManager.adminMode = false;
-          this.pluginManager.enforceNonAdminSettingCaps();
-          this.pluginManager.disableAllPlugins();
-          this.currentPlanTier = 'free';
-          this.lastKnownPlanTier = null;
-          this.botApiSessionStartedAt = null;
-          this.telemetryEmitter?.stop();
-          this.eventTracker?.stop();
-          this.broadcastGemStatus(null);
-          this.broadcastPluginState();
-        } else if (msg.type === 'botApiStatus') {
-          if (!this.botApiClient.loggedIn) {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'gemStatus', loggedIn: false, gem_balance: 0, active: false, active_plans: [], next_deduction_at: null }));
-            }
-          } else {
-            this.botApiClient.checkGems().then((status) => {
-              this.pluginManager.loginGateActive = true;
-              this.pluginManager.setActivePlans(status.active_subs?.map(s => s.plan_name) ?? []);
-              this.recordPlanTierFromStatus(status);
-              this.broadcastGemStatus(status);
-              this.broadcastPluginState();
-              this.startTelemetryEmitter();
-            }).catch(() => {
-              this.pluginManager.loginGateActive = false;
-              this.pluginManager.setActivePlans([]);
-              this.pluginManager.disableAllPlugins();
-              this.broadcastPluginState();
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'gemStatus', loggedIn: false, gem_balance: 0, active: false, active_plans: [], next_deduction_at: null }));
-              }
-            });
-          }
-        } else if (msg.type === 'getBundles') {
-          this.botApiClient.getBundles().then((bundles) => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'bundles', bundles }));
-            }
-          }).catch((err) => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'botApiError', error: (err as Error).message }));
-            }
-          });
-        } else if (msg.type === 'buyGems') {
-          const bundleId = String(msg.bundle_id ?? '');
-          this.botApiClient.createStripeCheckout(bundleId).then((resp) => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'stripeCheckout', checkout_url: resp.checkout_url, payment_id: resp.payment_id }));
-            }
-          }).catch((err) => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'botApiError', error: (err as Error).message }));
-            }
-          });
-        } else if (msg.type === 'getOwnedScripts') {
-          if (!this.botApiClient.loggedIn) {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'ownedScripts', scripts: [] }));
-            }
-          } else {
-            this.botApiClient.getOwnedScripts().then((scripts) => {
-              if (ws.readyState === WebSocket.OPEN) {
-                // Annotate each with whether it's cached (no re-fetch needed)
-                const annotated = scripts.map((s) => ({
-                  ...s,
-                  cached: this.scriptHost?.isMarketplaceCached(s.script_id) ?? false,
-                  running: this.scriptHost?.isRunning(s.script_id) ?? false,
-                }));
-                ws.send(JSON.stringify({ type: 'ownedScripts', scripts: annotated }));
-              }
-            }).catch((err) => {
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'botApiError', error: (err as Error).message }));
-              }
-            });
-          }
-        } else if (msg.type === 'runMarketplaceScript') {
-          const scriptId = String(msg.scriptId ?? '');
-          const scriptName = String(msg.scriptName ?? scriptId);
-          if (!scriptId || !this.scriptHost || !this.botApiClient.loggedIn) {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'marketplaceScriptResult', scriptId, ok: false, error: 'Not logged in or script host unavailable' }));
-            }
-          } else if (this.connectedClients.size === 0) {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'marketplaceScriptResult', scriptId, ok: false, error: 'Connect an account before starting scripts.' }));
-            }
-          } else {
-            const hwid = getClientToken();
-            const userId = extractUserIdFromJwt(this.botApiClient.getAccessToken() ?? '') ?? '';
-            // Use cached module if available — skip server round-trip
-            const needsFetch = !this.scriptHost.isMarketplaceCached(scriptId);
-            (needsFetch
-              ? this.botApiClient.getScriptRuntime(scriptId, hwid)
-              : Promise.resolve(null)
-            ).then(async (payload) => {
-              const result = await this.scriptHost!.startMarketplace(scriptId, scriptName, payload, userId, hwid);
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'marketplaceScriptResult', scriptId, ...result }));
-              }
-            }).catch((err) => {
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'marketplaceScriptResult', scriptId, ok: false, error: (err as Error).message }));
-              }
-            });
-          }
-        } else if (msg.type === 'stopMarketplaceScript') {
-          const scriptId = String(msg.scriptId ?? '');
-          if (!scriptId || !this.scriptHost) {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'marketplaceScriptResult', scriptId, ok: false, error: 'Script host unavailable' }));
-            }
-          } else {
-            const result = this.scriptHost.stop(scriptId);
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'marketplaceScriptResult', scriptId, ...result, stopped: true }));
-            }
-          }
         }
       } catch {}
     });
@@ -5154,24 +4227,7 @@ export class DevServer {
       Logger.log('DevServer', 'Dashboard client disconnected');
     });
   }
-
-  private broadcastGemStatus(status: GemStatusResponse | null): void {
-    const msg = JSON.stringify({
-      type: 'gemStatus',
-      loggedIn: this.botApiClient.loggedIn,
-      gem_balance: status?.gem_balance ?? 0,
-      active: status?.active ?? false,
-      active_plans: Array.from(this.pluginManager.activePlans),
-      next_deduction_at: status?.next_deduction_at ?? null,
-    });
-    for (const client of this.wss.clients) {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(msg);
-      }
-    }
-  }
-
-  broadcastPluginState(): void {
+broadcastPluginState(): void {
     const pluginData = JSON.stringify({
       type: 'plugins',
       data: this.pluginManager.getPlugins(),

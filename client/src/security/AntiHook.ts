@@ -124,7 +124,7 @@ export class AntiHook {
     const moduleHookIssue = AntiHook.checkModuleHooks();
     if (moduleHookIssue) hooked.push(moduleHookIssue);
 
-    return { hooked, targets: hooked };
+    return { hooked: hooked.length > 0, targets: hooked };
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────

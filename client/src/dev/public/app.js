@@ -1,4 +1,4 @@
-// Realm Engine Dashboard
+﻿// Realm Engine Dashboard
 (function() {
   // ── Electron detection & window controls ──
   const isElectron = !!(window.electronAPI);
@@ -100,7 +100,7 @@
   const TRANSLATIONS = {
     en: {
       'tab.home': 'Home', 'tab.plugins': 'Plugins', 'tab.api': 'API',
-      'tab.market': 'Market', 'tab.accounts': 'Accounts', 'tab.logs': 'Logs',
+      'tab.accounts': 'Accounts', 'tab.logs': 'Logs',
       'tab.damage': 'Damage Sniffer', 'tab.objects': 'Objects', 'tab.tilemap': 'Tilemap',
       'tab.gameWiki': 'Game Wiki',       'tab.nearby': 'Nearby Players', 'tab.scripts': 'Scripts',
       'tab.multibox': 'Multibox',
@@ -236,7 +236,7 @@
       'multibox.presetTitle6': 'Kronk-style: main top-right (~half), two left stacks, bottom row ×3 — like boxed multibox tools',
       'multibox.presetTitle8': 'Eight clients: wide main top-right, left ×2 stacks, bottom row ×5',
       'tab.developer': 'Developer',
-      'sidebar.balance': 'Balance', 'sidebar.plan': 'Plan', 'sidebar.account': 'Account',
+      'sidebar.account': 'Account',
       'sidebar.server': 'Server', 'sidebar.ipConnect': 'IP Connect',
       'btn.connect': 'Connect', 'btn.launch': 'Launch', 'btn.save': 'Save',
       'btn.cancel': 'Cancel', 'btn.refresh': 'Refresh',
@@ -258,14 +258,6 @@
       'tilemap.empty': 'No tile data. Click Refresh after connecting to a server and entering a map.',
       'objects.autoRefresh': 'Auto-refresh',
       'objects.empty': 'No object data. Click Refresh after connecting to a server and entering a map.',
-      'accountPopup.title': 'Account', 'accountPopup.memberSince': 'Member since',
-      'accountPopup.gemBalance': 'Gem Balance', 'accountPopup.currentPlan': 'Current Plan',
-      'accountPopup.gemStatus.active': 'Active', 'accountPopup.gemStatus.inactive': 'Inactive',
-      'accountPopup.plan.free': 'Free',
-      'accountPopup.buyGems.title': 'Buy Gems', 'accountPopup.buyGems.desc': 'Add gems to your balance',
-      'accountPopup.managePlan.title': 'Manage Plan', 'accountPopup.managePlan.desc': 'View or change your subscription',
-      'accountPopup.signOut': 'Sign Out', 'accountPopup.notSignedIn': 'Not signed in',
-      'accountPopup.nextDeduction': '· next deduction {date}', 'accountPopup.renews': '· renews {date}',
       'settings.title': 'Settings', 'settings.tab.visual': 'Visual',
       'settings.tab.game': 'Game', 'settings.tab.developer': 'Developer',
       'settings.tab.plugins': 'Plugins',
@@ -575,7 +567,7 @@
     },
     es: {
       'tab.home': 'Inicio', 'tab.plugins': 'Complementos', 'tab.api': 'API',
-      'tab.market': 'Mercado', 'tab.accounts': 'Cuentas', 'tab.logs': 'Registros',
+      'tab.accounts': 'Cuentas', 'tab.logs': 'Registros',
       'tab.damage': 'Analizador de Daño', 'tab.objects': 'Objetos', 'tab.tilemap': 'Mapa de Tiles',
       'tab.gameWiki': 'Wiki del Juego', 'tab.nearby': 'Jugadores Cercanos', 'tab.scripts': 'Guiones',
       'tab.multibox': 'Multibox',
@@ -618,7 +610,7 @@
       'memHelper.status.trimOk': 'Recorte terminado.',
       'memHelper.status.worldOk': 'Instantánea del mundo borrada.',
       'memHelper.err.fetch': 'No se pudieron leer las estadísticas de memoria.',
-      'sidebar.balance': 'Saldo', 'sidebar.plan': 'Plan', 'sidebar.account': 'Cuenta',
+      'sidebar.account': 'Cuenta',
       'sidebar.server': 'Servidor', 'sidebar.ipConnect': 'Conectar por IP',
       'btn.connect': 'Conectar', 'btn.launch': 'Lanzar', 'btn.save': 'Guardar',
       'btn.cancel': 'Cancelar', 'btn.refresh': 'Actualizar',
@@ -640,14 +632,6 @@
       'tilemap.empty': 'No hay datos de tiles. Pulsa Actualizar después de conectarte a un servidor y entrar en un mapa.',
       'objects.autoRefresh': 'Actualización automática',
       'objects.empty': 'No hay datos de objetos. Pulsa Actualizar después de conectarte a un servidor y entrar en un mapa.',
-      'accountPopup.title': 'Cuenta', 'accountPopup.memberSince': 'Miembro desde',
-      'accountPopup.gemBalance': 'Saldo de gemas', 'accountPopup.currentPlan': 'Plan actual',
-      'accountPopup.gemStatus.active': 'Activo', 'accountPopup.gemStatus.inactive': 'Inactivo',
-      'accountPopup.plan.free': 'Gratis',
-      'accountPopup.buyGems.title': 'Comprar gemas', 'accountPopup.buyGems.desc': 'Añade gemas a tu saldo',
-      'accountPopup.managePlan.title': 'Gestionar plan', 'accountPopup.managePlan.desc': 'Ver o cambiar tu suscripción',
-      'accountPopup.signOut': 'Cerrar sesión', 'accountPopup.notSignedIn': 'No has iniciado sesión',
-      'accountPopup.nextDeduction': '· próximo cargo {date}', 'accountPopup.renews': '· se renueva {date}',
       'settings.title': 'Configuración', 'settings.tab.visual': 'Visual',
       'settings.tab.game': 'Juego', 'settings.tab.developer': 'Desarrollador',
       'settings.tab.admin': 'Admin', 'settings.appearance': 'Apariencia',
@@ -912,7 +896,7 @@
     },
     de: {
       'tab.home': 'Startseite', 'tab.plugins': 'Erweiterungen', 'tab.api': 'API',
-      'tab.market': 'Markt', 'tab.accounts': 'Konten', 'tab.logs': 'Protokolle',
+      'tab.accounts': 'Konten', 'tab.logs': 'Protokolle',
       'tab.damage': 'Schadensanalyse', 'tab.objects': 'Objekte', 'tab.tilemap': 'Kachelkarte',
       'tab.gameWiki': 'Spiel-Wiki', 'tab.nearby': 'Nahe Spieler', 'tab.scripts': 'Skripte',
       'tab.multibox': 'Multibox',
@@ -955,7 +939,7 @@
       'memHelper.status.trimOk': 'Trim abgeschlossen.',
       'memHelper.status.worldOk': 'Welt-Snapshot gelöscht.',
       'memHelper.err.fetch': 'Speicherstatistik konnte nicht gelesen werden.',
-      'sidebar.balance': 'Guthaben', 'sidebar.plan': 'Plan', 'sidebar.account': 'Konto',
+      'sidebar.account': 'Konto',
       'sidebar.server': 'Server', 'sidebar.ipConnect': 'IP-Verbindung',
       'btn.connect': 'Verbinden', 'btn.launch': 'Starten', 'btn.save': 'Speichern',
       'btn.cancel': 'Abbrechen', 'btn.refresh': 'Aktualisieren',
@@ -977,14 +961,6 @@
       'tilemap.empty': 'Keine Tile-Daten. Klicke auf Aktualisieren, nachdem du dich mit einem Server verbunden und eine Karte betreten hast.',
       'objects.autoRefresh': 'Automatisch aktualisieren',
       'objects.empty': 'Keine Objektdaten. Klicke auf Aktualisieren, nachdem du dich mit einem Server verbunden und eine Karte betreten hast.',
-      'accountPopup.title': 'Konto', 'accountPopup.memberSince': 'Mitglied seit',
-      'accountPopup.gemBalance': 'Edelsteinguthaben', 'accountPopup.currentPlan': 'Aktueller Plan',
-      'accountPopup.gemStatus.active': 'Aktiv', 'accountPopup.gemStatus.inactive': 'Inaktiv',
-      'accountPopup.plan.free': 'Kostenlos',
-      'accountPopup.buyGems.title': 'Edelsteine kaufen', 'accountPopup.buyGems.desc': 'Deinem Guthaben Edelsteine hinzufügen',
-      'accountPopup.managePlan.title': 'Plan verwalten', 'accountPopup.managePlan.desc': 'Abo ansehen oder ändern',
-      'accountPopup.signOut': 'Abmelden', 'accountPopup.notSignedIn': 'Nicht angemeldet',
-      'accountPopup.nextDeduction': '· naechster Abzug {date}', 'accountPopup.renews': '· verlaengert sich am {date}',
       'settings.title': 'Einstellungen', 'settings.tab.visual': 'Visuell',
       'settings.tab.game': 'Spiel', 'settings.tab.developer': 'Entwickler',
       'settings.tab.admin': 'Admin', 'settings.appearance': 'Erscheinungsbild',
@@ -1249,7 +1225,7 @@
     },
     pt: {
       'tab.home': 'Início', 'tab.plugins': 'Complementos', 'tab.api': 'API',
-      'tab.market': 'Mercado', 'tab.accounts': 'Contas', 'tab.logs': 'Registros',
+      'tab.accounts': 'Contas', 'tab.logs': 'Registros',
       'tab.damage': 'Analisador de Dano', 'tab.objects': 'Objetos', 'tab.tilemap': 'Mapa de Tiles',
       'tab.gameWiki': 'Wiki do Jogo', 'tab.nearby': 'Jogadores Próximos', 'tab.scripts': 'Roteiros',
       'tab.multibox': 'Multibox',
@@ -1292,7 +1268,7 @@
       'memHelper.status.trimOk': 'Corte concluído.',
       'memHelper.status.worldOk': 'Snapshot do mundo apagado.',
       'memHelper.err.fetch': 'Não foi possível ler as estatísticas de memória.',
-      'sidebar.balance': 'Saldo', 'sidebar.plan': 'Plano', 'sidebar.account': 'Conta',
+      'sidebar.account': 'Conta',
       'sidebar.server': 'Servidor', 'sidebar.ipConnect': 'Conectar por IP',
       'btn.connect': 'Conectar', 'btn.launch': 'Iniciar', 'btn.save': 'Salvar',
       'btn.cancel': 'Cancelar', 'btn.refresh': 'Atualizar',
@@ -1314,14 +1290,6 @@
       'tilemap.empty': 'Não há dados de tiles. Clique em Atualizar depois de se conectar a um servidor e entrar em um mapa.',
       'objects.autoRefresh': 'Atualização automática',
       'objects.empty': 'Não há dados de objetos. Clique em Atualizar depois de se conectar a um servidor e entrar em um mapa.',
-      'accountPopup.title': 'Conta', 'accountPopup.memberSince': 'Membro desde',
-      'accountPopup.gemBalance': 'Saldo de gemas', 'accountPopup.currentPlan': 'Plano atual',
-      'accountPopup.gemStatus.active': 'Ativo', 'accountPopup.gemStatus.inactive': 'Inativo',
-      'accountPopup.plan.free': 'Grátis',
-      'accountPopup.buyGems.title': 'Comprar gemas', 'accountPopup.buyGems.desc': 'Adicione gemas ao seu saldo',
-      'accountPopup.managePlan.title': 'Gerenciar plano', 'accountPopup.managePlan.desc': 'Ver ou alterar sua assinatura',
-      'accountPopup.signOut': 'Sair', 'accountPopup.notSignedIn': 'Sessão não iniciada',
-      'accountPopup.nextDeduction': '· próxima dedução {date}', 'accountPopup.renews': '· renova em {date}',
       'settings.title': 'Configurações', 'settings.tab.visual': 'Visual',
       'settings.tab.game': 'Jogo', 'settings.tab.developer': 'Desenvolvedor',
       'settings.tab.admin': 'Admin', 'settings.appearance': 'Aparência',
@@ -1586,7 +1554,7 @@
     },
     ja: {
       'tab.home': 'ホーム', 'tab.plugins': 'プラグイン', 'tab.api': 'API',
-      'tab.market': 'マーケット', 'tab.accounts': 'アカウント', 'tab.logs': 'ログ',
+      'tab.accounts': 'アカウント', 'tab.logs': 'ログ',
       'tab.damage': 'ダメージ解析', 'tab.objects': 'オブジェクト', 'tab.tilemap': 'タイルマップ',
       'tab.gameWiki': '攻略Wiki', 'tab.nearby': '近くのプレイヤー', 'tab.scripts': 'スクリプト',
       'tab.multibox': 'マルチボックス',
@@ -1629,7 +1597,7 @@
       'memHelper.status.trimOk': 'トリム完了。',
       'memHelper.status.worldOk': 'ワールドスナップショット削除。',
       'memHelper.err.fetch': 'メモリ統計を取得できませんでした。',
-      'sidebar.balance': '残高', 'sidebar.plan': 'プラン', 'sidebar.account': 'アカウント',
+      'sidebar.account': 'アカウント',
       'sidebar.server': 'サーバー', 'sidebar.ipConnect': 'IP接続',
       'btn.connect': '接続', 'btn.launch': '起動', 'btn.save': '保存',
       'btn.cancel': 'キャンセル', 'btn.refresh': '更新',
@@ -1651,14 +1619,6 @@
       'tilemap.empty': 'タイルデータがありません。サーバーに接続してマップに入った後で更新を押してください。',
       'objects.autoRefresh': '自動更新',
       'objects.empty': 'オブジェクトデータがありません。サーバーに接続してマップに入った後で更新を押してください。',
-      'accountPopup.title': 'アカウント', 'accountPopup.memberSince': '登録日',
-      'accountPopup.gemBalance': 'ジェム残高', 'accountPopup.currentPlan': '現在のプラン',
-      'accountPopup.gemStatus.active': '有効', 'accountPopup.gemStatus.inactive': '無効',
-      'accountPopup.plan.free': '無料',
-      'accountPopup.buyGems.title': 'ジェムを購入', 'accountPopup.buyGems.desc': '残高にジェムを追加',
-      'accountPopup.managePlan.title': 'プランを管理', 'accountPopup.managePlan.desc': 'サブスクリプションを確認または変更',
-      'accountPopup.signOut': 'サインアウト', 'accountPopup.notSignedIn': '未サインイン',
-      'accountPopup.nextDeduction': '・次回差し引き {date}', 'accountPopup.renews': '・{date} に更新',
       'settings.title': '設定', 'settings.tab.visual': '表示',
       'settings.tab.game': 'ゲーム', 'settings.tab.developer': '開発者',
       'settings.tab.admin': '管理者', 'settings.appearance': '外観',
@@ -1923,6 +1883,19 @@
     },
   };
 
+  function t(key) {
+    var lang = TRANSLATIONS[currentLanguage] || TRANSLATIONS['en'];
+    return (lang && lang[key] !== undefined ? lang[key] : null) ||
+           (TRANSLATIONS['en'][key] !== undefined ? TRANSLATIONS['en'][key] : key);
+  }
+  function tr(key, vars) {
+    var s = t(key);
+    if (!vars) return s;
+    return s.replace(/\{([^}]+)\}/g, function(_, k) {
+      return vars[k] !== undefined ? String(vars[k]) : '{' + k + '}';
+    });
+  }
+
   const PLUGIN_NAME_TRANSLATIONS = {
     es: {
       autododge: 'Esquiva automática',
@@ -1993,6 +1966,13 @@
       dllwalkto: 'DLL歩行',
     },
   };
+
+  function getPluginDisplayName(p) {
+    var id = String(p.id || '').toLowerCase();
+    var langMap = PLUGIN_NAME_TRANSLATIONS[currentLanguage];
+    if (langMap && langMap[id]) return langMap[id];
+    return p.name || p.id || id;
+  }
 
   // 8x8 pixel sprite template for front-facing character
   // .: transparent, S: skin, s: skin shadow, P: primary, D: secondary/dark, H: hair/hat
@@ -2140,29 +2120,9 @@
   let activeSettingsTab = localStorage.getItem('activeSettingsTab') || 'visual';
   let snifferExpanded = false;
   let snifferPacketsSinceCollapse = 0;
-  let accessToken = localStorage.getItem('accessToken') || null;
-  let refreshToken = localStorage.getItem('refreshToken') || null;
-  let dashboardUser = null;
-  let dashboardLoggedIn = false;
-  /** Plan name for sidebar + settings (from /api/payments/subscription plan_name, else Free) */
-  let dashboardSubscriptionTier = 'Free';
-  /** Active plan names received from the server (normalized lowercase, e.g. {'dodge', 'developer'}). */
-  var activePlanNames = new Set();
-  /**
-   * View-as preview (admin debug). When set, activePlanNames + adminMode reflect
-   * the override instead of the server's real values. _realActivePlans keeps the
-   * server's last-known plans so we can restore on reset.
-   */
-  var _realActivePlans = new Set();
+  let dashboardUser = { email: 'Local Dashboard', username: 'Local Dashboard', displayName: 'Local Dashboard', is_admin: true, developer_mode: true };
+  let dashboardReady = true;
   var _realAdminMode = false;
-  var viewAsOverride = null;  // null = no override; otherwise { plans, isAdmin, label }
-  var VIEW_AS_PRESETS = {
-    'free':      { plans: [],            isAdmin: false, label: 'Free user' },
-    'dodge':     { plans: ['dodge'],     isAdmin: false, label: 'Dodge user' },
-    'developer': { plans: ['developer'], isAdmin: false, label: 'Developer user' },
-  };
-  /** Website for gem purchases & subscriptions (Payment page) */
-  var REALM_ENGINE_WEB_BASE = 'https://rotmg-engine.egtw.org';
 
   // Packet Lab state
   let labUnknowns = [];
@@ -2717,8 +2677,6 @@
   const damageSortEl = document.getElementById('damage-sort');
   const damageContextEl = document.getElementById('damage-context');
   const launchGameBtn = document.getElementById('btn-launch-game');
-  const disconnectOverlay = document.getElementById('disconnect-overlay');
-  const overlayLoginBtn = document.getElementById('overlay-login-btn');
   const rotmgPathInput = document.getElementById('setting-rotmg-path');
   const rotmgPathDesc = document.getElementById('rotmg-path-desc');
   const saveRotmgPathBtn = document.getElementById('btn-save-rotmg-path');
@@ -2733,7 +2691,6 @@
   const showServerPingToggle = document.getElementById('setting-show-server-ping');
   const showAccountEmailsToggle = document.getElementById('setting-show-account-emails');
   const showSingleAccountDockToggle = document.getElementById('setting-show-single-account-dock');
-  const telemetryEnabledToggle = document.getElementById('setting-telemetry-enabled');
   const nearbyRefreshBtn = document.getElementById('nearby-refresh-btn');
   const nearbySortEl = document.getElementById('nearby-sort');
   const nearbyFilterEl = document.getElementById('nearby-filter');
@@ -2742,10 +2699,6 @@
   const nearbyDebugTreeEl = document.getElementById('nearby-debug-tree');
   const nearbyDebugEmptyEl = document.getElementById('nearby-debug-empty');
   const nearbyDebugSubtitleEl = document.getElementById('nearby-debug-subtitle');
-  const overlayLoginError = document.getElementById('overlay-login-error');
-  const overlayEmailInput = document.getElementById('overlay-email');
-  const overlayPasswordInput = document.getElementById('overlay-password');
-  const overlayPasswordToggleBtn = document.getElementById('overlay-password-toggle');
   const itemDetailOverlay = document.getElementById('item-detail-overlay');
   const itemDetailCloseBtn = document.getElementById('item-detail-close');
   const itemDetailTitleEl = document.getElementById('item-detail-title');
@@ -2755,589 +2708,7 @@
   const itemDetailLocationsSectionEl = document.getElementById('item-detail-locations-section');
   const itemDetailLocationsEl = document.getElementById('item-detail-locations');
 
-  function formatDashboardDate(iso) {
-    if (!iso) return '—';
-    try {
-      return new Date(iso).toLocaleDateString();
-    } catch (e) {
-      return '—';
-    }
-  }
-
-  function formatGemBalanceDisplay(n) {
-    var x = Number(n);
-    if (!isFinite(x)) return '0';
-    if (Math.floor(x) === x) return String(Math.floor(x));
-    return String(x);
-  }
-
-  /** Last known gem balance from the API; null until first successful fetch. */
-  var lastKnownGemBalance = null;
-
-  /** 1 gem = 1 US cent (100 gems = $1). Returns e.g. "$1.00" or "—". */
-  function formatUsdFromGemCount(gemCount) {
-    var n = Number(gemCount);
-    if (!isFinite(n) || n < 0) return '—';
-    var dollars = n / 100;
-    try {
-      return dollars.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-    } catch (e) {
-      return '$' + dollars.toFixed(2);
-    }
-  }
-
-  /**
-   * @param {{ gems?: number }} [opts] - If gems is a positive integer, appends ?gems= (gem count) to the payment URL.
-   */
-  /**
-   * @param {{ gems?: number, method?: string }} [opts]
-   * gems appends ?gems=N, method appends &method=X to the payment URL.
-   */
-  function openRealmEnginePaymentPage(opts) {
-    opts = opts || {};
-    var url = REALM_ENGINE_WEB_BASE + '/payment';
-    var params = [];
-    var g = opts.gems;
-    if (g != null && g !== '') {
-      var n = parseInt(String(g), 10);
-      if (isFinite(n) && n >= 1) params.push('gems=' + encodeURIComponent(String(n)));
-    }
-    if (opts.method) params.push('method=' + encodeURIComponent(String(opts.method)));
-    if (params.length) url += '?' + params.join('&');
-    try {
-      window.open(url, '_blank', 'noopener,noreferrer');
-    } catch (e) {
-      window.location.href = url;
-    }
-  }
-
-  function getPurchaseModalGemQty() {
-    var input = document.getElementById('purchase-modal-gem-qty');
-    if (!input) return NaN;
-    return parseInt(String(input.value).trim(), 10);
-  }
-
-  function updatePurchaseModalTotal() {
-    var totalEl = document.getElementById('purchase-modal-total');
-    var errEl = document.getElementById('purchase-modal-qty-error');
-    if (errEl) { errEl.textContent = ''; errEl.classList.add('hidden'); }
-    var n = getPurchaseModalGemQty();
-    if (!totalEl) return;
-    if (!isFinite(n) || n < 1) {
-      totalEl.innerHTML = '= <strong>—</strong>';
-      return;
-    }
-    if (n < 50) {
-      totalEl.innerHTML = '= <strong class="purchase-qty-warn">min. 50 gems</strong>';
-      return;
-    }
-    totalEl.innerHTML = '= <strong>' + formatUsdFromGemCount(n) + '</strong>';
-    // Highlight matching quick button
-    document.querySelectorAll('.purchase-quick-btn').forEach(function (btn) {
-      btn.classList.toggle('active', parseInt(btn.getAttribute('data-quick-gems') || '0', 10) === n);
-    });
-  }
-
-  function validatePurchaseModalQty() {
-    var errEl = document.getElementById('purchase-modal-qty-error');
-    var n = getPurchaseModalGemQty();
-    if (!isFinite(n) || n < 50) {
-      if (errEl) { errEl.textContent = 'Enter a whole number of gems (minimum 50).'; errEl.classList.remove('hidden'); }
-      return null;
-    }
-    if (n > 999999) {
-      if (errEl) { errEl.textContent = 'Maximum 999,999 gems per purchase.'; errEl.classList.remove('hidden'); }
-      return null;
-    }
-    if (errEl) { errEl.textContent = ''; errEl.classList.add('hidden'); }
-    return n;
-  }
-
-  function purchaseModalCheckout() {
-    var n = validatePurchaseModalQty();
-    if (n == null) return;
-    // Move to step 2 — payment method
-    var step1 = document.getElementById('purchase-step-qty');
-    var step2 = document.getElementById('purchase-step-method');
-    var summary = document.getElementById('purchase-method-summary');
-    if (summary) summary.innerHTML = String(n) + '<span class="market-gem-label">G</span> (' + formatUsdFromGemCount(n) + ')';
-    // Clear any previous selection
-    document.querySelectorAll('.purchase-method-btn').forEach(function (b) { b.classList.remove('selected'); });
-    if (step1) step1.classList.add('hidden');
-    if (step2) step2.classList.remove('hidden');
-  }
-
-  function purchaseGoBack() {
-    var step1 = document.getElementById('purchase-step-qty');
-    var step2 = document.getElementById('purchase-step-method');
-    if (step2) step2.classList.add('hidden');
-    if (step1) step1.classList.remove('hidden');
-    // Collapse any open payment category panels
-    document.querySelectorAll('.pay-cat-options').forEach(function (p) { p.classList.add('hidden'); });
-    document.querySelectorAll('.pay-cat-row--expand').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
-  }
-
-  var CRYPTO_CURRENCIES = { btc: true, eth: true, usdt: true, ltc: true, xmr: true };
-
-  function purchaseWithMethod(method) {
-    var n = validatePurchaseModalQty();
-    if (n === null) return;
-    if (!dashboardLoggedIn || !accessToken) { closePurchaseModal(); return; }
-
-    if (method === 'stripe_card') {
-      var btn = document.querySelector('[data-method="stripe_card"]');
-      if (btn) btn.textContent = 'Opening…';
-      fetch('/api/payments/stripe/create-checkout-dynamic', {
-        method: 'POST',
-        headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gems: n }),
-      })
-        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
-        .then(function (result) {
-          closePurchaseModal();
-          if (!result.ok || !result.data.checkout_url) {
-            alert('Could not start Stripe checkout: ' + (result.data.detail || 'unknown error'));
-            return;
-          }
-          try { window.open(result.data.checkout_url, '_blank', 'noopener,noreferrer'); }
-          catch (e) { window.location.href = result.data.checkout_url; }
-        })
-        .catch(function () { closePurchaseModal(); alert('Network error starting card checkout. Try again.'); })
-        .finally(function () { if (btn) btn.textContent = 'Pay with Card'; });
-      return;
-    }
-
-    if (CRYPTO_CURRENCIES[method]) {
-      var cryptoBtn = document.querySelector('[data-method="' + method + '"]');
-      var origText = cryptoBtn ? cryptoBtn.textContent : '';
-      if (cryptoBtn) { cryptoBtn.textContent = 'Opening…'; cryptoBtn.disabled = true; }
-      fetch('/api/payments/create-bundle-dynamic', {
-        method: 'POST',
-        headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gems: n, pay_currency: method }),
-      })
-        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
-        .then(function (result) {
-          closePurchaseModal();
-          if (!result.ok || !result.data.invoice_url) {
-            alert('Could not create crypto invoice: ' + (result.data.detail || 'unknown error'));
-            return;
-          }
-          try { window.open(result.data.invoice_url, '_blank', 'noopener,noreferrer'); }
-          catch (e) { window.location.href = result.data.invoice_url; }
-        })
-        .catch(function () { closePurchaseModal(); alert('Network error starting crypto checkout. Try again.'); })
-        .finally(function () {
-          if (cryptoBtn) { cryptoBtn.textContent = origText; cryptoBtn.disabled = false; }
-        });
-      return;
-    }
-
-    closePurchaseModal();
-    openRealmEnginePaymentPage({ gems: n, method: method });
-  }
-
-  function refreshAccountBillingFromApi() {
-    var gemVal   = document.getElementById('account-popup-gem-balance');
-    var gemNext  = document.getElementById('account-popup-gem-next-deduction');
-    var gemBadge = document.getElementById('account-popup-gem-badge');
-    var planEl   = document.getElementById('account-popup-plan-name');
-    var stEl     = document.getElementById('account-popup-plan-status');
-    var exEl     = document.getElementById('account-popup-plan-expires');
-    var tbGems   = document.getElementById('titlebar-gems');
-    var tbPlan   = document.getElementById('titlebar-plan');
-    var macGems  = document.getElementById('multi-account-gems');
-    var macPlan  = document.getElementById('multi-account-plan');
-
-    function setSidebarBilling(gemsText, planText) {
-      if (tbGems) tbGems.textContent = gemsText;
-      if (tbPlan) tbPlan.textContent = planText;
-      if (macGems) macGems.textContent = gemsText;
-      if (macPlan) macPlan.textContent = planText;
-    }
-
-    function resetBillingUi() {
-      if (gemVal)  gemVal.textContent = '0';
-      if (gemBadge) { gemBadge.textContent = t('accountPopup.gemStatus.inactive'); gemBadge.classList.add('acct-badge--inactive'); gemBadge.classList.remove('acct-badge--active'); }
-      if (gemNext) { gemNext.textContent = ''; gemNext.classList.add('hidden'); }
-      if (planEl)  planEl.textContent = t('accountPopup.plan.free');
-      if (stEl)    { stEl.textContent = ''; stEl.classList.add('hidden'); }
-      if (exEl)    { exEl.textContent = ''; exEl.classList.add('hidden'); }
-      setSidebarBilling('0', t('accountPopup.plan.free'));
-    }
-
-    if (!dashboardLoggedIn || !accessToken) {
-      resetBillingUi();
-      dashboardSubscriptionTier = 'Free';
-      updateDashboardAvailabilityUi();
-      return;
-    }
-
-    var headers = { Authorization: 'Bearer ' + accessToken };
-    Promise.all([
-      fetch('/api/payments/gems/status', { headers: headers }).then(function (r) {
-        return r.json().catch(function () { return null; }).then(function (d) { return { ok: r.ok, data: d }; });
-      }),
-      fetch('/api/payments/subscription', { headers: headers }).then(function (r) {
-        return r.json().catch(function () { return null; }).then(function (d) { return { ok: r.ok, data: d }; });
-      }),
-    ])
-      .then(function (results) {
-        var gems = results[0];
-        var sub  = results[1];
-
-        var gemsDisplay = '0';
-        if (gems.ok && gems.data && typeof gems.data === 'object') {
-          gemsDisplay = formatGemBalanceDisplay(gems.data.gem_balance);
-          lastKnownGemBalance = isFinite(Number(gems.data.gem_balance)) ? Number(gems.data.gem_balance) : null;
-          if (gemVal) gemVal.textContent = gemsDisplay;
-          if (gemBadge) {
-            var hasGems = lastKnownGemBalance !== null && lastKnownGemBalance > 0;
-            gemBadge.textContent = hasGems ? t('accountPopup.gemStatus.active') : t('accountPopup.gemStatus.inactive');
-            gemBadge.classList.toggle('acct-badge--active', hasGems);
-            gemBadge.classList.toggle('acct-badge--inactive', !hasGems);
-          }
-          if (gemNext) {
-            if (gems.data.next_deduction_at) {
-              gemNext.textContent = tr('accountPopup.nextDeduction', { date: formatDashboardDate(gems.data.next_deduction_at) });
-              gemNext.classList.remove('hidden');
-            } else {
-              gemNext.textContent = '';
-              gemNext.classList.add('hidden');
-            }
-          }
-        } else {
-          if (gemVal)  gemVal.textContent = '0';
-          if (gemBadge) { gemBadge.textContent = t('accountPopup.gemStatus.inactive'); gemBadge.classList.add('acct-badge--inactive'); gemBadge.classList.remove('acct-badge--active'); }
-          if (gemNext) { gemNext.textContent = ''; gemNext.classList.add('hidden'); }
-        }
-
-        var planDisplay = t('accountPopup.plan.free');
-        if (sub.ok && sub.data && typeof sub.data === 'object' && sub.data.plan_name) {
-          planDisplay = String(sub.data.plan_name);
-          if (planEl) planEl.textContent = planDisplay;
-          if (stEl) {
-            stEl.textContent = String(sub.data.status || '');
-            stEl.classList.toggle('hidden', !sub.data.status);
-          }
-          if (exEl && sub.data.expires_at) {
-            exEl.textContent = tr('accountPopup.renews', { date: formatDashboardDate(sub.data.expires_at) });
-            exEl.classList.remove('hidden');
-          } else if (exEl) {
-            exEl.textContent = '';
-            exEl.classList.add('hidden');
-          }
-          dashboardSubscriptionTier = planDisplay;
-        } else {
-          if (planEl) planEl.textContent = t('accountPopup.plan.free');
-          if (stEl)   { stEl.textContent = ''; stEl.classList.add('hidden'); }
-          if (exEl)   { exEl.textContent = ''; exEl.classList.add('hidden'); }
-          dashboardSubscriptionTier = 'Free';
-        }
-
-        setSidebarBilling(gemsDisplay, planDisplay);
-        updateDashboardAvailabilityUi();
-        if (dashboardLoggedIn) applyAccountPermissions();
-      })
-      .catch(function () {
-        resetBillingUi();
-        dashboardSubscriptionTier = 'Free';
-        updateDashboardAvailabilityUi();
-      });
-  }
-
-  function openPurchaseModal() {
-    trackEvent('gem_buy_open');
-    var overlay = document.getElementById('purchase-modal-overlay');
-    if (!overlay) { openRealmEnginePaymentPage(); return; }
-
-    // Always start on step 1; collapse any open payment category panels
-    var step1 = document.getElementById('purchase-step-qty');
-    var step2 = document.getElementById('purchase-step-method');
-    if (step1) step1.classList.remove('hidden');
-    if (step2) step2.classList.add('hidden');
-    document.querySelectorAll('.pay-cat-options').forEach(function (p) { p.classList.add('hidden'); });
-    document.querySelectorAll('.pay-cat-row--expand').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
-
-    var errEl = document.getElementById('purchase-modal-qty-error');
-    if (errEl) { errEl.textContent = ''; errEl.classList.add('hidden'); }
-    updatePurchaseModalTotal();
-
-    overlay.classList.remove('hidden');
-    overlay.setAttribute('aria-hidden', 'false');
-    var qty = document.getElementById('purchase-modal-gem-qty');
-    if (qty) { try { qty.focus(); qty.select(); } catch (e) {} }
-  }
-
-  function closePurchaseModal() {
-    var el = document.getElementById('purchase-modal-overlay');
-    if (!el) return;
-    el.classList.add('hidden');
-    el.setAttribute('aria-hidden', 'true');
-  }
-
-  function closePlanModal() {
-    var el = document.getElementById('plan-modal-overlay');
-    if (!el) return;
-    el.classList.add('hidden');
-    el.setAttribute('aria-hidden', 'true');
-  }
-
-  function setPlanModalMsg(text, isError) {
-    var el = document.getElementById('plan-modal-msg');
-    if (!el) return;
-    if (!text) { el.textContent = ''; el.classList.add('hidden'); return; }
-    el.textContent = text;
-    el.className = 'plan-modal-msg' + (isError ? ' plan-modal-msg--error' : ' plan-modal-msg--ok');
-    el.classList.remove('hidden');
-  }
-
-  // Plans are fixed — no need to fetch from the server on modal open.
-  // Only subscriptions (which plans the user has active) are fetched.
-  // Plan prices: paid in gems, deducted monthly from balance (preload model).
-  //   Dodge      = $10/mo =  1,000 G/mo
-  //   Developer  = $20/mo =  2,000 G/mo
-  // Rate: 100 G = $1 USD. See formatUsdFromGemCount.
-  // Subscriptions unlock plugins they gate (auto-loot, auto-pot, etc.) and
-  // discount consumables (potions). They do NOT discount script purchases —
-  // scripts always cost gems at full price regardless of tier.
-  var CLIENT_PLANS = [
-    {
-      name: 'Dodge',
-      price_usd: 10.0,
-      description: 'Advanced dodge automation and survival tooling.',
-      features: [
-        'Autododge (AOE, tracking, speed-aware)',
-        'Godfarming script',
-        'Safe-walk plugin',
-        'Discount on potion purchases',
-      ],
-    },
-    {
-      name: 'Developer',
-      price_usd: 8.0,
-      badge: 'Pro',
-      description: 'Full SDK access and developer tooling.',
-      features: [
-        'RealmEngine SDK bridge access',
-        'Custom plugin development',
-        'Script hosting & management',
-        'Developer API access',
-        'Discount on potion purchases',
-      ],
-    },
-  ];
-
-  function renderPlanModalBody(activeSubs) {
-    var body = document.getElementById('plan-modal-body');
-    if (!body) return;
-    var gemBalance = lastKnownGemBalance;
-
-    // Match active subs by plan name (case-insensitive)
-    var activeSubsByName = {};
-    (activeSubs || []).forEach(function (s) {
-      if (s.plan_name) activeSubsByName[s.plan_name.toLowerCase()] = s;
-    });
-
-    var html = '';
-
-    // Free tier card (always shown)
-    html += '<div class="plan-card plan-card--free">';
-    html += '<div class="plan-card-head"><span class="plan-card-name">Free</span>';
-    html += '<span class="plan-card-price"><span class="plan-card-price-num">0</span><span class="market-gem-label">G</span><span class="plan-card-per">/mo</span></span>';
-    html += '<span class="plan-card-badge plan-card-badge--current">Always included</span></div>';
-    html += '<p class="plan-card-desc">Core bot features — no subscription required.</p>';
-    html += '<ul class="plan-card-features">';
-    html += '<li>Autoaim (smart target filtering)</li>';
-    html += '<li>Autonexus (configurable HP &amp; status thresholds)</li>';
-    html += '<li>Autoloot (potion pickup)</li>';
-    html += '<li>Damage Sniffer</li>';
-    html += '<li>Game Wiki</li>';
-    html += '</ul>';
-    html += '</div>';
-
-    CLIENT_PLANS.forEach(function (plan) {
-      var planNameLower = plan.name.toLowerCase();
-      var gemCost = Math.round(plan.price_usd * 100);
-      var activeSub = activeSubsByName[planNameLower];
-      var isActive = !!activeSub;
-
-      var dollarStr = '$' + (plan.price_usd % 1 === 0 ? plan.price_usd.toFixed(0) : plan.price_usd.toFixed(2));
-
-      html += '<div class="plan-card' + (isActive ? ' plan-card--active' : '') + (plan.badge ? ' plan-card--highlight' : '') + '">';
-      html += '<div class="plan-card-head">';
-      html += '<span class="plan-card-name">' + escapeHtml(plan.name) + '</span>';
-      html += '<span class="plan-card-price"><span class="plan-card-price-num">' + gemCost + '</span><span class="market-gem-label">G</span><span class="plan-card-per">/mo</span></span>';
-      if (isActive) {
-        html += '<span class="plan-card-badge plan-card-badge--active">Active</span>';
-      } else if (plan.badge) {
-        html += '<span class="plan-card-badge plan-card-badge--highlight">' + escapeHtml(plan.badge) + '</span>';
-      }
-      html += '</div>';
-
-      html += '<p class="plan-card-desc">' + escapeHtml(plan.description) + ' <em>' + dollarStr + '/mo</em></p>';
-      if (plan.features && plan.features.length) {
-        html += '<ul class="plan-card-features">';
-        plan.features.forEach(function (f) { html += '<li>' + escapeHtml(f) + '</li>'; });
-        html += '</ul>';
-      }
-
-      if (isActive) {
-        var expires = activeSub.expires_at ? new Date(activeSub.expires_at).toLocaleDateString() : '—';
-        var autopay = activeSub.autopay;
-        html += '<div class="plan-card-status-row">';
-        html += '<span class="plan-card-expires">Active until ' + escapeHtml(expires) + '</span>';
-        if (autopay) {
-          html += '<button type="button" class="plan-card-cancel-btn" data-cancel-sub-id="' + escapeHtml(activeSub.id) + '">Cancel autopay</button>';
-        } else {
-          html += '<span class="plan-card-no-autopay">Autopay off — expires ' + escapeHtml(expires) + '</span>';
-        }
-        html += '</div>';
-      } else {
-        var canAfford = gemBalance !== null && gemBalance >= gemCost;
-        var insufficientNote = (gemBalance !== null && !canAfford)
-          ? ' <span class="plan-card-afford-note">Need ' + gemCost + '<span class="market-gem-label">G</span> (you have ' + Math.floor(gemBalance) + '<span class="market-gem-label">G</span>)</span>'
-          : '';
-        html += '<button type="button" class="plan-card-buy-btn setting-btn'
-          + (canAfford ? '' : ' plan-card-buy-btn--low')
-          + '" data-buy-plan-name="' + escapeHtml(plan.name) + '" data-buy-gem-cost="' + gemCost + '">'
-          + 'Subscribe · ' + gemCost + '<span class="market-gem-label">G</span>/mo</button>' + insufficientNote;
-      }
-
-      html += '</div>';
-    });
-
-    body.innerHTML = html;
-
-    // Wire buy buttons — plan name is stored; ID is lazily resolved on click
-    body.querySelectorAll('[data-buy-plan-name]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var planName = btn.getAttribute('data-buy-plan-name');
-        var cost = parseInt(btn.getAttribute('data-buy-gem-cost') || '0', 10);
-        doPlanGemPurchase(planName, cost);
-      });
-    });
-
-    // Wire cancel buttons
-    body.querySelectorAll('[data-cancel-sub-id]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var subId = btn.getAttribute('data-cancel-sub-id');
-        doCancelAutopay(subId);
-      });
-    });
-  }
-
-  function fetchActiveSubs() {
-    if (!dashboardLoggedIn || !accessToken) return Promise.resolve([]);
-    return fetch('/api/payments/subscriptions', {
-      headers: { Authorization: 'Bearer ' + accessToken },
-    }).then(function (r) { return r.json().catch(function () { return []; }); });
-  }
-
-  function openPlanModal() {
-    trackEvent('plan_modal_open');
-    var overlay = document.getElementById('plan-modal-overlay');
-    if (!overlay) { openRealmEnginePaymentPage(); return; }
-
-    var body = document.getElementById('plan-modal-body');
-    setPlanModalMsg('', false);
-
-    overlay.classList.remove('hidden');
-    overlay.setAttribute('aria-hidden', 'false');
-
-    if (!dashboardLoggedIn || !accessToken) {
-      if (body) body.innerHTML = '<p class="plan-modal-loading">Sign in to manage your plan.</p>';
-      return;
-    }
-
-    // Show plan cards immediately with hardcoded plans; subscriptions load fast
-    renderPlanModalBody([]);
-    fetchActiveSubs().then(function (subs) {
-      renderPlanModalBody(subs);
-    }).catch(function () {
-      if (body) body.innerHTML = '<p class="plan-modal-loading">Failed to load subscription status.</p>';
-    });
-  }
-
-  function doPlanGemPurchase(planName, gemCost) {
-    if (!dashboardLoggedIn || !accessToken) {
-      setPlanModalMsg('You must be signed in to purchase.', true);
-      return;
-    }
-    setPlanModalMsg('Processing…', false);
-    var headers = { Authorization: 'Bearer ' + accessToken };
-    // Lazily fetch plan list only now (to get the server-side UUID for this plan name)
-    fetch('/api/payments/plans', { headers: headers })
-      .then(function (r) { return r.json().catch(function () { return []; }); })
-      .then(function (plans) {
-        var match = (plans || []).find(function (p) {
-          return p.name && p.name.toLowerCase() === (planName || '').toLowerCase();
-        });
-        if (!match) {
-          setPlanModalMsg('Plan not found on server. Contact support.', true);
-          return;
-        }
-        return fetch('/api/payments/subscription/gem-purchase', {
-          method: 'POST',
-          headers: Object.assign({}, headers, { 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ plan_id: match.id }),
-        })
-          .then(function (r) {
-            return r.json().then(function (d) { return { ok: r.ok, data: d }; });
-          })
-          .then(function (result) {
-            if (!result.ok) {
-              setPlanModalMsg(result.data.detail || 'Purchase failed.', true);
-              return;
-            }
-            var charged = result.data.gems_charged;
-            var newBal = result.data.gem_balance_after;
-            setPlanModalMsg('Subscribed! Charged ' + charged + 'G. New balance: ' + Math.floor(newBal) + 'G.', false);
-            refreshAccountBillingFromApi();
-            fetchActiveSubs().then(function (subs) { renderPlanModalBody(subs); });
-          });
-      })
-      .catch(function () {
-        setPlanModalMsg('Network error. Try again.', true);
-      });
-  }
-
-  function doCancelAutopay(subscriptionId) {
-    if (!dashboardLoggedIn || !accessToken) return;
-    setPlanModalMsg('', false);
-    fetch('/api/payments/subscription/' + encodeURIComponent(subscriptionId) + '/cancel-autopay', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + accessToken },
-    })
-      .then(function (r) {
-        return r.json().then(function (d) { return { ok: r.ok, data: d }; });
-      })
-      .then(function (result) {
-        if (!result.ok) {
-          setPlanModalMsg(result.data.detail || 'Failed to cancel autopay.', true);
-          return;
-        }
-        var expires = result.data.expires_at ? new Date(result.data.expires_at).toLocaleDateString() : '—';
-        setPlanModalMsg('Autopay cancelled. Plan stays active until ' + expires + '.', false);
-        fetchActiveSubs().then(function (subs) { renderPlanModalBody(subs); });
-      })
-      .catch(function () {
-        setPlanModalMsg('Network error. Try again.', true);
-      });
-  }
-
-  function renderAccountSettings() {
-    var emailEl = document.getElementById('account-popup-email');
-    var memberEl = document.getElementById('account-popup-member-since');
-    if (emailEl) {
-      emailEl.textContent = (dashboardUser && dashboardUser.email) || (dashboardLoggedIn ? '—' : t('accountPopup.notSignedIn'));
-    }
-    if (memberEl) {
-      memberEl.textContent =
-        dashboardUser && dashboardUser.created_at ? formatDashboardDate(dashboardUser.created_at) : '—';
-    }
-    refreshAccountBillingFromApi();
-  }
+  function renderAccountSettings() {}
 
   /* ── Account popup open / close ──
      Legacy account popup is gone — both functions now route to the Settings
@@ -3389,15 +2760,13 @@
     }
     document.body.classList.toggle('admin-mode', adminMode);
     if (adminModeToggle) {
-      var isAdminUser = !!(dashboardUser && dashboardUser.is_admin);
-      var canToggle = isAdminUser && (typeof __ADMIN_BUILD__ === 'undefined' || __ADMIN_BUILD__);
       adminModeToggle.checked = adminMode;
-      adminModeToggle.disabled = !canToggle;
+      adminModeToggle.disabled = false;
       var adminRow = adminModeToggle.closest('.settings-row');
-      if (adminRow) adminRow.classList.toggle('settings-row--locked', !canToggle);
+      if (adminRow) adminRow.classList.remove('settings-row--locked');
     }
     if (!adminMode) {
-      if (activeTab === 'logs' || activeTab === 'packet-lab' || activeTab === 'market' || activeTab === 'mem-helper' || activeTab === 'telemetry') {
+      if (activeTab === 'logs' || activeTab === 'packet-lab' || activeTab === 'mem-helper') {
         var fallbackBtn = document.querySelector('.content-tab[data-tab="plugins"]');
         if (fallbackBtn) fallbackBtn.click();
       }
@@ -3412,35 +2781,6 @@
     applyPacketSnifferVisibility();
   }
   applyAdminMode();
-
-  /**
-   * View-as preview (admin debug). Swaps activePlanNames + adminMode for a
-   * preset, toggles the banner + body class, and re-renders affected tabs.
-   * Pass null/falsy to reset to the real account state.
-   */
-  function applyViewAsOverride() {
-    if (viewAsOverride) {
-      activePlanNames = new Set(viewAsOverride.plans);
-      adminMode = !!viewAsOverride.isAdmin;
-    } else {
-      activePlanNames = new Set(_realActivePlans);
-      adminMode = _realAdminMode;
-    }
-    document.body.classList.toggle('admin-mode', adminMode);
-    document.body.classList.toggle('view-as-active', !!viewAsOverride);
-
-    var banner    = document.getElementById('view-as-banner');
-    var bannerLbl = document.getElementById('view-as-banner-label');
-    if (banner) banner.style.display = viewAsOverride ? '' : 'none';
-    if (bannerLbl) bannerLbl.textContent = viewAsOverride ? viewAsOverride.label : '—';
-
-    // Re-render the tabs whose UI depends on plan/admin state.
-    if (typeof renderPlugins === 'function' && Array.isArray(allPluginsData)) renderPlugins(allPluginsData);
-    if (typeof renderHomeTab === 'function') renderHomeTab();
-    if (typeof renderPremiumTab === 'function') renderPremiumTab();
-    // applyAdminMode handles the admin-only tab visibility + packet sniffer.
-    applyPacketSnifferVisibility();
-  }
 
   // ─── Navbar drag-and-drop reorder + tab visibility ─────────────
   var contentTabsEl = document.getElementById('content-tabs');
@@ -3814,397 +3154,28 @@
     });
   }
 
-  if (telemetryEnabledToggle) {
-    // Fire current state request once the socket is up so the checkbox reflects
-    // server-side config rather than the static HTML default.
-    function _requestTelemetryEnabled() {
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'getTelemetryEnabled' }));
-      } else {
-        setTimeout(_requestTelemetryEnabled, 500);
-      }
-    }
-    _requestTelemetryEnabled();
-    telemetryEnabledToggle.addEventListener('change', function () {
-      if (!ws || ws.readyState !== 1) return;
-      ws.send(JSON.stringify({
-        type: 'setTelemetryEnabled',
-        enabled: !!telemetryEnabledToggle.checked,
-      }));
-    });
-  }
-
-  function getThemeMeta(themeId) {
-    var id = String(themeId || '');
-    return THEMES.find(function (theme) { return theme.id === id; }) || THEMES[0];
-  }
-
-  function applyTheme() {
-    var themeMeta = getThemeMeta(currentTheme);
-    currentTheme = themeMeta.id;
-    localStorage.setItem('theme', currentTheme);
-    document.body.classList.remove('theme-dark', 'theme-light', 'theme-sage', 'theme-mist', 'theme-forest', 'theme-ocean', 'theme-ember', 'light-mode');
-    if (currentTheme !== 'dark') document.body.classList.add('theme-' + currentTheme);
-    if (currentTheme === 'light') document.body.classList.add('light-mode');
-    if (themeSelect) themeSelect.value = currentTheme;
-  }
-  applyTheme();
-
-  function t(key) {
-    var dict = TRANSLATIONS[currentLanguage] || TRANSLATIONS['en'];
-    return dict[key] || TRANSLATIONS['en'][key] || key;
-  }
-
-  function tr(key, vars) {
-    var s = t(key);
-    if (!vars || typeof vars !== 'object') return s;
-    Object.keys(vars).forEach(function (k) {
-      s = s.split('{' + k + '}').join(String(vars[k]));
-    });
-    return s;
-  }
-
-  function canonicalPluginKey(value) {
-    return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-  }
-
-  function getPluginDisplayName(plugin) {
-    if (!plugin) return '';
-    var dict = PLUGIN_NAME_TRANSLATIONS[currentLanguage];
-    if (dict) {
-      var byId = canonicalPluginKey(plugin.id);
-      if (byId && dict[byId]) return dict[byId];
-      var byName = canonicalPluginKey(plugin.name);
-      if (byName && dict[byName]) return dict[byName];
-    }
-    return plugin.name || plugin.id || '';
-  }
-
-  function refreshMultiboxClientTitles() {
-    var st = document.getElementById('multibox-stage');
-    if (!st) return;
-    st.querySelectorAll('.multibox-window[data-client-index]').forEach(function (win) {
-      var idx = parseInt(win.getAttribute('data-client-index'), 10);
-      if (!(idx >= 1)) return;
-      var span = win.querySelector('.multibox-window-title');
-      if (!span) return;
-      span.textContent = tr('multibox.clientTitle', { n: idx });
-    });
-  }
-
-  function applyLanguage() {
-    if (!TRANSLATIONS[currentLanguage]) currentLanguage = 'en';
-    localStorage.setItem('language', currentLanguage);
-    if (langSelect) langSelect.value = currentLanguage;
-    document.querySelectorAll('[data-i18n-html]').forEach(function (el) {
-      var key = el.getAttribute('data-i18n-html');
-      var text = t(key);
-      if (text) el.innerHTML = text;
-    });
-    document.querySelectorAll('[data-i18n]').forEach(function (el) {
-      var key = el.getAttribute('data-i18n');
-      var text = t(key);
-      if (text) el.textContent = text;
-    });
-    document.querySelectorAll('[data-i18n-placeholder]').forEach(function (el) {
-      var key = el.getAttribute('data-i18n-placeholder');
-      var text = t(key);
-      if (text) el.setAttribute('placeholder', text);
-    });
-    document.querySelectorAll('[data-i18n-aria-label]').forEach(function (el) {
-      var key = el.getAttribute('data-i18n-aria-label');
-      var text = t(key);
-      if (text) el.setAttribute('aria-label', text);
-    });
-    document.querySelectorAll('[data-i18n-title]').forEach(function (el) {
-      var key = el.getAttribute('data-i18n-title');
-      var text = t(key);
-      if (text) el.setAttribute('title', text);
-    });
-    refreshMultiboxClientTitles();
-    renderDamageSettings(Array.isArray(allPluginsData) ? allPluginsData : []);
-    renderAccountSettings();
-    updateMacLaunchSortSummary();
-    if (isMacStyleSidebar() && multiAccountSidebarMode === 'launch') renderMacLaunchGroupsList();
-    if (typeof syncWdThresholdCaption === 'function') syncWdThresholdCaption();
-  }
-  applyLanguage();
-
-  function setActiveSettingsTab(tabName) {
+    function setActiveSettingsTab(tabName) {
     activeSettingsTab = String(tabName || 'visual');
-    // Account tab moved to its own popup; fall back to visual if stale value
-    if (activeSettingsTab === 'dashboard') activeSettingsTab = 'visual';
-    localStorage.setItem('activeSettingsTab', activeSettingsTab);
+
+    // In the local/open-source build, the removed dashboard/account settings tab
+    // should never become the active settings panel.
+    if (activeSettingsTab === 'dashboard') {
+      activeSettingsTab = 'visual';
+    }
+
+    try {
+      localStorage.setItem('activeSettingsTab', activeSettingsTab);
+    } catch (e) {}
+
     document.querySelectorAll('.settings-tab').forEach(function (btn) {
-      btn.classList.toggle('active', String(btn.getAttribute('data-settings-tab') || '') === activeSettingsTab);
+      var key = String(btn.getAttribute('data-settings-tab') || '');
+      btn.classList.toggle('active', key === activeSettingsTab);
     });
+
     document.querySelectorAll('.settings-tab-panel').forEach(function (panel) {
-      panel.classList.toggle('active', String(panel.getAttribute('data-settings-panel') || '') === activeSettingsTab);
+      var key = String(panel.getAttribute('data-settings-panel') || '');
+      panel.classList.toggle('active', key === activeSettingsTab);
     });
-  }
-
-
-  if (themeSelect) {
-    themeSelect.addEventListener('change', function () {
-      currentTheme = String(themeSelect.value || 'dark');
-      applyTheme();
-    });
-  }
-
-  if (langSelect) {
-    langSelect.addEventListener('change', function () {
-      currentLanguage = String(langSelect.value || 'en');
-      applyLanguage();
-      renderPlugins(Array.isArray(allPluginsData) ? allPluginsData : []);
-      populateScriptSelect();
-      renderHomeTab();
-      if (activeTab === 'accounts') {
-        renderAccountsList();
-        renderAccountsOverview();
-      }
-    });
-  }
-
-  // ── Settings tab integration ────────────────────────────────────────────
-  //
-  // Settings live inside the "Settings" content tab. The cog in the header
-  // is just a shortcut that activates that tab — no separate modal. We move
-  // the existing settings-modal body and account-popup body into the tab
-  // panel on init so we don't have to duplicate hundreds of lines of markup.
-  // activateContentTab() programmatically clicks a content tab so legacy
-  // "open settings" / "open account" call sites can stay one-liners.
-  function activateContentTab(name) {
-    if (name === 'settings') {
-      openSettingsPopout();
-      return;
-    }
-    var btn = document.querySelector('.content-tab[data-tab="' + name + '"]');
-    if (btn) btn.click();
-  }
-
-  function openSettingsPopout() {
-    var settingsPopout = document.getElementById('tab-settings');
-    if (!settingsPopout) return;
-    refreshSettingsTab();
-    settingsPopout.style.display = '';
-    settingsPopout.classList.add('active', 'settings-popout-open');
-    settingsPopout.setAttribute('aria-hidden', 'false');
-  }
-
-  function closeSettingsPopout() {
-    var settingsPopout = document.getElementById('tab-settings');
-    if (!settingsPopout) return;
-    settingsPopout.style.display = 'none';
-    settingsPopout.classList.remove('active', 'settings-popout-open');
-    settingsPopout.setAttribute('aria-hidden', 'true');
-  }
-
-  document.addEventListener('click', function (e) {
-    var launcherBtn = e.target.closest('[data-launcher-tab]');
-    if (!launcherBtn) return;
-    if (launcherBtn.classList.contains('launcher-quick-btn--primary')) {
-      handleQuickLaunchClick();
-      return;
-    }
-    activateContentTab(String(launcherBtn.getAttribute('data-launcher-tab') || ''));
-  });
-
-  document.addEventListener('contextmenu', function (e) {
-    var qlBtn = e.target.closest('.launcher-quick-btn--primary');
-    if (!qlBtn) {
-      hideQuickLaunchCtxMenu();
-      return;
-    }
-    e.preventDefault();
-    showQuickLaunchCtxMenu(e.clientX, e.clientY);
-  });
-
-  document.addEventListener('click', function (e) {
-    if (!e.target.closest('#ql-ctx-menu')) hideQuickLaunchCtxMenu();
-    var qlAction = e.target.closest('[data-ql-action]');
-    if (!qlAction) return;
-    var action = qlAction.getAttribute('data-ql-action');
-    hideQuickLaunchCtxMenu();
-    if (action === 'edit') {
-      showQuickLaunchPicker();
-    } else if (action === 'launch') {
-      handleQuickLaunchClick();
-    } else if (action === 'clear') {
-      quickLaunchAccountId = null;
-      localStorage.removeItem('quickLaunchAccountId');
-      updateQuickLaunchBtn();
-    }
-  });
-
-  document.addEventListener('click', function (e) {
-    if (e.target.id === 'ql-picker-close' || e.target.closest('#ql-picker-close')) {
-      hideQuickLaunchPicker();
-    } else if (e.target.classList.contains('ql-picker-backdrop')) {
-      hideQuickLaunchPicker();
-    } else if (e.target.id === 'ql-picker-clear') {
-      quickLaunchAccountId = null;
-      localStorage.removeItem('quickLaunchAccountId');
-      updateQuickLaunchBtn();
-      hideQuickLaunchPicker();
-    }
-  });
-
-  function handleQuickLaunchClick() {
-    if (quickLaunchAccountId) {
-      var account = null;
-      for (var i = 0; i < dashboardAccounts.length; i++) {
-        if (dashboardAccounts[i].id === quickLaunchAccountId) { account = dashboardAccounts[i]; break; }
-      }
-      if (account && String(account.email || '').trim() && String(account.password || '')) {
-        launchGameWithCredentials(
-          String(account.email || '').trim(),
-          String(account.password || ''),
-          String(account.serverName || 'USWest').trim() || 'USWest',
-          undefined,
-          launchOptsWithAccount(account, {}),
-        );
-        return;
-      }
-    }
-    showQuickLaunchPicker();
-  }
-
-  function showQuickLaunchPicker() {
-    renderQuickLaunchPicker();
-    var el = document.getElementById('ql-picker');
-    if (el) el.style.display = '';
-  }
-
-  function hideQuickLaunchPicker() {
-    var el = document.getElementById('ql-picker');
-    if (el) el.style.display = 'none';
-  }
-
-  function renderQuickLaunchPicker() {
-    var list = document.getElementById('ql-picker-list');
-    if (!list) return;
-    list.innerHTML = '';
-    if (!dashboardAccounts.length) {
-      list.innerHTML = '<div class="ql-picker-empty">No accounts saved yet. Add accounts in the Accounts tab first.</div>';
-      return;
-    }
-    dashboardAccounts.forEach(function (account) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'ql-picker-account-btn' + (account.id === quickLaunchAccountId ? ' selected' : '');
-      var displayName = String(account.label || account.email || 'Unnamed Account');
-      btn.innerHTML =
-        '<span class="ql-picker-account-name">' + escapeHtml(displayName) + '</span>' +
-        '<span class="ql-picker-account-server">' + escapeHtml(String(account.serverName || 'USWest')) + '</span>';
-      btn.addEventListener('click', function () {
-        quickLaunchAccountId = account.id;
-        localStorage.setItem('quickLaunchAccountId', account.id);
-        updateQuickLaunchBtn();
-        hideQuickLaunchPicker();
-      });
-      list.appendChild(btn);
-    });
-  }
-
-  function updateQuickLaunchBtn() {
-    var btn = document.querySelector('.launcher-quick-btn--primary');
-    if (!btn) return;
-    var iconEl = btn.querySelector('.launcher-quick-icon');
-    var labelEl = btn.querySelector('.launcher-quick-label');
-    if (quickLaunchAccountId) {
-      var account = null;
-      for (var i = 0; i < dashboardAccounts.length; i++) {
-        if (dashboardAccounts[i].id === quickLaunchAccountId) { account = dashboardAccounts[i]; break; }
-      }
-      if (account) {
-        var displayName = String(account.label || account.email || 'Account');
-        if (iconEl) iconEl.textContent = displayName.charAt(0).toUpperCase();
-        if (labelEl) labelEl.textContent = displayName.length > 14 ? displayName.slice(0, 13) + '…' : displayName;
-        return;
-      }
-    }
-    if (iconEl) iconEl.textContent = 'A';
-    if (labelEl) labelEl.textContent = 'Quick Launch';
-  }
-
-  function showQuickLaunchCtxMenu(x, y) {
-    var menu = document.getElementById('ql-ctx-menu');
-    if (!menu) return;
-    menu.style.left = x + 'px';
-    menu.style.top = y + 'px';
-    menu.style.display = '';
-    var hasAccount = !!quickLaunchAccountId && dashboardAccounts.some(function (a) { return a.id === quickLaunchAccountId; });
-    var launchItem = menu.querySelector('[data-ql-action="launch"]');
-    var clearItem = menu.querySelector('[data-ql-action="clear"]');
-    if (launchItem) launchItem.style.display = hasAccount ? '' : 'none';
-    if (clearItem) clearItem.style.display = hasAccount ? '' : 'none';
-  }
-
-  function hideQuickLaunchCtxMenu() {
-    var menu = document.getElementById('ql-ctx-menu');
-    if (menu) menu.style.display = 'none';
-  }
-
-  var btnSettingsCog = document.getElementById('btn-settings');
-  if (btnSettingsCog) {
-    btnSettingsCog.addEventListener('click', function () {
-      openSettingsPopout();
-    });
-  }
-
-  var settingsPopoutClose = document.getElementById('settings-popout-close');
-  if (settingsPopoutClose) {
-    settingsPopoutClose.addEventListener('click', closeSettingsPopout);
-  }
-
-  var settingsPopout = document.getElementById('tab-settings');
-  if (settingsPopout) {
-    settingsPopout.addEventListener('click', function (e) {
-      if (e.target.closest('[data-settings-popout-close]')) closeSettingsPopout();
-    });
-  }
-
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') closeSettingsPopout();
-  });
-
-  (function relocateSettingsAndAccountIntoTab() {
-    var tabAccount = document.getElementById('settings-tab-account');
-    var tabForm = document.getElementById('settings-tab-form');
-    if (!tabAccount || !tabForm) return;
-
-    // Move the account-popup body (profile card, gem/plan stats, action
-    // buttons, sign out) into the Settings tab. We strip the wrapper "popup"
-    // chrome so it lays out as an inline section.
-    var acctOverlay = document.getElementById('account-popup-overlay');
-    if (acctOverlay) {
-      var acctBody = acctOverlay.querySelector('.account-popup-body');
-      var acctFooter = acctOverlay.querySelector('.account-popup-footer');
-      if (acctBody) tabAccount.appendChild(acctBody);
-      if (acctFooter) tabAccount.appendChild(acctFooter);
-      acctOverlay.remove();
-    }
-
-    // Move the actual settings form (Visual / Game / Developer / Admin
-    // sub-tabs) into the Settings tab.
-    var settingsOv = document.getElementById('settings-overlay');
-    if (settingsOv) {
-      var settingsBody = settingsOv.querySelector('#settings-body');
-      if (settingsBody) tabForm.appendChild(settingsBody);
-      settingsOv.remove();
-    }
-  })();
-
-  // When the Settings tab becomes active, refresh the same things the old
-  // cog click used to refresh (sub-tab panel, plugin configs, navbar
-  // visibility list, account billing).
-  function refreshSettingsTab() {
-    if (typeof setActiveSettingsTab === 'function') {
-      setActiveSettingsTab(activeSettingsTab);
-    }
-    if (typeof loadPluginConfigs === 'function') loadPluginConfigs();
-    if (typeof renderNavbarTabSettings === 'function') renderNavbarTabSettings();
-    if (typeof renderAccountSettings === 'function') renderAccountSettings();
   }
 
   var replayTutorialBtn = document.getElementById('settings-replay-tutorial');
@@ -4261,126 +3232,16 @@
     multiAccountBtn.addEventListener('click', function () { openAccountPopup(); });
   }
 
-  /* ── Account popup: close, buy-gems, manage-plan, sign-out ── */
+  /* ── Account popup: close ── */
   var accountPopupOverlay = document.getElementById('account-popup-overlay');
   if (accountPopupOverlay) {
     accountPopupOverlay.addEventListener('click', function (e) {
       if (e.target.closest('[data-account-popup-close]')) closeAccountPopup();
     });
   }
-  var acctPopupBuyGems = document.getElementById('account-popup-buy-gems');
-  var acctPopupManagePlan = document.getElementById('account-popup-manage-plan');
-  var acctPopupSignout = document.getElementById('account-popup-signout');
-  if (acctPopupBuyGems) {
-    acctPopupBuyGems.addEventListener('click', function () { closeAccountPopup(); openPurchaseModal(); });
-  }
-  if (acctPopupManagePlan) {
-    acctPopupManagePlan.addEventListener('click', function () { closeAccountPopup(); openPlanModal(); });
-  }
-  if (acctPopupSignout) {
-    acctPopupSignout.addEventListener('click', function () { signOutDashboard(); });
-  }
-
-  var planModalOverlay = document.getElementById('plan-modal-overlay');
-  if (planModalOverlay) {
-    planModalOverlay.addEventListener('click', function (e) {
-      if (e.target.closest('[data-plan-modal-close]')) closePlanModal();
-    });
-  }
-
-  var purchaseModalOverlay = document.getElementById('purchase-modal-overlay');
-  if (purchaseModalOverlay) {
-    purchaseModalOverlay.addEventListener('click', function (e) {
-      if (e.target.closest('[data-purchase-modal-close]')) closePurchaseModal();
-    });
-  }
-  var purchaseModalGemQty = document.getElementById('purchase-modal-gem-qty');
-  if (purchaseModalGemQty) {
-    function sanitizePurchaseGemQtyInput() {
-      var el = purchaseModalGemQty;
-      var digits = String(el.value).replace(/\D/g, '').slice(0, 6);
-      if (el.value !== digits) el.value = digits;
-      updatePurchaseModalTotal();
-    }
-    purchaseModalGemQty.addEventListener('input', sanitizePurchaseGemQtyInput);
-    purchaseModalGemQty.addEventListener('change', sanitizePurchaseGemQtyInput);
-    purchaseModalGemQty.addEventListener('keydown', function (e) {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      purchaseModalCheckout();
-    });
-  }
-  var purchaseModalCheckoutBtn = document.getElementById('purchase-modal-checkout');
-  if (purchaseModalCheckoutBtn) {
-    purchaseModalCheckoutBtn.addEventListener('click', function () {
-      purchaseModalCheckout();
-    });
-  }
-
-  // Quick-amount buttons
-  document.querySelectorAll('.purchase-quick-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var qty = document.getElementById('purchase-modal-gem-qty');
-      if (qty) {
-        qty.value = String(btn.getAttribute('data-quick-gems') || '100');
-        updatePurchaseModalTotal();
-      }
-    });
-  });
-
-  // Step 2: back button
-  var purchaseBackBtn = document.getElementById('purchase-modal-back');
-  if (purchaseBackBtn) {
-    purchaseBackBtn.addEventListener('click', purchaseGoBack);
-  }
-
-  // Step 2: category row expand/collapse
-  document.querySelectorAll('.pay-cat-row--expand').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var targetId = 'pay-expand-' + (btn.getAttribute('data-expand') || '');
-      var panel = document.getElementById(targetId);
-      if (!panel) return;
-      var isOpen = !panel.classList.contains('hidden');
-      // Close all other panels first
-      document.querySelectorAll('.pay-cat-options').forEach(function (p) { p.classList.add('hidden'); });
-      document.querySelectorAll('.pay-cat-row--expand').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
-      if (!isOpen) {
-        panel.classList.remove('hidden');
-        btn.setAttribute('aria-expanded', 'true');
-      }
-    });
-  });
-
-  // Step 2: direct card row
-  var stripeCardRow = document.querySelector('[data-method="stripe_card"]');
-  if (stripeCardRow) {
-    stripeCardRow.addEventListener('click', function () {
-      purchaseWithMethod('stripe_card');
-    });
-  }
-
-  // Step 2: individual option buttons inside expanded panels
-  document.querySelectorAll('.pay-opt-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var method = btn.getAttribute('data-method') || '';
-      purchaseWithMethod(method);
-    });
-  });
 
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
-    var pl = document.getElementById('plan-modal-overlay');
-    if (pl && !pl.classList.contains('hidden')) {
-      e.preventDefault();
-      closePlanModal();
-      return;
-    }
-    var pm = document.getElementById('purchase-modal-overlay');
-    if (pm && !pm.classList.contains('hidden')) {
-      e.preventDefault();
-      closePurchaseModal();
-      return;
-    }
     var ap = document.getElementById('account-popup-overlay');
     if (ap && !ap.classList.contains('hidden')) {
       e.preventDefault();
@@ -4406,52 +3267,15 @@
 
   if (adminModeToggle) {
     adminModeToggle.addEventListener('change', () => {
-      // Only admins can toggle admin mode
-      if (!dashboardUser || !dashboardUser.is_admin) {
-        adminModeToggle.checked = false;
-        return;
-      }
       adminMode = adminModeToggle.checked;
-      _realAdminMode = adminMode;  // remember the real choice for view-as resets
+      _realAdminMode = adminMode;
       applyAdminMode();
-    });
-  }
-
-  // View-as preview dropdown (admin debug — preview the dashboard as a non-admin user)
-  var viewAsSelect = document.getElementById('setting-view-as');
-  if (viewAsSelect) {
-    viewAsSelect.addEventListener('change', function () {
-      // Only admins can use view-as. If not, snap back to real account.
-      if (!dashboardUser || !dashboardUser.is_admin) {
-        viewAsSelect.value = '';
-        viewAsOverride = null;
-        applyViewAsOverride();
-        return;
-      }
-      var key = viewAsSelect.value;
-      viewAsOverride = key && VIEW_AS_PRESETS[key] ? VIEW_AS_PRESETS[key] : null;
-      applyViewAsOverride();
-    });
-  }
-  var viewAsBannerReset = document.getElementById('view-as-banner-reset');
-  if (viewAsBannerReset) {
-    viewAsBannerReset.addEventListener('click', function () {
-      viewAsOverride = null;
-      var sel = document.getElementById('setting-view-as');
-      if (sel) sel.value = '';
-      applyViewAsOverride();
     });
   }
 
   if (singleClientOnlyToggle) {
     singleClientOnlyToggle.checked = singleClientOnly;
     singleClientOnlyToggle.addEventListener('change', () => {
-      // Non-admins cannot disable single-client mode
-      if (!dashboardUser || !dashboardUser.is_admin) {
-        singleClientOnlyToggle.checked = true;
-        singleClientOnly = true;
-        return;
-      }
       singleClientOnly = !!singleClientOnlyToggle.checked;
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({
@@ -4536,306 +3360,41 @@
     }
   });
 
-  function setOverlayLoginError(text) {
-    if (!overlayLoginError) return;
-    overlayLoginError.textContent = text || '';
-    overlayLoginError.classList.toggle('hidden', !text);
-  }
-
-  function setOverlayPasswordEyeIcons(passwordVisible) {
-    if (!overlayPasswordToggleBtn) return;
-    var showIcon = overlayPasswordToggleBtn.querySelector('.disconnect-password-eye-show');
-    var hideIcon = overlayPasswordToggleBtn.querySelector('.disconnect-password-eye-hide');
-    if (showIcon) showIcon.classList.toggle('hidden', passwordVisible);
-    if (hideIcon) hideIcon.classList.toggle('hidden', !passwordVisible);
-  }
-
-  function resetOverlayPasswordVisibility() {
-    if (overlayPasswordInput) overlayPasswordInput.type = 'password';
-    if (overlayPasswordToggleBtn) {
-      overlayPasswordToggleBtn.setAttribute('aria-pressed', 'false');
-      overlayPasswordToggleBtn.setAttribute('aria-label', 'Show password');
-      overlayPasswordToggleBtn.title = 'Show password';
-    }
-    setOverlayPasswordEyeIcons(false);
-  }
-
-  if (overlayPasswordToggleBtn && overlayPasswordInput) {
-    overlayPasswordToggleBtn.addEventListener('click', function () {
-      var showPlain = overlayPasswordInput.type === 'password';
-      overlayPasswordInput.type = showPlain ? 'text' : 'password';
-      overlayPasswordToggleBtn.setAttribute('aria-pressed', showPlain ? 'true' : 'false');
-      overlayPasswordToggleBtn.setAttribute('aria-label', showPlain ? 'Hide password' : 'Show password');
-      overlayPasswordToggleBtn.title = showPlain ? 'Hide password' : 'Show password';
-      setOverlayPasswordEyeIcons(showPlain);
-    });
-  }
-
-  function persistDashboardLoginState() {
-    if (accessToken) localStorage.setItem('accessToken', accessToken);
-    else localStorage.removeItem('accessToken');
-    if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
-    else localStorage.removeItem('refreshToken');
-    localStorage.removeItem('dashboardLoggedIn');
-    localStorage.removeItem('dashboardUsername');
-    localStorage.removeItem('dashboardPassword');
-    renderAccountSettings();
-  }
-
-  function clearAuthLocalState() {
-    accessToken = null;
-    refreshToken = null;
-    dashboardUser = null;
-    dashboardLoggedIn = false;
-    dashboardSubscriptionTier = 'Free';
-    adminMode = false;
-    singleClientOnly = true;
-    localStorage.removeItem('accessToken');
-    localStorage.removeItem('refreshToken');
-    localStorage.removeItem('dashboardLoggedIn');
-    localStorage.removeItem('dashboardUsername');
-    localStorage.removeItem('dashboardPassword');
-  }
-
-  function finishSignOutUi() {
-    setOverlayLoginError('');
-    if (overlayEmailInput) overlayEmailInput.value = localStorage.getItem('lastLoginEmail') || '';
-    if (overlayPasswordInput) overlayPasswordInput.value = '';
-    resetOverlayPasswordVisibility();
-    if (disconnectOverlay) disconnectOverlay.setAttribute('data-mode', 'signin');
-    var sub = document.getElementById('disconnect-auth-subtitle');
-    if (sub) sub.textContent = 'Sign in to your account';
-    if (settingsOverlay) settingsOverlay.classList.add('hidden');
-    renderAccountSettings();
+  function activateLocalDashboardSession() {
     updateDashboardAvailabilityUi();
+    renderAccountSettings();
     applyAccountPermissions();
-  }
-
-  function authErrorDetail(data, fallback) {
-    var d = data && data.detail;
-    if (typeof d === 'string') return d;
-    if (Array.isArray(d) && d.length && d[0] && d[0].msg) return String(d[0].msg);
-    if (data && typeof data.error === 'string') return data.error;
-    if (data && typeof data.message === 'string') return data.message;
-    return fallback || 'The auth server did not return an error message.';
-  }
-
-  function fetchAuthWithTimeout(url, options, timeoutMs, timeoutMessage) {
-    var controller = new AbortController();
-    var timer = setTimeout(function () {
-      try { controller.abort(); } catch (_e) {}
-    }, timeoutMs || 15000);
-    var opts = Object.assign({}, options || {}, { signal: controller.signal });
-    return fetch(url, opts)
-      .catch(function (err) {
-        if (err && err.name === 'AbortError') {
-          throw new Error(timeoutMessage || 'Auth request timed out. Restart dev mode if this keeps happening.');
-        }
-        throw err;
-      })
-      .finally(function () {
-        clearTimeout(timer);
-      });
-  }
-
-  function readAuthResponse(r, fallback) {
-    return r.text().then(function (text) {
-      var data = {};
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch (_e) {
-        data = {};
-      }
-      if (!r.ok) throw new Error(authErrorDetail(data, fallback || ('Auth request failed with HTTP ' + r.status + '.')));
-      return data;
-    });
-  }
-
-  function authDisplayError(err, fallback) {
-    var msg = err && err.message ? String(err.message) : '';
-    if (/failed to fetch|networkerror|load failed/i.test(msg)) {
-      return 'Could not reach the local dashboard server. Restart dev mode and try again.';
-    }
-    return msg || fallback || 'Auth request failed.';
-  }
-
-  function tryRefreshToken() {
-    if (!refreshToken) return Promise.resolve(false);
-    return fetchAuthWithTimeout('/api/auth/refresh', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    }, 15000, 'Session refresh timed out. Please sign in again.')
-      .then(function (r) {
-        return r.json().catch(function () { return {}; }).then(function (data) {
-          if (!r.ok) return false;
-          if (data.access_token) accessToken = data.access_token;
-          if (data.refresh_token) refreshToken = data.refresh_token;
-          persistDashboardLoginState();
-          return true;
-        });
-      })
-      .catch(function () {
-        return false;
-      });
-  }
-
-  function fetchCurrentUser(allowRefreshRetry) {
-    if (!accessToken) {
-      return Promise.reject(new Error('No token'));
-    }
-    return fetchAuthWithTimeout('/api/auth/me', {
-      headers: { Authorization: 'Bearer ' + accessToken },
-    }, 15000, 'Profile lookup timed out. Restart dev mode if this keeps happening.')
-      .then(function (r) {
-        return r.text().then(function (text) {
-          var data = {};
-          try {
-            data = text ? JSON.parse(text) : {};
-          } catch (e) {
-            data = {};
-          }
-          if (r.status === 401 && allowRefreshRetry !== false && refreshToken) {
-            return tryRefreshToken().then(function (ok) {
-              if (ok) return fetchCurrentUser(false);
-              clearAuthLocalState();
-              finishSignOutUi();
-              return Promise.reject(new Error('Session expired'));
-            });
-          }
-          if (!r.ok) {
-            var msg = authErrorDetail(data, 'Could not load your account profile.');
-            if (r.status === 401) {
-              clearAuthLocalState();
-              finishSignOutUi();
-            }
-            throw new Error(msg);
-          }
-          return data;
-        });
-      })
-      .then(function (profile) {
-        dashboardUser = profile;
-        dashboardLoggedIn = true;
-        persistDashboardLoginState();
-        updateDashboardAvailabilityUi();
-        renderAccountSettings();
-        // Fetch billing first so dashboardSubscriptionTier is set before applying permissions
-        refreshAccountBillingFromApi();
-        applyAccountPermissions();
-        return profile;
-      });
+    return dashboardUser;
   }
 
   /**
-   * Apply UI permissions based on the authenticated account.
-   * - Admins: enable admin mode, can toggle single-client
-   * - Non-admins: force adminMode=false, singleClientOnly=true, lock both
-   * - Basic tier (or higher): show developer settings tab
-   * - Free tier: hide developer settings tab
-   * Called after every successful login/profile fetch.
+   * Apply local dashboard permissions.
    */
   function applyAccountPermissions() {
-    var isAdmin = !!(dashboardUser && dashboardUser.is_admin);
-    var tier = (dashboardSubscriptionTier || 'Free').toLowerCase();
-    var hasDeveloper = tier === 'premium' || tier === 'basic' || tier === 'developer';
-
-    // Admin mode: only admins can be in admin mode
-    if (!isAdmin) {
-      adminMode = false;
-    }
-    _realAdminMode = adminMode;  // capture real state for view-as override resets
-
-    // If a non-admin somehow has a view-as override active, drop it.
-    if (!isAdmin && viewAsOverride) {
-      viewAsOverride = null;
-      var vSel = document.getElementById('setting-view-as');
-      if (vSel) vSel.value = '';
-    }
-
+    _realAdminMode = adminMode;
     applyAdminMode();
 
-    // Lock singleClientOnly to true for non-admins
-    if (!isAdmin) {
-      singleClientOnly = true;
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'updateSingleClientOnly', value: true }));
-      }
-    }
     if (singleClientOnlyToggle) {
       singleClientOnlyToggle.checked = singleClientOnly;
-      singleClientOnlyToggle.disabled = !isAdmin;
+      singleClientOnlyToggle.disabled = false;
       var scoRow = singleClientOnlyToggle.closest('.settings-row');
-      if (scoRow) scoRow.classList.toggle('settings-row--locked', !isAdmin);
+      if (scoRow) scoRow.classList.remove('settings-row--locked');
     }
 
-    // Developer settings tab: only for Developer-tier or admins
     var devSettingsTab = document.getElementById('settings-tab-developer');
-    if (devSettingsTab) {
-      devSettingsTab.classList.toggle('hidden', !hasDeveloper && !isAdmin);
-    }
+    if (devSettingsTab) devSettingsTab.classList.remove('hidden');
 
-    // Admin settings tab: only for admins
     var adminSettingsTab = document.getElementById('settings-tab-admin');
-    if (adminSettingsTab) {
-      adminSettingsTab.classList.toggle('hidden', !isAdmin);
-    }
-
-    // Fall back active settings tab if no longer accessible
-    if (!hasDeveloper && !isAdmin && activeSettingsTab === 'developer') {
-      setActiveSettingsTab('visual');
-    }
-    if (!isAdmin && activeSettingsTab === 'admin') {
-      setActiveSettingsTab('visual');
-    }
-
-    // Send tokens to DevServer so plugins use the same session (no separate login)
-    if (accessToken && ws && ws.readyState === 1) {
-      ws.send(JSON.stringify({
-        type: 'dashboardToken',
-        access_token: accessToken,
-        refresh_token: refreshToken || null,
-        is_admin: !!(dashboardUser && dashboardUser.is_admin),
-        developer_mode: !!(dashboardUser && dashboardUser.developer_mode),
-      }));
-    }
+    if (adminSettingsTab) adminSettingsTab.classList.remove('hidden');
   }
 
   function restoreDashboardSessionFromTokens() {
-    if (!accessToken) return Promise.resolve(false);
-    return fetchCurrentUser(true).then(function () { return true; }).catch(function () { return false; });
+    activateLocalDashboardSession();
+    return Promise.resolve(true);
   }
 
   function signOutDashboard() {
-    var tok = accessToken;
-    if (tok) {
-      fetch('/api/auth/signout', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer ' + tok,
-        },
-      }).finally(function () {
-        clearAuthLocalState();
-        finishSignOutUi();
-      });
-    } else {
-      clearAuthLocalState();
-      finishSignOutUi();
-    }
-  }
-
-  function setOverlayAuthMode(mode) {
-    if (!disconnectOverlay) return;
-    disconnectOverlay.setAttribute('data-mode', mode === 'register' ? 'register' : 'signin');
-    var sub = document.getElementById('disconnect-auth-subtitle');
-    if (sub) sub.textContent = mode === 'register' ? 'Create a Realm Engine account' : 'Sign in to your Realm Engine account';
-    var notice = document.getElementById('disconnect-auth-notice');
-    if (notice) notice.textContent = mode === 'register'
-      ? 'Do not use your Realm password. Create a new password for Realm Engine.'
-      : 'This is not your Realm account. Use the credentials you created for Realm Engine.';
-    setOverlayLoginError('');
-    resetOverlayPasswordVisibility();
+    activateLocalDashboardSession();
   }
 
   function openDashboardTab(tabName) {
@@ -4845,35 +3404,184 @@
     if (btn.classList.contains('dev-only') && !devMode) return;
     btn.click();
   }
+  function activateContentTab(tabName) { openDashboardTab(tabName); }
 
-  /**
-   * Fire an anonymous product-analytics event. Forwarded to bot-api by DevServer
-   * — the browser never holds the access token. Safe to no-op when WS is down.
-   */
-  function trackEvent(eventName, props) {
-    if (!ws || ws.readyState !== 1) return;
-    try {
-      ws.send(JSON.stringify({
-        type: 'trackEvent',
-        event: String(eventName || ''),
-        props: props && typeof props === 'object' ? props : undefined,
-      }));
-    } catch (_e) { /* swallow */ }
+  function refreshMultiboxClientTitles() {
+    var st = document.getElementById('multibox-stage');
+    if (!st) return;
+    st.querySelectorAll('.multibox-window[data-client-index]').forEach(function (win) {
+      var idx = parseInt(win.getAttribute('data-client-index'), 10);
+      if (!(idx >= 1)) return;
+      var span = win.querySelector('.multibox-window-title');
+      if (!span) return;
+      span.textContent = tr('multibox.clientTitle', { n: idx });
+    });
   }
-  // Expose for inline handlers + cross-module callers.
-  window._trackEvent = trackEvent;
+
+  function refreshSettingsTab() {
+    if (typeof setActiveSettingsTab === 'function') setActiveSettingsTab(activeSettingsTab);
+    if (typeof loadPluginConfigs === 'function') loadPluginConfigs();
+    if (typeof renderNavbarTabSettings === 'function') renderNavbarTabSettings();
+    if (typeof renderAccountSettings === 'function') renderAccountSettings();
+  }
+
+  function openSettingsPopout() {
+    var settingsPopout = document.getElementById('tab-settings');
+    if (!settingsPopout) return;
+    refreshSettingsTab();
+    settingsPopout.style.display = '';
+    settingsPopout.classList.add('active', 'settings-popout-open');
+    settingsPopout.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeSettingsPopout() {
+    var settingsPopout = document.getElementById('tab-settings');
+    if (!settingsPopout) return;
+    settingsPopout.style.display = 'none';
+    settingsPopout.classList.remove('active', 'settings-popout-open');
+    settingsPopout.setAttribute('aria-hidden', 'true');
+  }
+
+  function updateQuickLaunchBtn() {
+    var btn = document.querySelector('.launcher-quick-btn--primary');
+    if (!btn) return;
+    var iconEl = btn.querySelector('.launcher-quick-icon');
+    var labelEl = btn.querySelector('.launcher-quick-label');
+    if (quickLaunchAccountId) {
+      var account = null;
+      for (var i = 0; i < dashboardAccounts.length; i++) {
+        if (dashboardAccounts[i].id === quickLaunchAccountId) { account = dashboardAccounts[i]; break; }
+      }
+      if (account) {
+        var displayName = String(account.label || account.email || 'Account');
+        if (iconEl) iconEl.textContent = displayName.charAt(0).toUpperCase();
+        if (labelEl) labelEl.textContent = displayName.length > 14 ? displayName.slice(0, 13) + '…' : displayName;
+        return;
+      }
+    }
+    if (iconEl) iconEl.textContent = 'A';
+    if (labelEl) labelEl.textContent = 'Quick Launch';
+  }
+
+  // Move settings form from legacy #settings-overlay into the settings popout tab
+  (function relocateSettingsAndAccountIntoTab() {
+    var tabForm = document.getElementById('settings-tab-form');
+    if (!tabForm) return;
+    var settingsOv = document.getElementById('settings-overlay');
+    if (settingsOv) {
+      var settingsBody = settingsOv.querySelector('#settings-body');
+      if (settingsBody) tabForm.appendChild(settingsBody);
+      settingsOv.remove();
+    }
+  })();
+
+  function getThemeMeta(themeId) {
+    var id = String(themeId || '');
+    return THEMES.find(function (theme) { return theme.id === id; }) || THEMES[0];
+  }
+
+  function applyTheme() {
+    var themeMeta = getThemeMeta(currentTheme);
+    currentTheme = themeMeta.id;
+    localStorage.setItem('theme', currentTheme);
+    document.body.classList.remove('theme-dark', 'theme-light', 'theme-sage', 'theme-mist', 'theme-forest', 'theme-ocean', 'theme-ember', 'light-mode');
+    if (currentTheme !== 'dark') document.body.classList.add('theme-' + currentTheme);
+    if (currentTheme === 'light') document.body.classList.add('light-mode');
+    if (themeSelect) themeSelect.value = currentTheme;
+  }
+  applyTheme();
+
+  function applyLanguage() {
+    if (!TRANSLATIONS[currentLanguage]) currentLanguage = 'en';
+    localStorage.setItem('language', currentLanguage);
+    if (langSelect) langSelect.value = currentLanguage;
+    document.querySelectorAll('[data-i18n-html]').forEach(function (el) {
+      var key = el.getAttribute('data-i18n-html');
+      var text = t(key);
+      if (text) el.innerHTML = text;
+    });
+    document.querySelectorAll('[data-i18n]').forEach(function (el) {
+      var key = el.getAttribute('data-i18n');
+      var text = t(key);
+      if (text) el.textContent = text;
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(function (el) {
+      var key = el.getAttribute('data-i18n-placeholder');
+      var text = t(key);
+      if (text) el.setAttribute('placeholder', text);
+    });
+    document.querySelectorAll('[data-i18n-aria-label]').forEach(function (el) {
+      var key = el.getAttribute('data-i18n-aria-label');
+      var text = t(key);
+      if (text) el.setAttribute('aria-label', text);
+    });
+    document.querySelectorAll('[data-i18n-title]').forEach(function (el) {
+      var key = el.getAttribute('data-i18n-title');
+      var text = t(key);
+      if (text) el.setAttribute('title', text);
+    });
+    refreshMultiboxClientTitles();
+    renderDamageSettings(Array.isArray(allPluginsData) ? allPluginsData : []);
+    updateMacLaunchSortSummary();
+    if (isMacStyleSidebar() && multiAccountSidebarMode === 'launch') renderMacLaunchGroupsList();
+    if (typeof syncWdThresholdCaption === 'function') syncWdThresholdCaption();
+  }
+  applyLanguage();
+
+  if (themeSelect) {
+    themeSelect.addEventListener('change', function () {
+      currentTheme = String(themeSelect.value || 'dark');
+      applyTheme();
+    });
+  }
+
+  if (langSelect) {
+    langSelect.addEventListener('change', function () {
+      currentLanguage = String(langSelect.value || 'en');
+      applyLanguage();
+      renderPlugins(Array.isArray(allPluginsData) ? allPluginsData : []);
+      populateScriptSelect();
+      renderHomeTab();
+      if (activeTab === 'accounts') {
+        renderAccountsList();
+        renderAccountsOverview();
+      }
+    });
+  }
+
+  // Wire settings gear button
+  var btnSettingsCog = document.getElementById('btn-settings');
+  if (btnSettingsCog) {
+    btnSettingsCog.addEventListener('click', function () { openSettingsPopout(); });
+  }
+  var settingsPopoutCloseBtn = document.getElementById('settings-popout-close');
+  if (settingsPopoutCloseBtn) {
+    settingsPopoutCloseBtn.addEventListener('click', closeSettingsPopout);
+  }
+  var settingsPopoutEl = document.getElementById('tab-settings');
+  if (settingsPopoutEl) {
+    settingsPopoutEl.addEventListener('click', function (e) {
+      if (e.target.closest('[data-settings-popout-close]')) closeSettingsPopout();
+    });
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeSettingsPopout();
+  });
+
+  // Wire launcher quick-tab buttons (e.g. the "Plugins" button in the launcher bar)
+  document.addEventListener('click', function (e) {
+    var launcherBtn = e.target.closest('[data-launcher-tab]');
+    if (!launcherBtn) return;
+    activateContentTab(String(launcherBtn.getAttribute('data-launcher-tab') || ''));
+  });
 
   var splashDismissed = false;
   function updateDashboardAvailabilityUi() {
-    // Don't show/hide login overlay while splash is still covering the screen
     if (!splashDismissed && document.getElementById('app-splash')) return;
-    if (disconnectOverlay) disconnectOverlay.classList.toggle('hidden', dashboardLoggedIn);
-    if (!dashboardLoggedIn) closeSettingsPopout();
     var titlebar = document.getElementById('titlebar');
-    if (titlebar) titlebar.style.display = dashboardLoggedIn ? '' : 'none';
-    // Hide settings cog when not logged in
+    if (titlebar) titlebar.style.display = '';
     var settingsBtn = document.getElementById('btn-settings');
-    if (settingsBtn) settingsBtn.style.display = dashboardLoggedIn ? '' : 'none';
+    if (settingsBtn) settingsBtn.style.display = '';
   }
 
   function formatHomeDuration(ms) {
@@ -5678,7 +4386,7 @@
   }
 
   /**
-   * Backpack tier / slot-capacity telemetry from ScriptHost.activity — hide from cards/pills only.
+   * Backpack tier / slot-capacity metadata from ScriptHost.activity - hide from cards/pills only.
    * (Slots still visible in MAC popout inventory; Developer tab can show tier code.)
    */
   function sanitizeScriptActivityForUi(activity) {
@@ -6541,16 +5249,7 @@
       if (adminMode && packetSnifferVisible) seedSnifferPacketTypeChipsFromDefs();
       addHomeFeed('ok', 'Dashboard socket connected.');
       try { ws.send(JSON.stringify({ type: 'requestScriptPanelSnapshots' })); } catch (_e) {}
-      // Re-send dashboard tokens so the server-side bot API client stays in sync
-      if (dashboardLoggedIn && accessToken) {
-        ws.send(JSON.stringify({
-          type: 'dashboardToken',
-          access_token: accessToken,
-          refresh_token: refreshToken || null,
-          is_admin: !!(dashboardUser && dashboardUser.is_admin),
-          developer_mode: !!(dashboardUser && dashboardUser.developer_mode),
-        }));
-      }
+
     };
 
     ws.onclose = () => {
@@ -6718,14 +5417,6 @@
         case 'labPacketSendResult':
           handleLabPacketSendResult(msg);
           break;
-        case 'gemStatus':
-          if (Array.isArray(msg.active_plans)) {
-            _realActivePlans = new Set(msg.active_plans.map(function (p) { return String(p).toLowerCase(); }));
-            // If view-as override is active, keep the override; otherwise reflect server state.
-            if (!viewAsOverride) activePlanNames = new Set(_realActivePlans);
-            renderPlugins(Array.isArray(allPluginsData) ? allPluginsData : []);
-          }
-          break;
         case 'pluginToggleError':
           handlePluginToggleError(msg);
           break;
@@ -6749,28 +5440,8 @@
         case 'scriptPanelClose':
           closeScriptPanelById(msg && msg.scriptId, { notifyServer: false });
           break;
-        case 'botApiTokenGranted':
-          if (msg.access_token) window._botApiToken = String(msg.access_token);
-          break;
-        case 'ownedScripts':
-          renderMarketplaceScripts(Array.isArray(msg.scripts) ? msg.scripts : []);
-          break;
-        case 'marketplaceScriptResult':
-          handleMarketplaceScriptResult(msg);
-          break;
         case 'muling_status':
           handleMulingStatus(msg.status);
-          break;
-        case 'telemetryStats':
-          handleTelemetryStats(msg);
-          break;
-        case 'telemetryStatsError':
-          handleTelemetryStatsError(msg);
-          break;
-        case 'telemetryEnabledState':
-          if (telemetryEnabledToggle) {
-            telemetryEnabledToggle.checked = !!msg.enabled;
-          }
           break;
       }
     };
@@ -9534,11 +8205,7 @@
       return name.indexOf(q) >= 0 || rawName.indexOf(q) >= 0 || id.indexOf(q) >= 0;
     });
 
-    var _isAdmin = document.body.classList.contains('admin-mode');
     filtered.sort(function (a, b) {
-      var aLocked = !_isAdmin && (a.source === 'bundled' && a.requiredPlan && !activePlanNames.has(String(a.requiredPlan).toLowerCase())) ? 1 : 0;
-      var bLocked = !_isAdmin && (b.source === 'bundled' && b.requiredPlan && !activePlanNames.has(String(b.requiredPlan).toLowerCase())) ? 1 : 0;
-      if (aLocked !== bLocked) return aLocked - bLocked;
       return getPluginDisplayName(a).localeCompare(getPluginDisplayName(b));
     });
 
@@ -9559,49 +8226,35 @@
     }
 
     filtered.forEach(function (p) {
-      var isLocked = !_isAdmin && p.source === 'bundled' && p.requiredPlan && !activePlanNames.has(String(p.requiredPlan).toLowerCase());
       var item = document.createElement('div');
-      item.className = 'plugin-sidebar-item' + (p.enabled ? '' : ' disabled') + (isLocked ? ' plugin-sidebar-item--locked' : '');
+      item.className = 'plugin-sidebar-item' + (p.enabled ? '' : ' disabled');
       item.setAttribute('data-plugin-id', p.id);
 
       var nameSpan = document.createElement('span');
       nameSpan.className = 'plugin-sidebar-item-name';
       nameSpan.textContent = getPluginDisplayName(p);
 
-      if (isLocked) {
-        var planDisplay = String(p.requiredPlan).charAt(0).toUpperCase() + String(p.requiredPlan).slice(1);
-        var lockBadge = document.createElement('span');
-        lockBadge.className = 'plugin-sidebar-plan-badge';
-        lockBadge.textContent = planDisplay;
-        lockBadge.title = 'Requires ' + planDisplay + ' plan';
-        item.appendChild(nameSpan);
-        item.appendChild(lockBadge);
-      } else {
-        item.appendChild(nameSpan);
-      }
+      item.appendChild(nameSpan);
 
       var toggleLabel = document.createElement('label');
       toggleLabel.className = 'toggle-switch toggle-switch-sm';
       toggleLabel.innerHTML =
-        '<input type="checkbox" ' + (p.enabled ? 'checked' : '') + (isLocked ? ' disabled' : '') + '>' +
+        '<input type="checkbox" ' + (p.enabled ? 'checked' : '') + '>' +
         '<span class="toggle-slider"></span>';
       var cb = toggleLabel.querySelector('input');
-      if (!isLocked) {
-        cb.addEventListener('change', function (e) {
-          e.stopPropagation();
-          if (!ws || ws.readyState !== 1) return;
-          ws.send(JSON.stringify({
-            type: 'togglePlugin',
-            pluginId: p.id,
-            enabled: cb.checked,
-          }));
-        });
-      }
+      cb.addEventListener('change', function (e) {
+        e.stopPropagation();
+        if (!ws || ws.readyState !== 1) return;
+        ws.send(JSON.stringify({
+          type: 'togglePlugin',
+          pluginId: p.id,
+          enabled: cb.checked,
+        }));
+      });
       toggleLabel.addEventListener('click', function (e) { e.stopPropagation(); });
 
       item.addEventListener('click', function (e) {
         if (e.target.closest('.toggle-switch')) return;
-        if (isLocked) { openPlanModal(); return; }
         jumpToPluginInHub(p.id);
       });
 
@@ -11592,8 +10245,6 @@
     }
 
     activeTab = tabName;
-    // Track tab view for the funnel breakdown.
-    trackEvent('tab_view', { tab: String(tabName) });
     if (tabName === 'api') {
       requestAnimationFrame(function () {
         var fr = document.querySelector('#tab-api .api-docs-iframe');
@@ -11607,12 +10258,10 @@
       });
     }
     if (tabName === 'home') renderHomeTab();
-    if (tabName === 'premium') renderPremiumTab();
     if (tabName === 'settings') refreshSettingsTab();
     if (tabName === 'accounts') renderAccountsTab();
     if (tabName === 'damage') renderDamageTab();
     if (tabName === 'logs') refreshLogsEmptyState();
-    if (tabName === 'telemetry') openTelemetryTab();
     if (tabName === 'objects') renderObjectsTree(lastObjectsData);
     if (tabName === 'tilemap') {
       renderTilemapTree(lastTilesData);
@@ -11663,9 +10312,6 @@
       wireScriptsPageControls();
       refreshScriptsTab();
     }
-    if (tabName === 'market') {
-      loadMarketTab();
-    }
     if (tabName === 'plugins') {
       // Render immediately from cached data (shows spinner if not yet received)
       renderPlugins(Array.isArray(allPluginsData) ? allPluginsData : []);
@@ -11686,1142 +10332,6 @@
         .catch(function () {});
     }
   });
-
-  // ─── Market tab (GET /api/market/catalog, POST /api/market/checkout) ──
-  var marketCatalog = null;
-  var marketSubtab = 'scripts';
-  var marketScriptCat = 'All';
-  var marketScriptSort = 'Recommended';
-  var marketScriptPrice = 'Any';
-  var marketScriptSearch = '';
-  /** @type {{ id: string, type: string, name: string, detail: string, priceGems: number }[]} */
-  var marketCart = [];
-  /** dupe id -> tier index */
-  var marketDupeTier = {};
-  /** pot id -> quantity (for maxing shop) */
-  var marketMaxingQtys = {};
-  var marketKeySel = { tierIdx: 0, tenStar: false };
-
-  function normalizeMarketCatalog(data) {
-    var d = data || {};
-    return {
-      scripts: Array.isArray(d.scripts) ? d.scripts : [],
-      dupes: Array.isArray(d.dupes) ? d.dupes : [],
-      items: Array.isArray(d.items) ? d.items : [],
-      keyTiers: Array.isArray(d.keyTiers) && d.keyTiers.length ? d.keyTiers : [{ qty: 10, priceGems: 40 }],
-      key10StarSurcharge: typeof d.key10StarSurcharge === 'number' ? d.key10StarSurcharge : 0.4,
-      scriptCategories: Array.isArray(d.scriptCategories) ? d.scriptCategories : ['All'],
-      sortOptions: Array.isArray(d.sortOptions) ? d.sortOptions : ['Recommended'],
-      priceOptions: Array.isArray(d.priceOptions) ? d.priceOptions : ['Any'],
-    };
-  }
-
-  /** % saved vs lowest-qty tier (per-unit), from catalog prices */
-  function marketBulkDiscountPctRaw(baseTier, tier) {
-    if (!baseTier || !tier || !baseTier.qty || !tier.qty) return 0;
-    var baseUnit = baseTier.priceGems / baseTier.qty;
-    if (baseUnit <= 0) return 0;
-    var unit = tier.priceGems / tier.qty;
-    if (unit >= baseUnit - 1e-9) return 0;
-    return Math.min(100, Math.max(0, Math.round((1 - unit / baseUnit) * 100)));
-  }
-
-  function marketDupeTierDiscountPct(item, tierIdx) {
-    var tiers = item.tiers || [];
-    if (tiers.length < 2 || tierIdx < 1) return 0;
-    return marketBulkDiscountPctRaw(tiers[0], tiers[tierIdx]);
-  }
-
-  function marketKeyTierDiscountPct(keyTiers, tierIdx) {
-    if (!keyTiers || keyTiers.length < 2 || tierIdx < 1) return 0;
-    return marketBulkDiscountPctRaw(keyTiers[0], keyTiers[tierIdx]);
-  }
-
-  function loadMarketTab() {
-    var loadEl = document.getElementById('market-loading');
-    var errEl = document.getElementById('market-error');
-    var contentEl = document.getElementById('market-content');
-    if (!loadEl || !contentEl) return;
-    if (marketCatalog) {
-      loadEl.style.display = 'none';
-      if (errEl) errEl.style.display = 'none';
-      contentEl.style.display = '';
-      renderMarketFull();
-      return;
-    }
-    loadEl.style.display = '';
-    if (errEl) errEl.style.display = 'none';
-    contentEl.style.display = 'none';
-    fetch('/api/market/catalog')
-      .then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      })
-      .then(function (data) {
-        marketCatalog = normalizeMarketCatalog(data);
-        loadEl.style.display = 'none';
-        if (errEl) errEl.style.display = 'none';
-        contentEl.style.display = '';
-        (marketCatalog.dupes || []).forEach(function (d) {
-          if (marketDupeTier[d.id] == null) marketDupeTier[d.id] = 0;
-          if (marketMaxingQtys[d.id] == null) marketMaxingQtys[d.id] = 0;
-        });
-        renderMarketFull();
-      })
-      .catch(function (e) {
-        loadEl.style.display = 'none';
-        if (errEl) {
-          errEl.style.display = '';
-          errEl.textContent = 'Could not load catalog. ' + (e && e.message ? e.message : '');
-        }
-        contentEl.style.display = 'none';
-      });
-  }
-
-  function marketCartTotal() {
-    return marketCart.reduce(function (s, x) {
-      return s + (Number(x.priceGems) || 0);
-    }, 0);
-  }
-
-  function renderMarketCart() {
-    var wrap = document.getElementById('market-cart-items');
-    var countEl = document.getElementById('market-cart-count');
-    var totalEl = document.getElementById('market-cart-total-gems');
-    if (!wrap) return;
-    if (countEl) countEl.textContent = String(marketCart.length);
-    if (totalEl) totalEl.textContent = String(marketCartTotal());
-    if (!marketCart.length) {
-      wrap.innerHTML = '<div class="market-cart-line-meta" style="padding:8px;">Cart is empty.</div>';
-      return;
-    }
-    wrap.innerHTML = marketCart
-      .map(function (line) {
-        return (
-          '<div class="market-cart-line" data-cart-id="' +
-          escapeHtml(line.id) +
-          '">' +
-          '<div><div style="font-weight:700;color:var(--text-dim);">' +
-          escapeHtml(line.name) +
-          '</div><div class="market-cart-line-meta">' +
-          escapeHtml(line.detail) +
-          ' · ' +
-          escapeHtml(String(line.priceGems)) +
-          'G</div></div>' +
-          '<button type="button" class="market-cart-remove" data-cart-remove="' +
-          escapeHtml(line.id) +
-          '">×</button></div>'
-        );
-      })
-      .join('');
-  }
-
-  function marketFilterSortScripts(scripts) {
-    var list = scripts.slice();
-    var q = (marketScriptSearch || '').trim().toLowerCase();
-    if (q) {
-      list = list.filter(function (s) {
-        var blob = (
-          String(s.name || '') +
-          ' ' +
-          String(s.author || '') +
-          ' ' +
-          String(s.description || '') +
-          ' ' +
-          String(s.category || '') +
-          ' ' +
-          (s.tags || []).join(' ')
-        ).toLowerCase();
-        return blob.indexOf(q) >= 0;
-      });
-    }
-    if (marketScriptCat && marketScriptCat !== 'All') {
-      list = list.filter(function (s) {
-        return String(s.category || '') === marketScriptCat;
-      });
-    }
-    if (marketScriptPrice === 'Free') {
-      list = list.filter(function (s) {
-        return s.tier === 'free';
-      });
-    } else if (marketScriptPrice === 'Included (Premium)') {
-      list = list.filter(function (s) {
-        return s.tier === 'premium';
-      });
-    } else if (marketScriptPrice === 'Gem Purchase') {
-      list = list.filter(function (s) {
-        return s.tier === 'instanced';
-      });
-    }
-    function priceNum(s) {
-      if (s.priceType === 'free') return 0;
-      return Number(s.priceGems) || 0;
-    }
-    if (marketScriptSort === 'Price: High to Low') {
-      list.sort(function (a, b) {
-        return priceNum(b) - priceNum(a);
-      });
-    } else if (marketScriptSort === 'Price: Low to High') {
-      list.sort(function (a, b) {
-        return priceNum(a) - priceNum(b);
-      });
-    } else if (marketScriptSort === 'Most Recently Updated') {
-      list.sort(function (a, b) {
-        return String(b.updatedLabel || '').localeCompare(String(a.updatedLabel || ''));
-      });
-    } else if (marketScriptSort === 'Most Popular') {
-      list.sort(function (a, b) {
-        return (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0) || b.id - a.id;
-      });
-    } else {
-      list.sort(function (a, b) {
-        var fs = (b.isFeatured ? 2 : 0) + (b.isNew ? 1 : 0) - ((a.isFeatured ? 2 : 0) + (a.isNew ? 1 : 0));
-        if (fs !== 0) return fs;
-        return a.id - b.id;
-      });
-    }
-    return list;
-  }
-
-  var MARKET_SEARCH_ICON =
-    '<svg class="market-script-search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>';
-  var MARKET_QS_ICON =
-    '<svg class="market-qs-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg>';
-
-  function renderMarketToolbar() {
-    var tb = document.getElementById('market-toolbar');
-    if (!tb || !marketCatalog) return;
-    if (marketSubtab !== 'scripts') {
-      tb.innerHTML = '';
-      return;
-    }
-    var cats = marketCatalog.scriptCategories || ['All'];
-    var sorts = marketCatalog.sortOptions || ['Recommended'];
-    var prices = marketCatalog.priceOptions || ['Any'];
-    function opts(arr, cur) {
-      return arr
-        .map(function (o) {
-          return (
-            '<option value="' +
-            escapeHtml(o) +
-            '"' +
-            (o === cur ? ' selected' : '') +
-            '>' +
-            escapeHtml(o) +
-            '</option>'
-          );
-        })
-        .join('');
-    }
-    var tagBtns = cats
-      .map(function (cat) {
-        var active = cat === marketScriptCat ? ' active' : '';
-        return (
-          '<button type="button" class="market-script-tag' +
-          active +
-          '" data-market-script-cat="' +
-          escapeHtml(cat) +
-          '">' +
-          escapeHtml(cat) +
-          '</button>'
-        );
-      })
-      .join('');
-    tb.innerHTML =
-      '<div class="market-scripts-explore">' +
-      '<div class="market-scripts-toprow">' +
-      '<div class="market-script-search-wrap">' +
-      MARKET_SEARCH_ICON +
-      '<input type="search" id="market-script-search" class="market-script-search" placeholder="Search scripts..." autocomplete="off" value="' +
-      escapeHtml(marketScriptSearch) +
-      '">' +
-      '</div>' +
-      '<select id="market-select-sort" class="market-script-select" aria-label="Sort scripts">' +
-      opts(sorts, marketScriptSort) +
-      '</select>' +
-      '<select id="market-select-price" class="market-script-select" aria-label="Filter by price">' +
-      opts(prices, marketScriptPrice) +
-      '</select>' +
-      '</div>' +
-      '<div class="market-scripts-tags" role="tablist" aria-label="Script categories">' +
-      tagBtns +
-      '</div></div>';
-  }
-
-  function renderMarketBody() {
-    var body = document.getElementById('market-body');
-    if (!body || !marketCatalog) return;
-    if (marketSubtab === 'scripts') {
-      var scripts = marketFilterSortScripts(marketCatalog.scripts || []);
-      var n = scripts.length;
-      var resultsBar =
-        '<div class="market-scripts-results-bar">' +
-        '<span class="market-scripts-count">Showing <strong>' +
-        n +
-        '</strong> script' +
-        (n === 1 ? '' : 's') +
-        '</span>' +
-        '<div class="market-scripts-results-actions">' +
-        '<button type="button" class="market-scripts-submit-btn" data-market-submit-script>Submit Script</button>' +
-        '<button type="button" class="market-scripts-clear-link" data-market-scripts-clear>Clear filters <span class="market-scripts-clear-x" aria-hidden="true">×</span></button>' +
-        '</div></div>';
-      var paneInner =
-        n === 0
-          ? '<div class="market-scripts-empty">' +
-            '<p class="market-scripts-empty-msg">No scripts match your filters.</p>' +
-            '<button type="button" class="market-scripts-empty-clear" data-market-scripts-clear>Clear filters</button>' +
-            '</div>'
-          : '<div class="market-grid-scripts">' + scripts.map(marketScriptCardHtml).join('') + '</div>';
-      body.innerHTML =
-        resultsBar + '<div class="market-scripts-results-pane">' + paneInner + '</div>';
-      return;
-    }
-    if (marketSubtab === 'maxing') {
-      body.innerHTML = renderMarketMaxingBody();
-      return;
-    }
-    body.innerHTML = '';
-  }
-
-  function marketScriptCardHtml(s) {
-    var feat = s.isFeatured ? ' featured' : '';
-    var tierClass = s.tier === 'free' ? ' free' : s.tier === 'premium' ? ' premium' : '';
-    var priceBlock = '';
-    if (s.priceType === 'free') {
-      priceBlock = '<div class="market-script-price">0<span class="market-gem-label">G</span><span class="sub">Free</span></div>';
-    } else if (s.priceType === 'monthly') {
-      priceBlock =
-        '<div class="market-script-price">' +
-        escapeHtml(String(s.priceGems || 0)) +
-        '<span class="market-gem-label">G</span><span class="sub">/mo</span>';
-      if (s.perRunGems != null) {
-        priceBlock +=
-          '<span class="sub">or ' + escapeHtml(String(s.perRunGems)) + 'G/run</span>';
-      }
-      priceBlock += '</div>';
-    } else if (s.priceType === 'per_run') {
-      priceBlock =
-        '<div class="market-script-price">' +
-        escapeHtml(String(s.perRunGems || 0)) +
-        '<span class="market-gem-label">G</span><span class="sub">/run</span></div>';
-    }
-    var tags = '';
-    if (s.isNew) tags += '<span class="market-tag new">New</span>';
-    if (s.isFeatured) tags += '<span class="market-tag featured">Featured</span>';
-    return (
-      '<div class="market-script-card' +
-      feat +
-      '" data-script-id="' +
-      s.id +
-      '">' +
-      '<div class="market-script-left">' +
-      '<div class="market-script-avatar">' +
-      escapeHtml(String((s.name || '?')[0] || '?')) +
-      '</div>' +
-      '<span class="market-tier-badge' +
-      tierClass +
-      '">' +
-      (s.tier === 'instanced' ? 'Gem Purchase' : s.tier === 'premium' ? 'Premium' : 'Free') +
-      '</span>' +
-      priceBlock +
-      '</div><div class="market-script-right">' +
-      '<h3 class="market-script-title">' +
-      escapeHtml(s.name || '') +
-      '</h3>' +
-      '<div class="market-script-meta"><span>' +
-      escapeHtml(s.author || '') +
-      '</span><span>' +
-      escapeHtml(s.updatedLabel || '') +
-      '</span>' +
-      '</div>' +
-      (tags ? '<div class="market-script-tags">' + tags + '</div>' : '') +
-      '<p class="market-script-desc">' +
-      escapeHtml(s.description || '') +
-      '</p>' +
-      '<div class="market-script-actions">' +
-      '<button type="button" class="setting-btn setting-btn-secondary" data-script-learn="' +
-      s.id +
-      '">Learn more</button>' +
-      (s.priceType === 'free'
-        ? '<button type="button" class="setting-btn" data-script-add="' + s.id + '">+ Add</button>'
-        : '<button type="button" class="setting-btn setting-btn-secondary" data-script-try="' +
-          s.id +
-          '">Try</button><button type="button" class="setting-btn" data-script-buy="' +
-          s.id +
-          '">Buy</button>') +
-      '</div></div></div>'
-    );
-  }
-
-  function marketDupeCardHtml(item) {
-    var ti = marketDupeTier[item.id] != null ? marketDupeTier[item.id] : 0;
-    var tier = (item.tiers || [])[ti] || { qty: 1, priceGems: 0 };
-    var tierBtns = (item.tiers || [])
-      .map(function (t, i) {
-        var disc = marketDupeTierDiscountPct(item, i);
-        var pctHtml =
-          disc > 0
-            ? '<span class="market-dupe-tier-pct">−' + disc + '%</span>'
-            : '<span class="market-dupe-tier-pct market-dupe-tier-pct-empty"></span>';
-        return (
-          '<button type="button" class="' +
-          (i === ti ? 'active' : '') +
-          '" data-dupe-tier="' +
-          item.id +
-          ':' +
-          i +
-          '">' +
-          '<span class="market-dupe-tier-qty">' +
-          t.qty +
-          '</span>' +
-          pctHtml +
-          '</button>'
-        );
-      })
-      .join('');
-    var selDisc = marketDupeTierDiscountPct(item, ti);
-    var savePill =
-      selDisc > 0
-        ? '<span class="market-dupe-save-pill">Save ' + selDisc + '%</span>'
-        : '';
-    return (
-      '<div class="market-dupe-card" data-dupe-id="' +
-      item.id +
-      '">' +
-      '<div class="market-dupe-head"><div class="market-dupe-icon">' +
-      (item.icon || '📦') +
-      '</div><div class="market-dupe-name">' +
-      escapeHtml(item.name || '') +
-      '</div></div>' +
-      '<div class="market-dupe-tiers"><div class="market-dupe-tiers-label">Quantity <span class="market-dupe-tiers-hint">(up to 30% off at ×100)</span></div>' +
-      '<div class="market-tier-btns">' +
-      tierBtns +
-      '</div></div>' +
-      '<div class="market-dupe-foot"><div class="market-dupe-foot-price">' +
-      '<div class="market-dupe-foot-price-row"><strong class="market-price-num">' +
-      tier.priceGems +
-      '</strong><span class="market-gem-label">G</span></div>' +
-      savePill +
-      '</div>' +
-      '<button type="button" class="setting-btn market-dupe-buy-btn" data-dupe-add="' +
-      item.id +
-      '">Buy ×' +
-      tier.qty +
-      '</button></div></div>'
-    );
-  }
-
-  function marketItemTileHtml(it) {
-    var r = String(it.rarity || 'common');
-    return (
-      '<div class="market-item-tile rarity-' +
-      escapeHtml(r) +
-      '" data-item-id="' +
-      it.id +
-      '">' +
-      '<div class="market-item-hero rarity-' +
-      escapeHtml(r) +
-      '">' +
-      (it.isNew ? '<span class="market-item-new">NEW</span>' : '') +
-      '<span>' +
-      escapeHtml(String((it.name || '?')[0] || '?')) +
-      '</span></div>' +
-      '<div class="market-item-body">' +
-      '<p class="market-item-name">' +
-      escapeHtml(it.name || '') +
-      '</p>' +
-      '<div class="market-item-row"><span class="rarity-' +
-      escapeHtml(r) +
-      '" style="text-transform:capitalize;font-weight:700;font-size:10px;">' +
-      escapeHtml(r) +
-      '</span>' +
-      (it.stat
-        ? '<span style="color:var(--accent);font-size:10px;font-weight:600;">' +
-          escapeHtml(it.stat) +
-          '</span>'
-        : '') +
-      '</div>' +
-      '<div class="market-item-row"><strong class="market-price-num">' +
-      it.priceGems +
-      '</strong><span class="market-gem-label">G</span>' +
-      '<span style="color:var(--text-muted);font-size:10px;">' +
-      escapeHtml(it.itemType || '') +
-      '</span></div></div></div>'
-    );
-  }
-
-  function marketAccountsPanelHtml() {
-    var tiers = marketCatalog.keyTiers || [];
-    var ti = marketKeySel.tierIdx;
-    if (ti < 0 || ti >= tiers.length) ti = 0;
-    var t = tiers[ti] || { qty: 0, priceGems: 0 };
-    var base = t.priceGems || 0;
-    var mult = marketKeySel.tenStar ? 1 + (marketCatalog.key10StarSurcharge || 0) : 1;
-    var finalPrice = Math.round(base * mult);
-    var kDiscSel = marketKeyTierDiscountPct(tiers, ti);
-    var tierBtns = tiers
-      .map(function (kt, i) {
-        var kd = marketKeyTierDiscountPct(tiers, i);
-        var pctLine =
-          kd > 0
-            ? '<span class="market-key-tier-pct">−' + kd + '%</span>'
-            : '<span class="market-key-tier-pct market-key-tier-pct-empty"></span>';
-        return (
-          '<button type="button" class="' +
-          (i === ti ? 'active' : '') +
-          '" data-key-tier-idx="' +
-          i +
-          '"><span class="market-key-tier-main">' +
-          kt.qty +
-          ' keys · ' +
-          kt.priceGems +
-          'G</span>' +
-          pctLine +
-          '</button>'
-        );
-      })
-      .join('');
-    var keySavePill =
-      kDiscSel > 0
-        ? '<span class="market-key-save-pill">Save ' + kDiscSel + '%</span>'
-        : '';
-    return (
-      '<div class="market-accounts-panel">' +
-      '<h3>Key orders</h3>' +
-      '<p>Bundle size and optional 10★ account surcharge. Larger bundles save up to <strong class="market-key-max-save">35%</strong>. Server will validate on checkout.</p>' +
-      '<div class="market-key-tiers">' +
-      tierBtns +
-      '</div>' +
-      '<div class="market-key-options">' +
-      '<label class="market-key-toggle-row">' +
-      '<span class="market-key-toggle-text">10★ accounts (+' +
-      Math.round((marketCatalog.key10StarSurcharge || 0) * 100) +
-      '%)</span>' +
-      '<span class="toggle-switch market-key-toggle">' +
-      '<input type="checkbox" id="market-key-10star"' +
-      (marketKeySel.tenStar ? ' checked' : '') +
-      ' />' +
-      '<span class="toggle-slider"></span></span></label></div>' +
-      '<div class="market-key-price-row">' +
-      '<div class="market-key-price-wrap">' +
-      '<div class="market-key-price">' +
-      finalPrice +
-      '<span class="market-gem-label">G</span> <span class="market-key-price-sub">(' +
-      t.qty +
-      ' keys)</span></div>' +
-      keySavePill +
-      '</div>' +
-      '<button type="button" class="setting-btn market-key-add-btn" data-key-add="1">Add</button></div></div>'
-    );
-  }
-
-  function maxingBestTier(item, qty) {
-    var tiers = item.tiers || [];
-    if (!tiers.length) return { qty: 1, priceGems: 0 };
-    var best = tiers[0];
-    for (var i = 1; i < tiers.length; i++) {
-      if (tiers[i].qty <= qty) best = tiers[i];
-    }
-    return best;
-  }
-
-  function maxingSubtotal(item, qty) {
-    if (qty <= 0) return 0;
-    var t = maxingBestTier(item, qty);
-    return Math.round(qty * (t.priceGems / t.qty));
-  }
-
-  function maxingDiscount(item, qty) {
-    var tiers = item.tiers || [];
-    if (tiers.length < 2 || qty < 1) return 0;
-    var base = tiers[0];
-    var best = maxingBestTier(item, qty);
-    if (best === base || best.qty === base.qty) return 0;
-    return Math.round((1 - (best.priceGems / best.qty) / (base.priceGems / base.qty)) * 100);
-  }
-
-  function maxingPotIconHtml(item) {
-    if (item.objectType != null) {
-      return buildItemSpriteHtml(
-        { objectType: item.objectType, name: item.name, objectTypeHex: '0x' + Number(item.objectType).toString(16) },
-        'market-maxing-pot-sprite',
-        null,
-        'strict'
-      );
-    }
-    return '<span class="market-maxing-icon">' + escapeHtml(item.icon || '💊') + '</span>';
-  }
-
-  function renderMarketMaxingBody() {
-    var pots = marketCatalog ? (marketCatalog.dupes || []) : [];
-    var grandTotal = 0;
-    var rows = pots.map(function (item) {
-      var qty = marketMaxingQtys[item.id] || 0;
-      var sub = maxingSubtotal(item, qty);
-      var disc = maxingDiscount(item, qty);
-      var basePrice = ((item.tiers || [])[0] || { priceGems: 0 }).priceGems;
-      grandTotal += sub;
-      return (
-        '<div class="market-maxing-row" data-pot-id="' + item.id + '">' +
-        maxingPotIconHtml(item) +
-        '<span class="market-maxing-name">' + escapeHtml(item.name || '') + '</span>' +
-        '<span class="market-maxing-unit">' + basePrice + 'G ea' +
-          '<span class="market-maxing-disc"' + (disc > 0 ? '' : ' style="display:none"') + '>−' + disc + '%</span>' +
-        '</span>' +
-        '<div class="market-maxing-stepper">' +
-          '<button type="button" data-maxing-dec="' + item.id + '">−</button>' +
-          '<input type="number" min="0" max="9999" value="' + qty + '" data-maxing-input="' + item.id + '">' +
-          '<button type="button" data-maxing-inc="' + item.id + '">+</button>' +
-        '</div>' +
-        '<span class="market-maxing-subtotal' + (qty <= 0 ? ' market-maxing-subtotal-dim' : '') + '">' +
-          (qty > 0 ? sub + 'G' : '—') +
-        '</span>' +
-        '</div>'
-      );
-    }).join('');
-
-    return (
-      '<div class="market-maxing-panel">' +
-      '<div class="market-maxing-header">' +
-        '<span class="market-maxing-preset-label">Quick fill</span>' +
-        '<div class="market-maxing-presets">' +
-          '<button type="button" class="market-maxing-preset-btn" data-maxing-preset="10">×10 each</button>' +
-          '<button type="button" class="market-maxing-preset-btn" data-maxing-preset="45">×45 each</button>' +
-          '<button type="button" class="market-maxing-preset-btn market-maxing-clear-btn" data-maxing-preset="0">Clear</button>' +
-        '</div>' +
-      '</div>' +
-      '<div class="market-maxing-list">' + rows + '</div>' +
-      '<div class="market-maxing-footer">' +
-        '<span class="market-maxing-footer-label">Total</span>' +
-        '<span class="market-maxing-footer-total">' + (grandTotal > 0 ? grandTotal + 'G' : '—') + '</span>' +
-        '<button type="button" class="setting-btn market-maxing-add-btn"' +
-          (grandTotal === 0 ? ' disabled' : '') + ' data-maxing-add-all>Add to Cart</button>' +
-      '</div>' +
-      '</div>'
-    );
-  }
-
-  function refreshMaxingTotals() {
-    if (!marketCatalog || marketSubtab !== 'maxing') return;
-    var pots = marketCatalog.dupes || [];
-    var grandTotal = 0;
-    pots.forEach(function (item) {
-      var qty = marketMaxingQtys[item.id] || 0;
-      var sub = maxingSubtotal(item, qty);
-      var disc = maxingDiscount(item, qty);
-      grandTotal += sub;
-      var row = document.querySelector('.market-maxing-row[data-pot-id="' + item.id + '"]');
-      if (!row) return;
-      var subEl = row.querySelector('.market-maxing-subtotal');
-      if (subEl) {
-        subEl.textContent = qty > 0 ? sub + 'G' : '—';
-        subEl.classList.toggle('market-maxing-subtotal-dim', qty <= 0);
-      }
-      var discEl = row.querySelector('.market-maxing-disc');
-      if (discEl) {
-        discEl.textContent = disc > 0 ? '−' + disc + '%' : '';
-        discEl.style.display = disc > 0 ? '' : 'none';
-      }
-    });
-    var totalEl = document.querySelector('.market-maxing-footer-total');
-    if (totalEl) totalEl.textContent = grandTotal > 0 ? grandTotal + 'G' : '—';
-    var addBtn = document.querySelector('[data-maxing-add-all]');
-    if (addBtn) addBtn.disabled = grandTotal === 0;
-  }
-
-  function renderMarketFull() {
-    renderMarketToolbar();
-    renderMarketBody();
-    renderMarketCart();
-    syncMarketNavActive();
-  }
-
-  function syncMarketNavActive() {
-    var nav = document.getElementById('market-nav');
-    if (!nav) return;
-    nav.querySelectorAll('.market-nav-btn').forEach(function (btn) {
-      btn.classList.toggle('active', btn.getAttribute('data-market-sub') === marketSubtab);
-    });
-  }
-
-  function findScriptById(id) {
-    return (marketCatalog.scripts || []).find(function (s) {
-      return s.id === id;
-    });
-  }
-
-  function closeMarketScriptBuyModal() {
-    var modal = document.getElementById('market-script-buy-modal');
-    if (!modal) return;
-    modal.style.display = 'none';
-    modal.setAttribute('aria-hidden', 'true');
-    var actions = document.getElementById('market-script-buy-modal-actions');
-    if (actions) actions.innerHTML = '';
-  }
-
-  function pushScriptCartLine(script, detail, priceGems) {
-    marketCart.push({
-      id: 'script-' + script.id + '-' + Date.now(),
-      type: 'script',
-      name: script.name,
-      detail: detail,
-      priceGems: priceGems,
-    });
-    renderMarketCart();
-  }
-
-  function openMarketScriptBuyModal(script) {
-    var modal = document.getElementById('market-script-buy-modal');
-    var titleEl = document.getElementById('market-script-buy-modal-title');
-    var actionsEl = document.getElementById('market-script-buy-modal-actions');
-    if (!modal || !titleEl || !actionsEl) return;
-
-    titleEl.textContent = script.name || 'Purchase';
-
-    if (script.priceType === 'monthly' && script.altPriceGems != null) {
-      var mo = script.priceGems || 0;
-      var once = script.altPriceGems;
-      actionsEl.innerHTML =
-        '<button type="button" class="setting-btn market-modal-choice" data-script-billing-choice="monthly" data-script-billing-id="' +
-        script.id +
-        '">Monthly — ' +
-        mo +
-        'G<span class="market-modal-choice-sub">/mo</span></button>' +
-        '<button type="button" class="setting-btn market-modal-choice" data-script-billing-choice="once" data-script-billing-id="' +
-        script.id +
-        '">One-time — ' +
-        once +
-        'G</button>';
-    } else {
-      actionsEl.innerHTML = '';
-    }
-
-    modal.style.display = '';
-    modal.setAttribute('aria-hidden', 'false');
-  }
-
-  function marketTabClickHandler(ev) {
-    var t = ev.target;
-    if (!t || !t.closest) return;
-    var navBtn = t.closest('.market-nav-btn');
-    if (navBtn && navBtn.getAttribute('data-market-sub')) {
-      marketSubtab = navBtn.getAttribute('data-market-sub');
-      renderMarketFull();
-      return;
-    }
-    var scriptPill = t.closest('[data-market-script-cat]');
-    if (scriptPill && marketCatalog && marketSubtab === 'scripts') {
-      marketScriptCat = scriptPill.getAttribute('data-market-script-cat') || 'All';
-      var mtb = document.getElementById('market-toolbar');
-      if (mtb) {
-        mtb.querySelectorAll('.market-script-tag').forEach(function (b) {
-          b.classList.toggle('active', b.getAttribute('data-market-script-cat') === marketScriptCat);
-        });
-      }
-      renderMarketBody();
-      return;
-    }
-    if (t.closest('[data-market-scripts-clear]') && marketSubtab === 'scripts') {
-      marketScriptSearch = '';
-      marketScriptCat = 'All';
-      marketScriptSort = 'Recommended';
-      marketScriptPrice = 'Any';
-      renderMarketToolbar();
-      renderMarketBody();
-      return;
-    }
-    if (t.closest('[data-market-submit-script]') && marketSubtab === 'scripts') {
-      openMarketSubmitScriptModal();
-      return;
-    }
-    var rm = t.closest('[data-cart-remove]');
-    if (rm) {
-      var cid = rm.getAttribute('data-cart-remove');
-      marketCart = marketCart.filter(function (x) {
-        return x.id !== cid;
-      });
-      renderMarketCart();
-      return;
-    }
-    var sid = t.closest('[data-script-learn]');
-    if (sid) {
-      var s1 = findScriptById(parseInt(sid.getAttribute('data-script-learn'), 10));
-      if (s1) window.alert(s1.name + '\n\n' + (s1.description || ''));
-      return;
-    }
-    var tryB = t.closest('[data-script-try]');
-    if (tryB) {
-      window.alert('Try flow will open when your server implements it.');
-      return;
-    }
-    var addB = t.closest('[data-script-add]');
-    if (addB && marketCatalog) {
-      var s2 = findScriptById(parseInt(addB.getAttribute('data-script-add'), 10));
-      if (s2 && s2.priceType === 'free') {
-        marketCart.push({
-          id: 'script-' + s2.id + '-' + Date.now(),
-          type: 'script',
-          name: s2.name,
-          detail: 'Free script',
-          priceGems: 0,
-        });
-        renderMarketCart();
-      }
-      return;
-    }
-    var billingChoice = t.closest('[data-script-billing-choice]');
-    if (billingChoice && marketCatalog) {
-      var bid = parseInt(billingChoice.getAttribute('data-script-billing-id'), 10);
-      var mode = billingChoice.getAttribute('data-script-billing-choice');
-      var sb = findScriptById(bid);
-      if (sb) {
-        if (mode === 'monthly') {
-          pushScriptCartLine(sb, 'Monthly', sb.priceGems || 0);
-        } else if (mode === 'once' && sb.altPriceGems != null) {
-          pushScriptCartLine(sb, 'One-time', sb.altPriceGems);
-        }
-      }
-      closeMarketScriptBuyModal();
-      return;
-    }
-
-    var modalClose = t.closest('[data-market-modal-close]');
-    if (modalClose) {
-      closeMarketScriptBuyModal();
-      return;
-    }
-
-    var buyB = t.closest('[data-script-buy]');
-    if (buyB && marketCatalog) {
-      var s3 = findScriptById(parseInt(buyB.getAttribute('data-script-buy'), 10));
-      if (s3) {
-        if (s3.priceType === 'monthly' && s3.altPriceGems != null) {
-          openMarketScriptBuyModal(s3);
-        } else if (s3.priceType === 'monthly') {
-          pushScriptCartLine(s3, 'Monthly', s3.priceGems || 0);
-        } else {
-          pushScriptCartLine(s3, 'One-time', s3.priceGems || 0);
-        }
-      }
-      return;
-    }
-    var maxDec = t.closest('[data-maxing-dec]');
-    if (maxDec) {
-      var mdId = parseInt(maxDec.getAttribute('data-maxing-dec'), 10);
-      marketMaxingQtys[mdId] = Math.max(0, (marketMaxingQtys[mdId] || 0) - 1);
-      var mdInp = document.querySelector('[data-maxing-input="' + mdId + '"]');
-      if (mdInp) mdInp.value = marketMaxingQtys[mdId];
-      refreshMaxingTotals();
-      return;
-    }
-    var maxInc = t.closest('[data-maxing-inc]');
-    if (maxInc) {
-      var miId = parseInt(maxInc.getAttribute('data-maxing-inc'), 10);
-      marketMaxingQtys[miId] = Math.min(9999, (marketMaxingQtys[miId] || 0) + 1);
-      var miInp = document.querySelector('[data-maxing-input="' + miId + '"]');
-      if (miInp) miInp.value = marketMaxingQtys[miId];
-      refreshMaxingTotals();
-      return;
-    }
-    var maxPreset = t.closest('[data-maxing-preset]');
-    if (maxPreset && marketCatalog) {
-      var mpQty = parseInt(maxPreset.getAttribute('data-maxing-preset'), 10);
-      (marketCatalog.dupes || []).forEach(function (item) {
-        marketMaxingQtys[item.id] = mpQty;
-        var mpInp = document.querySelector('[data-maxing-input="' + item.id + '"]');
-        if (mpInp) mpInp.value = mpQty;
-      });
-      refreshMaxingTotals();
-      return;
-    }
-    var maxAdd = t.closest('[data-maxing-add-all]');
-    if (maxAdd && marketCatalog) {
-      (marketCatalog.dupes || []).forEach(function (item) {
-        var qty = marketMaxingQtys[item.id] || 0;
-        if (qty <= 0) return;
-        var sub = maxingSubtotal(item, qty);
-        marketCart.push({
-          id: 'maxing-' + item.id + '-' + Date.now() + Math.random(),
-          type: 'maxing',
-          name: item.name,
-          detail: '×' + qty,
-          priceGems: sub,
-        });
-      });
-      renderMarketCart();
-      return;
-    }
-    var tierB = t.closest('[data-dupe-tier]');
-    if (tierB) {
-      var parts = (tierB.getAttribute('data-dupe-tier') || '').split(':');
-      var did = parseInt(parts[0], 10);
-      var idx = parseInt(parts[1], 10);
-      if (!isNaN(did) && !isNaN(idx)) {
-        marketDupeTier[did] = idx;
-        renderMarketBody();
-        renderMarketCart();
-      }
-      return;
-    }
-    var dupeAdd = t.closest('[data-dupe-add]');
-    if (dupeAdd && marketCatalog) {
-      var dupeId = parseInt(dupeAdd.getAttribute('data-dupe-add'), 10);
-      var dupe = (marketCatalog.dupes || []).find(function (d) {
-        return d.id === dupeId;
-      });
-      if (dupe) {
-        var dti = marketDupeTier[dupe.id] != null ? marketDupeTier[dupe.id] : 0;
-        var dt = (dupe.tiers || [])[dti];
-        if (dt) {
-          marketCart.push({
-            id: 'dupe-' + dupe.id + '-' + dt.qty + '-' + Date.now(),
-            type: 'dupe',
-            name: dupe.name,
-            detail: '×' + dt.qty,
-            priceGems: dt.priceGems,
-          });
-          renderMarketCart();
-        }
-      }
-      return;
-    }
-    var itemEl = t.closest('[data-item-id]');
-    if (itemEl && marketCatalog) {
-      var iid = parseInt(itemEl.getAttribute('data-item-id'), 10);
-      var it = (marketCatalog.items || []).find(function (x) {
-        return x.id === iid;
-      });
-      if (it) {
-        marketCart.push({
-          id: 'item-' + it.id + '-' + Date.now(),
-          type: 'item',
-          name: it.name,
-          detail: it.seller || '',
-          priceGems: it.priceGems || 0,
-        });
-        renderMarketCart();
-      }
-      return;
-    }
-    var kt = t.closest('[data-key-tier-idx]');
-    if (kt) {
-      marketKeySel.tierIdx = parseInt(kt.getAttribute('data-key-tier-idx'), 10);
-      renderMarketBody();
-      return;
-    }
-    var keyAdd = t.closest('[data-key-add]');
-    if (keyAdd && marketCatalog) {
-      var tiers2 = marketCatalog.keyTiers || [];
-      var tix = marketKeySel.tierIdx;
-      if (tix < 0 || tix >= tiers2.length) tix = 0;
-      var tk = tiers2[tix];
-      var b = tk.priceGems || 0;
-      var m = marketKeySel.tenStar ? 1 + (marketCatalog.key10StarSurcharge || 0) : 1;
-      var fp = Math.round(b * m);
-      marketCart.push({
-        id: 'keys-' + tk.qty + '-' + Date.now(),
-        type: 'order',
-        name: 'Key order (' + tk.qty + ' keys)',
-        detail: marketKeySel.tenStar ? '10★ surcharge' : 'Standard',
-        priceGems: fp,
-      });
-      renderMarketCart();
-      return;
-    }
-  }
-
-  function marketTabChangeHandler(ev) {
-    var tg = ev.target;
-    if (tg && tg.id === 'market-select-sort') {
-      marketScriptSort = tg.value;
-      renderMarketBody();
-    } else if (tg && tg.id === 'market-select-price') {
-      marketScriptPrice = tg.value;
-      renderMarketBody();
-    } else if (tg && tg.id === 'market-key-10star') {
-      marketKeySel.tenStar = !!tg.checked;
-      renderMarketBody();
-    }
-  }
-
-  var marketTabEl = document.getElementById('tab-market');
-  if (marketTabEl) {
-    marketTabEl.addEventListener('click', marketTabClickHandler);
-    marketTabEl.addEventListener('change', marketTabChangeHandler);
-    marketTabEl.addEventListener('input', function (ev) {
-      var tg = ev.target;
-      if (tg && tg.id === 'market-script-search' && marketSubtab === 'scripts') {
-        marketScriptSearch = tg.value || '';
-        renderMarketBody();
-      }
-      var mqi = tg && tg.getAttribute && tg.getAttribute('data-maxing-input');
-      if (mqi && marketSubtab === 'maxing') {
-        var mqv = parseInt(tg.value, 10);
-        if (isNaN(mqv) || mqv < 0) mqv = 0;
-        if (mqv > 9999) mqv = 9999;
-        marketMaxingQtys[parseInt(mqi, 10)] = mqv;
-        refreshMaxingTotals();
-      }
-    });
-  }
-
-  var marketSubmitScriptOverlay = document.getElementById('market-submit-script-overlay');
-
-  function openMarketSubmitScriptModal() {
-    if (!marketSubmitScriptOverlay) return;
-    if (typeof closeMarketScriptBuyModal === 'function') closeMarketScriptBuyModal();
-    marketSubmitScriptOverlay.classList.remove('hidden');
-    var n = document.getElementById('market-submit-script-name');
-    if (n) {
-      setTimeout(function () {
-        n.focus();
-      }, 30);
-    }
-  }
-
-  function closeMarketSubmitScriptModal() {
-    if (!marketSubmitScriptOverlay) return;
-    marketSubmitScriptOverlay.classList.add('hidden');
-    var f = document.getElementById('market-submit-script-form');
-    if (f) f.reset();
-    var fn = document.getElementById('market-submit-script-filename');
-    if (fn) fn.textContent = 'No file chosen';
-  }
-
-  if (marketSubmitScriptOverlay) {
-    marketSubmitScriptOverlay.addEventListener('click', function (e) {
-      if (e.target === marketSubmitScriptOverlay) closeMarketSubmitScriptModal();
-    });
-  }
-
-  var marketSubmitScriptX = document.getElementById('market-submit-script-x');
-  var marketSubmitScriptCancel = document.getElementById('market-submit-script-cancel');
-  if (marketSubmitScriptX) marketSubmitScriptX.addEventListener('click', closeMarketSubmitScriptModal);
-  if (marketSubmitScriptCancel) marketSubmitScriptCancel.addEventListener('click', closeMarketSubmitScriptModal);
-
-  var marketSubmitScriptFile = document.getElementById('market-submit-script-file');
-  var marketSubmitScriptFilename = document.getElementById('market-submit-script-filename');
-  if (marketSubmitScriptFile && marketSubmitScriptFilename) {
-    marketSubmitScriptFile.addEventListener('change', function () {
-      var file = marketSubmitScriptFile.files && marketSubmitScriptFile.files[0];
-      marketSubmitScriptFilename.textContent = file ? file.name : 'No file chosen';
-    });
-  }
-
-  var marketSubmitScriptForm = document.getElementById('market-submit-script-form');
-  if (marketSubmitScriptForm) {
-    marketSubmitScriptForm.addEventListener('submit', function (e) {
-      e.preventDefault();
-      var nameEl = document.getElementById('market-submit-script-name');
-      var name = nameEl ? String(nameEl.value || '').trim() : '';
-      if (!name) {
-        window.alert('Please enter a script name.');
-        return;
-      }
-      var fileEl = document.getElementById('market-submit-script-file');
-      var chosen = fileEl && fileEl.files && fileEl.files[0];
-      var payload = {
-        name: name,
-        description: String(
-          (document.getElementById('market-submit-script-description') || {}).value || '',
-        ).trim(),
-        category: String((document.getElementById('market-submit-script-category') || {}).value || '').trim(),
-        tags: String((document.getElementById('market-submit-script-tags') || {}).value || '').trim(),
-        pricing: String((document.getElementById('market-submit-script-pricing') || {}).value || 'free'),
-        fileName: chosen ? chosen.name : null,
-        fileSize: chosen ? chosen.size : 0,
-        hasFile: !!chosen,
-      };
-      var sendBtn = document.getElementById('market-submit-script-send');
-      if (sendBtn) {
-        sendBtn.disabled = true;
-      }
-      fetch('/api/market/script-submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-        .then(function (r) {
-          return r.text().then(function (text) {
-            return { ok: r.ok, text: text };
-          });
-        })
-        .then(function (x) {
-          var j = {};
-          try {
-            j = x.text ? JSON.parse(x.text) : {};
-          } catch (e2) {
-            j = { error: x.text };
-          }
-          var msg = j.message || j.error || 'Done.';
-          if (x.ok && j.ok !== false) {
-            window.alert(msg);
-            closeMarketSubmitScriptModal();
-          } else {
-            window.alert('Submit failed: ' + msg);
-          }
-        })
-        .catch(function (err) {
-          window.alert('Request failed: ' + (err && err.message ? err.message : err));
-        })
-        .then(function () {
-          if (sendBtn) sendBtn.disabled = false;
-        });
-    });
-  }
-
-  document.addEventListener('keydown', function (e) {
-    if (e.key !== 'Escape') return;
-    if (marketSubmitScriptOverlay && !marketSubmitScriptOverlay.classList.contains('hidden')) {
-      closeMarketSubmitScriptModal();
-    }
-  });
-
-  var marketCheckoutBtn = document.getElementById('market-checkout-btn');
-  if (marketCheckoutBtn) {
-    marketCheckoutBtn.addEventListener('click', function () {
-      var payload = { items: marketCart, totalGems: marketCartTotal() };
-      fetch('/api/market/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-        .then(function (r) {
-          return r.text().then(function (text) {
-            var j = {};
-            try {
-              j = text ? JSON.parse(text) : {};
-            } catch (e) {
-              j = { error: text || 'Non-JSON response' };
-            }
-            return { ok: r.ok, j: j };
-          });
-        })
-        .then(function (x) {
-          var msg = (x.j && x.j.message) || (x.j && x.j.error) || JSON.stringify(x.j);
-          if (x.j && x.j.stub) {
-            window.alert('Stub response:\n' + msg);
-          } else if (x.ok) {
-            window.alert('Checkout: ' + msg);
-            marketCart = [];
-            renderMarketCart();
-          } else {
-            window.alert('Checkout failed: ' + msg);
-          }
-        })
-        .catch(function (e) {
-          window.alert('Checkout request failed: ' + (e && e.message ? e.message : e));
-        });
-    });
-  }
-
-  var marketClearBtn = document.getElementById('market-cart-clear-btn');
-  if (marketClearBtn) {
-    marketClearBtn.addEventListener('click', function () {
-      marketCart = [];
-      renderMarketCart();
-    });
-  }
 
   if (logsClearBtn) {
     logsClearBtn.addEventListener('click', () => {
@@ -16647,6 +14157,7 @@
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'account-card' + (account.id === selectedAccountId ? ' selected' : '');
+      btn.setAttribute('data-account-id', account.id);
       var displayName = String(account.label || account.email || 'Unnamed Account');
       btn.innerHTML =
         '<div class="account-card-title">' +
@@ -16998,24 +14509,16 @@
   }
 
   function handleConfig(msg) {
-    // Capture bot API URL for direct script upload requests
-    if (msg.botApiUrl) window._botApiUrl = String(msg.botApiUrl);
     rotmgPath = msg.rotmgPath || '';
     rotmgPathSource = msg.rotmgPathSource || 'none';
-    var isAdminUser = !!(dashboardUser && dashboardUser.is_admin);
-    // Non-admins are always locked to singleClientOnly=true regardless of server config
-    if (isAdminUser) {
-      singleClientOnly = msg.singleClientOnly !== false;
-    } else {
-      singleClientOnly = true;
-    }
+    singleClientOnly = msg.singleClientOnly !== false;
     serverPluginConfigId = String(msg.pluginConfigId || '');
     availableServerNames = Array.isArray(msg.serverNames) ? msg.serverNames.slice() : [];
     if (singleClientOnlyToggle) {
       singleClientOnlyToggle.checked = singleClientOnly;
-      singleClientOnlyToggle.disabled = !isAdminUser;
+      singleClientOnlyToggle.disabled = false;
       var scoRow = singleClientOnlyToggle.closest('.settings-row');
-      if (scoRow) scoRow.classList.toggle('settings-row--locked', !isAdminUser);
+      if (scoRow) scoRow.classList.remove('settings-row--locked');
     }
     if (serverPluginConfigId) localStorage.setItem('pluginConfigSelected', serverPluginConfigId);
     renderAccountsTab();
@@ -17131,140 +14634,7 @@
     openDashboardTab('accounts');
   }
 
-  function setAuthOverlayLoading(loading) {
-    var mode = disconnectOverlay ? (disconnectOverlay.getAttribute('data-mode') || 'signin') : 'signin';
-    if (overlayLoginBtn) {
-      overlayLoginBtn.disabled = !!loading;
-      overlayLoginBtn.textContent = loading && mode !== 'register' ? 'Signing in...' : 'Sign in';
-    }
-    var regBtn = document.getElementById('overlay-register-btn');
-    if (regBtn) {
-      regBtn.disabled = !!loading;
-      regBtn.textContent = loading && mode === 'register' ? 'Creating account...' : 'Create account';
-    }
-    if (overlayPasswordToggleBtn) overlayPasswordToggleBtn.disabled = !!loading;
-  }
-
-  // ── Auth rate limiting (client-side) ──────────────────────────────────────
-  function authRateLimitKey(type) {
-    // type='login' → hourly bucket; type='register' → daily bucket
-    var now = new Date();
-    if (type === 'login') {
-      return 'auth_login_' + now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + 'T' + String(now.getHours()).padStart(2,'0');
-    }
-    return 'auth_register_' + now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
-  }
-  function authRateLimitCount(type) {
-    return parseInt(localStorage.getItem(authRateLimitKey(type)) || '0', 10);
-  }
-  function authRateLimitIncrement(type) {
-    var key = authRateLimitKey(type);
-    localStorage.setItem(key, String(parseInt(localStorage.getItem(key) || '0', 10) + 1));
-  }
-
-  function doDashboardLogin() {
-    var email = (overlayEmailInput && overlayEmailInput.value || '').trim();
-    var password = (overlayPasswordInput && overlayPasswordInput.value || '');
-    if (!email || !password) {
-      setOverlayLoginError('Enter email and password.');
-      return;
-    }
-    if (authRateLimitCount('login') >= 4) {
-      setOverlayLoginError('Too many login attempts. Try again next hour.');
-      return;
-    }
-    authRateLimitIncrement('login');
-    setOverlayLoginError('');
-    setAuthOverlayLoading(true);
-    fetchAuthWithTimeout('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email, password: password }),
-    }, 15000, 'Sign in timed out. The local dashboard or Realm Engine auth API is not responding.')
-      .then(function (r) { return readAuthResponse(r, 'Sign in failed.'); })
-      .then(function (data) {
-        if (!data.access_token) throw new Error('Sign in failed: no session token returned.');
-        accessToken = data.access_token || null;
-        refreshToken = data.refresh_token || null;
-        persistDashboardLoginState();
-        if (email) localStorage.setItem('lastLoginEmail', email);
-        if (overlayPasswordInput) overlayPasswordInput.value = '';
-        resetOverlayPasswordVisibility();
-        return fetchCurrentUser(true);
-      })
-      .then(function () {
-        setOverlayLoginError('');
-      })
-      .catch(function (err) {
-        setOverlayLoginError(authDisplayError(err, 'Sign in failed.'));
-      })
-      .finally(function () {
-        setAuthOverlayLoading(false);
-      });
-  }
-
-  function doRegister() {
-    var email = (overlayEmailInput && overlayEmailInput.value || '').trim();
-    var password = (overlayPasswordInput && overlayPasswordInput.value || '');
-    if (!email || !password) {
-      setOverlayLoginError('Enter email and password.');
-      return;
-    }
-    if (password.length < 6) {
-      setOverlayLoginError('Password must be at least 6 characters.');
-      return;
-    }
-    if (authRateLimitCount('register') >= 2) {
-      setOverlayLoginError('Account creation limit reached (2 per day). Try again tomorrow.');
-      return;
-    }
-    authRateLimitIncrement('register');
-    setOverlayLoginError('');
-    setAuthOverlayLoading(true);
-    fetchAuthWithTimeout('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email, password: password }),
-    }, 15000, 'Account creation timed out. The local dashboard or Realm Engine auth API is not responding.')
-      .then(function (r) { return readAuthResponse(r, 'Account creation failed.'); })
-      .then(function (data) {
-        if (!data.access_token) throw new Error('Account creation failed: no session token returned.');
-        accessToken = data.access_token || null;
-        refreshToken = data.refresh_token || null;
-        persistDashboardLoginState();
-        if (overlayPasswordInput) overlayPasswordInput.value = '';
-        resetOverlayPasswordVisibility();
-        return fetchCurrentUser(true);
-      })
-      .then(function () {
-        setOverlayLoginError('');
-        setOverlayAuthMode('signin');
-      })
-      .catch(function (err) {
-        setOverlayLoginError(authDisplayError(err, 'Account creation failed.'));
-      })
-      .finally(function () {
-        setAuthOverlayLoading(false);
-      });
-  }
-
   if (launchGameBtn) launchGameBtn.addEventListener('click', function () { doLaunchGame(); });
-  if (overlayLoginBtn) overlayLoginBtn.addEventListener('click', function () { doDashboardLogin(); });
-  var overlayRegisterBtn = document.getElementById('overlay-register-btn');
-  if (overlayRegisterBtn) overlayRegisterBtn.addEventListener('click', function () { doRegister(); });
-  var overlaySwitchRegister = document.getElementById('overlay-switch-to-register');
-  var overlaySwitchSignin = document.getElementById('overlay-switch-to-signin');
-  if (overlaySwitchRegister) overlaySwitchRegister.addEventListener('click', function () { setOverlayAuthMode('register'); });
-  if (overlaySwitchSignin) overlaySwitchSignin.addEventListener('click', function () { setOverlayAuthMode('signin'); });
-
-  document.addEventListener('keydown', function (e) {
-    if (e.key !== 'Enter') return;
-    if (!disconnectOverlay || disconnectOverlay.classList.contains('hidden')) return;
-    e.preventDefault();
-    var mode = disconnectOverlay.getAttribute('data-mode') || 'signin';
-    if (mode === 'register') doRegister();
-    else doDashboardLogin();
-  });
 
   function handleLaunchResult(msg) {
     if (accountsLaunchBtn) {
@@ -20127,7 +17497,7 @@
       });
   }
 
-  // ── Marketplace Scripts (runtime delivery) ────────────────────────────────
+  // ── Scripts runtime delivery ──────────────────────────────────────────────
 
   function normalizeScriptStatus(sc) {
     var st = String(sc && sc.status ? sc.status : 'idle').toLowerCase();
@@ -20579,219 +17949,10 @@
 
   setInterval(updateScriptsDetailRuntime, 1000);
 
-  var marketplaceScriptsPending = {};  // scriptId -> true while loading
-
-  function refreshMarketplaceScripts() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'getOwnedScripts' }));
-    }
-  }
-
-  function renderMarketplaceScripts(scripts) {
-    var listEl = document.getElementById('marketplace-scripts-list');
-    if (!listEl) return;
-    listEl.innerHTML = '';
-
-    if (!scripts.length) {
-      var empty = document.createElement('div');
-      empty.className = 'plugin-sidebar-empty';
-      empty.textContent = 'No purchased scripts. Buy scripts from the marketplace.';
-      listEl.appendChild(empty);
-      return;
-    }
-
-    scripts.forEach(function (sc) {
-      var scriptId = String(sc.script_id || sc.id || '');
-      var name = String(sc.script_name || scriptId);
-      var running = sc.running === true;
-      var cached = sc.cached === true;
-      var pending = !!marketplaceScriptsPending[scriptId];
-      var expires = sc.expires_at ? new Date(sc.expires_at).toLocaleDateString() : 'Lifetime';
-
-      var row = document.createElement('div');
-      row.className = 'plugin-sidebar-item scripts-row';
-      row.setAttribute('data-mscript-id', scriptId);
-
-      var badgeText = running ? 'running' : pending ? 'loading…' : 'idle';
-      var badgeClass = running ? 'scripts-badge-running' : pending ? 'scripts-badge-loading' : 'scripts-badge-idle';
-
-      row.innerHTML =
-        '<div class="scripts-row-main">' +
-          '<span class="scripts-row-name">' + escapeHtml(name) + '</span>' +
-          '<span class="scripts-badge ' + badgeClass + '">' + badgeText + '</span>' +
-        '</div>' +
-        '<div class="scripts-row-meta">' +
-          '<span>Expires: ' + escapeHtml(expires) + '</span>' +
-          (cached ? '<span style="color:#4ade80;font-size:11px">cached</span>' : '') +
-        '</div>' +
-        '<div class="scripts-row-actions">' +
-          '<button type="button" class="setting-btn scripts-run-btn" data-mscript-run="' + escapeHtml(scriptId) + '" data-mscript-name="' + escapeHtml(name) + '"' + (running || pending ? ' disabled' : '') + '>Run</button>' +
-          '<button type="button" class="setting-btn setting-btn-secondary scripts-stop-btn" data-mscript-stop="' + escapeHtml(scriptId) + '"' + (!running ? ' disabled' : '') + '>Stop</button>' +
-        '</div>';
-
-      listEl.appendChild(row);
-    });
-
-    listEl.querySelectorAll('[data-mscript-run]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var scriptId = String(btn.getAttribute('data-mscript-run') || '');
-        var scriptName = String(btn.getAttribute('data-mscript-name') || scriptId);
-        if (!scriptId || !ws || ws.readyState !== WebSocket.OPEN) return;
-        marketplaceScriptsPending[scriptId] = true;
-        btn.disabled = true;
-        ws.send(JSON.stringify({ type: 'runMarketplaceScript', scriptId: scriptId, scriptName: scriptName }));
-        // Refresh to show loading state
-        refreshMarketplaceScripts();
-      });
-    });
-
-    listEl.querySelectorAll('[data-mscript-stop]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var scriptId = String(btn.getAttribute('data-mscript-stop') || '');
-        if (!scriptId || !ws || ws.readyState !== WebSocket.OPEN) return;
-        ws.send(JSON.stringify({ type: 'stopMarketplaceScript', scriptId: scriptId }));
-        refreshMarketplaceScripts();
-      });
-    });
-  }
-
-  function handleMarketplaceScriptResult(msg) {
-    var scriptId = String(msg.scriptId || '');
-    delete marketplaceScriptsPending[scriptId];
-    if (!msg.ok && msg.error && !msg.stopped) {
-      var toast = document.createElement('div');
-      toast.className = 'gem-toast';
-      toast.textContent = 'Script error: ' + String(msg.error);
-      document.body.appendChild(toast);
-      setTimeout(function () { if (toast.parentNode) toast.remove(); }, 4500);
-    }
-    // Refresh to show updated running state
-    refreshMarketplaceScripts();
-  }
-
-  // Rate-limited script submission helpers (client-side)
-  function getSubmitCountToday() {
-    var today = new Date().toISOString().slice(0, 10);
-    return parseInt(localStorage.getItem('script_submits_' + today) || '0', 10);
-  }
-
-  function incrementSubmitCountToday() {
-    var today = new Date().toISOString().slice(0, 10);
-    var key = 'script_submits_' + today;
-    localStorage.setItem(key, String(parseInt(localStorage.getItem(key) || '0', 10) + 1));
-  }
-
-  function handleMarketplaceScriptSubmit(formEl, statusEl) {
-    if (getSubmitCountToday() >= 3) {
-      statusEl.textContent = 'Daily submission limit reached (3 per day). Try again tomorrow.';
-      statusEl.style.color = '#f87171';
-      return;
-    }
-
-    var nameEl = formEl.querySelector('[name="script_name"]');
-    var descEl = formEl.querySelector('[name="script_description"]');
-    var categoryEl = formEl.querySelector('[name="script_category"]');
-    var priceTypeEl = formEl.querySelector('[name="script_price_type"]');
-    var gemCostEl = formEl.querySelector('[name="script_gem_cost"]');
-    var fileEl = formEl.querySelector('[name="script_file"]');
-
-    if (!fileEl || !fileEl.files || !fileEl.files[0]) {
-      statusEl.textContent = 'Select a .mjs file to upload.';
-      statusEl.style.color = '#f87171';
-      return;
-    }
-
-    var file = fileEl.files[0];
-    if (!file.name.endsWith('.mjs')) {
-      statusEl.textContent = 'Only .mjs files are accepted.';
-      statusEl.style.color = '#f87171';
-      return;
-    }
-
-    var formData = new FormData();
-    formData.append('name', nameEl ? nameEl.value.trim() : '');
-    formData.append('description', descEl ? descEl.value.trim() : '');
-    formData.append('category', categoryEl ? categoryEl.value : '');
-    formData.append('price_type', priceTypeEl ? priceTypeEl.value : 'free');
-    formData.append('gem_cost', gemCostEl ? gemCostEl.value : '0');
-    formData.append('file', file);
-
-    // Read token from bot API session
-    var submitBtn = formEl.querySelector('[type="submit"]');
-    if (submitBtn) submitBtn.disabled = true;
-    statusEl.textContent = 'Uploading…';
-    statusEl.style.color = '';
-
-    // We need the JWT — request it via WS then do the upload
-    // For now use the global dashboardToken if available, or the plugin login token
-    var token = window._botApiToken || '';
-    if (!token) {
-      statusEl.textContent = 'Log in to the Bot API first.';
-      statusEl.style.color = '#f87171';
-      if (submitBtn) submitBtn.disabled = false;
-      return;
-    }
-
-    var botApiUrl = (window._botApiUrl || '').replace(/\/+$/, '');
-    fetch((botApiUrl || '') + '/api/marketplace/scripts/upload', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + token },
-      body: formData,
-    })
-    .then(function (r) {
-      return r.json().then(function (d) { return { ok: r.ok, data: d }; });
-    })
-    .then(function (result) {
-      if (result.ok) {
-        incrementSubmitCountToday();
-        statusEl.textContent = 'Script submitted! It will be reviewed before going live.';
-        statusEl.style.color = '#4ade80';
-        formEl.reset();
-      } else {
-        statusEl.textContent = result.data.detail || 'Upload failed';
-        statusEl.style.color = '#f87171';
-      }
-    })
-    .catch(function (e) {
-      statusEl.textContent = 'Upload error: ' + e.message;
-      statusEl.style.color = '#f87171';
-    })
-    .finally(function () {
-      if (submitBtn) submitBtn.disabled = false;
-    });
-  }
-
-  // Wire up script submission form
-  (function () {
-    var form = document.getElementById('marketplace-submit-form');
-    var status = document.getElementById('marketplace-submit-status');
-    if (!form || !status) return;
-    form.addEventListener('submit', function (e) {
-      e.preventDefault();
-      handleMarketplaceScriptSubmit(form, status);
-    });
-    // Show remaining submissions today
-    var remaining = document.getElementById('marketplace-submit-remaining');
-    if (remaining) {
-      remaining.textContent = String(3 - getSubmitCountToday()) + ' submissions remaining today';
-    }
-  })();
-
   function handlePluginToggleError(msg) {
     var toast = document.createElement('div');
-    toast.className = 'gem-toast';
-    if (msg.requiredPlan) {
-      var planDisplay = String(msg.requiredPlan).charAt(0).toUpperCase() + String(msg.requiredPlan).slice(1);
-      toast.innerHTML =
-        '<span>' + (msg.reason || ('Requires ' + planDisplay + ' plan')) + '</span>' +
-        '<button class="gem-toast-action">Manage Plan</button>';
-      var actionBtn = toast.querySelector('.gem-toast-action');
-      if (actionBtn) {
-        actionBtn.addEventListener('click', function () { toast.remove(); openPlanModal(); });
-      }
-    } else {
-      toast.textContent = msg.reason || 'Cannot enable plugin';
-    }
+    toast.className = 'app-toast';
+    toast.textContent = (msg && msg.reason) ? String(msg.reason) : 'Cannot enable plugin';
     document.body.appendChild(toast);
     setTimeout(function () { if (toast.parentNode) toast.remove(); }, 4500);
   }
@@ -21259,9 +18420,9 @@
       completeTutorial();
     });
 
-    // Only show tutorial after login AND accounts have loaded — avoids false-positive on existing users.
+    // Only show tutorial after local dashboard init and accounts have loaded.
     function tryShowTutorial() {
-      if (!dashboardLoggedIn || !window._accountsLoaded) {
+      if (!dashboardReady || !window._accountsLoaded) {
         setTimeout(tryShowTutorial, 500);
         return;
       }
@@ -21278,10 +18439,9 @@
     };
   })();
 
-  // Start — show splash while restoring session, then reveal UI
+  // Start — show splash while initializing the local dashboard, then reveal UI
   var splash = document.getElementById('app-splash');
   var splashStatus = document.getElementById('app-splash-status');
-  var hasStoredToken = !!accessToken;
 
   function setSplashStatus(text, isError) {
     if (splashStatus) {
@@ -21299,17 +18459,14 @@
     splashDismissed = true;
     splash.classList.add('fade-out');
     setTimeout(function () { splash.remove(); }, 400);
-    // Show login overlay now that splash is gone
     updateDashboardAvailabilityUi();
   }
 
-  // Restore session (returns promise); splash stays visible for at least 600ms
+  // Initialize local dashboard session; splash stays visible for at least 600ms.
   var splashMinReady = false;
-  // If no stored token, dismiss quickly — go straight to login
-  var sessionReady = !hasStoredToken;
+  var sessionReady = false;
   var eamReady = !window._eamPromise;
   var splashMinTimer = setTimeout(function () { splashMinReady = true; maybeFinishSplash(); }, 600);
-  // Reduced from 5s to 3s — don't hold the splash forever if restore fails
   var splashTimeout = setTimeout(function () { splashMinReady = true; sessionReady = true; eamReady = true; maybeFinishSplash(); }, 3000);
 
   function maybeFinishSplash() {
@@ -21323,10 +18480,9 @@
     window._eamPromise.then(function() { eamReady = true; maybeFinishSplash(); });
   }
 
-  if (hasStoredToken) setSplashStatus('Restoring session...');
   restoreDashboardSessionFromTokens().then(function (ok) {
     sessionReady = true;
-    if (!ok) setSplashStatus('Session expired — please sign in');
+    if (!ok) setSplashStatus('Could not initialize dashboard', true);
     maybeFinishSplash();
   }).catch(function () {
     sessionReady = true;
@@ -21334,619 +18490,19 @@
     maybeFinishSplash();
   });
 
-  // ── Plugin Store ───────────────────────────────────────────────────────────
-  var storeManifest = null;
-  var storeInstalledMap = {};
-  var storeActiveCategory = 'all';
-
-  var STORE_CAT_COLORS = {
-    all:        null,
-    automation: '#6366f1',
-    combat:     '#ef4444',
-    visual:     '#a855f7',
-    movement:   '#14b8a6',
-    network:    '#0ea5e9',
-    utility:    '#94a3b8',
-  };
-
-  function initPluginStore() {
-    var tabNav = document.getElementById('plugin-tab-nav');
-    if (!tabNav) return;
-    tabNav.addEventListener('click', function (e) {
-      var btn = e.target.closest('.plugin-tab-nav-btn');
-      if (!btn) return;
-      var view = btn.getAttribute('data-plugin-view');
-      tabNav.querySelectorAll('.plugin-tab-nav-btn').forEach(function (b) { b.classList.remove('active'); });
-      btn.classList.add('active');
-      var installedEl = document.getElementById('plugin-view-installed');
-      var storeEl = document.getElementById('plugin-view-store');
-      if (installedEl) installedEl.style.display = view === 'installed' ? '' : 'none';
-      if (storeEl) storeEl.style.display = view === 'store' ? '' : 'none';
-      if (view === 'store' && !storeManifest) loadPluginStore();
-    });
-    var searchEl = document.getElementById('store-search');
-    var refreshBtn = document.getElementById('store-refresh-btn');
-    if (searchEl) searchEl.addEventListener('input', renderStoreGrid);
-    if (refreshBtn) refreshBtn.addEventListener('click', function () {
-      storeManifest = null;
-      storeActiveCategory = 'all';
-      loadPluginStore();
-    });
-  }
-
-  function loadPluginStore() {
-    var statusEl = document.getElementById('store-status');
-    var gridEl = document.getElementById('store-grid');
-    var chipsEl = document.getElementById('store-category-chips');
-    if (statusEl) statusEl.style.display = 'none';
-    if (chipsEl) chipsEl.innerHTML = '';
-    showStoreSkeletons();
-
-    Promise.all([
-      fetch('/api/plugins/store/installed').then(function (r) { return r.json(); }),
-      fetch('/api/plugins/store/manifest').then(function (r) { return r.json(); }),
-    ]).then(function (results) {
-      var installedData = results[0];
-      var manifestData = results[1];
-      storeInstalledMap = {};
-      if (installedData && Array.isArray(installedData.installed)) {
-        installedData.installed.forEach(function (r) { storeInstalledMap[r.id] = r; });
-      }
-      if (gridEl) gridEl.style.display = 'none';
-      if (gridEl) gridEl.innerHTML = '';
-      if (manifestData && manifestData.error) {
-        if (statusEl) { statusEl.textContent = 'Could not load store: ' + manifestData.error; statusEl.style.display = ''; }
-        return;
-      }
-      if (!manifestData || !Array.isArray(manifestData.plugins)) {
-        if (statusEl) { statusEl.textContent = 'Store unavailable.'; statusEl.style.display = ''; }
-        return;
-      }
-      storeManifest = manifestData.plugins;
-      populateStoreCategoryChips();
-      if (gridEl) gridEl.style.display = '';
-      renderStoreGrid();
-    }).catch(function (err) {
-      if (gridEl) { gridEl.style.display = 'none'; gridEl.innerHTML = ''; }
-      if (statusEl) { statusEl.textContent = 'Error: ' + err.message; statusEl.style.display = ''; }
-    });
-  }
-
-  function showStoreSkeletons() {
-    var gridEl = document.getElementById('store-grid');
-    if (!gridEl) return;
-    gridEl.innerHTML = '';
-    gridEl.style.display = '';
-    for (var i = 0; i < 6; i++) {
-      var skel = document.createElement('div');
-      skel.className = 'store-card store-card-skeleton';
-      skel.innerHTML =
-        '<div class="store-skel-banner"></div>' +
-        '<div class="store-skel-body">' +
-          '<div class="store-skel-line store-skel-title"></div>' +
-          '<div class="store-skel-line store-skel-meta"></div>' +
-          '<div class="store-skel-line store-skel-desc"></div>' +
-          '<div class="store-skel-line store-skel-desc2"></div>' +
-        '</div>' +
-        '<div class="store-skel-footer"></div>';
-      gridEl.appendChild(skel);
-    }
-  }
-
-  function populateStoreCategoryChips() {
-    var chipsEl = document.getElementById('store-category-chips');
-    if (!chipsEl || !storeManifest) return;
-    var cats = ['all'];
-    storeManifest.forEach(function (p) {
-      if (p.category && cats.indexOf(p.category) < 0) cats.push(p.category);
-    });
-    chipsEl.innerHTML = '';
-    cats.forEach(function (c) {
-      var chip = document.createElement('button');
-      chip.className = 'store-chip' + (c === storeActiveCategory ? ' active' : '');
-      chip.setAttribute('data-cat', c);
-      var color = STORE_CAT_COLORS[c] || '#40916c';
-      if (color) chip.style.setProperty('--chip-color', color);
-      chip.textContent = c === 'all' ? 'All' : (c.charAt(0).toUpperCase() + c.slice(1));
-      chip.addEventListener('click', function () {
-        storeActiveCategory = c;
-        chipsEl.querySelectorAll('.store-chip').forEach(function (el) { el.classList.remove('active'); });
-        chip.classList.add('active');
-        renderStoreGrid();
-      });
-      chipsEl.appendChild(chip);
-    });
-  }
-
-  function renderStoreGrid() {
-    var gridEl = document.getElementById('store-grid');
-    if (!gridEl || !storeManifest) return;
-    var q = ((document.getElementById('store-search') || {}).value || '').trim().toLowerCase();
-    var cat = storeActiveCategory || 'all';
-    var filtered = storeManifest.filter(function (p) {
-      if (cat !== 'all' && p.category !== cat) return false;
-      if (!q) return true;
-      return (p.name || '').toLowerCase().indexOf(q) >= 0 ||
-             (p.description || '').toLowerCase().indexOf(q) >= 0 ||
-             (p.id || '').toLowerCase().indexOf(q) >= 0;
-    });
-    gridEl.innerHTML = '';
-    if (filtered.length === 0) {
-      var empty = document.createElement('div');
-      empty.className = 'store-empty';
-      empty.innerHTML =
-        '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>' +
-        '<span>' + (q ? 'No plugins match your search.' : 'No plugins available.') + '</span>';
-      gridEl.appendChild(empty);
-      return;
-    }
-    filtered.forEach(function (p) { gridEl.appendChild(buildStoreCard(p)); });
-  }
-
-  function buildStoreCard(p) {
-    var installed = storeInstalledMap[p.id];
-    var isInstalled = !!installed;
-    var hasUpdate = isInstalled && installed.version !== p.version;
-    var cat = p.category || 'utility';
-    var words = (p.name || p.id).split(/[\s\-_]+/);
-    var initials = (words[0] ? words[0][0] : '') + (words[1] ? words[1][0] : (words[0] && words[0][1] ? words[0][1] : ''));
-    initials = initials.toUpperCase() || '??';
-
-    var card = document.createElement('div');
-    card.className = 'store-card' + (isInstalled ? ' store-card--installed' : '');
-    card.setAttribute('data-category', cat);
-
-    // Banner
-    var banner = document.createElement('div');
-    banner.className = 'store-card-banner';
-
-    var icon = document.createElement('div');
-    icon.className = 'store-card-icon';
-    icon.textContent = initials;
-
-    var catLabel = document.createElement('div');
-    catLabel.className = 'store-card-cat-label';
-    catLabel.textContent = cat;
-
-    banner.appendChild(icon);
-    banner.appendChild(catLabel);
-
-    if (isInstalled) {
-      var checkEl = document.createElement('div');
-      checkEl.className = 'store-card-installed-check';
-      checkEl.innerHTML = '<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-      banner.appendChild(checkEl);
-    }
-    card.appendChild(banner);
-
-    // Body
-    var body = document.createElement('div');
-    body.className = 'store-card-body';
-
-    var nameRow = document.createElement('div');
-    nameRow.className = 'store-card-name-row';
-    var nameEl = document.createElement('div');
-    nameEl.className = 'store-card-name';
-    nameEl.textContent = p.name || p.id;
-    nameRow.appendChild(nameEl);
-    if (hasUpdate) {
-      var pip = document.createElement('span');
-      pip.className = 'store-update-pip';
-      pip.textContent = 'Update';
-      nameRow.appendChild(pip);
-    }
-    body.appendChild(nameRow);
-
-    var meta = document.createElement('div');
-    meta.className = 'store-card-meta';
-    var authorSpan = document.createElement('span');
-    authorSpan.textContent = p.author || 'Unknown';
-    var versionSpan = document.createElement('span');
-    versionSpan.className = 'store-card-version';
-    versionSpan.textContent = 'v' + (p.version || '0.0.0');
-    meta.appendChild(authorSpan);
-    meta.appendChild(versionSpan);
-    body.appendChild(meta);
-
-    if (p.description) {
-      var desc = document.createElement('div');
-      desc.className = 'store-card-desc';
-      desc.textContent = p.description;
-      body.appendChild(desc);
-    }
-
-    if (p.tags && p.tags.length) {
-      var tags = document.createElement('div');
-      tags.className = 'store-card-tags';
-      p.tags.slice(0, 4).forEach(function (tag) {
-        var t = document.createElement('span');
-        t.className = 'store-tag';
-        t.textContent = tag;
-        tags.appendChild(t);
-      });
-      body.appendChild(tags);
-    }
-    card.appendChild(body);
-
-    // Footer
-    var footer = document.createElement('div');
-    footer.className = 'store-card-footer';
-
-    var planSpacer = document.createElement('span');
-    if (p.requiredPlan) {
-      planSpacer.className = 'store-plan-req';
-      planSpacer.textContent = p.requiredPlan.charAt(0).toUpperCase() + p.requiredPlan.slice(1);
-    }
-    footer.appendChild(planSpacer);
-
-    var btnWrap = document.createElement('div');
-    btnWrap.className = 'store-btn-wrap';
-
-    if (!isInstalled) {
-      var installBtn = document.createElement('button');
-      installBtn.className = 'store-install-btn';
-      installBtn.innerHTML = 'Install <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M6 1v7M3 5.5l3 3 3-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-      installBtn.addEventListener('click', function () { storeInstallPlugin(p, installBtn); });
-      btnWrap.appendChild(installBtn);
-    } else {
-      if (hasUpdate) {
-        var updateBtn = document.createElement('button');
-        updateBtn.className = 'store-install-btn store-update-btn';
-        updateBtn.textContent = '↑ Update';
-        updateBtn.addEventListener('click', function () { storeInstallPlugin(p, updateBtn); });
-        btnWrap.appendChild(updateBtn);
-      }
-      var removeBtn = document.createElement('button');
-      removeBtn.className = 'store-remove-btn';
-      removeBtn.textContent = 'Remove';
-      removeBtn.addEventListener('click', function () { storeRemovePlugin(p.id, removeBtn); });
-      btnWrap.appendChild(removeBtn);
-    }
-    footer.appendChild(btnWrap);
-    card.appendChild(footer);
-    return card;
-  }
-
-  function storeInstallPlugin(p, btn) {
-    var orig = btn.innerHTML;
-    btn.disabled = true;
-    btn.textContent = '…';
-    fetch('/api/plugins/store/install', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: p.id, bundleUrl: p.bundleUrl, version: p.version, name: p.name }),
-    }).then(function (r) { return r.json(); }).then(function (data) {
-      if (data.ok) {
-        storeInstalledMap[p.id] = { id: p.id, version: p.version, bundleUrl: p.bundleUrl, installedAt: new Date().toISOString() };
-        renderStoreGrid();
-      } else {
-        btn.disabled = false;
-        btn.innerHTML = orig;
-        showStoreError(data.error || 'Install failed');
-      }
-    }).catch(function (err) {
-      btn.disabled = false;
-      btn.innerHTML = orig;
-      showStoreError(err.message);
-    });
-  }
-
-  function storeRemovePlugin(id, btn) {
-    var orig = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = '…';
-    fetch('/api/plugins/store/remove', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: id }),
-    }).then(function (r) { return r.json(); }).then(function (data) {
-      if (data.ok) {
-        delete storeInstalledMap[id];
-        renderStoreGrid();
-      } else {
-        btn.disabled = false;
-        btn.textContent = orig;
-        showStoreError(data.error || 'Remove failed');
-      }
-    }).catch(function (err) {
-      btn.disabled = false;
-      btn.textContent = orig;
-      showStoreError(err.message);
-    });
-  }
-
-  function showStoreError(msg) {
-    var statusEl = document.getElementById('store-status');
-    if (!statusEl) return;
-    statusEl.textContent = '⚠ ' + msg;
-    statusEl.style.display = '';
-    setTimeout(function () { if (statusEl) statusEl.style.display = 'none'; }, 5000);
-  }
-
-  initPluginStore();
-
-  // ── Premium tab ───────────────────────────────────────────────────────────
-  var premRendered = false;
-
-  function renderPremiumTab() {
-    if (!document.getElementById('tab-premium')) return;
-    var emailEl   = document.getElementById('prem-email');
-    var sinceEl   = document.getElementById('prem-since');
-    var gemsEl    = document.getElementById('prem-gems');
-    var gemBadge  = document.getElementById('prem-gem-badge');
-    var gemNext   = document.getElementById('prem-gem-next');
-    var planEl    = document.getElementById('prem-plan-name');
-    var planSt    = document.getElementById('prem-plan-status');
-    var planEx    = document.getElementById('prem-plan-expires');
-    var plansBody = document.getElementById('prem-plans-body');
-
-    // Wire up buttons once
-    if (!premRendered) {
-      premRendered = true;
-      var buyBtn     = document.getElementById('prem-buy-gems');
-      var manageBtn  = document.getElementById('prem-manage-plan');
-      var signoutBtn = document.getElementById('prem-signout');
-      var upgradeBtn = document.getElementById('prem-hero-upgrade');
-      if (buyBtn)     buyBtn.addEventListener('click',    function () { openPurchaseModal(); });
-      if (manageBtn)  manageBtn.addEventListener('click', function () { openPlanModal(); });
-      if (signoutBtn) signoutBtn.addEventListener('click',function () { signOutDashboard(); });
-      if (upgradeBtn) upgradeBtn.addEventListener('click',function () {
-        var plansSection = document.querySelector('.prem-plans-section');
-        if (plansSection) plansSection.scrollIntoView({ behavior: 'smooth' });
-      });
-    }
-
-    // Populate from cached account data
-    if (dashboardLoggedIn && dashboardUser) {
-      if (emailEl) emailEl.textContent = dashboardUser.email || '—';
-      if (sinceEl && dashboardUser.created_at) sinceEl.textContent = formatDashboardDate(dashboardUser.created_at);
-    } else {
-      if (emailEl) emailEl.textContent = 'Not signed in';
-    }
-
-    if (!dashboardLoggedIn || !accessToken) {
-      if (gemsEl)   gemsEl.textContent = '0';
-      if (gemBadge) { gemBadge.textContent = 'Inactive'; gemBadge.className = 'acct-badge acct-badge--inactive'; }
-      if (planEl)   planEl.textContent = 'Free';
-      if (plansBody) plansBody.innerHTML = '<p class="prem-plans-loading">Sign in to manage your subscription.</p>';
-      return;
-    }
-
-    if (plansBody) plansBody.innerHTML = '<p class="prem-plans-loading">Loading…</p>';
-
-    var headers = { 'Authorization': 'Bearer ' + accessToken };
-
-    fetch('/api/payments/gems/status', { headers: headers })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        if (gemsEl)   gemsEl.textContent = Number(d.gem_balance || 0).toLocaleString();
-        if (gemBadge) {
-          var active = d.active;
-          gemBadge.textContent = active ? 'Active' : 'Inactive';
-          gemBadge.className = 'acct-badge ' + (active ? 'acct-badge--active' : 'acct-badge--inactive');
-        }
-        if (gemNext && d.next_deduction_at) {
-          gemNext.textContent = 'Next deduction: ' + new Date(d.next_deduction_at).toLocaleDateString();
-          gemNext.classList.remove('hidden');
-        }
-      }).catch(function () {});
-
-    fetch('/api/payments/subscription', { headers: headers })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        var name = d.plan_name || 'Free';
-        if (planEl) planEl.textContent = name;
-        if (planSt) {
-          if (d.status) { planSt.textContent = d.status; planSt.classList.remove('hidden'); }
-          else planSt.classList.add('hidden');
-        }
-        if (planEx) {
-          if (d.expires_at) { planEx.textContent = 'Renews ' + new Date(d.expires_at).toLocaleDateString(); planEx.classList.remove('hidden'); }
-          else planEx.classList.add('hidden');
-        }
-      }).catch(function () {});
-
-    fetch('/api/payments/plans', { headers: headers })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        if (!plansBody) return;
-        var plans = Array.isArray(d) ? d : (Array.isArray(d.plans) ? d.plans : []);
-        if (!plans.length) { plansBody.innerHTML = '<p class="prem-plans-loading">No plans available.</p>'; return; }
-        plansBody.innerHTML = '';
-        plans.forEach(function (plan) {
-          var card = document.createElement('div');
-          var isFree = String(plan.name || '').toLowerCase() === 'free';
-          card.className = 'prem-plan-card-item' + (isFree ? '' : ' prem-plan-card-item--premium');
-          var priceStr = plan.price_usd != null
-            ? (plan.price_usd === 0 ? 'Free' : '$' + Number(plan.price_usd).toFixed(2) + '/mo')
-            : (isFree ? 'Free' : '');
-          var features = Array.isArray(plan.features) ? plan.features : [];
-          card.innerHTML =
-            '<div class="prem-plan-header">' +
-              '<div class="prem-plan-name">' + escapeHtml(plan.name || 'Plan') + '</div>' +
-              '<div class="prem-plan-price">' + escapeHtml(priceStr) + '</div>' +
-            '</div>' +
-            (plan.description ? '<div class="prem-plan-desc">' + escapeHtml(plan.description) + '</div>' : '') +
-            (features.length ? '<ul class="prem-plan-features">' + features.map(function (f) { return '<li>' + escapeHtml(f) + '</li>'; }).join('') + '</ul>' : '') +
-            (!isFree ? '<button class="prem-plan-cta" data-plan-id="' + escapeHtml(String(plan.id || plan.name)) + '">Get ' + escapeHtml(plan.name) + '</button>' : '');
-          var cta = card.querySelector('.prem-plan-cta');
-          if (cta) cta.addEventListener('click', function () { openPlanModal(); });
-          plansBody.appendChild(card);
-        });
-      }).catch(function () {
-        if (plansBody) {
-          plansBody.innerHTML = '';
-          // Fallback: render static plan cards if API unavailable
-          renderPremiumFallbackPlans(plansBody);
-        }
-      });
-  }
-
-  function renderPremiumFallbackPlans(container) {
-    // Paid in gems (preload model). Rate: 100 G = $1.
-    //   Dodge:     $10/mo = 1,000 G/mo, auto-deducted monthly from balance
-    //   Developer: $20/mo = 2,000 G/mo, auto-deducted monthly from balance
-    var PLANS = [
-      { name: 'Free',      price: 'Free',      gemsPerMonth: 0,    color: '#94a3b8', badge: null,
-        desc: 'Core features — no subscription required.',
-        features: ['Auto Nexus', 'Loot Notifier', 'Server Switch', 'IP Connect', 'Rollback', 'O3 Helper'] },
-      { name: 'Dodge',     price: '$10/mo',    gemsPerMonth: 1000, color: '#2dd4bf', badge: 'Popular',
-        desc: 'Everything in Free plus full movement automation. Auto-renews from your gem balance.',
-        features: ['Auto Dodge', 'Safe Walk', 'Auto Aim', 'God Farming', 'Potion discount', 'All Free features'] },
-      { name: 'Developer', price: '$20/mo',    gemsPerMonth: 2000, color: '#a855f7', badge: 'Pro',
-        desc: 'Complete access including analytics and DLL bridge. Auto-renews from your gem balance.',
-        features: ['Damage Sniffer', 'Spoof Push Tiles', 'Packet Lab', 'DLL Walk-To', 'Potion discount', 'All Dodge features'] },
-    ];
-    PLANS.forEach(function (plan) {
-      var card = document.createElement('div');
-      card.className = 'prem-plan-card-item';
-      card.style.setProperty('--pc', plan.color);
-      var priceBlock = plan.gemsPerMonth > 0
-        ? plan.price + '<div class="prem-plan-banner-subprice">' + plan.gemsPerMonth.toLocaleString() + ' G/mo</div>'
-        : plan.price;
-      card.innerHTML =
-        '<div class="prem-plan-banner">' +
-          (plan.badge ? '<div class="prem-plan-badge">' + plan.badge + '</div>' : '') +
-          '<div class="prem-plan-banner-name">' + plan.name + '</div>' +
-          '<div class="prem-plan-banner-price">' + priceBlock + '</div>' +
-        '</div>' +
-        '<div class="prem-plan-content">' +
-          '<div class="prem-plan-desc">' + plan.desc + '</div>' +
-          '<ul class="prem-plan-features">' + plan.features.map(function (f) { return '<li>' + f + '</li>'; }).join('') + '</ul>' +
-        '</div>' +
-        (plan.price !== 'Free'
-          ? '<button class="prem-plan-cta">Subscribe with Gems →</button>'
-          : '<div class="prem-plan-current">Your current plan</div>');
-      var cta = card.querySelector('.prem-plan-cta');
-      if (cta) cta.addEventListener('click', function () { openPlanModal(); });
-      container.appendChild(card);
-    });
-  }
-
-  // ── Home tab extras ────────────────────────────────────────────────────────
-  var homeNewsItems = [
-    { date: 'May 11 2026', tag: 'New',    color: '#22c55e', title: 'Plugin Store is Live',           body: 'Browse, install, and update signed plugins directly from the dashboard.' },
-    { date: 'May 10 2026', tag: 'Update', color: '#60a5fa', title: 'Auto Dodge v2.0',                body: 'Smarter dodge algorithm — 40% better reaction time on burst projectile patterns.' },
-    { date: 'May 9 2026',  tag: 'Fix',    color: '#fb923c', title: 'O3 Helper Phase Detection',      body: 'Fixed Dammah coins phase not being detected correctly in multi-phase encounters.' },
-    { date: 'May 8 2026',  tag: 'New',    color: '#a78bfa', title: 'Packet Throttle Plugin',         body: 'Rate-limit outgoing MOVE packets to reduce bandwidth and server-side flags.' },
-  ];
-
-  function initHomeExtras() {
-    var plansBtn   = document.getElementById('home-hero-plans-btn');
-    var pluginsBtn = document.getElementById('home-hero-plugins-btn');
-    var upgradeBtn = document.getElementById('home-upgrade-btn');
-
-    if (plansBtn) plansBtn.addEventListener('click', function () {
-      var t = document.querySelector('[data-tab="market"]');
-      if (t) t.click();
-    });
-    if (pluginsBtn) pluginsBtn.addEventListener('click', function () {
-      var t = document.querySelector('[data-tab="plugins"]');
-      if (t) { t.click(); setTimeout(function () {
-        var s = document.querySelector('[data-plugin-view="store"]');
-        if (s) s.click();
-      }, 60); }
-    });
-    if (upgradeBtn) upgradeBtn.addEventListener('click', function () {
-      var t = document.querySelector('[data-tab="market"]');
-      if (t) t.click();
-    });
-
-    renderHomeNews();
-    fetchHomeFeatured();
-    updateHomeHero();
-  }
-
-  function renderHomeNews() {
-    var list = document.getElementById('home-news-list');
-    if (!list) return;
-    list.innerHTML = '';
-    homeNewsItems.forEach(function (item) {
-      var row = document.createElement('div');
-      row.className = 'home-news-row';
-      row.innerHTML =
-        '<div class="home-news-tag" style="background:' + item.color + '22;color:' + item.color + ';border-color:' + item.color + '55">' + item.tag + '</div>' +
-        '<div class="home-news-body"><div class="home-news-title">' + escapeHtml(item.title) + '</div>' +
-        '<div class="home-news-desc">' + escapeHtml(item.body) + '</div></div>' +
-        '<div class="home-news-date">' + escapeHtml(item.date) + '</div>';
-      list.appendChild(row);
-    });
-  }
-
-  function fetchHomeFeatured() {
-    if (storeManifest && storeManifest.length) { renderHomeFeatured(storeManifest.slice(0, 3)); return; }
-    fetch('/api/plugins/store/manifest').then(function (r) { return r.json(); }).then(function (data) {
-      if (data && Array.isArray(data.plugins) && data.plugins.length) {
-        if (!storeManifest) storeManifest = data.plugins;
-        renderHomeFeatured(data.plugins.slice(0, 3));
-      }
-    }).catch(function () {});
-  }
-
-  var FEAT_COLORS = { automation:'#818cf8', combat:'#fb2c54', visual:'#c084fc', movement:'#2dd4bf', network:'#38bdf8', utility:'#94a3b8' };
-
-  function renderHomeFeatured(plugins) {
-    var grid = document.getElementById('home-featured-grid');
-    if (!grid) return;
-    grid.innerHTML = '';
-    plugins.forEach(function (p) {
-      var cat     = p.category || 'utility';
-      var color   = FEAT_COLORS[cat] || '#94a3b8';
-      var installed = storeInstalledMap && storeInstalledMap[p.id];
-      var words   = (p.name || p.id).split(/[\s\-_]+/);
-      var initials = ((words[0] || '')[0] || '') + ((words[1] ? words[1][0] : (words[0] || '')[1]) || '');
-
-      var card = document.createElement('div');
-      card.className = 'home-featured-card';
-      card.style.setProperty('--fc', color);
-
-      var locked = p.requiredPlan && !(activePlanNames && activePlanNames.has(String(p.requiredPlan).toLowerCase())) && !document.body.classList.contains('admin-mode');
-      var btnLabel = installed ? '✓ Installed' : locked ? '🔒 ' + p.requiredPlan.charAt(0).toUpperCase() + p.requiredPlan.slice(1) : 'Install';
-      var btnClass = 'home-featured-btn' + (installed ? ' home-featured-btn--installed' : locked ? ' home-featured-btn--locked' : '');
-
-      card.innerHTML =
-        '<div class="home-featured-banner">' +
-          '<div class="home-featured-icon">' + initials.toUpperCase() + '</div>' +
-          '<span class="home-featured-cat">' + cat + '</span>' +
-        '</div>' +
-        '<div class="home-featured-body">' +
-          '<div class="home-featured-name">' + escapeHtml(p.name || p.id) + '</div>' +
-          '<div class="home-featured-desc">' + escapeHtml((p.description || '').slice(0, 72) + ((p.description || '').length > 72 ? '…' : '')) + '</div>' +
-        '</div>' +
-        '<button class="' + btnClass + '">' + btnLabel + '</button>';
-
-      if (!installed) {
-        card.querySelector('button').addEventListener('click', function () {
-          if (locked) { var t = document.querySelector('[data-tab="market"]'); if (t) t.click(); }
-          else storeInstallPlugin(p, card.querySelector('button'));
-        });
-      }
-      grid.appendChild(card);
-    });
-  }
-
   function updateHomeHero() {
-    var badge     = document.getElementById('home-hero-plan-badge');
-    var gemsEl    = document.getElementById('home-hero-gems-val');
+    var badge     = document.getElementById('home-hero-mode-badge');
     var pluginsEl = document.getElementById('home-hero-plugins-val');
 
     if (badge) {
       var isAdmin   = document.body.classList.contains('admin-mode');
-      var isPremium = isAdmin || (activePlanNames && activePlanNames.size > 0);
-      var planName  = isAdmin
-        ? 'Admin'
-        : isPremium
-          ? Array.from(activePlanNames)[0].charAt(0).toUpperCase() + Array.from(activePlanNames)[0].slice(1) + ' Plan'
-          : 'Free Plan';
-      badge.textContent = planName;
-      badge.className = 'home-hero-stat-badge' + (isPremium ? ' home-hero-stat-badge--premium' : '');
+      badge.textContent = isAdmin ? 'Admin' : 'Local';
+      badge.className = 'home-hero-stat-badge';
     }
-    var tbGems = document.getElementById('titlebar-gems');
-    if (gemsEl && tbGems) gemsEl.textContent = tbGems.textContent || '0';
     if (pluginsEl) pluginsEl.textContent = cachedPluginsForHub ? cachedPluginsForHub.length : '—';
   }
 
-  initHomeExtras();
+  updateHomeHero();
 
   populateScriptSelect();
   renderHomeTab();
@@ -22277,197 +18833,5 @@
 
   connect();
 
-  // ─── Admin Telemetry tab ─────────────────────────────────────────────────
-  var telemetryRefreshTimer = null;
-  var telemetryWindowMinutes = 5;
-  var telemetryPendingKinds = new Set();
 
-  function openTelemetryTab() {
-    if (!adminMode) return;
-    var sel = document.getElementById('telemetry-window-select');
-    if (sel) telemetryWindowMinutes = Number(sel.value || 5) || 5;
-    requestTelemetryRefresh();
-    // Auto-refresh while the tab is open. 30s cadence keeps it lively without
-    // hammering — heartbeats themselves arrive on a 60s cycle.
-    if (telemetryRefreshTimer) clearInterval(telemetryRefreshTimer);
-    telemetryRefreshTimer = setInterval(function () {
-      if (activeTab === 'telemetry') requestTelemetryRefresh();
-    }, 30000);
-  }
-
-  function requestTelemetryRefresh() {
-    if (!ws || ws.readyState !== 1) {
-      setTelemetryStatus('Dashboard offline.', true);
-      return;
-    }
-    setTelemetryStatus('Loading…', false);
-    var kinds = ['overview', 'servers', 'classes', 'plugins', 'settings', 'eventsTop', 'timeline'];
-    telemetryPendingKinds = new Set(kinds);
-    // Buckets: 5m for short windows, 1h for >24h windows.
-    var bucketSeconds = telemetryWindowMinutes >= 1440 ? 3600 : 300;
-    kinds.forEach(function (kind) {
-      var req = {
-        type: 'requestTelemetryStats',
-        kind: kind,
-        window: telemetryWindowMinutes,
-      };
-      if (kind === 'timeline') req.bucket = bucketSeconds;
-      ws.send(JSON.stringify(req));
-    });
-  }
-
-  function setTelemetryStatus(text, isError) {
-    var el = document.getElementById('telemetry-status');
-    if (!el) return;
-    el.textContent = text || '';
-    el.classList.toggle('error', !!isError);
-  }
-
-  function handleTelemetryStats(msg) {
-    if (!msg || !msg.kind || !msg.data) return;
-    if (msg.kind === 'overview') {
-      renderTelemetryOverview(msg.data);
-    } else if (msg.kind === 'servers') {
-      renderTelemetryBreakdown('telemetry-servers-tbody', 'telemetry-servers-empty', msg.data);
-    } else if (msg.kind === 'classes') {
-      renderTelemetryBreakdown('telemetry-classes-tbody', 'telemetry-classes-empty', msg.data);
-    } else if (msg.kind === 'plugins') {
-      renderTelemetryBreakdown('telemetry-plugins-tbody', 'telemetry-plugins-empty', msg.data);
-    } else if (msg.kind === 'eventsTop') {
-      renderTelemetryBreakdown('telemetry-events-tbody', 'telemetry-events-empty', msg.data);
-    } else if (msg.kind === 'settings') {
-      renderTelemetrySettings(msg.data);
-    } else if (msg.kind === 'timeline') {
-      renderTelemetryTimeline(msg.data);
-    }
-    telemetryPendingKinds.delete(msg.kind);
-    if (telemetryPendingKinds.size === 0) {
-      var sampled = msg.data && msg.data.sampled_at ? new Date(msg.data.sampled_at) : new Date();
-      setTelemetryStatus('Updated ' + sampled.toLocaleTimeString(), false);
-    }
-  }
-
-  function renderTelemetrySettings(data) {
-    var tbody = document.getElementById('telemetry-settings-tbody');
-    var empty = document.getElementById('telemetry-settings-empty');
-    if (!tbody) return;
-    var rows = (data && Array.isArray(data.rows)) ? data.rows : [];
-    if (rows.length === 0) {
-      tbody.innerHTML = '';
-      if (empty) empty.style.display = '';
-      return;
-    }
-    if (empty) empty.style.display = 'none';
-    tbody.innerHTML = rows.map(function (r) {
-      return '<tr><td>' + escapeHtml(String(r.key || ''))
-        + '</td><td>' + escapeHtml(String(r.value || ''))
-        + '</td><td class="telemetry-num">' + (Number(r.count) || 0) + '</td></tr>';
-    }).join('');
-  }
-
-  function renderTelemetryTimeline(data) {
-    var svg = document.getElementById('telemetry-sparkline-svg');
-    var meta = document.getElementById('telemetry-sparkline-meta');
-    if (!svg) return;
-    var points = (data && Array.isArray(data.points)) ? data.points : [];
-    if (points.length === 0) {
-      svg.innerHTML = '';
-      if (meta) meta.textContent = 'No data';
-      return;
-    }
-    // Build a polyline + fill path over a 600×60 viewBox.
-    var W = 600, H = 60;
-    var max = 0;
-    for (var i = 0; i < points.length; i++) {
-      if ((points[i].active_users || 0) > max) max = points[i].active_users;
-    }
-    if (max < 1) max = 1;
-    var stepX = W / Math.max(1, points.length - 1);
-    var d = '';
-    for (var j = 0; j < points.length; j++) {
-      var x = j * stepX;
-      var y = H - 2 - ((points[j].active_users || 0) / max) * (H - 4);
-      d += (j === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
-    }
-    // Fill path: extend down to the baseline so the area shades.
-    var fillD = d + 'L' + W + ',' + H + ' L0,' + H + ' Z';
-    svg.innerHTML =
-      '<path class="telemetry-sparkline-path" d="' + fillD + '"></path>';
-    if (meta) {
-      var peak = max;
-      var latest = points[points.length - 1].active_users || 0;
-      var bucket = Math.round((Number(data.bucket_seconds) || 0) / 60);
-      meta.textContent = 'peak ' + peak + ' · now ' + latest + ' · ' + bucket + 'm buckets';
-    }
-  }
-
-  function handleTelemetryStatsError(msg) {
-    var err = msg && msg.error ? String(msg.error) : 'Failed to load telemetry.';
-    setTelemetryStatus(err, true);
-  }
-
-  function renderTelemetryOverview(data) {
-    var setText = function (id, val) {
-      var el = document.getElementById(id);
-      if (el) el.textContent = val == null ? '—' : String(val);
-    };
-    setText('telemetry-active-5m', data.active_5m);
-    setText('telemetry-active-1h', data.active_1h);
-    setText('telemetry-active-24h', data.active_24h);
-    setText('telemetry-free-users', data.free_users);
-    setText('telemetry-paid-users', data.paid_users);
-    var totalUsers = (Number(data.free_users) || 0) + (Number(data.paid_users) || 0);
-    var shareEl = document.getElementById('telemetry-paid-share');
-    if (shareEl) {
-      if (totalUsers > 0) {
-        var pct = Math.round((Number(data.paid_users) / totalUsers) * 100);
-        shareEl.textContent = pct + '% of active';
-      } else {
-        shareEl.textContent = '—';
-      }
-    }
-    var plansTbody = document.getElementById('telemetry-plans-tbody');
-    var plansEmpty = document.getElementById('telemetry-plans-empty');
-    if (plansTbody) {
-      var dist = (data && data.plan_distribution) || {};
-      var entries = Object.keys(dist).map(function (k) { return { key: k, count: Number(dist[k]) || 0 }; });
-      entries.sort(function (a, b) { return b.count - a.count; });
-      plansTbody.innerHTML = entries.map(function (e) {
-        var label = e.key.replace(/^(.)/, function (c) { return c.toUpperCase(); });
-        return '<tr><td>' + escapeHtml(label) + '</td><td class="telemetry-num">' + e.count + '</td></tr>';
-      }).join('');
-      if (plansEmpty) plansEmpty.style.display = entries.length ? 'none' : '';
-    }
-  }
-
-  function renderTelemetryBreakdown(tbodyId, emptyId, data) {
-    var tbody = document.getElementById(tbodyId);
-    var empty = document.getElementById(emptyId);
-    if (!tbody) return;
-    var rows = (data && Array.isArray(data.rows)) ? data.rows : [];
-    if (rows.length === 0) {
-      tbody.innerHTML = '';
-      if (empty) empty.style.display = '';
-      return;
-    }
-    if (empty) empty.style.display = 'none';
-    tbody.innerHTML = rows.map(function (r) {
-      return '<tr><td>' + escapeHtml(String(r.label || r.key || '—'))
-        + '</td><td class="telemetry-num">' + (Number(r.count) || 0) + '</td></tr>';
-    }).join('');
-  }
-
-  var telemetryWindowSelect = document.getElementById('telemetry-window-select');
-  if (telemetryWindowSelect) {
-    telemetryWindowSelect.addEventListener('change', function () {
-      telemetryWindowMinutes = Number(telemetryWindowSelect.value || 5) || 5;
-      if (activeTab === 'telemetry') requestTelemetryRefresh();
-    });
-  }
-  var telemetryRefreshBtn = document.getElementById('telemetry-refresh-btn');
-  if (telemetryRefreshBtn) {
-    telemetryRefreshBtn.addEventListener('click', function () {
-      requestTelemetryRefresh();
-    });
-  }
 })();

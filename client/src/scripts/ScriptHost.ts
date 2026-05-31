@@ -4,8 +4,6 @@ import { basename, isAbsolute, join, relative, resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { SDKBridge } from './bridge/index.js';
 import type { BridgeDeps, ScriptLogLevel, ScriptPanelInboundEvent } from './bridge/BridgeDeps.js';
-import { decryptScript } from '../util/ScriptDecryptor.js';
-import type { ScriptRuntimePayload } from '../util/ScriptDecryptor.js';
 
 export interface ScriptInfo {
   id: string;
@@ -23,12 +21,6 @@ export interface ScriptInfo {
   startedAt?: number;
   /** Current run duration in milliseconds, only present while running. */
   runtimeMs?: number;
-}
-
-export interface MarketplaceScriptInfo {
-  id: string;
-  name: string;
-  status: 'idle' | 'running';
 }
 
 interface ScriptManifest {
@@ -52,18 +44,10 @@ export class ScriptHost {
   private logCallback?: (id: string, line: string, level: ScriptLogLevel) => void;
   private bridgeInstalled = false;
   private readonly scriptSession: { scriptId: string | undefined };
-  /** Latest activity line per script id (folder name or marketplace uuid), for dashboard cards. */
+  /** Latest activity line per script id for dashboard cards. */
   private scriptActivityById = new Map<string, string>();
   /** DevServer notifies dashboard WS clients when activity or runnable state changes (optional). */
   private scriptsStateNotify?: () => void;
-
-  /**
-   * In-memory cache of decrypted marketplace module classes.
-   * Populated on first `startMarketplace()` call. Reused on subsequent starts
-   * after stop — avoids re-fetching from the server every time.
-   * Lives for the process lifetime. Nothing is written to disk.
-   */
-  private marketplaceModuleCache: Map<string, { ModuleClass: new () => ScriptInstance; name: string }> = new Map();
 
   constructor(scriptSession: { scriptId: string | undefined }) {
     this.scriptSession = scriptSession;
@@ -379,110 +363,6 @@ export class ScriptHost {
     });
 
     return { ok: true };
-  }
-
-  /**
-   * Load and start a marketplace script from an encrypted server payload.
-   *
-   * First call: decrypts the payload, imports the module via data: URL (no disk write),
-   * caches the module class in memory, then starts the loop.
-   *
-   * Subsequent calls (after stop): skips decryption+import and uses the cached class.
-   *
-   * @param scriptId  The marketplace script UUID (used as the running key)
-   * @param name      Display name for logs
-   * @param payload   Encrypted payload from POST /api/marketplace/scripts/{id}/runtime
-   * @param userId    The authenticated user's ID (for key derivation)
-   * @param hwid      The client's HWID from getClientToken() (for key derivation)
-   */
-  async startMarketplace(
-    scriptId: string,
-    name: string,
-    payload: ScriptRuntimePayload | null,
-    userId: string,
-    hwid: string,
-  ): Promise<{ ok: boolean; error?: string }> {
-    if (this.running.has(scriptId)) {
-      return { ok: false, error: 'Already running' };
-    }
-
-    this.scriptActivityById.delete(scriptId);
-    this.emitScriptsStateChanged();
-
-    let cached = this.marketplaceModuleCache.get(scriptId);
-
-    if (!cached) {
-      // First run — must have a payload to decrypt
-      if (!payload) {
-        return { ok: false, error: 'No payload provided and script not cached' };
-      }
-
-      try {
-        const source = decryptScript(payload, userId, hwid);
-        // Load via data: URL — stays in the V8 module cache only, never touches disk
-        const encoded = Buffer.from(source).toString('base64');
-        const mod = await import(`data:text/javascript;base64,${encoded}`);
-        const ModuleClass = mod.default;
-        if (typeof ModuleClass !== 'function') {
-          return { ok: false, error: 'Script has no default export class' };
-        }
-        cached = { ModuleClass, name };
-        this.marketplaceModuleCache.set(scriptId, cached);
-      } catch (err: any) {
-        return { ok: false, error: `Failed to load script: ${err.message}` };
-      }
-    }
-
-    try {
-      const instance = new cached.ModuleClass() as ScriptInstance;
-      if (
-        typeof instance.onStart !== 'function' ||
-        typeof instance.onLoop !== 'function' ||
-        typeof instance.onStop !== 'function'
-      ) {
-        return { ok: false, error: 'Script must implement onStart(), onLoop(), and onStop()' };
-      }
-
-      this.withScriptId(scriptId, () => {
-        this.log(scriptId, `Starting marketplace script: ${cached!.name}...`);
-        instance.onStart();
-      });
-
-      const startedAt = Date.now();
-      const schedule = () => {
-        if (!this.running.has(scriptId)) return;
-        this.withScriptId(scriptId, () => {
-          try {
-            const delay = instance.onLoop();
-            if (typeof delay === 'number' && delay < 0) {
-              this.log(scriptId, 'Script requested stop (onLoop returned < 0).');
-              this.stop(scriptId);
-              return;
-            }
-            const timer = setTimeout(schedule, typeof delay === 'number' ? delay : 600);
-            this.running.set(scriptId, { instance, timer, startedAt });
-          } catch (err: any) {
-            this.log(scriptId, `Error in onLoop: ${err.message}`, 'error');
-            this.stop(scriptId);
-          }
-        });
-      };
-
-      const timer = setTimeout(schedule, 0);
-      this.running.set(scriptId, { instance, timer, startedAt });
-      this.withScriptId(scriptId, () => this.log(scriptId, `Running marketplace script: ${cached!.name}.`));
-
-      this.emitScriptsStateChanged();
-
-      return { ok: true };
-    } catch (err: any) {
-      return { ok: false, error: err.message };
-    }
-  }
-
-  /** Returns true if the marketplace module is cached (already fetched+decrypted this session). */
-  isMarketplaceCached(scriptId: string): boolean {
-    return this.marketplaceModuleCache.has(scriptId);
   }
 
   /** Stops all running scripts */

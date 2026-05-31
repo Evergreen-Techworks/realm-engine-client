@@ -1,7 +1,6 @@
 import { readdirSync, existsSync } from 'fs';
 import { join, basename, resolve } from 'path';
 import { pathToFileURL } from 'url';
-import { createDecipheriv, createHash, createPublicKey, verify } from 'crypto';
 import { PluginContext, type PluginCategory } from './PluginContext.js';
 import { UserPluginContext, type UserPluginCleanup } from './UserPluginContext.js';
 import type { Proxy } from '../proxy/Proxy.js';
@@ -11,36 +10,11 @@ import type { GameWorldState } from '../state/GameWorldState.js';
 import type { ProjectileTracker } from '../state/ProjectileTracker.js';
 import { Logger } from '../util/Logger.js';
 
-declare const __PLUGIN_BUNDLE_SIGNING_PUBLIC_KEY__: string | undefined;
-declare const __PLUGIN_BUNDLE_ENC_KEY__: string | undefined;
-
-const IS_PROD = process.env.REALM_ENGINE_PROD === '1';
-
-function getSigningPublicKeyPem(): string {
-  try {
-    return String(typeof __PLUGIN_BUNDLE_SIGNING_PUBLIC_KEY__ !== 'undefined' ? __PLUGIN_BUNDLE_SIGNING_PUBLIC_KEY__ : '').trim();
-  } catch {
-    return '';
-  }
-}
-
-function getBundleEncKeyHex(): string {
-  try {
-    return String(typeof __PLUGIN_BUNDLE_ENC_KEY__ !== 'undefined' ? __PLUGIN_BUNDLE_ENC_KEY__ : '').trim();
-  } catch {
-    return '';
-  }
-}
-
-function isHexKey32(v: string): boolean {
-  return /^[0-9a-fA-F]{64}$/.test(v);
-}
-
 /**
  * Where a loaded plugin's code came from.
- * - `bundled`: shipped in the app (TS/JS files in `plugins/`) or fetched from the signed API bundle.
+ * - `bundled`: shipped in the app (TS/JS files in `plugins/`).
  * - `user`: a `.mjs` the user dropped into `Documents/Realmengine/Plugins/` themselves.
- * User plugins are unverified and bypass the login/gem/admin gates — they are free to run.
+ * User plugins are local files and run through the restricted SDK context.
  */
 type PluginSource = 'bundled' | 'user';
 
@@ -74,56 +48,14 @@ function stripPluginExt(fileName: string): string {
   return fileName.replace(/\.(?:mjs|js|ts)$/i, '');
 }
 
-interface SecurePluginRecord {
-  id: string;
-  alg: 'aes-256-gcm';
-  ivB64: string;
-  tagB64: string;
-  ciphertextB64: string;
-  sha256: string;
-}
-
-interface SecureBundlePayload {
-  version: number;
-  protocol: 'plugin-bundle-v1';
-  generatedAt: string;
-  plugins: SecurePluginRecord[];
-}
-
-interface SecureBundleEnvelope {
-  version: number;
-  sigAlg: 'ed25519';
-  payloadB64: string;
-  signatureB64: string;
-}
-
 /**
  * Loads single-file .ts plugins from the /plugins/ directory.
  * Each plugin exports a `register(ctx: PluginContext)` function.
  */
 export class PluginManager {
-  /**
-   * Maps normalized plan names to the plugin IDs that require that plan.
-   * 'combined' is not listed here — it is expanded to 'dodge' + 'developer' in setActivePlans().
-   */
-  private static readonly planGatedPlugins: Record<string, string[]> = {
-    dodge: ['auto-dodge', 'safe-walk', 'godfarming'],
-    developer: ['spoof-push-tiles'],
-  };
-
   /** Hidden dashboard service plugins that must keep running even when plugin profiles/logins change. */
   private static readonly alwaysEnabledPluginIds = new Set<string>([
     'damage-sniffer',
-  ]);
-
-  /** Plugins only visible and usable when the logged-in user is an admin. */
-  private static readonly adminGatedPluginIds = new Set<string>([
-    'admin-autododge',
-    'camera-controls',
-    'auto-drink',
-    'rollback',
-    'auto-ability',
-    'player-noclip',
   ]);
 
   private loadedPlugins = new Map<string, LoadedPlugin>();
@@ -138,18 +70,6 @@ export class PluginManager {
   };
   private dashboardLogListeners = new Set<(pluginName: string, message: string) => void>();
   private broadcastDataListeners = new Set<(pluginId: string, type: string, data: any) => void>();
-
-  /** When false, plugins cannot be enabled because the user is not logged in. */
-  loginGateActive = false;
-
-  /**
-   * Currently active plan names (normalized to lowercase).
-   * 'combined' is expanded to both 'dodge' and 'developer' via setActivePlans().
-   */
-  activePlans = new Set<string>();
-
-  /** When false, admin-gated plugins are hidden from the plugin list entirely. */
-  adminMode = false;
 
   constructor(
     private proxy: Proxy,
@@ -172,10 +92,9 @@ export class PluginManager {
     this.sessionStateResolver = sessionStateResolver;
   }
 
-  /** Get all loaded plugins (for dashboard). Admin-gated plugins hidden when adminMode is off. */
-  getPlugins(): { id: string; name: string; enabled: boolean; category: PluginCategory; settings: any[]; source: PluginSource; requiredPlan: string | null }[] {
+  /** Get all loaded plugins for the dashboard. */
+  getPlugins(): { id: string; name: string; enabled: boolean; category: PluginCategory; settings: any[]; source: PluginSource }[] {
     return Array.from(this.loadedPlugins.values())
-      .filter(p => !this.isAdminGated(p.id) || this.adminMode)
       .sort((a, b) => a.name.localeCompare(b.name))
       .map(p => ({
         id: p.id,
@@ -184,41 +103,11 @@ export class PluginManager {
         category: p.context.category,
         settings: this.getDashboardSettings(p),
         source: p.source,
-        requiredPlan: this.getRequiredPlan(p.id),
       }));
   }
 
   private getDashboardSettings(plugin: LoadedPlugin): any[] {
-    return plugin.context.getSettings().map((setting) => {
-      const s = { ...setting };
-      if (plugin.id === 'speed-hack' && s.key === 'speedMult') {
-        s.min = 1;
-        s.step = 0.1;
-        if (this.adminMode) {
-          s.type = 'number';
-          delete s.max;
-        } else {
-          s.type = 'range';
-          s.max = 4;
-          if (Number(s.value) > 4) s.value = 4;
-        }
-      }
-      return s;
-    });
-  }
-
-  /** Returns the plan name required to use this plugin, or null if freely available. */
-  getRequiredPlan(pluginId: string): string | null {
-    if (this.isAlwaysEnabled(pluginId)) return null;
-    if (this.adminMode) return null;
-    for (const [plan, ids] of Object.entries(PluginManager.planGatedPlugins)) {
-      if (ids.includes(pluginId)) return plan;
-    }
-    return null;
-  }
-
-  private isAdminGated(pluginId: string): boolean {
-    return PluginManager.adminGatedPluginIds.has(pluginId);
+    return plugin.context.getSettings().map((setting) => ({ ...setting }));
   }
 
   private isAlwaysEnabled(pluginId: string): boolean {
@@ -226,109 +115,33 @@ export class PluginManager {
   }
 
   /**
-   * Update the set of active plans from the server subscription response.
-   * Expands 'combined' → 'dodge' + 'developer'.
-   * Automatically disables plugins for any plan that is no longer active.
-   */
-  setActivePlans(planNames: string[]): void {
-    const next = new Set<string>();
-    for (const name of planNames) {
-      const lower = name.toLowerCase();
-      next.add(lower);
-      if (lower) {
-        next.add('dodge');
-        next.add('developer');
-      }
-    }
-    // Disable plugins for plans that are no longer active
-    // for (const [plan, ids] of Object.entries(PluginManager.planGatedPlugins)) {
-    //   if (!next.has(plan)) {
-    //     for (const id of ids) {
-    //       if (this.isAlwaysEnabled(id)) continue;
-    //       const plugin = this.loadedPlugins.get(id);
-    //       if (plugin && plugin.source === 'bundled') plugin.context.enabled = false;
-    //     }
-    //   }
-    // }
-    this.activePlans = next;
-  }
-
-  /**
    * Toggle a plugin on/off.
-   *
-   * Bundled plugins still require login, and some additionally require gems or admin.
-   * User plugins (loose `.mjs` in `Documents/Realmengine/Plugins`) are unverified and
-   * explicitly lax — they ignore all gates.
    */
-  togglePlugin(pluginId: string, enabled: boolean): { ok: boolean; reason?: string; requiredPlan?: string } {
+  togglePlugin(pluginId: string, enabled: boolean): { ok: boolean; reason?: string } {
     const plugin = this.loadedPlugins.get(pluginId);
     if (!plugin) return { ok: false, reason: 'Plugin not found' };
+
     if (this.isAlwaysEnabled(pluginId)) {
       plugin.context.enabled = true;
       return { ok: true };
     }
-    const gated = plugin.source === 'bundled';
-    if (enabled && gated && !this.loginGateActive) {
-      return { ok: false, reason: 'Sign in to use plugins.' };
-    }
-    const requiredPlan = this.getRequiredPlan(pluginId);
-    if (enabled && gated && requiredPlan && !this.activePlans.has(requiredPlan) && !this.adminMode) {
-      const display = requiredPlan.charAt(0).toUpperCase() + requiredPlan.slice(1);
-      return { ok: false, reason: `Requires ${display} plan — upgrade in Manage Plan.`, requiredPlan };
-    }
-    if (enabled && gated && this.isAdminGated(pluginId) && !this.adminMode) {
-      return { ok: false, reason: 'Admin access required for this plugin.' };
-    }
+
     plugin.context.enabled = enabled;
     return { ok: true };
   }
 
-  /**
-   * Disable bundled plugins (called on logout). User plugins are not tied to an account
-   * and stay in whatever state the user left them.
-   */
   disableAllPlugins(): void {
     for (const plugin of this.loadedPlugins.values()) {
-      if (plugin.source !== 'bundled') continue;
-      if (this.isAlwaysEnabled(plugin.id)) {
-        plugin.context.enabled = true;
-        continue;
-      }
-      plugin.context.enabled = false;
+      if (this.isAlwaysEnabled(plugin.id)) plugin.context.enabled = true;
     }
   }
 
-  /** Disable admin-gated plugins (called when admin mode is revoked). */
   disableAdminGatedPlugins(): void {
-    for (const plugin of this.loadedPlugins.values()) {
-      if (plugin.source !== 'bundled') continue;
-      if (this.isAdminGated(plugin.id)) {
-        plugin.context.enabled = false;
-      }
-    }
+    // No-op.
   }
 
-  /** Clamp settings that admin users can raise beyond normal user limits. */
   enforceNonAdminSettingCaps(): void {
-    if (this.adminMode) return;
-    const speedHack = this.loadedPlugins.get('speed-hack');
-    if (!speedHack) return;
-    const current = Number(speedHack.context.getSetting('speedMult'));
-    if (Number.isFinite(current) && current > 4) {
-      speedHack.context.updateSetting('speedMult', 4);
-    }
-  }
-
-  /** Disable all plan-gated plugins (called when login is lost or subscription status is unknown). */
-  disableGemGatedPlugins(): void {
-    if (this.adminMode) return;
-    for (const ids of Object.values(PluginManager.planGatedPlugins)) {
-      for (const id of ids) {
-        if (this.isAlwaysEnabled(id)) continue;
-        const plugin = this.loadedPlugins.get(id);
-        if (plugin && plugin.source === 'bundled') plugin.context.enabled = false;
-      }
-    }
+    // No-op.
   }
 
   /** Subscribe to dashboard-only log messages from plugins. */
@@ -363,14 +176,6 @@ export class PluginManager {
   updateSetting(pluginId: string, key: string, value: any): boolean {
     const plugin = this.loadedPlugins.get(pluginId);
     if (!plugin) return false;
-    if (plugin.source === 'bundled' && this.isAdminGated(pluginId) && !this.adminMode) {
-      return false;
-    }
-    if (pluginId === 'speed-hack' && key === 'speedMult' && !this.adminMode) {
-      const numericValue = Number(value);
-      if (!Number.isFinite(numericValue)) return false;
-      value = Math.min(4, Math.max(1, numericValue));
-    }
     return plugin.context.updateSetting(key, value);
   }
 
@@ -520,198 +325,6 @@ export class PluginManager {
     this.proxy.unhookPlugin(pluginId);
     this.loadedPlugins.delete(pluginId);
     Logger.log('PluginManager', `Unloaded plugin: ${plugin.name}`);
-  }
-
-  private parseSecureBundle(input: unknown): SecureBundleEnvelope | null {
-    if (!input || typeof input !== 'object') return null;
-    const b = input as Record<string, unknown>;
-    if (b.version !== 1 || b.sigAlg !== 'ed25519') return null;
-    if (typeof b.payloadB64 !== 'string' || typeof b.signatureB64 !== 'string') return null;
-    return {
-      version: 1,
-      sigAlg: 'ed25519',
-      payloadB64: b.payloadB64,
-      signatureB64: b.signatureB64,
-    };
-  }
-
-  private verifyBundleSignature(bundle: SecureBundleEnvelope): SecureBundlePayload | null {
-    const pubPem = getSigningPublicKeyPem();
-    if (!pubPem) {
-      Logger.warn('PluginManager', 'Missing plugin bundle signing public key.');
-      return null;
-    }
-    let payloadRaw: Buffer;
-    let signature: Buffer;
-    try {
-      payloadRaw = Buffer.from(bundle.payloadB64, 'base64');
-      signature = Buffer.from(bundle.signatureB64, 'base64');
-    } catch {
-      return null;
-    }
-
-    try {
-      const key = createPublicKey(pubPem);
-      const ok = verify(null, Buffer.from(bundle.payloadB64, 'utf8'), key, signature);
-      if (!ok) {
-        Logger.warn('PluginManager', 'Plugin bundle signature verification failed.');
-        return null;
-      }
-    } catch (err) {
-      Logger.warn('PluginManager', `Plugin signature verification error: ${(err as Error).message}`);
-      return null;
-    }
-
-    let payload: unknown;
-    try {
-      payload = JSON.parse(payloadRaw.toString('utf8'));
-    } catch {
-      return null;
-    }
-    const p = payload as Partial<SecureBundlePayload>;
-    if (p?.version !== 1 || p?.protocol !== 'plugin-bundle-v1' || !Array.isArray(p.plugins)) return null;
-    return p as SecureBundlePayload;
-  }
-
-  private decryptPluginCode(record: SecurePluginRecord): string | null {
-    const keyHex = getBundleEncKeyHex();
-    if (!isHexKey32(keyHex)) {
-      Logger.warn('PluginManager', 'Missing/invalid plugin bundle encryption key.');
-      return null;
-    }
-    if (record.alg !== 'aes-256-gcm') return null;
-    try {
-      const key = Buffer.from(keyHex, 'hex');
-      const iv = Buffer.from(record.ivB64, 'base64');
-      const tag = Buffer.from(record.tagB64, 'base64');
-      const cipherText = Buffer.from(record.ciphertextB64, 'base64');
-      const decipher = createDecipheriv('aes-256-gcm', key, iv);
-      decipher.setAuthTag(tag);
-      const plain = Buffer.concat([decipher.update(cipherText), decipher.final()]);
-      const code = plain.toString('utf8');
-      const digest = createHash('sha256').update(code).digest('hex');
-      if (digest.toLowerCase() !== String(record.sha256 || '').toLowerCase()) {
-        Logger.warn('PluginManager', `Plugin hash mismatch for ${record.id}`);
-        return null;
-      }
-      return code;
-    } catch (err) {
-      Logger.warn('PluginManager', `Plugin decrypt failed for ${record.id}: ${(err as Error).message}`);
-      return null;
-    }
-  }
-
-  // ── Remote plugin loading (in-memory only, never touches disk) ─────────
-
-  /**
-   * Load a plugin from raw JS source code (fetched from the API).
-   * Uses a data: URL import so the code lives only in memory.
-   */
-  async loadPluginFromCode(id: string, code: string): Promise<void> {
-    try {
-      if (this.loadedPlugins.has(id)) {
-        await this.unloadPlugin(id);
-      }
-
-      // Import via data: URL — ESM module loaded entirely from memory
-      const dataUrl = 'data:text/javascript;base64,' + Buffer.from(code).toString('base64');
-      const module = await import(dataUrl);
-
-      if (typeof module.register !== 'function') {
-        Logger.warn('PluginManager', `Remote plugin ${id} has no register() export, skipping`);
-        return;
-      }
-
-      const context = new PluginContext(
-        this.proxy,
-        id,
-        `remote:${id}`,
-        this.gameData,
-        this.worldState,
-        this.projectileTracker,
-        this.sessionStateResolver,
-      );
-      context.onDashboardLog = (pluginName, message) => {
-        for (const listener of this.dashboardLogListeners) {
-          try { listener(pluginName, message); } catch {}
-        }
-      };
-      context.onBroadcastData = (pluginId, type, data) => {
-        for (const listener of this.broadcastDataListeners) {
-          try { listener(pluginId, type, data); } catch {}
-        }
-      };
-      module.register(context);
-
-      this.loadedPlugins.set(id, {
-        id,
-        name: context.name || id,
-        filePath: `remote:${id}`,
-        source: 'bundled',
-        context,
-        userCleanup: null,
-      });
-
-      Logger.log('PluginManager', `Loaded remote plugin: ${context.name || id}`);
-    } catch (err) {
-      Logger.error('PluginManager', `Failed to load remote plugin ${id}`, err as Error);
-    }
-  }
-
-  /**
-   * Fetch the plugin bundle from the API and load all plugins in-memory.
-   * Called after the user logs in.
-   */
-  async loadFromApi(apiBaseUrl: string, accessToken: string): Promise<number> {
-    try {
-      const res = await fetch(`${apiBaseUrl}/api/plugins/bundle`, {
-        headers: { 'Authorization': `Bearer ${accessToken}` },
-      });
-
-      if (!res.ok) {
-        Logger.warn('PluginManager', `Plugin bundle fetch failed: HTTP ${res.status}`);
-        return 0;
-      }
-
-      const data = await res.json() as { bundle?: unknown; plugins?: Array<{ id: string; code: string }> };
-
-      // Secure bundle path (required in production).
-      const secureBundle = this.parseSecureBundle(data.bundle);
-      if (secureBundle) {
-        const payload = this.verifyBundleSignature(secureBundle);
-        if (!payload) {
-          Logger.warn('PluginManager', 'Secure plugin bundle rejected.');
-          return 0;
-        }
-        let loaded = 0;
-        for (const plugin of payload.plugins) {
-          const code = this.decryptPluginCode(plugin);
-          if (!code) continue;
-          await this.loadPluginFromCode(plugin.id, code);
-          loaded++;
-        }
-        Logger.log('PluginManager', `Loaded ${loaded} signed+encrypted plugins from API`);
-        return loaded;
-      }
-
-      // Legacy plaintext fallback (dev only).
-      if (IS_PROD) {
-        Logger.warn('PluginManager', 'Unsigned plugin bundle blocked in production.');
-        return 0;
-      }
-      if (!data.plugins || !Array.isArray(data.plugins)) {
-        Logger.warn('PluginManager', 'Plugin bundle response invalid');
-        return 0;
-      }
-      for (const plugin of data.plugins) {
-        await this.loadPluginFromCode(plugin.id, plugin.code);
-      }
-      Logger.log('PluginManager', `Loaded ${data.plugins.length} legacy plugins from API`);
-      return data.plugins.length;
-    } catch (err) {
-      Logger.error('PluginManager', 'Failed to fetch plugin bundle', err as Error);
-      return 0;
-    }
   }
 
   /** Start watching plugin directories for changes (hot-reload). */

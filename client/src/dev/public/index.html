@@ -9,13 +9,6 @@
   <link rel="stylesheet" href="game-wiki.css">
 </head>
 <body>
-  <!-- View-as override banner — visible only when admin is previewing as another user -->
-  <div id="view-as-banner" class="view-as-banner" style="display:none;">
-    <span class="view-as-banner-icon">🔍</span>
-    <span>Viewing as: <strong id="view-as-banner-label">—</strong></span>
-    <button id="view-as-banner-reset" type="button" class="view-as-banner-reset">Reset</button>
-  </div>
-
   <!-- Custom titlebar (doubles as drag region in Electron) -->
   <header id="titlebar">
     <div class="titlebar-drag">
@@ -46,12 +39,6 @@
   <div id="main">
     <!-- Player card (left) -->
     <div id="player-card">
-      <!-- Account / balance summary has moved to the Settings tab. Two hidden
-           spans remain so existing live-update code that writes the balance
-           and plan name doesn't have to null-check. -->
-      <span id="titlebar-gems" hidden>0</span>
-      <span id="titlebar-plan" hidden>Free</span>
-
       <div id="player-identity">
         <div id="player-avatar">?</div>
         <div id="player-name-info">
@@ -232,13 +219,11 @@
             <span class="launcher-quick-label">Quick Launch</span>
           </button>
           <button type="button" class="launcher-quick-btn" data-launcher-tab="plugins">Plugins</button>
-          <button type="button" class="launcher-quick-btn admin-only" data-launcher-tab="market">Market</button>
         </div>
       </div>
       <div id="content-tabs">
         <button class="content-tab active" data-tab="home" data-icon="H" data-label="Home" data-i18n="tab.home">Home</button>
         <button class="content-tab" data-tab="plugins" data-icon="P" data-label="Plugins" data-i18n="tab.plugins">Plugins</button>
-        <button class="content-tab admin-only" data-tab="market" data-icon="$" data-label="Market" data-i18n="tab.market">Market</button>
         <button class="content-tab" data-tab="accounts" data-icon="A" data-label="Accounts" data-i18n="tab.accounts">Accounts</button>
         <button class="content-tab admin-only" data-tab="logs" data-icon="L" data-label="Logs" data-i18n="tab.logs">Logs</button>
         <button class="content-tab" data-tab="damage" data-icon="D" data-label="Damage Sniffer" data-i18n="tab.damage">Damage Sniffer</button>
@@ -250,7 +235,6 @@
         <button class="content-tab dev-only" data-tab="game-wiki" data-icon="W" data-label="Game Wiki" data-i18n="tab.gameWiki">Game Wiki</button>
         <button class="content-tab dev-only" data-tab="nearby" data-icon="N" data-label="Nearby Players" data-i18n="tab.nearby">Nearby Players</button>
         <button class="content-tab admin-only" data-tab="packet-lab" data-icon="PK" data-label="Packet Lab">Packet Lab <span id="lab-tab-badge" class="lab-tab-badge hidden">0</span></button>
-        <button class="content-tab admin-only" data-tab="telemetry" data-icon="TM" data-label="Telemetry" data-i18n="tab.telemetry">Telemetry</button>
         <button class="content-tab admin-only" data-tab="multibox" data-icon="M" data-label="Multibox" data-i18n="tab.multibox">Multibox</button>
         <button class="content-tab admin-only" data-tab="mem-helper" data-icon="CPU" data-label="Mem Helper" data-i18n="tab.memHelper">Mem Helper</button>
         <button class="content-tab dev-only" data-tab="scripts" data-icon="S" data-label="Scripts" data-i18n="tab.scripts">Scripts</button>
@@ -439,46 +423,6 @@
               </div>
             </div>
           </main>
-        </div>
-      </div>
-
-      <div id="tab-market" class="tab-panel admin-only" style="display:none;">
-        <div class="market-layout">
-          <aside class="market-sidebar">
-            <div class="market-brand">
-              <span class="market-brand-title">Realm Market</span>
-            </div>
-            <nav class="market-nav" id="market-nav">
-              <button type="button" class="market-nav-btn active" data-market-sub="scripts" data-i18n="tab.scripts">Scripts</button>
-              <button type="button" class="market-nav-btn" data-market-sub="maxing">Maxing</button>
-            </nav>
-            <div class="market-cart-panel">
-              <div class="market-cart-head">Cart <span id="market-cart-count" class="market-cart-badge">0</span></div>
-              <div id="market-cart-items" class="market-cart-items"></div>
-              <div class="market-cart-foot">
-                <div class="market-cart-total">Total <span id="market-cart-total-gems">0</span><span class="market-gem-label">G</span></div>
-                <button type="button" id="market-checkout-btn" class="setting-btn market-checkout-btn">Checkout</button>
-                <button type="button" id="market-cart-clear-btn" class="setting-btn setting-btn-secondary market-cart-clear">Clear</button>
-              </div>
-            </div>
-          </aside>
-          <main class="market-main">
-            <div id="market-loading" class="market-loading">Loading catalog…</div>
-            <div id="market-error" class="market-error" style="display:none;"></div>
-            <div id="market-content" class="market-content" style="display:none;">
-              <div id="market-toolbar" class="market-toolbar"></div>
-              <div id="market-body" class="market-body"></div>
-            </div>
-          </main>
-        </div>
-        <div id="market-script-buy-modal" class="market-modal" style="display:none" aria-hidden="true">
-          <div class="market-modal-backdrop" data-market-modal-close></div>
-          <div class="market-modal-panel" role="dialog" aria-modal="true" aria-labelledby="market-script-buy-modal-title">
-            <h4 id="market-script-buy-modal-title" class="market-modal-title"></h4>
-            <p class="market-modal-sub">Choose billing. Prices are in gems (G). <strong>100 gems = $1</strong> (1 gem = 1¢).</p>
-            <div id="market-script-buy-modal-actions" class="market-modal-actions"></div>
-            <button type="button" class="setting-btn setting-btn-secondary market-modal-cancel" data-market-modal-close>Cancel</button>
-          </div>
         </div>
       </div>
 
@@ -1256,118 +1200,6 @@
         </div>
       </div>
 
-      <div id="tab-telemetry" class="tab-panel admin-only telemetry-tab" style="display:none;">
-        <div class="telemetry-toolbar">
-          <div class="telemetry-title-wrap">
-            <h3 class="telemetry-title">Community Telemetry</h3>
-            <span class="telemetry-sub">Anonymous client stats. No user is identifiable from this data.</span>
-          </div>
-          <div class="telemetry-toolbar-actions">
-            <label class="telemetry-window-label">Window
-              <select id="telemetry-window-select" class="settings-select">
-                <option value="5">Last 5 minutes</option>
-                <option value="60">Last hour</option>
-                <option value="1440">Last 24 hours</option>
-                <option value="10080">Last 7 days</option>
-              </select>
-            </label>
-            <button type="button" class="setting-btn setting-btn-secondary" id="telemetry-refresh-btn">Refresh</button>
-            <span id="telemetry-status" class="telemetry-status"></span>
-          </div>
-        </div>
-        <div class="telemetry-sparkline-card">
-          <div class="telemetry-sparkline-header">
-            <span class="telemetry-sparkline-title">Concurrent users</span>
-            <span class="telemetry-sparkline-meta" id="telemetry-sparkline-meta">—</span>
-          </div>
-          <svg class="telemetry-sparkline-svg" id="telemetry-sparkline-svg" viewBox="0 0 600 60" preserveAspectRatio="none" aria-hidden="true"></svg>
-        </div>
-        <div class="telemetry-cards">
-          <div class="telemetry-card">
-            <div class="telemetry-card-label">Active (5m)</div>
-            <div class="telemetry-card-value" id="telemetry-active-5m">—</div>
-          </div>
-          <div class="telemetry-card">
-            <div class="telemetry-card-label">Active (1h)</div>
-            <div class="telemetry-card-value" id="telemetry-active-1h">—</div>
-          </div>
-          <div class="telemetry-card">
-            <div class="telemetry-card-label">Active (24h)</div>
-            <div class="telemetry-card-value" id="telemetry-active-24h">—</div>
-          </div>
-          <div class="telemetry-card telemetry-card--accent">
-            <div class="telemetry-card-label">Paid users</div>
-            <div class="telemetry-card-value" id="telemetry-paid-users">—</div>
-            <div class="telemetry-card-sub" id="telemetry-paid-share">—</div>
-          </div>
-          <div class="telemetry-card">
-            <div class="telemetry-card-label">Free users</div>
-            <div class="telemetry-card-value" id="telemetry-free-users">—</div>
-          </div>
-        </div>
-        <div class="telemetry-grid">
-          <div class="telemetry-grid-card">
-            <div class="telemetry-grid-card-title">Servers</div>
-            <div class="telemetry-grid-card-body">
-              <table class="telemetry-table">
-                <thead><tr><th>Server</th><th>Players</th></tr></thead>
-                <tbody id="telemetry-servers-tbody"></tbody>
-              </table>
-              <div class="telemetry-empty" id="telemetry-servers-empty" style="display:none">No data yet.</div>
-            </div>
-          </div>
-          <div class="telemetry-grid-card">
-            <div class="telemetry-grid-card-title">Classes</div>
-            <div class="telemetry-grid-card-body">
-              <table class="telemetry-table">
-                <thead><tr><th>Class</th><th>Players</th></tr></thead>
-                <tbody id="telemetry-classes-tbody"></tbody>
-              </table>
-              <div class="telemetry-empty" id="telemetry-classes-empty" style="display:none">No data yet.</div>
-            </div>
-          </div>
-          <div class="telemetry-grid-card">
-            <div class="telemetry-grid-card-title">Plugins enabled</div>
-            <div class="telemetry-grid-card-body">
-              <table class="telemetry-table">
-                <thead><tr><th>Plugin</th><th>Users</th></tr></thead>
-                <tbody id="telemetry-plugins-tbody"></tbody>
-              </table>
-              <div class="telemetry-empty" id="telemetry-plugins-empty" style="display:none">No data yet.</div>
-            </div>
-          </div>
-          <div class="telemetry-grid-card">
-            <div class="telemetry-grid-card-title">Plan distribution</div>
-            <div class="telemetry-grid-card-body">
-              <table class="telemetry-table">
-                <thead><tr><th>Plan</th><th>Users</th></tr></thead>
-                <tbody id="telemetry-plans-tbody"></tbody>
-              </table>
-              <div class="telemetry-empty" id="telemetry-plans-empty" style="display:none">No data yet.</div>
-            </div>
-          </div>
-          <div class="telemetry-grid-card">
-            <div class="telemetry-grid-card-title">Top user events</div>
-            <div class="telemetry-grid-card-body">
-              <table class="telemetry-table">
-                <thead><tr><th>Event</th><th>Count</th></tr></thead>
-                <tbody id="telemetry-events-tbody"></tbody>
-              </table>
-              <div class="telemetry-empty" id="telemetry-events-empty" style="display:none">No data yet.</div>
-            </div>
-          </div>
-          <div class="telemetry-grid-card">
-            <div class="telemetry-grid-card-title">Settings popularity</div>
-            <div class="telemetry-grid-card-body">
-              <table class="telemetry-table">
-                <thead><tr><th>Setting</th><th>Value</th><th>Users</th></tr></thead>
-                <tbody id="telemetry-settings-tbody"></tbody>
-              </table>
-              <div class="telemetry-empty" id="telemetry-settings-empty" style="display:none">No data yet.</div>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <div id="tab-damage" class="tab-panel" style="display:none;">
         <div id="damage-settings-bar"></div>
@@ -1843,21 +1675,6 @@
                   <span class="toggle-slider"></span>
                 </label>
               </div>
-              <div class="settings-row settings-row-stacked">
-                <div class="settings-row-info">
-                  <span class="settings-label">Anonymous telemetry</span>
-                  <span class="settings-desc">
-                    Sends an anonymous heartbeat every minute plus product events
-                    (tab clicks, plugin toggles, in-game milestones) to help us
-                    improve the app. No email, character name, or HWID is sent —
-                    only a one-way hash of your device id.
-                  </span>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="setting-telemetry-enabled" checked>
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
             </div>
             <div class="settings-group">
               <h3 data-i18n="settings.navbarTabs">Navbar Tabs</h3>
@@ -1966,18 +1783,6 @@
               </div>
               <div class="settings-row">
                 <div class="settings-row-info">
-                  <span class="settings-label">View as user</span>
-                  <span class="settings-desc">Preview the dashboard as a non-admin user on a specific plan. Resets on reload.</span>
-                </div>
-                <select id="setting-view-as" class="settings-select">
-                  <option value="">Real account</option>
-                  <option value="free">Free user (no admin)</option>
-                  <option value="dodge">Dodge user ($10/mo tier)</option>
-                  <option value="developer">Developer user ($8/mo tier)</option>
-                </select>
-              </div>
-              <div class="settings-row">
-                <div class="settings-row-info">
                   <span class="settings-label">Single Client Only</span>
                   <span class="settings-desc">Block launching if a RotMG Exalt process is already open.</span>
                 </div>
@@ -2004,78 +1809,11 @@
     </div>
   </div>
 
-  <!-- Market: Submit a Script (settings-style overlay) -->
-  <div id="market-submit-script-overlay" class="hidden admin-only">
-    <div id="market-submit-script-modal" role="dialog" aria-modal="true" aria-labelledby="market-submit-script-heading">
-      <div class="mss-header">
-        <div class="mss-header-text">
-          <h2 id="market-submit-script-heading" class="mss-title">Submit a Script</h2>
-          <p class="mss-subtitle">Your script will be reviewed by an admin before appearing in the marketplace.</p>
-        </div>
-        <button type="button" id="market-submit-script-x" class="mss-x" aria-label="Close">&times;</button>
-      </div>
-      <form id="market-submit-script-form" class="mss-form" novalidate>
-        <input type="text" id="market-submit-script-name" name="name" class="mss-input" placeholder="Script name" autocomplete="off" spellcheck="false" />
-        <textarea id="market-submit-script-description" name="description" class="mss-textarea" rows="5" placeholder="Description"></textarea>
-        <div class="mss-row2">
-          <input type="text" id="market-submit-script-category" name="category" class="mss-input" placeholder="Category" autocomplete="off" spellcheck="false" />
-          <input type="text" id="market-submit-script-tags" name="tags" class="mss-input" placeholder="Tags (comma-sep)" autocomplete="off" spellcheck="false" />
-        </div>
-        <select id="market-submit-script-pricing" name="pricing" class="mss-select" aria-label="Pricing">
-          <option value="free">Free</option>
-          <option value="monthly">Monthly</option>
-          <option value="one_time">One-time</option>
-        </select>
-        <div class="mss-file-block">
-          <div class="mss-file-label">Script file</div>
-          <div class="mss-file-row">
-            <label for="market-submit-script-file" class="mss-file-btn">Choose File</label>
-            <input type="file" id="market-submit-script-file" class="hidden" accept=".js,.ts,.tsx,.mjs,.cjs,.lua,.txt,.zip" />
-            <span id="market-submit-script-filename" class="mss-file-status">No file chosen</span>
-          </div>
-        </div>
-        <div class="mss-footer">
-          <button type="button" id="market-submit-script-cancel" class="mss-btn mss-btn-cancel">Cancel</button>
-          <button type="submit" id="market-submit-script-send" class="mss-btn mss-btn-submit">Submit for Review</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
   <!-- Splash / loading screen (shown until session restore completes) -->
   <div id="app-splash" class="app-splash">
     <img src="LogoWNoBackground.png" width="64" height="64" alt="Realm Engine" class="app-splash-logo" />
     <div class="app-splash-spinner"></div>
     <div id="app-splash-status" class="app-splash-status">Loading...</div>
-  </div>
-
-  <!-- Dashboard login overlay -->
-  <div id="disconnect-overlay" class="hidden" data-mode="signin">
-    <div class="disconnect-content">
-      <img class="disconnect-icon" src="LogoWNoBackground.png" width="72" height="72" alt="Realm Engine" />
-              <div class="disconnect-title">Realm Engine</div>
-      <div id="disconnect-auth-subtitle" class="disconnect-subtitle disconnect-auth-subtitle">Sign in to your Realm Engine account</div>
-      <div id="disconnect-auth-notice" class="disconnect-auth-notice">This is not your Realm account. Use the credentials you created for Realm Engine.</div>
-      <div id="overlay-login-error" class="login-error hidden"></div>
-      <div class="disconnect-form">
-        <input type="email" id="overlay-email" placeholder="Email" spellcheck="false" autocomplete="email">
-        <div class="disconnect-password-wrap">
-          <input type="password" id="overlay-password" placeholder="Password" autocomplete="current-password">
-          <button type="button" id="overlay-password-toggle" class="disconnect-password-eye-btn" aria-pressed="false" aria-label="Show password" title="Show password">
-            <svg class="disconnect-password-eye-show" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-            <svg class="disconnect-password-eye-hide hidden" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-          </button>
-        </div>
-      </div>
-      <div class="disconnect-auth-switch">
-        <button type="button" id="overlay-switch-to-register" class="disconnect-auth-link">Create an account</button>
-        <button type="button" id="overlay-switch-to-signin" class="disconnect-auth-link">Back to sign in</button>
-      </div>
-      <div class="disconnect-actions disconnect-auth-actions">
-        <button id="overlay-login-btn" class="launch-game-btn" type="button">Sign in</button>
-        <button id="overlay-register-btn" class="launch-game-btn disconnect-secondary-btn" type="button">Create account</button>
-      </div>
-    </div>
   </div>
 
   <div id="item-detail-overlay" class="hidden">
@@ -2101,202 +1839,6 @@
     </div>
   </div>
 
-  <!-- Subscription tiers (Manage plan) — content rendered dynamically by JS -->
-  <div id="plan-modal-overlay" class="plan-modal-overlay hidden" aria-hidden="true">
-    <div class="plan-modal-backdrop" data-plan-modal-close></div>
-    <div class="plan-modal-panel" role="dialog" aria-modal="true" aria-labelledby="plan-modal-title">
-      <div class="plan-modal-header">
-        <h2 id="plan-modal-title" class="plan-modal-title">Manage plan</h2>
-        <p class="plan-modal-lead"><strong>$1 USD = 100 gems</strong>. Plans renew monthly from your gem balance.</p>
-      </div>
-      <div id="plan-modal-body" class="plan-modal-body" aria-live="polite">
-        <div class="plan-modal-loading">Loading plans…</div>
-      </div>
-      <div id="plan-modal-msg" class="plan-modal-msg hidden" role="alert"></div>
-      <div class="plan-modal-footer">
-        <button type="button" class="setting-btn setting-btn-secondary" data-plan-modal-close>Close</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Buy gems modal (two-step: quantity → payment method) -->
-  <div id="purchase-modal-overlay" class="purchase-modal-overlay hidden" aria-hidden="true">
-    <div class="purchase-modal-backdrop" data-purchase-modal-close></div>
-    <div class="purchase-modal-panel" role="dialog" aria-modal="true" aria-labelledby="purchase-modal-title">
-
-      <!-- Step 1: quantity -->
-      <div id="purchase-step-qty" class="purchase-step">
-        <div class="purchase-modal-header">
-          <h2 id="purchase-modal-title" class="purchase-modal-title">Buy gems</h2>
-          <p class="purchase-modal-rate"><strong>1¢ = 1 gem</strong> (800G = $8)</p>
-          <p class="purchase-modal-sub-hint">Subscribers get bonus gems on every purchase!</p>
-        </div>
-        <div class="purchase-modal-qty-block">
-          <label for="purchase-modal-gem-qty" class="purchase-modal-qty-label">Gems to add</label>
-          <div class="purchase-modal-qty-row">
-            <input type="text" id="purchase-modal-gem-qty" class="purchase-modal-gem-input" value="100" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="6" aria-describedby="purchase-modal-qty-error" />
-            <span class="purchase-modal-usd" id="purchase-modal-total">= <strong>$1.00</strong></span>
-          </div>
-          <div class="purchase-modal-quick-btns" aria-label="Quick amounts">
-            <button type="button" class="purchase-quick-btn" data-quick-gems="100">100<span class="market-gem-label">G</span></button>
-            <button type="button" class="purchase-quick-btn" data-quick-gems="500">500<span class="market-gem-label">G</span></button>
-            <button type="button" class="purchase-quick-btn" data-quick-gems="800">800<span class="market-gem-label">G</span></button>
-            <button type="button" class="purchase-quick-btn" data-quick-gems="1000">1,000<span class="market-gem-label">G</span></button>
-            <button type="button" class="purchase-quick-btn" data-quick-gems="2500">2,500<span class="market-gem-label">G</span></button>
-          </div>
-          <p id="purchase-modal-qty-error" class="purchase-modal-qty-error hidden" role="alert"></p>
-        </div>
-        <div class="purchase-modal-actions">
-          <button type="button" id="purchase-modal-checkout" class="setting-btn">Choose payment →</button>
-          <button type="button" class="setting-btn setting-btn-secondary" data-purchase-modal-close>Cancel</button>
-        </div>
-      </div>
-
-      <!-- Step 2: payment method -->
-      <div id="purchase-step-method" class="purchase-step hidden">
-        <div class="purchase-modal-header">
-          <button type="button" id="purchase-modal-back" class="purchase-modal-back-btn" aria-label="Back">← Back</button>
-          <h2 class="purchase-modal-title">Payment method</h2>
-          <p class="purchase-modal-rate">Paying <strong id="purchase-method-summary"></strong> — complete checkout on our website.</p>
-        </div>
-        <div class="pay-cat-list" role="group" aria-label="Select payment method">
-
-          <!-- Card — direct, no dropdown -->
-          <button type="button" class="pay-cat-row pay-cat-row--card" data-method="stripe_card">
-            <span class="pay-cat-left">
-              <span class="pay-cat-icon">💳</span>
-              <span class="pay-cat-label">Credit / Debit Card</span>
-            </span>
-            <span class="pay-cat-arrow">→</span>
-          </button>
-
-          <!-- Crypto — expandable -->
-          <div class="pay-cat-group">
-            <button type="button" class="pay-cat-row pay-cat-row--expand" data-expand="crypto" aria-expanded="false">
-              <span class="pay-cat-left">
-                <span class="pay-cat-icon">₿</span>
-                <span class="pay-cat-label">Crypto</span>
-              </span>
-              <span class="pay-cat-chevron">▾</span>
-            </button>
-            <div class="pay-cat-options hidden" id="pay-expand-crypto">
-              <button type="button" class="pay-opt-btn" data-method="btc">
-                <span class="pay-opt-icon">₿</span> Bitcoin (BTC)
-              </button>
-              <button type="button" class="pay-opt-btn" data-method="eth">
-                <span class="pay-opt-icon">Ξ</span> Ethereum (ETH)
-              </button>
-              <button type="button" class="pay-opt-btn" data-method="usdt">
-                <span class="pay-opt-icon">₮</span> Tether (USDT)
-              </button>
-              <button type="button" class="pay-opt-btn" data-method="ltc">
-                <span class="pay-opt-icon">Ł</span> Litecoin (LTC)
-              </button>
-              <button type="button" class="pay-opt-btn" data-method="xmr">
-                <span class="pay-opt-icon">ɱ</span> Monero (XMR)
-              </button>
-            </div>
-          </div>
-
-          <!-- Other — expandable -->
-          <div class="pay-cat-group">
-            <button type="button" class="pay-cat-row pay-cat-row--expand" data-expand="other" aria-expanded="false">
-              <span class="pay-cat-left">
-                <span class="pay-cat-icon">🎁</span>
-                <span class="pay-cat-label">Other</span>
-              </span>
-              <span class="pay-cat-chevron">▾</span>
-            </button>
-            <div class="pay-cat-options hidden" id="pay-expand-other">
-              <button type="button" class="pay-opt-btn" data-method="amazon_gift_card">
-                <span class="pay-opt-icon">🎁</span> Amazon Gift Card
-              </button>
-            </div>
-          </div>
-
-        </div>
-        <p class="purchase-modal-web-note">Selecting a method opens the checkout page in your browser.</p>
-      </div>
-
-    </div>
-  </div>
-
-  <!-- Account panel popup (opened from sidebar account button) -->
-  <div id="account-popup-overlay" class="account-popup-overlay hidden" aria-hidden="true">
-    <div class="account-popup-backdrop" data-account-popup-close></div>
-    <div class="account-popup-panel" role="dialog" aria-modal="true" aria-labelledby="account-popup-title">
-      <!-- Header -->
-      <div class="account-popup-header">
-        <h2 id="account-popup-title" class="account-popup-title" data-i18n="accountPopup.title">Account</h2>
-        <button type="button" class="account-popup-close" data-account-popup-close aria-label="Close">&times;</button>
-      </div>
-
-      <div class="account-popup-body">
-        <!-- Profile card -->
-        <div class="acct-pop-card">
-          <div class="acct-pop-profile">
-            <div class="acct-pop-avatar" id="account-popup-avatar">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            </div>
-            <div class="acct-pop-profile-info">
-              <span class="acct-pop-email" id="account-popup-email">—</span>
-              <span class="acct-pop-member-since"><span data-i18n="accountPopup.memberSince">Member since</span> <span id="account-popup-member-since">—</span></span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Billing stats row -->
-        <div class="acct-pop-stats">
-          <div class="acct-pop-stat-card">
-            <span class="acct-pop-stat-label" data-i18n="accountPopup.gemBalance">Gem Balance</span>
-            <div class="acct-pop-stat-value-row">
-              <span class="acct-pop-stat-value" id="account-popup-gem-balance">0</span>
-              <span class="market-gem-label">G</span>
-            </div>
-            <span id="account-popup-gem-badge" class="acct-badge acct-badge--inactive">Inactive</span>
-            <span id="account-popup-gem-next-deduction" class="acct-pop-stat-sub hidden"></span>
-          </div>
-          <div class="acct-pop-stat-card">
-            <span class="acct-pop-stat-label" data-i18n="accountPopup.currentPlan">Current Plan</span>
-            <div class="acct-pop-stat-value-row">
-              <span class="acct-pop-stat-value" id="account-popup-plan-name">Free</span>
-            </div>
-            <span id="account-popup-plan-status" class="acct-sub-status hidden"></span>
-            <span id="account-popup-plan-expires" class="acct-pop-stat-sub hidden"></span>
-          </div>
-        </div>
-
-        <!-- Actions -->
-        <div class="acct-pop-actions">
-          <button type="button" id="account-popup-buy-gems" class="acct-pop-action-btn">
-            <span class="acct-pop-action-icon">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-            </span>
-            <span class="acct-pop-action-text">
-              <span class="acct-pop-action-title" data-i18n="accountPopup.buyGems.title">Buy Gems</span>
-              <span class="acct-pop-action-desc" data-i18n="accountPopup.buyGems.desc">Add gems to your balance</span>
-            </span>
-            <span class="acct-pop-action-arrow">›</span>
-          </button>
-          <button type="button" id="account-popup-manage-plan" class="acct-pop-action-btn">
-            <span class="acct-pop-action-icon">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-            </span>
-            <span class="acct-pop-action-text">
-              <span class="acct-pop-action-title" data-i18n="accountPopup.managePlan.title">Manage Plan</span>
-              <span class="acct-pop-action-desc" data-i18n="accountPopup.managePlan.desc">View or change your subscription</span>
-            </span>
-            <span class="acct-pop-action-arrow">›</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Footer -->
-      <div class="account-popup-footer">
-        <button type="button" id="account-popup-signout" class="acct-pop-signout-btn" data-i18n="accountPopup.signOut">Sign Out</button>
-      </div>
-    </div>
-  </div>
 
 <!-- First-time tutorial overlay -->
 <div id="tutorial-overlay" class="tutorial-overlay hidden">

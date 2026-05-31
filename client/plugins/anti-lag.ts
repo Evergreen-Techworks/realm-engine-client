@@ -259,7 +259,7 @@ export function register(ctx: PluginContext) {
       defIsPet: def?.isPet === true,
       playerPct: readPct('playerSize'),
       allyPct: readPct('allySize'),
-      applyToGuildMates: !!ctx.getSetting<boolean>('applyToGuildMates'),
+      applyGuildMates: !!ctx.getSetting<boolean>('applyToGuildMates'),
       otherPlayerGuild: guildFromEntityStats(oid),
       petHide: readPetHide(ctx),
     });

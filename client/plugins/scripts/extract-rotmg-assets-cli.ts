@@ -8,7 +8,7 @@
 
 import { resolve } from 'path';
 import { existsSync, unlinkSync } from 'fs';
-import { extractGameXmls, getRealmengineDataDir } from '../src/util/rotmgAssetExtractor.js';
+import { extractGameXmls, getRealmengineDataDir } from '../../src/util/rotmgAssetExtractor.js';
 
 const args = process.argv.slice(2);
 const force = args.includes('--force');

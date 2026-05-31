@@ -64,7 +64,7 @@
                 <li data-i18n="docs.svp.scripts.shape2">Default-exports a class with three methods: <code>onStart()</code>, <code>onLoop()</code>, <code>onStop()</code>.</li>
                 <li data-i18n="docs.svp.scripts.shape3">Uses the typed SDK: <code>RealmEngine.chat</code>, <code>RealmEngine.inventory</code>, and so on — full listing in the <strong>API Reference</strong> tab.</li>
                 <li data-i18n="docs.svp.scripts.shape4">Shows up in the <strong>Scripts</strong> tab. Only one runs at a time.</li>
-                <li data-i18n="docs.svp.scripts.shape5">You either write it locally or install it from the marketplace (where it's reviewed by us).</li>
+
               </ul>
 
               <h3 id="svp-plugins" data-i18n="docs.svp.h3.plugins">Plugins</h3>
@@ -99,7 +99,7 @@
               <p data-i18n="docs.svp.pick.p3">You can have both. They share the same <code>RealmEngine</code> SDK where it makes sense, so skills transfer.</p>
 
               <h3 id="svp-security" data-i18n="docs.svp.h3.security">Trust Model</h3>
-              <p data-i18n="docs.svp.security.p1">Scripts installed from the RealmEngine marketplace are reviewed by us before they're published. Community plugins are <strong>not reviewed</strong> — they're JavaScript files the community shares freely, and they run on your machine. Their reach into the game is limited to what the SDK exposes (raw packet access, the internal proxy bus, and low-level game-data internals are reserved for bundled first-party plugins), but they can still drive anything the SDK can do — chat, movement, combat, auto-actions — and they run with whatever permissions Node.js has on your computer. Only load community plugins from people you trust, and stick to the bundled plugins (the ones that ship with the client) if you're not sure.</p>
+
             </article>
 
             <article id="guide-first-script" class="api-guide" aria-labelledby="api-gs-title">
@@ -2771,7 +2771,7 @@ export default class MyScript extends TreeScript {
         'docs.svp.scripts.shape2': 'Exporta por defecto una clase con tres métodos: <code>onStart()</code>, <code>onLoop()</code>, <code>onStop()</code>.',
         'docs.svp.scripts.shape3': 'Usa el SDK tipado: <code>RealmEngine.chat</code>, <code>RealmEngine.inventory</code>, etc. — la lista completa está en la pestaña <strong>Referencia de la API</strong>.',
         'docs.svp.scripts.shape4': 'Aparece en la pestaña <strong>Guiones</strong>. Solo puede ejecutarse uno a la vez.',
-        'docs.svp.scripts.shape5': 'Puedes escribirlo localmente o instalarlo desde el marketplace (donde lo revisamos nosotros).',
+
         'docs.svp.h3.plugins': 'Complementos',
         'docs.svp.plugins.p1': 'Un complemento es una pieza de código que <strong>reacciona</strong> a las cosas que pasan en el juego. No tiene una tarea principal ni una condición de parada: una vez que activas el interruptor, se queda en segundo plano escuchando. Usos típicos:',
         'docs.svp.plugins.li1': 'Filtrar mensajes de chat que coincidan con una blocklist',
@@ -2794,7 +2794,7 @@ export default class MyScript extends TreeScript {
         'docs.svp.pick.ex4': '"Highlight low-HP enemies on screen" → <strong>plugin</strong> (siempre activo mientras juegas)',
         'docs.svp.pick.p3': 'Puedes tener ambos. Comparten el mismo SDK de <code>RealmEngine</code> cuando tiene sentido, así que lo que aprendas te servirá para los dos.',
         'docs.svp.h3.security': 'Modelo de confianza',
-        'docs.svp.security.p1': 'Los scripts instalados desde el marketplace de RealmEngine son revisados por nosotros antes de publicarse. Los plugins de la comunidad <strong>no se revisan</strong>: son archivos JavaScript que la comunidad comparte libremente y se ejecutan en tu máquina. Su alcance dentro del juego está limitado a lo que expone el SDK (el acceso a raw packets, el internal proxy bus y las partes de bajo nivel de game-data están reservados para los plugins first-party incluidos), pero aun así pueden controlar cualquier cosa que el SDK pueda hacer: chat, movimiento, combate, acciones automáticas, y se ejecutan con los permisos que Node.js tenga en tu ordenador. Carga plugins de la comunidad solo de personas en las que confíes y, si no estás seguro, quédate con los plugins incluidos con el cliente.',
+
         'docs.firstScript.p1': 'Esta guía te acompaña para crear el script funcional más pequeño posible: un archivo que imprime un mensaje cada segundo. Al final sabrás exactamente qué va dónde y estarás listo para escribir algo real.',
         'docs.firstScript.p2': 'Un <strong>script</strong> en RealmEngine es una carpeta. La carpeta tiene un manifiesto que le dice al cliente cómo llamar al script, quién lo hizo y qué archivo ejecutar. Ese archivo exporta una clase con tres métodos de ciclo de vida. Ese es todo el modelo.',
         'docs.firstScript.h3.where': 'Dónde viven los scripts',
@@ -3271,7 +3271,7 @@ export default class MyScript extends TreeScript {
         'docs.svp.scripts.shape2': 'Exportiert standardmäßig eine Klasse mit drei Methoden: <code>onStart()</code>, <code>onLoop()</code>, <code>onStop()</code>.',
         'docs.svp.scripts.shape3': 'Verwendet das typisierte SDK: <code>RealmEngine.chat</code>, <code>RealmEngine.inventory</code> und so weiter — die vollständige Liste findest du im Tab <strong>API-Referenz</strong>.',
         'docs.svp.scripts.shape4': 'Erscheint im Tab <strong>Skripte</strong>. Es kann immer nur eins gleichzeitig laufen.',
-        'docs.svp.scripts.shape5': 'Du schreibst es entweder lokal selbst oder installierst es aus dem Marketplace (wo es von uns geprüft wird).',
+
         'docs.svp.h3.plugins': 'Plugins',
         'docs.svp.plugins.p1': 'Ein Plugin ist ein Stück Code, das auf Dinge im Spiel <strong>reagiert</strong>. Es hat keine Hauptaufgabe und keine Stop-Bedingung — sobald du den Schalter aktivierst, sitzt es im Hintergrund und lauscht. Typische Einsatzfälle:',
         'docs.svp.plugins.li1': 'Chat-Nachrichten herausfiltern, die zu einer Blockliste passen',
@@ -3294,7 +3294,7 @@ export default class MyScript extends TreeScript {
         'docs.svp.pick.ex4': '"Highlight low-HP enemies on screen" → <strong>Plugin</strong> (während des Spielens immer aktiv)',
         'docs.svp.pick.p3': 'Du kannst beides haben. Beide teilen sich dasselbe <code>RealmEngine</code>-SDK, wo es sinnvoll ist, daher lassen sich die Kenntnisse übertragen.',
         'docs.svp.h3.security': 'Vertrauensmodell',
-        'docs.svp.security.p1': 'Skripte aus dem RealmEngine-Marketplace werden von uns geprüft, bevor sie veröffentlicht werden. Community-Plugins werden <strong>nicht geprüft</strong> — es sind JavaScript-Dateien, die die Community frei teilt, und sie laufen auf deinem Rechner. Ihr Zugriff auf das Spiel ist auf das beschränkt, was das SDK freigibt (raw packet access, der internal proxy bus und low-level game-data internals sind für gebündelte first-party Plugins reserviert), aber sie können trotzdem alles steuern, was das SDK erlaubt — Chat, Bewegung, Kampf, automatische Aktionen — und sie laufen mit den Rechten, die Node.js auf deinem Computer hat. Lade Community-Plugins nur von Personen, denen du vertraust, und bleib bei den mitgelieferten Plugins (denen, die mit dem Client ausgeliefert werden), wenn du dir unsicher bist.',
+
         'docs.firstScript.p1': 'Dieser Leitfaden fuehrt dich Schritt fuer Schritt durch das kleinstmoegliche funktionierende Skript: eine Datei, die jede Sekunde eine Nachricht ausgibt. Am Ende weisst du genau, was wohin gehoert, und bist bereit, etwas Echtes zu schreiben.',
         'docs.firstScript.p2': 'Ein <strong>Skript</strong> in RealmEngine ist ein Ordner. Der Ordner hat ein Manifest, das dem Client sagt, wie das Skript heisst, wer es erstellt hat und welche Datei ausgefuehrt werden soll. Diese Datei exportiert eine Klasse mit drei Lifecycle-Methoden. Das ist schon das ganze Modell.',
         'docs.firstScript.h3.where': 'Wo Skripte gespeichert werden',
@@ -3771,7 +3771,7 @@ export default class MyScript extends TreeScript {
         'docs.svp.scripts.shape2': 'Exporta por padrão uma classe com três métodos: <code>onStart()</code>, <code>onLoop()</code>, <code>onStop()</code>.',
         'docs.svp.scripts.shape3': 'Usa o SDK tipado: <code>RealmEngine.chat</code>, <code>RealmEngine.inventory</code> e assim por diante — a lista completa está na aba <strong>Referência da API</strong>.',
         'docs.svp.scripts.shape4': 'Aparece na aba <strong>Scripts</strong>. Apenas um pode rodar por vez.',
-        'docs.svp.scripts.shape5': 'Você pode escrevê-lo localmente ou instalá-lo pelo marketplace (onde ele é revisado por nós).',
+
         'docs.svp.h3.plugins': 'Plugins',
         'docs.svp.plugins.p1': 'Um plugin é um pedaço de código que <strong>reage</strong> ao que acontece no jogo. Ele não tem uma tarefa principal nem condição de parada — quando você ativa a chave, ele fica em segundo plano escutando. Usos típicos:',
         'docs.svp.plugins.li1': 'Filtrar mensagens de chat que combinam com uma blocklist',
@@ -3794,7 +3794,7 @@ export default class MyScript extends TreeScript {
         'docs.svp.pick.ex4': '"Highlight low-HP enemies on screen" → <strong>plugin</strong> (sempre ativo enquanto joga)',
         'docs.svp.pick.p3': 'Você pode ter os dois. Eles compartilham o mesmo SDK <code>RealmEngine</code> onde faz sentido, então o conhecimento se transfere.',
         'docs.svp.h3.security': 'Modelo de confiança',
-        'docs.svp.security.p1': 'Scripts instalados a partir do marketplace do RealmEngine são revisados por nós antes de serem publicados. Plugins da comunidade <strong>não são revisados</strong> — são arquivos JavaScript que a comunidade compartilha livremente e que rodam na sua máquina. O alcance deles dentro do jogo é limitado ao que o SDK expõe (raw packet access, o internal proxy bus e partes low-level de game-data ficam reservados para plugins first-party incluídos), mas eles ainda podem controlar tudo o que o SDK consegue fazer — chat, movimento, combate, ações automáticas — e rodam com quaisquer permissões que o Node.js tenha no seu computador. Carregue plugins da comunidade apenas de pessoas em quem você confia e, se estiver em dúvida, fique com os plugins incluídos no cliente.',
+
         'docs.firstScript.p1': 'Este guia mostra como montar o menor script funcional possível: um arquivo que imprime uma mensagem a cada segundo. No fim, você vai saber exatamente o que vai em cada lugar e estará pronto para escrever algo de verdade.',
         'docs.firstScript.p2': 'Um <strong>script</strong> no RealmEngine é uma pasta. Essa pasta tem um manifesto que diz ao cliente como chamar o script, quem o fez e qual arquivo executar. Esse arquivo exporta uma classe com três métodos de ciclo de vida. Esse é o modelo inteiro.',
         'docs.firstScript.h3.where': 'Onde os scripts ficam',
@@ -4271,7 +4271,7 @@ export default class MyScript extends TreeScript {
         'docs.svp.scripts.shape2': 'デフォルトで 3 つのメソッドを持つクラスを export します: <code>onStart()</code>, <code>onLoop()</code>, <code>onStop()</code>。',
         'docs.svp.scripts.shape3': '型付き SDK を使います: <code>RealmEngine.chat</code>, <code>RealmEngine.inventory</code> など。完全な一覧は <strong>APIリファレンス</strong> タブにあります。',
         'docs.svp.scripts.shape4': '<strong>スクリプト</strong> タブに表示されます。同時に実行できるのは 1 つだけです。',
-        'docs.svp.scripts.shape5': 'ローカルで自分で書くか、Marketplace からインストールします（そこで私たちがレビューします）。',
+
         'docs.svp.h3.plugins': 'プラグイン',
         'docs.svp.plugins.p1': 'プラグインは、ゲーム内で起こる出来事に <strong>反応する</strong> コードです。メインタスクや停止条件はなく、トグルをオンにするとバックグラウンドで待機し続けます。典型的な用途:',
         'docs.svp.plugins.li1': 'blocklist に一致するチャットメッセージを除外する',
@@ -4294,7 +4294,7 @@ export default class MyScript extends TreeScript {
         'docs.svp.pick.ex4': '"Highlight low-HP enemies on screen" → <strong>plugin</strong>（プレイ中は常に有効）',
         'docs.svp.pick.p3': '両方を使うこともできます。適切な場面では同じ <code>RealmEngine</code> SDK を共有するので、学んだことは相互に活かせます。',
         'docs.svp.h3.security': '信頼モデル',
-        'docs.svp.security.p1': 'RealmEngine Marketplace からインストールされるスクリプトは、公開前に私たちがレビューします。コミュニティ製プラグインは <strong>レビューされません</strong>。これはコミュニティが自由に共有する JavaScript ファイルであり、あなたのマシン上で実行されます。ゲーム内で触れられる範囲は SDK が公開しているものに制限されます（raw packet access、internal proxy bus、low-level game-data internals は同梱の first-party plugin 用に予約されています）が、それでも SDK ができることは制御できます。たとえば chat、movement、combat、自動操作などです。また、Node.js がそのコンピューター上で持つ権限で実行されます。コミュニティ製プラグインは信頼できる人のものだけを読み込み、不安があるならクライアント同梱のプラグインに留めてください。',
+
         'docs.firstScript.p1': 'このガイドでは、1 秒ごとにメッセージを出力するだけの、最小の動く script を作ります。最後には何をどこに置くべきかがはっきり分かり、実際の script を書き始められるようになります。',
         'docs.firstScript.p2': 'RealmEngine の <strong>script</strong> は 1 つの folder です。その folder には、client に script の名前、作者、実行する file を伝える manifest があります。その file は 3 つの lifecycle methods を持つ class を export します。モデルはそれだけです。',
         'docs.firstScript.h3.where': 'scripts の置き場所',
