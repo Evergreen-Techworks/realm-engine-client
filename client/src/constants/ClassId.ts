@@ -3,6 +3,7 @@ export const ClassId = {
   Rogue:        768,
   Archer:       775,
   Wizard:       782,
+  Priest:       784,
   Samurai:      785,
   Bard:         796,
   Warrior:      797,

@@ -43,6 +43,7 @@ export class Proxy extends EventEmitter {
     public readonly packetFactory: PacketFactory,
   ) {
     super();
+    this.setMaxListeners(50);
   }
 
   /** Start the TCP listener. */
