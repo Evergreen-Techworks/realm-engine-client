@@ -90,6 +90,19 @@ static std::mutex s_pluginFloatingTextMutex;
 static char s_pluginFloatingText[128] = {};
 static bool s_pluginFloatingTextPending = false;
 
+struct UnityNullableColor32Abi {
+    bool hasValue;
+    uint8_t padding[3];
+    uint32_t rgba;
+};
+
+static_assert(sizeof(UnityNullableColor32Abi) == 8, "Nullable<Color32> ABI must be 8 bytes");
+
+constexpr uint32_t PackColor32(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255)
+{
+    return uint32_t(r) | (uint32_t(g) << 8) | (uint32_t(b) << 16) | (uint32_t(a) << 24);
+}
+
 
 // ── Tile map (from bot-client tileUpdate / noWalkInit packets) ────────────────
 // Key: (x & 0xFFFF) << 16 | (y & 0xFFFF).  Value: tile type.
@@ -846,15 +859,11 @@ static void ApplyPluginFloatingTextFeatureState()
     auto* receiverMgr = reinterpret_cast<app::MapObjectUIManager*>(receiver);
     DbgLog("[FloatText] receiver=%p source=%s container=%p pool=%p", receiver, localMgr ? "localView.GUIManager" : "FindObjectsByType[0]", (void*)receiverMgr->fields.floatingTextsContainer, (void*)receiverMgr->fields.floatingTextPool);
 
-    using Fn = void(*)(void*, app::DGKAANOAENH__Enum, app::String*, app::Nullable_1_UnityEngine_Color32_, float, float, float, const MethodInfo*);
+    using Fn = void(*)(void*, app::DGKAANOAENH__Enum, app::String*, UnityNullableColor32Abi, float, float, float, const MethodInfo*);
     const bool off = strstr(text, "Disabled") != nullptr;
-    app::Nullable_1_UnityEngine_Color32_ col{};
+    UnityNullableColor32Abi col{};
     col.hasValue = true;
-    col.value.r = off ? 255 : 32;
-    col.value.g = off ? 0 : 220;
-    col.value.b = off ? 25 : 0;
-    col.value.a = 255;
-    col.value.rgba = static_cast<int32_t>(static_cast<uint32_t>(col.value.r) | (static_cast<uint32_t>(col.value.g) << 8) | (static_cast<uint32_t>(col.value.b) << 16) | (static_cast<uint32_t>(col.value.a) << 24));
+    col.rgba = off ? PackColor32(255, 0, 25) : PackColor32(32, 220, 0);
 
     static void* s_primedReceiver = nullptr;
     if (s_primedReceiver != receiver) {
