@@ -24,7 +24,7 @@
 #include "SpeedHack.h"
 #include "FpsSetter.h"
 #include "gui/tabs/CameraTAB.h"
-#include "IpcBridge.h"
+#include "FeatureRuntime.h"
 #include "ChatToast.h"
 #include "HwidCapture.h"
 #include "NoclipHook.h"
@@ -170,7 +170,7 @@ HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags
 	// freezes. Re-enable once the underlying issue is fixed.
 	// NoclipHook::Tick();      // drives player tileSwapInProgress flag (xdecomp noclip)
 	SharedMemory::Tick();    // shared mapping telemetry (pos + legacy bridges still using shared memory)
-	IpcBridge_ApplyFeatureOverrides(); // unified pipe-driven feature sync
+	FeatureRuntime::ApplyOverrides(); // unified pipe-driven feature sync
 	SkinChanger::Tick();     // writes skin when ptr changes — uses GameState
 	// #region agent log
 	SpeedHack::LogTimingProbe("pre_apply_timescale");

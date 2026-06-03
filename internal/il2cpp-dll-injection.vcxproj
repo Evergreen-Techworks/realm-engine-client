@@ -44,8 +44,17 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="src\platform\dx11\Dx11.cpp" />
-    <ClCompile Include="src\ui\IpcBridge.cpp" />
-    <ClCompile Include="src\ui\Handshake.cpp" />
+    <ClCompile Include="src\core\ipc\Handshake.cpp" />
+    <ClCompile Include="src\core\ipc\IpcBridge.cpp" />
+    <ClCompile Include="src\core\ipc\IpcFraming.cpp" />
+    <ClCompile Include="src\core\ipc\IpcJson.cpp" />
+    <ClCompile Include="src\core\ipc\IpcMessages.cpp" />
+    <ClCompile Include="src\core\ipc\IpcSession.cpp" />
+    <ClCompile Include="src\core\ipc\IpcTileState.cpp" />
+    <ClCompile Include="src\features\control\FeatureCommandRegistry.cpp" />
+    <ClCompile Include="src\features\control\FeatureState.cpp" />
+    <ClCompile Include="src\features\runtime\FeatureRuntime.cpp" />
+    <ClCompile Include="src\features\visuals\FloatingTextService.cpp" />
     <ClCompile Include="src\ui\gui\tabs\CameraTAB.cpp" />
     <ClCompile Include="src\ui\gui\tabs\WorldTAB.cpp" />
     <ClCompile Include="src\ui\gui\tabs\PlayerTAB.cpp" />
