@@ -11,6 +11,7 @@ namespace ProjectileTracking {
 
     void Install();
     void Uninstall();
+    bool IsInstalled();
 
     void SetLocalPlayerObjectId(int32_t objectId);
     int32_t GetLocalPlayerObjectId();
@@ -18,12 +19,6 @@ namespace ProjectileTracking {
     // Cleared at the start of each WorldTAB entity scan; filled per entity for shooter-origin lookup.
     void OnWorldRefreshBegin();
     void OnWorldEntity(int32_t objectId, float x, float y);
-
-    // Called from DebugTAB::Render when toggles change.
-    void SetVisualFlags(bool showPaths, bool showHitboxes);
-
-    bool ShowPaths();
-    bool ShowHitboxes();
 
     // Copy active (unexpired) shots into `out` (under lock). Used by WorldTAB::DoRefresh.
     void SnapshotToWorld(std::vector<WorldProjectile>& out);
@@ -34,13 +29,10 @@ namespace ProjectileTracking {
     // Local player projectile paths only.
     void CopyActiveLocalForDraw(std::vector<WorldProjectile>& out);
 
-    // Predicted world position at tMs after spawn (DIA4A ProjPosAt).
+    // Game-authored world position at tMs after spawn. Compatibility wrapper around HBEAKBIHANL.GIBLKPDHLBG.
     void ComputePosAt(const WorldProjectile& proj, float tMs, float& outX, float& outY);
 
-    // SEH-guarded variant. ComputePosAt occasionally touches fields on a
-    // projectile that has gone stale mid-tick. Use this from any caller
-    // that might race the despawn path (DangerMap, DangerPlanner).
-    // outX/outY are zero on guard trip.
+    // Compatibility wrapper for legacy callers. Leaves outX/outY unchanged if the game call fails.
     void ComputePosAtSafe(const WorldProjectile& proj, float tMs, float& outX, float& outY);
 
     // Optional UI scale (default 1) multiplied with native per-shot speed mult from IL2CPP field KDAJOMOFMJB.
@@ -51,9 +43,6 @@ namespace ProjectileTracking {
     // Values > 0.3001 replace KOBMINBDOBD startX/Y with cos/sin * offset; at 0.3 no extra work per shot.
     void  SetLocalPlayerMuzzleOffsetTiles(float tiles);
     float GetLocalPlayerMuzzleOffsetTiles();
-
-    // Last world (sx,sy) for a local SpawnProjectile (muzzle debug overlay).
-    bool GetMuzzleDebugLastSpawn(float& outWorldX, float& outWorldY);
 
     // HBEAKBIHANL instance: reads KDAJOMOFMJB via il2cpp_field_get_offset, × GetFlashSpeedMultiplier().
     float EffectiveSpeedMulFromProjectile(void* hbeakInstance);

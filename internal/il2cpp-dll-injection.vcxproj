@@ -69,6 +69,9 @@
     <ClCompile Include="src\platform\hooks\DirectX.cpp" />
     <ClCompile Include="src\platform\hooks\InitHooks.cpp" />
     <ClCompile Include="src\features\movement\dodge\ProjectileTracking.cpp" />
+    <ClCompile Include="src\features\projectiles\ProjectileRuntimeReader.cpp" />
+    <ClCompile Include="src\features\projectiles\ProjectileStore.cpp" />
+    <ClCompile Include="src\features\projectiles\ProjectileTrajectory.cpp" />
     <ClCompile Include="src\features\account\HwidCapture.cpp" />
     <ClCompile Include="src\features\account\CharSelect.cpp" />
     <ClCompile Include="src\features\account\CredentialCapture.cpp" />
@@ -168,6 +171,9 @@
     <ClInclude Include="src\platform\hooks\DirectX.h" />
     <ClInclude Include="src\platform\hooks\InitHooks.h" />
     <ClInclude Include="src\features\movement\dodge\ProjectileTracking.h" />
+    <ClInclude Include="src\features\projectiles\ProjectileRuntimeReader.h" />
+    <ClInclude Include="src\features\projectiles\ProjectileStore.h" />
+    <ClInclude Include="src\features\projectiles\ProjectileTrajectory.h" />
     <ClInclude Include="src\features\account\HwidCapture.h" />
     <ClInclude Include="src\features\account\CharSelect.h" />
     <ClInclude Include="src\features\account\CredentialCapture.h" />
