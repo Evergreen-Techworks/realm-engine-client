@@ -1,0 +1,51 @@
+name: Beebyte offset auto-update
+
+# Fired by the realm-engine beebyte daily scan (repository_dispatch) when the
+# live trace shows RuntimeOffsets fallbacks drifting from the current build.
+# Applies the verified offsets via internal/tools/apply-offset-update.py and
+# opens a PR. Never merges anything — humans review the diff.
+
+on:
+  repository_dispatch:
+    types: [beebyte-offsets]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write payload
+        env:
+          # toJSON through an env var — payload content never touches the
+          # shell as code, only as data.
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+        run: printf '%s' "$PAYLOAD" > /tmp/beebyte-payload.json
+
+      - name: Apply offsets
+        run: |
+          python3 internal/tools/apply-offset-update.py /tmp/beebyte-payload.json > /tmp/pr-body.md
+          cat /tmp/pr-body.md
+
+      - name: Open PR if anything changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet; then
+            echo "no offset changes — nothing to PR"
+            exit 0
+          fi
+          BRANCH="beebyte/offsets-${{ github.run_id }}"
+          git config user.name "beebyte-bot"
+          git config user.email "noreply@realmengine.org"
+          git checkout -b "$BRANCH"
+          git add internal/src/core/runtime/RuntimeOffsets.cpp internal/src/core/runtime/RuntimeOffsets.h
+          git commit -m "fix(offsets): auto-update fallbacks from beebyte daily scan"
+          git push -u origin "$BRANCH"
+          gh pr create \
+            --title "fix(offsets): auto-update fallbacks from beebyte daily scan" \
+            --body-file /tmp/pr-body.md
