@@ -77,9 +77,15 @@ function getListeningPidsForPort(port) {
       const parts = line.trim().split(/\s+/);
       if (parts.length < 5 || parts[0].toUpperCase() !== 'TCP') return;
       const local = parts[1] || '';
-      const state = parts[3] || '';
+      const foreign = parts[2] || '';
       const pid = Number(parts[4]);
-      if (!Number.isFinite(pid) || state.toUpperCase() !== 'LISTENING') return;
+      // A listening TCP socket has a wildcard foreign endpoint (0.0.0.0:0 / [::]:0).
+      // Key off that instead of the State column ("LISTENING"), which Windows
+      // localizes by UI language (German "ABHÖREN", French "À L'ÉCOUTE", …) and
+      // would otherwise make this return nothing — leaving stale dev proxies
+      // un-cleaned — on non-English PCs.
+      const isListening = /:0$/.test(foreign);
+      if (!Number.isFinite(pid) || !isListening) return;
       if (portPattern.test(local)) pids.add(pid);
     });
     return Array.from(pids);

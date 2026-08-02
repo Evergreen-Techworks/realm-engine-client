@@ -39,7 +39,7 @@ export function applyRoleTrimPolicyFromDisk() {
 
 /**
  * Safety reset: Normal priority + full CPU affinity, clears parked list, stops CPU watchdog, clears dashboard preset name.
- * Optionally activates a power plan whose name matches /balanced/i (typically "Balanced").
+ * Optionally activates the Balanced power plan (matched by its well-known GUID, name as fallback).
  */
 export async function restoreAllClientTuning(options?: {
   activateBalancedPowerPlan?: boolean;
@@ -65,7 +65,14 @@ export async function restoreAllClientTuning(options?: {
 
     if (options?.activateBalancedPowerPlan && sup.ok) {
       const plans = await listPowerPlans();
+      // Prefer the well-known Balanced scheme GUID. Matching the friendly name
+      // alone fails on non-English Windows, where powercfg localizes it (German
+      // "Ausbalanciert", Spanish "Equilibrado", Japanese "バランス", …), so the
+      // safety reset would never re-apply Balanced. Name match stays as fallback.
+      const BALANCED_GUID = '381b4222-f694-41f0-9685-ff5bb260df2e';
+      const guidOnly = (g: string): string => String(g).replace(/[{}]/g, '').trim().toLowerCase();
       const bal =
+        plans.find((p) => guidOnly(p.guid) === BALANCED_GUID) ||
         plans.find((p) => /\bbalanced\b/i.test(p.name)) ||
         plans.find((p) => /^balanced$/i.test(String(p.name).trim()));
       if (bal) await activatePowerPlan(bal.guid);

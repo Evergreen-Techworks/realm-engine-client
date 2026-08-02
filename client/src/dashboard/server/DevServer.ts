@@ -145,6 +145,39 @@ import {
 import { normalizeSlotCount, toBoolArray, extractTradeItemIncluded, parseOfferSlots } from '../../util/tradeSlots.js';
 import { WikiSpriteService } from './wikiSpriteService.js';
 
+/**
+ * Count running processes matching an image name, locale-independently.
+ *
+ * `tasklist` prints a localized "no tasks are running" notice (English "INFO:",
+ * German "INFORMATION:", Spanish "INFORMACIÓN:", Japanese "情報:", …) to stdout —
+ * and exits 0 — when nothing matches the filter. We must NOT blacklist that prose
+ * by its English "INFO:" prefix: on a non-English PC the prefix differs, the line
+ * survives, and the count is a false 1. Instead count only genuine CSV process
+ * rows, identified by their first quoted field ("RotMG Exalt.exe","1234",…); the
+ * notice is unquoted prose, so this is correct on every UI language.
+ */
+function countRunningProcessesByImageName(imageName: string): number {
+  try {
+    const output = execFileSync('tasklist', ['/FI', `IMAGENAME eq ${imageName}`, '/FO', 'CSV', '/NH'], {
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    const normalize = (s: string): string => s.replace(/\u00A0/g, ' ').trim().toLowerCase();
+    const target = normalize(imageName);
+    return String(output || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => {
+        const m = line.match(/^"([^"]*)"/);
+        return m !== null && normalize(m[1]) === target;
+      }).length;
+  } catch (err) {
+    Logger.warn('DevServer', `Failed to inspect ${imageName} processes: ${(err as Error).message}`);
+    return 0;
+  }
+}
+
 /** `taskkill /IM msedge.exe /F /T` — frees RAM from stray Edge renderer processes (Windows only). */
 function killMicrosoftEdgeProcessesBestEffort(): {
   ok: boolean;
@@ -166,7 +199,11 @@ function killMicrosoftEdgeProcessesBestEffort(): {
     const message = String((err as Error).message || '');
     const stderr = (err as { stderr?: Buffer })?.stderr ? String((err as { stderr?: Buffer }).stderr) : '';
     const combined = `${message} ${stderr}`;
-    if (/not found|no running instance|not running/i.test(combined)) {
+    // taskkill exits non-zero (with localized "not found" text) when no msedge.exe
+    // is running. Re-check the count structurally rather than matching English
+    // strings, so a non-English PC with no Edge isn't reported as a real failure
+    // (which would surface as an HTTP 400 at the dashboard endpoint).
+    if (countRunningProcessesByImageName('msedge.exe') === 0) {
       return { ok: true, ran: false };
     }
     Logger.warn('DevServer', `kill-msedge: ${combined.trim()}`);
@@ -1319,20 +1356,7 @@ export class DevServer {
   }
 
   private getRunningProcessCount(imageName: string): number {
-    try {
-      const output = execFileSync('tasklist', ['/FI', `IMAGENAME eq ${imageName}`, '/FO', 'CSV', '/NH'], {
-        encoding: 'utf8',
-        windowsHide: true,
-      });
-      const lines = String(output || '')
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
-      return lines.filter((line) => !line.startsWith('INFO:')).length;
-    } catch (err) {
-      Logger.warn('DevServer', `Failed to inspect ${imageName} processes: ${(err as Error).message}`);
-      return 0;
-    }
+    return countRunningProcessesByImageName(imageName);
   }
 
   private getRunningRotmgExaltProcessCount(): number {
@@ -1347,11 +1371,14 @@ export class DevServer {
       });
       return true;
     } catch (err) {
-      const message = String((err as Error).message || '');
-      if (message.toLowerCase().includes('not found') || message.toLowerCase().includes('no running instance')) {
+      // taskkill exits non-zero when the image simply isn't running. Detect that
+      // structurally — its "not found"/"no running instance" text is localized by
+      // the Windows UI language, so matching English substrings mislabels the
+      // benign no-op as a real failure on non-English PCs.
+      if (countRunningProcessesByImageName(imageName) === 0) {
         return false;
       }
-      Logger.warn('DevServer', `Failed to terminate ${imageName}: ${message}`);
+      Logger.warn('DevServer', `Failed to terminate ${imageName}: ${String((err as Error).message || '')}`);
       return false;
     }
   }

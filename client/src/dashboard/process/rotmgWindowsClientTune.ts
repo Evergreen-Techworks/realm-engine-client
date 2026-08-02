@@ -833,9 +833,10 @@ export async function activatePowerPlan(rawGuid: string): Promise<{ ok: boolean;
   if (!g) return { ok: false, error: 'Invalid power scheme GUID.' };
 
   const r = await execFileCmd([powerCfgExePath(), '/setactive', g]);
-  if ((r.stderr || '').toLowerCase().includes('unable') || (r.stderr || '').includes('権限')) {
-    return { ok: false, error: r.stderr.trim() || 'powercfg refused.' };
-  }
+  // Don't classify the outcome by powercfg's stderr text — its access-denied
+  // message is localized by the Windows UI language, so the old "unable"/"権限"
+  // check missed German/French/Spanish/etc. failures. Verify the active scheme
+  // actually changed, then fall back to the exit code; both are locale-independent.
   await new Promise((x) => setTimeout(x, 120));
   const verify = await getActiveSchemeGuid();
   if (verify?.toLowerCase() === g.toLowerCase()) return { ok: true };
