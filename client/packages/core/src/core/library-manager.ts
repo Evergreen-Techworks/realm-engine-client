@@ -3,12 +3,13 @@ import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Packet } from '@re-headless/protocol';
 import { Logger, LogLevel } from '../services/logger.js';
-import { getLibraries, getPacketHooks } from './hooks.js';
+import { getClientHooks, getLibraries, getPacketHooks } from './hooks.js';
 import type { Client } from './client.js';
 
 export class LibraryManager {
   private libs: any[] = [];
   private packetHookIndex: Map<string, Array<{ lib: any; method: string }>> = new Map();
+  private clientHookIndex: Map<string, Array<{ lib: any; method: string }>> = new Map();
 
   constructor(readonly root: string) {}
 
@@ -54,6 +55,31 @@ export class LibraryManager {
       }
       if (list.length) this.packetHookIndex.set(hook.packet, list);
     }
+
+    this.clientHookIndex.clear();
+    for (const hook of getClientHooks()) {
+      const list = this.clientHookIndex.get(hook.event) ?? [];
+      for (const lib of this.libs) {
+        if (lib?.constructor?.name === hook.target && typeof lib[hook.method] === 'function') {
+          list.push({ lib, method: hook.method });
+        }
+      }
+      if (list.length) this.clientHookIndex.set(hook.event, list);
+    }
+  }
+
+  attachClient(client: Client): void {
+    for (const [event, hooks] of this.clientHookIndex) {
+      client.addListener(event, (...args: unknown[]) => {
+        for (const h of hooks) {
+          try {
+            h.lib[h.method](client, ...args);
+          } catch (err: any) {
+            Logger.log('LibraryManager', `Hook error ${h.lib.constructor.name}.${h.method}: ${err?.message ?? err}`, LogLevel.Error);
+          }
+        }
+      });
+    }
   }
 
   dispatchPacket(client: Client, packet: Packet): void {
@@ -68,4 +94,3 @@ export class LibraryManager {
     }
   }
 }
-

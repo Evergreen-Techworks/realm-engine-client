@@ -214,6 +214,7 @@ export class Client extends EventEmitter {
     this._key = cfg.key;
     const raw = cfg.serverLabel?.trim();
     this.serverLabel = raw && raw.length > 0 ? raw : null;
+    this.cfg.libraryManager?.attachClient(this);
   }
 
   get time(): number {
