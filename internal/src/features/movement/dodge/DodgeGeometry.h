@@ -26,6 +26,20 @@ inline bool InProjAabb(float cx, float cy, float px, float py, float effR)
     return std::fabs(dx) < effR && std::fabs(dy) < effR;
 }
 
+inline float MinDistPointToSegment(float px, float py,
+                                   float ax, float ay,
+                                   float bx, float by)
+{
+    const float dx = bx - ax, dy = by - ay;
+    const float L2 = dx * dx + dy * dy;
+    float t = (L2 > 1e-9f) ? ((px - ax) * dx + (py - ay) * dy) / L2 : 0.f;
+    if (t < 0.f) t = 0.f;
+    else if (t > 1.f) t = 1.f;
+    const float cx = ax + t * dx, cy = ay + t * dy;
+    const float ddx = px - cx, ddy = py - cy;
+    return std::sqrt(ddx * ddx + ddy * ddy);
+}
+
 // Push `probe` outside the AABB centered on `center` with half-side `half`.
 // Picks the cheaper axis to clear. Used as an analytic escape vector when
 // the player is currently inside a single bullet's AABB and we need to
