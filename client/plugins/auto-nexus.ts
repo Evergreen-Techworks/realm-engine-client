@@ -51,17 +51,25 @@ interface TrackedAoe {
 }
 
 /**
- * Damage the server has been told about (a C→S damage packet we forwarded) but
- * which is not yet reflected in the `pd.health` we read from NEWTICK.
+ * One locally predicted hit, pending confirmation from the server.
+ *
+ * An entry lives until either the server confirms it (a server HP drop or a
+ * DAMAGE packet consumes it) or its TTL expires — expiry refunds the HP, because
+ * `clientHp` is recomputed from the surviving entries rather than accumulated.
  */
-interface SentHit {
-  amount: number;
-  at:     number;
-  source: string;
+interface PredictedHit {
+  amount:    number;
+  at:        number;
+  expiresAt: number;
+  source:    string;
+  serverWillApply: boolean;
 }
 
 interface NexusState {
-  clientHp:     number;
+  /**
+   * Authoritative HP — ProdMafia's `syncedChp`. Written only from `pd.health` on
+   * NEWTICK and from server DAMAGE confirmations. Local damage never mutates it.
+   */
   serverHp:     number;
   maxHp:        number;
   defense:      number;
@@ -73,15 +81,14 @@ interface NexusState {
   lastTickTime: number;
   lastSyncTick: number;
   pendingAoes:  TrackedAoe[];
-  /** Damage in flight to the server — see `serverBelievedHp`. */
-  sentHits:     SentHit[];
-  /** Wall clock of the previous NEWTICK; hits older than it are assumed applied. */
-  prevTickAt:   number;
+  /** Locally predicted damage awaiting confirmation — see `clientHp`. */
+  predicted:    PredictedHit[];
+  /** Positive recovery applied to the prediction but not yet in `serverHp`. */
+  predictedRecovery: number;
   /** Pending release timers for held lethal PLAYERHITs. */
   heldTimers:   ReturnType<typeof setTimeout>[];
-  /** Trailing window of server HP loss we could not attribute to a modeled hit. */
+  /** Trailing window of server HP loss no prediction accounted for. */
   unattributed: UnattributedSample[];
-  residualCarry: number;
 }
 
 interface UnattributedSample {
@@ -166,7 +173,10 @@ export function register(ctx: PluginContext) {
   let lethalHoldMs    = 100;  // LethalHoldTime
   let lethalCushionHp = 10;    // LethalCushionHealth
 
-  const SENT_HIT_TTL_MS = 1000;
+  // ── Predicted-damage ledger TTLs ───────────────────────────────────────
+  const PREDICTED_TTL_PROJECTILE_MS  = 600;
+  const PREDICTED_TTL_ENVIRONMENT_MS = 1200;
+  const MAX_PENDING_PREDICTIONS      = 64;
 
   // ── Unattributed-damage margin (ProdMafia `effectiveAutoNexusThreshold`) ──
   let useUnattributedMargin = true;
@@ -174,7 +184,6 @@ export function register(ctx: PluginContext) {
   const UNATTRIBUTED_WINDOW_MS    = 2000;
   const UNATTRIBUTED_REACTION_MS  = 350;
   const UNATTRIBUTED_MAX_FRACTION = 0.12;
-  const UNATTRIBUTED_CARRY_CAP    = 0.25;
 
   ctx.registerSetting('ForceAutoNexusHealth', {
     label: 'Force Nexus Health',
@@ -256,59 +265,106 @@ export function register(ctx: PluginContext) {
     let s = states.get(client);
     if (!s) {
       s = {
-        clientHp: 0, serverHp: 0, maxHp: 0,
+        serverHp: 0, maxHp: 0,
         defense: 0, vitality: 0,
         regenAccum: 0,
         pendingHeal: 0,
         nexusSent: false, inSafeZone: false,
         lastTickTime: Date.now(), lastSyncTick: 0,
         pendingAoes: [],
-        sentHits: [], prevTickAt: 0, heldTimers: [],
-        unattributed: [], residualCarry: 0,
+        predicted: [], predictedRecovery: 0, heldTimers: [],
+        unattributed: [],
       };
       states.set(client, s);
     }
     return s;
   }
 
-  // ── Server-believed HP ────────────────────────────────────────────────
-  function pruneSentHits(state: NexusState): void {
-    if (state.sentHits.length === 0) return;
-    const cutoff = Date.now() - SENT_HIT_TTL_MS;
-    state.sentHits = state.sentHits.filter((h) => h.at > cutoff);
+  // ── Predicted-damage ledger ───────────────────────────────────────────
+  function pruneExpired(state: NexusState): void {
+    if (state.predicted.length === 0) return;
+    const now = Date.now();
+    state.predicted = state.predicted.filter((p) => p.expiresAt > now);
   }
 
-  function recordSentHit(state: NexusState, amount: number, source: string): void {
+  function chargePredicted(
+    state:  NexusState,
+    amount: number,
+    source: string,
+    ttlMs:  number,
+    serverWillApply: boolean,
+  ): void {
     if (amount <= 0) return;
-    pruneSentHits(state);
-    state.sentHits.push({ amount, at: Date.now(), source });
+    pruneExpired(state);
+
+    const now = Date.now();
+    state.predicted.push({
+      amount, at: now, expiresAt: now + ttlMs, source, serverWillApply,
+    });
+
+    while (state.predicted.length > MAX_PENDING_PREDICTIONS) {
+      const dropped = state.predicted.shift();
+      if (dropped) {
+        ctx.log(`Prediction ledger full — refunded ${Math.round(dropped.amount)} HP (${dropped.source})`);
+      }
+    }
+  }
+
+  function pendingDamage(state: NexusState): number {
+    pruneExpired(state);
+    let total = 0;
+    for (const p of state.predicted) total += p.amount;
+    return total;
+  }
+
+  function consumePredicted(state: NexusState, amount: number): number {
+    pruneExpired(state);
+    let remaining = amount;
+
+    while (remaining > 0 && state.predicted.length > 0) {
+      const oldest = state.predicted[0];
+      if (oldest.amount <= remaining) {
+        remaining -= oldest.amount;
+        state.predicted.shift();
+      } else {
+        oldest.amount -= remaining;
+        remaining = 0;
+      }
+    }
+
+    return amount - remaining;
+  }
+
+  function clientHp(state: NexusState): number {
+    const hp = state.serverHp + state.predictedRecovery - pendingDamage(state);
+    return Math.min(hp, state.maxHp > 0 ? state.maxHp : hp);
   }
 
   function serverBelievedHp(state: NexusState): number {
-    pruneSentHits(state);
+    pruneExpired(state);
     let hp = state.serverHp;
-    for (const hit of state.sentHits) hp -= hit.amount;
+    for (const p of state.predicted) {
+      if (p.serverWillApply) hp -= p.amount;
+    }
     return hp;
   }
 
-  // ── Unattributed damage ───────────────────────────────────────────────
-  function measureUnattributed(
-    state:        NexusState,
-    actualLoss:   number,
-    modeledLoss:  number,
-  ): void {
-    let residue = actualLoss - modeledLoss + state.residualCarry;
+  /** Add recovery to the prediction, bounded so `clientHp` cannot exceed max HP. */
+  function addPredictedRecovery(state: NexusState, amount: number): void {
+    if (amount === 0) return;
+    state.predictedRecovery += amount;
+    if (state.predictedRecovery < 0) state.predictedRecovery = 0;
 
-    if (residue < 0) {
-      const cap = -Math.min(modeledLoss, state.maxHp * UNATTRIBUTED_CARRY_CAP);
-      state.residualCarry = Math.max(residue, cap);
-      return;
+    const overshoot = clientHp(state) - state.maxHp;
+    if (state.maxHp > 0 && overshoot > 0) {
+      state.predictedRecovery = Math.max(0, state.predictedRecovery - overshoot);
     }
+  }
 
-    state.residualCarry = 0;
-    if (residue > 0) {
-      state.unattributed.push({ amount: residue, at: Date.now() });
-    }
+  function resyncPrediction(state: NexusState): void {
+    state.predicted.length  = 0;
+    state.predictedRecovery = 0;
+    state.regenAccum        = 0;
   }
 
   function unattributedDps(state: NexusState): number {
@@ -374,7 +430,7 @@ export function register(ctx: PluginContext) {
     const threshold = effectiveThresholdHp(state);
 
     if (useClientHp) {
-      return state.clientHp <= threshold;
+      return clientHp(state) <= threshold;
     }
     return serverBelievedHp(state) <= threshold;
   }
@@ -389,18 +445,20 @@ export function register(ctx: PluginContext) {
     if (state.nexusSent) return;
     state.nexusSent = true;
 
-    const hpPct = state.maxHp > 0 ? Math.round((state.clientHp / state.maxHp) * 100) : 0;
+    const hp    = clientHp(state);
+    const hpPct = state.maxHp > 0 ? Math.round((hp / state.maxHp) * 100) : 0;
     const conds = describeConditions(client.playerData);
     const thresholds = describeThresholds(state);
-    ctx.log(`AUTO NEXUS — HP: ${Math.round(state.clientHp)}/${state.maxHp} (${hpPct}%) — ${reason}`
-      + ` — ${thresholds}`
+    ctx.log(`AUTO NEXUS — HP: ${Math.round(hp)}/${state.maxHp} (${hpPct}%) — ${reason}`
+      + ` — ${thresholds} — ${describeLedger(state)}`
       + (conds ? ` — conditions: ${conds}` : '')
       + (detail ? ` — ${detail.replace(/\n/g, ' | ')}` : ''));
 
     if (showNotification) {
         ctx.sendNotification(client, 'AutoNexus',
-        `AutoNexused at ${hpPct}% HP\nHP: ${Math.round(state.clientHp)}/${state.maxHp} | DEF: ${state.defense} | ServerHP: ${state.serverHp}`
+        `AutoNexused at ${hpPct}% HP\nHP: ${Math.round(hp)}/${state.maxHp} | DEF: ${state.defense} | ServerHP: ${state.serverHp}`
         + `\n${thresholds}`
+        + `\n${describeLedger(state)}`
         + (conds ? `\nConditions: ${conds}` : '')
         + `\nSource: ${reason}`
         + (detail ? `\n${detail}` : ''));
@@ -409,6 +467,14 @@ export function register(ctx: PluginContext) {
     const escape = ctx.createPacket('ESCAPE');
     escape.modified = true;
     client.sendToServer(escape);
+  }
+
+  function describeLedger(state: NexusState): string {
+    const pending = pendingDamage(state);
+    return `HP model: synced ${Math.round(state.serverHp)}`
+      + ` + recovery ${Math.round(state.predictedRecovery)}`
+      + ` - pending ${Math.round(pending)} (${state.predicted.length} entries)`
+      + ` = ${Math.round(clientHp(state))}`;
   }
 
   function describeThresholds(state: NexusState): string {
@@ -458,15 +524,17 @@ export function register(ctx: PluginContext) {
     dmg:    number,
     reason: string,
     packet?: Packet,
+    ttlMs:  number = PREDICTED_TTL_PROJECTILE_MS,
   ): void {
-    state.clientHp -= dmg;
+    chargePredicted(state, dmg, reason, ttlMs, true);
+    const entry = state.predicted[state.predicted.length - 1];
 
     if (shouldNexus(state)) {
       if (packet) packet.send = false;
       doNexus(client, state, reason);
     }
 
-    if (!packet || packet.send) recordSentHit(state, dmg, reason);
+    if (entry && packet && !packet.send) entry.serverWillApply = false;
   }
 
 
@@ -495,8 +563,9 @@ export function register(ctx: PluginContext) {
 
     const num4 = Math.trunc(state.regenAccum);
     state.regenAccum -= num4;
-    state.clientHp += num4;
-    if (state.clientHp > state.maxHp) state.clientHp = state.maxHp;
+    // Regen is a prediction like any other: it lands in `predictedRecovery` and is
+    // retired when the server's own HP catches up to it.
+    addPredictedRecovery(state, num4);
   }
 
   ctx.hookPacket('MAPINFO', (client, packet) => {
@@ -504,15 +573,11 @@ export function register(ctx: PluginContext) {
     const state   = getState(client);
     state.inSafeZone = SAFE_ZONE_MAPS.has(mapName);
     state.nexusSent  = false;
-    state.clientHp   = 0;
     state.serverHp   = 0;
     state.pendingHeal = 0;
-    state.regenAccum  = 0;
     state.pendingAoes   = [];
-    state.sentHits      = [];
-    state.prevTickAt    = 0;
     state.unattributed  = [];
-    state.residualCarry = 0;
+    resyncPrediction(state);
 
     if (state.heldTimers.length > 0) {
       ctx.log(`Dropping ${state.heldTimers.length} held PLAYERHIT(s) — map changed before release`);
@@ -541,38 +606,35 @@ export function register(ctx: PluginContext) {
     const serverHp     = pd.health > 0 ? pd.health : state.maxHp;
     const prevServerHp = state.serverHp;
 
-    let modeledLoss = 0;
-    if (state.sentHits.length > 0) {
-      const stillInFlight: SentHit[] = [];
-      for (const hit of state.sentHits) {
-        if (hit.at > state.prevTickAt) stillInFlight.push(hit);
-        else modeledLoss += hit.amount;
-      }
-      state.sentHits = stillInFlight;
-    }
-    state.prevTickAt = Date.now();
-
-    if (prevServerHp > 0 && state.maxHp > 0) {
-      measureUnattributed(state, prevServerHp - serverHp, modeledLoss);
-    }
-
-    if (state.clientHp <= 0) {
-      state.clientHp   = serverHp;
-      state.serverHp   = serverHp;
+    if (prevServerHp <= 0) {
+      state.serverHp = serverHp;
+      resyncPrediction(state);
       state.pendingHeal = 0;
     } else {
-      const drift = Math.abs(state.clientHp - serverHp);
-      if (syncServerHp && drift > 30 && state.lastSyncTick > 5) {
-        // ctx.log(`HP sync: client ${Math.round(state.clientHp)} → server ${serverHp} (drift ${drift})`);
-        state.clientHp = serverHp;
+      const delta = prevServerHp - serverHp;
+
+      if (delta > 0) {
+        const consumed    = consumePredicted(state, delta);
+        const unexplained = delta - consumed;
+        if (unexplained > 0) {
+          state.unattributed.push({ amount: unexplained, at: Date.now() });
+        }
+      } else if (delta < 0) {
+        // The server healed us; retire the recovery we had already predicted.
+        addPredictedRecovery(state, delta);
       }
+
       state.serverHp = serverHp;
+
+      if (syncServerHp && clientHp(state) > serverHp) {
+        const excess = clientHp(state) - serverHp;
+        state.predictedRecovery = Math.max(0, state.predictedRecovery - excess);
+      }
     }
 
     // Class89.method_7: `int_9` heal queue (method_33) after stats, before method_30
     if (state.pendingHeal !== 0) {
-      state.clientHp += state.pendingHeal;
-      if (state.clientHp > state.maxHp) state.clientHp = state.maxHp;
+      addPredictedRecovery(state, state.pendingHeal);
       state.pendingHeal = 0;
     }
 
@@ -610,7 +672,8 @@ export function register(ctx: PluginContext) {
         if (distSq <= radiusSq) {
           const dmg = getDmgFromState(client, state, aoe.damage, aoe.armorPierce);
           aoes.splice(i, 1);
-          applyDamage(client, state, dmg, `AoE dmg=${dmg} (on MOVE, pre-AOEACK)`, packet);
+          applyDamage(client, state, dmg, `AoE dmg=${dmg} (on MOVE, pre-AOEACK)`, packet,
+            PREDICTED_TTL_ENVIRONMENT_MS);
           if (state.nexusSent) return;
         }
       }
@@ -650,13 +713,14 @@ export function register(ctx: PluginContext) {
 
     if (lethal) {
       packet.send = false;
-      state.clientHp -= dmg;
+      chargePredicted(state, dmg, 'held lethal PLAYERHIT',
+        PREDICTED_TTL_PROJECTILE_MS + lethalHoldMs, true);
 
-      const inFlight = state.sentHits.reduce((sum, h) => sum + h.amount, 0);
+      const inFlight = state.serverHp - srvHp;
       doNexus(client, state,
         `LETHAL projectile hit (${dmg} dmg vs ${Math.round(srvHp)} server HP)`,
         `Server HP ${Math.round(state.serverHp)} - ${Math.round(inFlight)} in flight `
-        + `= ${Math.round(srvHp)}; incoming ${dmg}${bullet ? '' : ' (estimated — unknown bullet)'}\n`);
+        + `= ${Math.round(srvHp)}; incoming ${dmg}${bullet ? '' : ' (estimated — unknown bullet)'}`);
 
       releaseHeldHit(client, state, packet, dmg);
       return;
@@ -681,7 +745,6 @@ export function register(ctx: PluginContext) {
         return;
       }
       client.sendRawToServer(bytes);
-      recordSentHit(state, dmg, 'released lethal PLAYERHIT');
       ctx.log(`Released held PLAYERHIT (${dmg} dmg) ${lethalHoldMs}ms after ESCAPE`);
     }, lethalHoldMs);
     state.heldTimers.push(timer);
@@ -720,7 +783,8 @@ export function register(ctx: PluginContext) {
         if (distSq <= radiusSq) {
           const dmg = getDmgFromState(client, state, aoe.damage, aoe.armorPierce);
           aoes.splice(i, 1);
-          applyDamage(client, state, dmg, `AoE dmg=${dmg} (on MOVE, pre-AOEACK)`, packet);
+          applyDamage(client, state, dmg, `AoE dmg=${dmg} (on MOVE, pre-AOEACK)`, packet,
+            PREDICTED_TTL_ENVIRONMENT_MS);
           if (state.nexusSent) return;
         }
       }
@@ -752,6 +816,7 @@ export function register(ctx: PluginContext) {
 
     applyDamage(
       client, state, dmg, `ground damage (${label}, raw=${raw} → ${dmg})`, packet,
+      PREDICTED_TTL_ENVIRONMENT_MS,
     );
   }, { prepend: true });
 
@@ -771,7 +836,19 @@ export function register(ctx: PluginContext) {
       return;
     }
     if (serverDmg > 0 && !state.nexusSent) {
-      ctx.log(`Server confirmed ${serverDmg} dmg (client HP ~${Math.round(state.clientHp)}/${state.maxHp})`);
+      const consumed    = consumePredicted(state, serverDmg);
+      const unexplained = serverDmg - consumed;
+      state.serverHp -= serverDmg;
+      if (unexplained > 0) {
+        state.unattributed.push({ amount: unexplained, at: Date.now() });
+      }
+      ctx.log(`Server confirmed ${serverDmg} dmg `
+        + `(${Math.round(consumed)} matched a prediction, ${Math.round(unexplained)} unattributed) — `
+        + describeLedger(state));
+
+      if (shouldNexus(state)) {
+        doNexus(client, state, `server DAMAGE ${serverDmg}`);
+      }
     }
   }, { prepend: true });
 
@@ -830,7 +907,7 @@ export function register(ctx: PluginContext) {
       lines.push(`  ...+${rest.length} more — ${restDmg} dmg`);
     }
 
-    const hpNow    = Math.round(state.clientHp);
+    const hpNow    = Math.round(clientHp(state));
     const after    = Math.round(hpAfter);
     const wouldDie = hpAfter <= 0;
 
@@ -910,7 +987,7 @@ export function register(ctx: PluginContext) {
     }
     ordered.sort((a, b) => a.tHitMs - b.tHitMs);
 
-    let hp = state.clientHp;
+    let hp = clientHp(state);
     let resolved = 0;
     let bulletCount = 0;
     
@@ -1024,10 +1101,11 @@ export function register(ctx: PluginContext) {
   ctx.hookCommand('reset', (client, _cmd, _args) => {
     const state = getState(client);
     if (!client.playerData || state.maxHp <= 0) return;
-    const oldHp = Math.round(state.clientHp);
-    state.clientHp = state.serverHp;
-    ctx.sendNotification(client, 'AutoNexus', `Reset client HP ${oldHp} → ${state.serverHp}`);
-    ctx.log(`/reset: clientHp ${oldHp} → ${state.serverHp}`);
+    const oldHp = Math.round(clientHp(state));
+    resyncPrediction(state);
+    ctx.sendNotification(client, 'AutoNexus',
+      `Reset client HP ${oldHp} → ${state.serverHp}\n${describeLedger(state)}`);
+    ctx.log(`/reset: clientHp ${oldHp} → ${state.serverHp} (ledger cleared)`);
   });
 
   ctx.hookCommand('nexus', (client, _cmd, _args) => {
