@@ -93,12 +93,24 @@ static const std::map<uint8_t, const char*> KeyMap = {
 	{0xA3, "R CTRL"},
 };
 
-static std::bitset<0xFF> PrevKeyState;
 static std::bitset<0xFF> KeyState;
+static std::bitset<0xFF> PressedLatch;
+static std::bitset<0xFF> ReleasedLatch;
+
+static void SetKeyState(uint8_t key, bool down)
+{
+	if (KeyState[key] == down) 
+		return;
+	KeyState[key] = down;
+	
+	if (down) 
+		PressedLatch[key]  = true;
+	else
+		ReleasedLatch[key] = true;
+}
 
 void KeyBinds::WndProc(UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-	PrevKeyState = KeyState;
 	switch (uMsg) {
 	case WM_LBUTTONDOWN: case WM_LBUTTONDBLCLK:
 	case WM_RBUTTONDOWN: case WM_RBUTTONDBLCLK:
@@ -111,7 +123,7 @@ void KeyBinds::WndProc(UINT uMsg, WPARAM wParam, LPARAM lParam)
 		if (uMsg == WM_RBUTTONDOWN || uMsg == WM_RBUTTONDBLCLK) { mouseButton = 0x02; }
 		if (uMsg == WM_MBUTTONDOWN || uMsg == WM_MBUTTONDBLCLK) { mouseButton = 0x04; }
 		if (uMsg == WM_XBUTTONDOWN || uMsg == WM_XBUTTONDBLCLK) { mouseButton = (GET_XBUTTON_WPARAM(wParam) == XBUTTON1) ? 0x05 : 0x06; }
-		KeyState[mouseButton] = true;
+		SetKeyState(mouseButton, true);
 		return;
 	}
 	case WM_LBUTTONUP:
@@ -125,25 +137,27 @@ void KeyBinds::WndProc(UINT uMsg, WPARAM wParam, LPARAM lParam)
 		if (uMsg == WM_RBUTTONUP) { mouseButton = 0x02; }
 		if (uMsg == WM_MBUTTONUP) { mouseButton = 0x04; }
 		if (uMsg == WM_XBUTTONUP) { mouseButton = (GET_XBUTTON_WPARAM(wParam) == XBUTTON1) ? 0x05 : 0x06; }
-		KeyState[mouseButton] = false;
+		SetKeyState(mouseButton, false);
 		return;
 	}
 	case WM_KEYDOWN:
 	case WM_SYSKEYDOWN:
 	{
 		if (wParam < 256)
-			KeyState[wParam] = true;
+			SetKeyState(static_cast<uint8_t>(wParam), true);
 		return;
 	}
 	case WM_KEYUP:
 	case WM_SYSKEYUP:
 	{
 		if (wParam < 256)
-			KeyState[wParam] = false;
+			SetKeyState(static_cast<uint8_t>(wParam), false);
 		return;
 	}
 	case WM_KILLFOCUS:
 		KeyState.reset();
+		PressedLatch.reset();
+		ReleasedLatch.reset();
 		break;
 	}
 }
@@ -174,10 +188,14 @@ bool KeyBinds::IsKeyDown(uint8_t key)
 
 bool KeyBinds::IsKeyPressed(uint8_t key)
 {
-	return (!PrevKeyState[key] && KeyState[key]);
+	if (!PressedLatch[key]) return false;
+	PressedLatch[key] = false;
+	return true;
 }
 
 bool KeyBinds::IsKeyReleased(uint8_t key)
 {
-	return (PrevKeyState[key] && !KeyState[key]);
+	if (!ReleasedLatch[key]) return false;
+	ReleasedLatch[key] = false;
+	return true;
 }

@@ -116,6 +116,22 @@ LRESULT __stdcall dWndProc(const HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPa
 
 	KeyBinds::WndProc(uMsg, wParam, lParam);
 
+	if (settings.ImGuiInitialized && ImGui::GetCurrentContext()) {
+		ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
+
+		if (settings.bShowMenu) {
+			const ImGuiIO& io = ImGui::GetIO();
+			const bool isMouse = (uMsg >= WM_MOUSEFIRST && uMsg <= WM_MOUSELAST);
+			const bool isKey   = (uMsg == WM_KEYDOWN    || uMsg == WM_KEYUP ||
+			                      uMsg == WM_SYSKEYDOWN || uMsg == WM_SYSKEYUP ||
+			                      uMsg == WM_CHAR);
+			const bool isToggle = isKey && wParam == settings.KeyBinds.Toggle_Menu;
+			if ((isMouse && io.WantCaptureMouse) ||
+			    (isKey && !isToggle && io.WantCaptureKeyboard))
+				return 1;
+		}
+	}
+
 	if (uMsg == WM_SIZE) {
 		UpdateCachedClientSize();
 		if (pRenderTargetView) {
@@ -215,7 +231,7 @@ HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags
 		ImGui_ImplWin32_NewFrame();
 		ImGui::NewFrame();
 
-		ImGui::GetIO().MouseDrawCursor = false;
+		ImGui::GetIO().MouseDrawCursor = settings.bShowMenu;
 
 		// Toggle menu on keybind press.
 		if (KeyBinds::IsKeyPressed(settings.KeyBinds.Toggle_Menu))
