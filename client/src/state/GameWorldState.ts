@@ -79,6 +79,9 @@ export interface NearestEnemyFilter {
   hpUnder?: number;
   hpOver?: number;
   maxDistance?: number;
+  /** Skip entities whose last update is older than this many ms (drops ghosts
+   * that despawned or left view without a removedObjs). */
+  maxStaleMs?: number;
 }
 
 /**
@@ -431,8 +434,10 @@ export class GameWorldState {
   ): { objectId: number; objectType: number; x: number; y: number; dist: number; hp: number; maxHp: number } | null {
     let best: { objectId: number; objectType: number; x: number; y: number; dist: number; hp: number; maxHp: number } | null = null;
 
+    const nowMs = Date.now();
     for (const e of this.entities.values()) {
       if (excludeObjectId != null && e.objectId === excludeObjectId) continue;
+      if (filter?.maxStaleMs != null && nowMs - e.lastUpdate > filter.maxStaleMs) continue;
       const candidate = this.buildEnemyCandidate(gameData, e, origin);
       if (!candidate) continue;
 
