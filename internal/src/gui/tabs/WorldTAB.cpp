@@ -163,6 +163,7 @@ static std::vector<WorldProjectile>  g_projectiles;
 static std::unordered_map<uint32_t, bool>  s_blockedMap;    // present = movement blocked (NoWalk / OccupySquare / FullOccupy)
 static std::unordered_map<uint32_t, bool>  s_fullOccupyMap; // present = tile has FullOccupy entity (for sub-tile neighbour check)
 static std::unordered_map<uint32_t, bool>  s_damagingMap;  // present = tile deals damage (minDmg/maxDmg > 0)
+static std::unordered_map<uint32_t, int>   s_tileMaxDmgMap; // value = tile maxDmg (damaging tiles only)
 static std::unordered_map<uint32_t, float> s_tileSpeedMap; // value = XML speed multiplier (non-zero tiles only)
 static std::mutex s_tileMapMutex;
 
@@ -177,11 +178,13 @@ static void RebuildBlockedMap()
     std::unordered_map<uint32_t, bool> blockedMap;
     std::unordered_map<uint32_t, bool> fullOccupyMap;
     std::unordered_map<uint32_t, bool> damagingMap;
+    std::unordered_map<uint32_t, int>  tileMaxDmgMap;
     std::unordered_map<uint32_t, float> tileSpeedMap;
 
     blockedMap.reserve(g_tiles.size() + g_entities.size());
     fullOccupyMap.reserve(g_entities.size());
     damagingMap.reserve(g_tiles.size());
+    tileMaxDmgMap.reserve(g_tiles.size());
     tileSpeedMap.reserve(g_tiles.size());
 
     for (const WorldTile& t : g_tiles) {
@@ -205,8 +208,10 @@ static void RebuildBlockedMap()
         // Damaging tiles tracked separately: damage triggers when the player centre
         // (floor of world XY) lands on the tile, not when the hitbox overlaps it.
         // Use the native engine's cached damage (sq+0x10) and ensure there is no cover (sq+0x48).
-        if (t.damageCached > 0 && !t.hasCover)
+        if (t.damageCached > 0 && !t.hasCover) {
             damagingMap[k] = true;
+            tileMaxDmgMap[k] = (t.maxDmg > 0) ? t.maxDmg : t.damageCached;
+        }
         // Store speed modifier for any tile that has one (0 = no modifier)
         if (t.speed != 0.f)
             tileSpeedMap[k] = t.speed;
@@ -238,6 +243,7 @@ static void RebuildBlockedMap()
     s_blockedMap.swap(blockedMap);
     s_fullOccupyMap.swap(fullOccupyMap);
     s_damagingMap.swap(damagingMap);
+    s_tileMaxDmgMap.swap(tileMaxDmgMap);
     s_tileSpeedMap.swap(tileSpeedMap);
 }
 
@@ -2430,6 +2436,8 @@ namespace WorldTAB {
         return (off > 0 && off < 0x1000) ? static_cast<uint32_t>(off) : fallback;
     }
 
+    // Resolve once. Shared by IsTileDamagingLive and GetTileDamageLive so the
+    // validation cannot be present in one path and missing from the other.
     static void EnsureSquareLookupResolved()
     {
         if (s_liveHazResolved) return;
@@ -2467,29 +2475,75 @@ namespace WorldTAB {
                      << " coverOff=0x" << s_squareCoverOff << std::dec);
     }
 
-    // SEH-isolated raw call — POD locals only (no C++ unwinding → no C2712).
-    // Returns 1 = hazardous, 0 = safe, -1 = call/read failed.
-    static int QuerySquareHazard(void* map, int tx, int ty)
+    static std::unordered_map<uint32_t, int> s_typeMaxDmg;
+    static std::mutex s_typeMaxDmgMutex;
+
+    static int XmlMaxDamage(void* props, uint32_t tileType)
     {
-        int result = -1;
+        {
+            std::lock_guard<std::mutex> lk(s_typeMaxDmgMutex);
+            auto it = s_typeMaxDmg.find(tileType);
+            if (it != s_typeMaxDmg.end()) return it->second;
+        }
+
+        int best = 0;
+        for (const uint32_t off : { OFF_TP_MINDMG, OFF_TP_MAXDMG }) {
+            void* s = nullptr;
+            if (!SafeRead(props, off, s) || !AddrValid(s)) continue;
+            char buf[32] = {};
+            if (!ReadIl2CppString(s, buf, sizeof(buf))) continue;
+            const int v = static_cast<int>(std::strtol(buf, nullptr, 10));
+            if (v > best) best = v;   // worst case of the range — safety feature
+        }
+
+        std::lock_guard<std::mutex> lk(s_typeMaxDmgMutex);
+        s_typeMaxDmg[tileType] = best;
+        return best;
+    }
+
+    struct SquareProbe {
+        int      dmgCached = 0;    // gate: > 0 means this square is damaging NOW
+        bool     covered   = false;
+        uint32_t tileType  = 0;
+        void*    props     = nullptr;
+    };
+
+    static bool ProbeSquare(void* map, int tx, int ty, SquareProbe* out)
+    {
         __try {
             void* sq = s_squareLookup(map, tx, ty, nullptr);
-            if (!sq) {
-                result = 0;   // off-map / not loaded — harmless, not a fault
-            } else {
-                const uint8_t* p = reinterpret_cast<const uint8_t*>(sq);
-                const int dmg = *reinterpret_cast<const int*>(p + s_squareDamageOff);
-                if (dmg <= 0) {
-                    result = 0;
-                } else {
-                    const uint64_t cover = *reinterpret_cast<const uint64_t*>(p + s_squareCoverOff);
-                    result = (cover != 0) ? 0 : 1;   // covered → safe; uncovered → hazard
-                }
-            }
+            if (!sq) return true;
+
+            const uint8_t* p = reinterpret_cast<const uint8_t*>(sq);
+            out->dmgCached = *reinterpret_cast<const int*>(p + s_squareDamageOff);
+            out->covered   = *reinterpret_cast<const uint64_t*>(p + s_squareCoverOff) != 0;
+            out->tileType  = *reinterpret_cast<const uint16_t*>(p + OFF_TILE_TYPE);
+            out->props     = *reinterpret_cast<void* const*>(p + OFF_TILE_PROPS);
+            return true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
-            result = -1;
+            return false;
         }
-        return result;
+    }
+
+    static int QuerySquareDamage(void* map, int tx, int ty)
+    {
+        SquareProbe pr{};
+        if (!ProbeSquare(map, tx, ty, &pr)) return -1;
+
+        if (pr.dmgCached <= 0) return 0;
+        if (pr.covered)        return 0;
+
+        if (pr.props) {
+            const int xml = XmlMaxDamage(pr.props, pr.tileType);
+            if (xml > 0) return xml;
+        }
+        return pr.dmgCached;
+    }
+
+    static int QuerySquareHazard(void* map, int tx, int ty)
+    {
+        const int dmg = QuerySquareDamage(map, tx, ty);
+        return (dmg < 0) ? -1 : (dmg > 0 ? 1 : 0);
     }
 
     bool IsTileDamagingLive(int tx, int ty)
@@ -2507,6 +2561,26 @@ namespace WorldTAB {
             }
         }
         return IsDamagingTile(tx, ty);   // cached fallback (== current behaviour)
+    }
+
+    int GetTileDamageLive(int tx, int ty)
+    {
+        EnsureSquareLookupResolved();
+        if (s_liveHazOk && s_squareLookup) {
+            if (void* map = GameState::GetWorldMgr()) {
+                const int d = QuerySquareDamage(map, tx, ty);
+                if (d >= 0) { s_liveHazFails = 0; return d; }
+                if (++s_liveHazFails >= 8) {
+                    s_liveHazOk = false;
+                    DBG_FILE_LOG("[WorldTAB] live GetSquare faulted 8x -> latched OFF, "
+                                 "using cached tile damage.");
+                }
+            }
+        }
+        
+        std::lock_guard<std::mutex> lock(s_tileMapMutex);
+        auto it = s_tileMaxDmgMap.find(BlockedKey(tx, ty));
+        return (it != s_tileMaxDmgMap.end()) ? it->second : 0;
     }
 
     // Returns the XML speed multiplier for the tile at (tx, ty).

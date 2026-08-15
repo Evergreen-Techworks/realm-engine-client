@@ -276,6 +276,8 @@ namespace WorldTAB {
     // IsDamagingTile if the raw call/offsets are unavailable on this build.
     bool IsTileDamagingLive(int tx, int ty);
 
+    int GetTileDamageLive(int tx, int ty);
+
     // Returns the XML speed multiplier of the tile at (tx, ty).
     // 0.0 = no modifier, > 1.0 = speedy ground, < 1.0 = slow ground.
     float GetTileSpeed(int tx, int ty);
