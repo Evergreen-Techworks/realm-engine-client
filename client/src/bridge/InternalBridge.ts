@@ -19,6 +19,7 @@ import { createHash, createHmac, randomBytes } from 'crypto';
 import { Logger } from '../util/Logger.js';
 import { EventEmitter } from 'events';
 import { signalHelloEvent } from '../native/hello-event.js';
+import { parseThreatPayload, publishDllThreats } from './DllThreatBus.js';
 
 declare const __HANDSHAKE_KEY__: string | undefined;
 declare const __PIPE_NAME__: string | undefined;
@@ -490,6 +491,9 @@ export class InternalBridge extends EventEmitter {
       case 'unresolvedClasses':
         this.handleUnresolvedClasses(msg);
         break;
+      case 'threats':
+        this.handleThreats(msg);
+        break;
       default:
         if (this.authenticated) {
           const sigPayload = typeof msg.sigPayload === 'string' ? msg.sigPayload : null;
@@ -613,6 +617,18 @@ export class InternalBridge extends EventEmitter {
       return;
     }
     this.emit('message', msg);
+  }
+
+  private handleThreats(msg: DllMessage): void {
+    const payload = typeof msg.threats === 'string' ? msg.threats : '';
+    if (!this.verifyIncomingSignedMessage(msg, payload)) {
+      Logger.warn('InternalBridge', 'Dropped unsigned/invalid threats message');
+      return;
+    }
+    {
+      const parsed = parseThreatPayload(payload);
+      publishDllThreats(parsed.threats, parsed.ground);
+    }
   }
 
   private handleUnresolvedClasses(msg: DllMessage): void {
