@@ -1,7 +1,11 @@
 #include "pch-il2cpp.h"
 #include "GhostHit.h"
 #include "../../movement/dodge/ProjectileTracking.h"
+#include "DodgeHit.h"
 #include "DodgeGeometry.h"
+#include "XDodge.h"
+#include "RolloutDodge.h"
+#include "SpeedHack.h"
 #include "gui/tabs/WorldTAB.h"   // WorldProjectile
 #include "IpcBridge.h"
 
@@ -27,7 +31,6 @@ namespace GhostHit {
 //                  full lifetime; short enough that ids can be recycled.
 //
 constexpr float    kHitPadTiles    = 0.04f;
-constexpr float    kPlayerHalf     = 0.2139f;   // RotMG player half-hitbox
 constexpr uint64_t kSignaledTtlMs  = 2500;
 constexpr int      kPrevMapSize    = 512;
 constexpr int      kSignaledMapSize = 256;
@@ -54,15 +57,6 @@ static SignaledKey s_signaled[kSignaledMapSize];
 static std::atomic<bool> s_enabled{ true };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-static float ChebyshevHalf(const WorldProjectile& b)
-{
-    if (b.runtimeChebyshevHalf > 1e-5f && std::isfinite(b.runtimeChebyshevHalf))
-        return b.runtimeChebyshevHalf;
-    if (b.projHalfSize > 1e-6f && std::isfinite(b.projHalfSize))
-        return b.projHalfSize;
-    return 0.5f;
-}
 
 // Open-addressed lookup keyed by bulletId — collision-skip on mismatch.
 static PrevPos* PrevSlotFor(int32_t bulletId)
@@ -112,9 +106,15 @@ static void MarkSignaled(int32_t ownerId, int32_t bulletId, uint64_t nowMs)
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
+static bool PhaseThroughPossible()
+{
+    return SpeedHack::IsActive() || XDodge::IsEnabled() || RolloutDodge::IsEnabled();
+}
+
 void Tick(void* /*player*/, float playerX, float playerY)
 {
     if (!s_enabled.load(std::memory_order_relaxed)) return;
+    if (!PhaseThroughPossible()) return;
 
     std::vector<WorldProjectile> projs;
     ProjectileTracking::CopyActiveForDraw(projs);
@@ -146,7 +146,7 @@ void Tick(void* /*player*/, float playerX, float playerY)
         // Effective hit radius — bullet's Chebyshev half + player half + pad.
         // Matches the danger-grid stamping envelope (sans the catalog
         // inflation we hard-disabled).
-        const float effHalf = ChebyshevHalf(b) + kPlayerHalf + kHitPadTiles;
+        const float effHalf = DodgeHit::EffectiveHalf(b, 1.f, kHitPadTiles);
 
         // Swept-segment-to-point distance. If the closest approach of the
         // bullet's segment to the player is inside the combined hitbox,
