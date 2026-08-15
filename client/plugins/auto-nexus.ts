@@ -449,10 +449,14 @@ export function register(ctx: PluginContext) {
     const hpPct = state.maxHp > 0 ? Math.round((hp / state.maxHp) * 100) : 0;
     const conds = describeConditions(client.playerData);
     const thresholds = describeThresholds(state);
+
+    const forecast = describeForecast(client, state);
+    const body     = [detail, forecast].filter(Boolean).join('\n');
+
     ctx.log(`AUTO NEXUS — HP: ${Math.round(hp)}/${state.maxHp} (${hpPct}%) — ${reason}`
       + ` — ${thresholds} — ${describeLedger(state)}`
       + (conds ? ` — conditions: ${conds}` : '')
-      + (detail ? ` — ${detail.replace(/\n/g, ' | ')}` : ''));
+      + (body ? ` — ${body.replace(/\n/g, ' | ')}` : ''));
 
     if (showNotification) {
         ctx.sendNotification(client, 'AutoNexus',
@@ -461,7 +465,7 @@ export function register(ctx: PluginContext) {
         + `\n${describeLedger(state)}`
         + (conds ? `\nConditions: ${conds}` : '')
         + `\nSource: ${reason}`
-        + (detail ? `\n${detail}` : ''));
+        + (body ? `\n${body}` : ''));
     }
 
     const escape = ctx.createPacket('ESCAPE');
@@ -932,21 +936,27 @@ export function register(ctx: PluginContext) {
     return names.join(', ');
   }
 
-  function evaluateThreats(): void {
-    if (!ctx.enabled) return;
-    const client = activeClient;
-    if (!client) return;
-    if (!enableAutoNexus || !enableAutoNexusOnly) return;
+  interface Forecast {
+    incoming:    IncomingHit[];
+    
+    hp:          number;
+    resolved:    number;
+    bulletCount: number;
+    
+    tripIndex:   number;
+    hpAtTrip:    number;
+    tripReason:  string;
+  }
 
-    const state = getState(client);
-    if (state.nexusSent || state.inSafeZone || state.maxHp <= 0) return;
+  function buildForecast(client: ClientConnection, state: NexusState): Forecast | null {
+    if (state.maxHp <= 0) return null;
 
     const threats = getDllThreats();
     const ground = getDllGround();
-    
+
     const groundDmgRaw =
       includeGroundTicks && ground && ground.rawDamage > 0 ? ground.rawDamage : 0;
-    if (threats.length === 0 && groundDmgRaw === 0) return;
+    if (threats.length === 0 && groundDmgRaw === 0) return null;
 
     const pd = client.playerData;
     const int47 = damageRedIntThousand(pd);
@@ -990,7 +1000,10 @@ export function register(ctx: PluginContext) {
     let hp = clientHp(state);
     let resolved = 0;
     let bulletCount = 0;
-    
+    let tripIndex   = -1;
+    let hpAtTrip    = hp;
+    let tripReason  = '';
+
     const incoming: IncomingHit[] = [];
     for (let i = 0; i < ordered.length; i++) {
       const ev = ordered[i];
@@ -1005,12 +1018,11 @@ export function register(ctx: PluginContext) {
           known: true,
           applies: [],
         });
-        if (hp / state.maxHp * 100 <= predictedNexusPct) {
-          doNexus(client, state,
-            `predicted: standing on damaging ground in ${Math.round(ev.tHitMs)}ms `
-            + `→ ~${Math.round(hp)}/${state.maxHp} HP`,
-            describeIncoming(incoming, state, hp));
-          return;
+        if (tripIndex < 0 && hp / state.maxHp * 100 <= predictedNexusPct) {
+          tripIndex  = incoming.length - 1;
+          hpAtTrip   = hp;
+          tripReason = `predicted: standing on damaging ground in ${Math.round(ev.tHitMs)}ms `
+            + `→ ~${Math.round(hp)}/${state.maxHp} HP`;
         }
         continue;
       }
@@ -1054,12 +1066,11 @@ export function register(ctx: PluginContext) {
         applies: mitigationEffects,
       });
 
-      if (hp / state.maxHp * 100 <= predictedNexusPct) {
-        doNexus(client, state,
-          `predicted: ${bulletCount} bullet(s) in ${Math.round(ev.tHitMs)}ms `
-          + `→ ~${Math.round(hp)}/${state.maxHp} HP (${resolved}/${bulletCount} resolved)`,
-          describeIncoming(incoming, state, hp));
-        return;
+      if (tripIndex < 0 && hp / state.maxHp * 100 <= predictedNexusPct) {
+        tripIndex  = incoming.length - 1;
+        hpAtTrip   = hp;
+        tripReason = `predicted: ${bulletCount} bullet(s) in ${Math.round(ev.tHitMs)}ms `
+          + `→ ~${Math.round(hp)}/${state.maxHp} HP (${resolved}/${bulletCount} resolved)`;
       }
 
       for (const effect of mitigationEffects) {
@@ -1072,6 +1083,34 @@ export function register(ctx: PluginContext) {
           default: break;
         }
       }
+    }
+
+    return { incoming, hp, resolved, bulletCount, tripIndex, hpAtTrip, tripReason };
+  }
+
+  function evaluateThreats(): void {
+    if (!ctx.enabled) return;
+    const client = activeClient;
+    if (!client) return;
+    if (!enableAutoNexus || !enableAutoNexusOnly) return;
+
+    const state = getState(client);
+    if (state.nexusSent || state.inSafeZone || state.maxHp <= 0) return;
+
+    const forecast = buildForecast(client, state);
+    if (!forecast || forecast.tripIndex < 0) return;
+
+    doNexus(client, state, forecast.tripReason);
+  }
+
+  function describeForecast(client: ClientConnection, state: NexusState): string {
+    try {
+      const forecast = buildForecast(client, state);
+      if (!forecast || forecast.incoming.length === 0) return '';
+      return describeIncoming(forecast.incoming, state, forecast.hp);
+    } catch (err) {
+      ctx.log(`forecast for notification failed: ${(err as Error).message}`);
+      return '';
     }
   }
 
