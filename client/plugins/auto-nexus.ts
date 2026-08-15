@@ -451,7 +451,7 @@ export function register(ctx: PluginContext) {
     const thresholds = describeThresholds(state);
 
     const forecast = describeForecast(client, state);
-    const body     = [detail, forecast].filter(Boolean).join('\n');
+    const body     = [detail, describePending(state), forecast].filter(Boolean).join('\n');
 
     ctx.log(`AUTO NEXUS — HP: ${Math.round(hp)}/${state.maxHp} (${hpPct}%) — ${reason}`
       + ` — ${thresholds} — ${describeLedger(state)}`
@@ -479,6 +479,31 @@ export function register(ctx: PluginContext) {
       + ` + recovery ${Math.round(state.predictedRecovery)}`
       + ` - pending ${Math.round(pending)} (${state.predicted.length} entries)`
       + ` = ${Math.round(clientHp(state))}`;
+  }
+
+  const MAX_LEDGER_LINES = 8;
+  function describePending(state: NexusState): string {
+    pruneExpired(state);
+    if (state.predicted.length === 0) return '';
+
+    const now   = Date.now();
+    const shown = state.predicted.slice(0, MAX_LEDGER_LINES);
+
+    const lines = shown.map((p) => {
+      const age = Math.round(now - p.at);
+      const ttl = Math.max(0, Math.round(p.expiresAt - now));
+      return `  -${age}ms  ${p.source} — ${Math.round(p.amount)} HP`
+        + (p.serverWillApply ? '' : ' [blocked, server unaware]')
+        + ` (expires in ${ttl}ms)`;
+    });
+
+    if (state.predicted.length > shown.length) {
+      const rest   = state.predicted.slice(shown.length);
+      const restHp = rest.reduce((sum, p) => sum + p.amount, 0);
+      lines.push(`  ...+${rest.length} more — ${Math.round(restHp)} HP`);
+    }
+
+    return `Pending (${state.predicted.length} unconfirmed):\n${lines.join('\n')}`;
   }
 
   function describeThresholds(state: NexusState): string {
