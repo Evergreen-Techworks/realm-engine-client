@@ -283,6 +283,7 @@ static Entry s_entries[] = {
     { "FKALGHJIADI", { "FMHMGKEPIDN" },                              1, kActk, &CurMP,              false },
     { "FKALGHJIADI", { "NEDCKPIIIPN" },                              1, kActk, &MaxMP,              false },
     // DAGEMHFLJLK = groundDamageImmune (dump 0x458 / runtime 0x4A8)
+    // This doesn't seem to work. I do not believe this is labeled correctly.
     { "FKALGHJIADI", { "DAGEMHFLJLK" },                              1, kActk, &GroundDmgImmune,    false },
     // BINDBHJLPMG = invincible bool (dump 0x459 / runtime 0x4A9) — per FKALGHJIADI_mapped.txt
     { "FKALGHJIADI", { "BINDBHJLPMG" },                              1, kActk, &LocalInvincible,    false },
@@ -761,6 +762,15 @@ void FormatMapObjectConditionMask(uint32_t word0, uint32_t word1, char* buf, siz
         { ConditionEffects::NinjaSpeedy,      "NinjaSpeedy"      },
         { ConditionEffects::Unstable,         "Unstable"         },
         { ConditionEffects::Darkness,         "Darkness"         },
+        // conditions[1] — the ones that change a damage or motion prediction.
+        { ConditionEffects::Petrified,        "Petrified"        },
+        { ConditionEffects::PetrifiedImmune,  "PetrifiedImmune"  },
+        { ConditionEffects::Curse,            "Curse"            },
+        { ConditionEffects::CurseImmune,      "CurseImmune"      },
+        { ConditionEffects::Silenced,         "Silenced"         },
+        { ConditionEffects::Exposed,          "Exposed"          },
+        { ConditionEffects::Energized,        "Energized"        },
+        { ConditionEffects::InCombat,         "InCombat"         },
     };
 
     const uint64_t full = GetFullConditions(word0, word1);
