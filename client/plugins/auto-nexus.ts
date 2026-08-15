@@ -127,7 +127,7 @@ export function register(ctx: PluginContext) {
   const enableAutoNexusOnly = true; 
   const useClientHp         = true; 
   const syncServerHp        = true; 
-  const trackAoeDamage      = true; 
+  const trackAoeDamage      = false;
 
   // ── Thresholds ─────────────────────────────────────────────────────────
   let nexusThresholdPct    = 25;   // ForceAutoNexusHealth
