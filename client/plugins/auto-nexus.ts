@@ -50,6 +50,16 @@ interface TrackedAoe {
   radius:      number;
 }
 
+/**
+ * Damage the server has been told about (a C→S damage packet we forwarded) but
+ * which is not yet reflected in the `pd.health` we read from NEWTICK.
+ */
+interface SentHit {
+  amount: number;
+  at:     number;
+  source: string;
+}
+
 interface NexusState {
   clientHp:     number;
   serverHp:     number;
@@ -63,6 +73,12 @@ interface NexusState {
   lastTickTime: number;
   lastSyncTick: number;
   pendingAoes:  TrackedAoe[];
+  /** Damage in flight to the server — see `serverBelievedHp`. */
+  sentHits:     SentHit[];
+  /** Wall clock of the previous NEWTICK; hits older than it are assumed applied. */
+  prevTickAt:   number;
+  /** Pending release timers for held lethal PLAYERHITs. */
+  heldTimers:   ReturnType<typeof setTimeout>[];
 }
 
 /** Class27 Int32_47: stored ×1000, default 1000. */
@@ -137,6 +153,13 @@ export function register(ctx: PluginContext) {
   let showNotification     = true; // ShowChatMessageOnNexus
   let drawOverlay          = false; // DrawOverlay
 
+  // ── Lethal PLAYERHIT hold ──────────────────────────────────────────────
+  let holdLethalHits  = true; // HoldLethalPlayerHit
+  let lethalHoldMs    = 100;  // LethalHoldTime
+  let lethalCushionHp = 10;    // LethalCushionHealth
+
+  const SENT_HIT_TTL_MS = 1000;
+
   ctx.registerSetting('ForceAutoNexusHealth', {
     label: 'Force Nexus Health',
     type: 'range', value: nexusThresholdPct, min: 0, max: 100, step: 1,
@@ -158,6 +181,20 @@ export function register(ctx: PluginContext) {
     includeGroundTicks = v === true;
     sendDllFeature('autoNexusTilePredict', includeGroundTicks);
   });
+
+  ctx.registerSetting('HoldLethalPlayerHit', {
+    label: 'Hold Lethal Player Hits', type: 'boolean', value: holdLethalHits,
+  }, (v: boolean) => { holdLethalHits = v === true; });
+
+  ctx.registerSetting('LethalHoldTime', {
+    label: 'Lethal Hold Time', advanced: true,
+    type: 'range', value: lethalHoldMs, min: 0, max: 2000, step: 25,
+  }, (v: number) => { lethalHoldMs = v; });
+
+  ctx.registerSetting('LethalCushionHealth', {
+    label: 'Lethal Cushion HP', advanced: true,
+    type: 'range', value: lethalCushionHp, min: 0, max: 500, step: 5,
+  }, (v: number) => { lethalCushionHp = v; });
 
   ctx.registerSetting('ShowChatMessageOnNexus', {
     label: 'Show Chat Message on Nexus', advanced: true,
@@ -205,10 +242,45 @@ export function register(ctx: PluginContext) {
         nexusSent: false, inSafeZone: false,
         lastTickTime: Date.now(), lastSyncTick: 0,
         pendingAoes: [],
+        sentHits: [], prevTickAt: 0, heldTimers: [],
       };
       states.set(client, s);
     }
     return s;
+  }
+
+  // ── Server-believed HP ────────────────────────────────────────────────
+  function pruneSentHits(state: NexusState): void {
+    if (state.sentHits.length === 0) return;
+    const cutoff = Date.now() - SENT_HIT_TTL_MS;
+    state.sentHits = state.sentHits.filter((h) => h.at > cutoff);
+  }
+
+  function recordSentHit(state: NexusState, amount: number, source: string): void {
+    if (amount <= 0) return;
+    pruneSentHits(state);
+    state.sentHits.push({ amount, at: Date.now(), source });
+  }
+
+  function serverBelievedHp(state: NexusState): number {
+    pruneSentHits(state);
+    let hp = state.serverHp;
+    for (const hit of state.sentHits) hp -= hit.amount;
+    return hp;
+  }
+
+  const liveHeldTimers = new Set<ReturnType<typeof setTimeout>>();
+  ctx.registerCleanup(() => {
+    for (const timer of liveHeldTimers) clearTimeout(timer);
+    liveHeldTimers.clear();
+  });
+
+  function clearHeldTimers(state: NexusState): void {
+    for (const timer of state.heldTimers) {
+      clearTimeout(timer);
+      liveHeldTimers.delete(timer);
+    }
+    state.heldTimers.length = 0;
   }
 
   let activeClient: ClientConnection | null = null;
@@ -221,6 +293,7 @@ export function register(ctx: PluginContext) {
   }
 
   ctx.on('clientDisconnected', (client) => {
+    clearHeldTimers(getState(client));
     if (activeClient === client) activeClient = null;
   });
 
@@ -234,7 +307,7 @@ export function register(ctx: PluginContext) {
     if (useClientHp) {
       return state.clientHp <= threshold;
     }
-    return state.serverHp <= threshold;
+    return serverBelievedHp(state) <= threshold;
   }
 
   // method_0
@@ -306,12 +379,13 @@ export function register(ctx: PluginContext) {
     packet?: Packet,
   ): void {
     state.clientHp -= dmg;
-    state.serverHp -= dmg;
 
     if (shouldNexus(state)) {
       if (packet) packet.send = false;
       doNexus(client, state, reason);
     }
+
+    if (!packet || packet.send) recordSentHit(state, dmg, reason);
   }
 
   function getThresholdHp(state: NexusState): number {
@@ -357,10 +431,19 @@ export function register(ctx: PluginContext) {
     state.pendingHeal = 0;
     state.regenAccum  = 0;
     state.pendingAoes   = [];
+    state.sentHits      = [];
+    state.prevTickAt    = 0;
+    
+    if (state.heldTimers.length > 0) {
+      ctx.log(`Dropping ${state.heldTimers.length} held PLAYERHIT(s) — map changed before release`);
+      clearHeldTimers(state);
+    }
     ctx.log(`Map: "${mapName}" — safe zone: ${state.inSafeZone}`);
   }, { prepend: true });
 
   ctx.hookPacket('CREATESUCCESS', (client) => {
+    const existing = states.get(client);
+    if (existing) clearHeldTimers(existing);
     states.delete(client);
   }, { prepend: true });
 
@@ -376,6 +459,11 @@ export function register(ctx: PluginContext) {
     state.vitality = pd.vitality; //Actual Vit
 
     const serverHp = pd.health > 0 ? pd.health : state.maxHp;
+
+    if (state.sentHits.length > 0) {
+      state.sentHits = state.sentHits.filter((h) => h.at > state.prevTickAt);
+    }
+    state.prevTickAt = Date.now();
 
     if (state.clientHp <= 0) {
       state.clientHp   = serverHp;
@@ -461,8 +549,53 @@ export function register(ctx: PluginContext) {
     const piercing = bullet ? (bullet.projDef?.armorPiercing ?? false) : true;
 
     const dmg = getDmgFromState(client, state, baseDmg, piercing);
+
+    const srvHp = serverBelievedHp(state);
+    const lethal = holdLethalHits
+      && !state.inSafeZone
+      && enableAutoNexus && enableAutoNexusOnly
+      && srvHp > 0
+      && srvHp - dmg <= lethalCushionHp;
+
+    if (lethal) {
+      packet.send = false;
+      state.clientHp -= dmg;
+
+      const inFlight = state.sentHits.reduce((sum, h) => sum + h.amount, 0);
+      doNexus(client, state,
+        `LETHAL projectile hit (${dmg} dmg vs ${Math.round(srvHp)} server HP)`,
+        `Server HP ${Math.round(state.serverHp)} - ${Math.round(inFlight)} in flight `
+        + `= ${Math.round(srvHp)}; incoming ${dmg}${bullet ? '' : ' (estimated — unknown bullet)'}\n`);
+
+      releaseHeldHit(client, state, packet, dmg);
+      return;
+    }
+
     applyDamage(client, state, dmg, `projectile hit (${dmg} dmg)`, packet);
   }, { prepend: true });
+
+  function releaseHeldHit(
+    client: ClientConnection,
+    state:  NexusState,
+    packet: Packet,
+    dmg:    number,
+  ): void {
+    const bytes = Buffer.from(packet.rawBytes);
+    const timer = setTimeout(() => {
+      const idx = state.heldTimers.indexOf(timer);
+      if (idx >= 0) state.heldTimers.splice(idx, 1);
+      liveHeldTimers.delete(timer);
+      if (!client.connected) {
+        ctx.log(`Held PLAYERHIT dropped — client disconnected before release`);
+        return;
+      }
+      client.sendRawToServer(bytes);
+      recordSentHit(state, dmg, 'released lethal PLAYERHIT');
+      ctx.log(`Released held PLAYERHIT (${dmg} dmg) ${lethalHoldMs}ms after ESCAPE`);
+    }, lethalHoldMs);
+    state.heldTimers.push(timer);
+    liveHeldTimers.add(timer);
+  }
 
   ctx.hookPacket('AOE', (client, packet) => {
     if (!packet.isDefined) return;
