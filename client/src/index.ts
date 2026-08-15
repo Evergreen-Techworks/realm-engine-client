@@ -451,6 +451,9 @@ async function main() {
     devServer.start(4440);
   }
 
+  const internalBridge = new InternalBridge('admin-dev');
+  setDllFeatureSender((key, value) => internalBridge.setFeature(key, value));
+
   // 7. Mirror XML + plugin loading in parallel (metadata fetch can be slow if mirrors are down)
   const [metadataResult] = await Promise.all([
     ensureRotmgMetadataXml(dataDir, {
@@ -486,15 +489,9 @@ async function main() {
     Logger.log('Main', 'Dev dashboard: http://localhost:4440');
   }
 
-  // 9. Internal DLL bridge (named pipe to injected DLL). Node.js is the pipe
-  //    server; the injected DLL connects to us. listen() starts the server once
-  //    at startup and it stays open — no reconnect hammering needed.
-  const internalBridge = new InternalBridge('admin-dev');
-  // #region agent log
-  // #endregion
-  setDllFeatureSender((key, value) => internalBridge.setFeature(key, value));
-  // #region agent log
-  // #endregion
+  // 9. Start the internal DLL bridge (named pipe to injected DLL). Node.js is the
+  //    pipe server; the injected DLL connects to us. listen() starts the server
+  //    once at startup and it stays open — no reconnect hammering needed.
   // Feed the DLL's authoritative memory defense into StateManager so it can
   // self-check the wire defense model on each character load (DefenseCheck log).
   stateManager.setDllDefenseSource(() => internalBridge.getDllDefense());
