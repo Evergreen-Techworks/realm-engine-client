@@ -63,6 +63,7 @@ interface PredictedHit {
   expiresAt: number;
   source:    string;
   serverWillApply: boolean;
+  bulletKey?: string;
 }
 
 interface NexusState {
@@ -293,13 +294,14 @@ export function register(ctx: PluginContext) {
     source: string,
     ttlMs:  number,
     serverWillApply: boolean,
+    bulletKey?: string,
   ): void {
     if (amount <= 0) return;
     pruneExpired(state);
 
     const now = Date.now();
     state.predicted.push({
-      amount, at: now, expiresAt: now + ttlMs, source, serverWillApply,
+      amount, at: now, expiresAt: now + ttlMs, source, serverWillApply, bulletKey,
     });
 
     while (state.predicted.length > MAX_PENDING_PREDICTIONS) {
@@ -338,6 +340,15 @@ export function register(ctx: PluginContext) {
   function clientHp(state: NexusState): number {
     const hp = state.serverHp + state.predictedRecovery - pendingDamage(state);
     return Math.min(hp, state.maxHp > 0 ? state.maxHp : hp);
+  }
+  
+  function pendingBulletKeys(state: NexusState): Set<string> {
+    pruneExpired(state);
+    const keys = new Set<string>();
+    for (const p of state.predicted) {
+      if (p.bulletKey) keys.add(p.bulletKey);
+    }
+    return keys;
   }
 
   function serverBelievedHp(state: NexusState): number {
@@ -554,8 +565,9 @@ export function register(ctx: PluginContext) {
     reason: string,
     packet?: Packet,
     ttlMs:  number = PREDICTED_TTL_PROJECTILE_MS,
+    bulletKey?: string,
   ): void {
-    chargePredicted(state, dmg, reason, ttlMs, true);
+    chargePredicted(state, dmg, reason, ttlMs, true, bulletKey);
     const entry = state.predicted[state.predicted.length - 1];
 
     if (shouldNexus(state)) {
@@ -725,7 +737,8 @@ export function register(ctx: PluginContext) {
 
     const bulletId = (packet.data.bulletId as number) & 0xffff;
     const objectId = packet.data.objectId as number;
-    const bullet   = ctx.getProjectileTracker(client)?.getBullet(`${objectId}:${bulletId}`);
+    const bulletKey = `${objectId}:${bulletId}`;
+    const bullet   = ctx.getProjectileTracker(client)?.getBullet(bulletKey);
 
     // Unknown bullet: assume the worst (MultiTool warns and guesses here too).
     const baseDmg  = bullet ? bullet.damage : 200;
@@ -743,7 +756,7 @@ export function register(ctx: PluginContext) {
     if (lethal) {
       packet.send = false;
       chargePredicted(state, dmg, 'held lethal PLAYERHIT',
-        PREDICTED_TTL_PROJECTILE_MS + lethalHoldMs, true);
+        PREDICTED_TTL_PROJECTILE_MS + lethalHoldMs, true, bulletKey);
 
       const inFlight = state.serverHp - srvHp;
       doNexus(client, state,
@@ -755,7 +768,8 @@ export function register(ctx: PluginContext) {
       return;
     }
 
-    applyDamage(client, state, dmg, `projectile hit (${dmg} dmg)`, packet);
+    applyDamage(client, state, dmg, `projectile hit (${dmg} dmg)`, packet,
+      PREDICTED_TTL_PROJECTILE_MS, bulletKey);
   }, { prepend: true });
 
   function releaseHeldHit(
@@ -918,6 +932,7 @@ export function register(ctx: PluginContext) {
     incoming: IncomingHit[],
     state: NexusState,
     hpAfter: number,
+    suppressed = 0,
   ): string {
     if (incoming.length === 0) return '';
 
@@ -942,6 +957,9 @@ export function register(ctx: PluginContext) {
 
     return `Incoming (${incoming.length} source${incoming.length === 1 ? '' : 's'}):\n`
       + `${lines.join('\n')}\n`
+      + (suppressed > 0
+        ? `  (${suppressed} already-landed bullet${suppressed === 1 ? '' : 's'} excluded)\n`
+        : '')
       + `Total ${total} dmg vs ${hpNow} HP → `
       + (wouldDie ? `DEATH (${after})` : `~${after}/${state.maxHp} HP`);
   }
@@ -967,6 +985,8 @@ export function register(ctx: PluginContext) {
     hp:          number;
     resolved:    number;
     bulletCount: number;
+    
+    suppressed:  number;
     
     tripIndex:   number;
     hpAtTrip:    number;
@@ -1022,9 +1042,12 @@ export function register(ctx: PluginContext) {
     }
     ordered.sort((a, b) => a.tHitMs - b.tHitMs);
 
+    const spentBullets = pendingBulletKeys(state);
+
     let hp = clientHp(state);
     let resolved = 0;
     let bulletCount = 0;
+    let suppressed  = 0;
     let tripIndex   = -1;
     let hpAtTrip    = hp;
     let tripReason  = '';
@@ -1053,9 +1076,20 @@ export function register(ctx: PluginContext) {
       }
 
       const threat = ev.threat;
+      const threatKey = `${threat.attackerObjId}:${threat.bulletId & 0xffff}`;
+
+      // Already hit us — the game client sent PLAYERHIT for it and it is charged
+      // to the ledger. The DLL usually retires these itself, but not when its
+      // 200 ms retro window was skipped after a stall, or when its geometry
+      // disagreed with the game's own collision.
+      if (spentBullets.has(threatKey)) {
+        suppressed++;
+        continue;
+      }
+
       bulletCount++;
 
-      const bullet = tracker?.getBullet(`${threat.attackerObjId}:${threat.bulletId & 0xffff}`);
+      const bullet = tracker?.getBullet(threatKey);
       const projDef = bullet?.projDef ?? null;
       if (bullet) resolved++;
 
@@ -1110,7 +1144,7 @@ export function register(ctx: PluginContext) {
       }
     }
 
-    return { incoming, hp, resolved, bulletCount, tripIndex, hpAtTrip, tripReason };
+    return { incoming, hp, resolved, bulletCount, suppressed, tripIndex, hpAtTrip, tripReason };
   }
 
   function evaluateThreats(): void {
@@ -1132,7 +1166,7 @@ export function register(ctx: PluginContext) {
     try {
       const forecast = buildForecast(client, state);
       if (!forecast || forecast.incoming.length === 0) return '';
-      return describeIncoming(forecast.incoming, state, forecast.hp);
+      return describeIncoming(forecast.incoming, state, forecast.hp, forecast.suppressed);
     } catch (err) {
       ctx.log(`forecast for notification failed: ${(err as Error).message}`);
       return '';
