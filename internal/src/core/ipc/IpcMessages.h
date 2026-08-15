@@ -17,6 +17,7 @@ int BuildHeartbeatResp(char* buf, int bufSize, const char* response, uint64_t se
 int BuildUnresolvedClasses(char* buf, int bufSize, const char* classes, uint64_t seq, const char* mac);
 int BuildPlayer(char* buf, int bufSize, uint64_t seq, const char* mac);
 int BuildHotkeyEvent(char* buf, int bufSize, const char* pluginId, const char* action, bool value, uint64_t seq, const char* mac);
+int BuildThreats(char* buf, int bufSize, const char* threats, uint64_t seq, const char* mac);
 void BuildPlayerSigPayload(char* outBuf, int outBufSize);
 
 } // namespace IpcMessages

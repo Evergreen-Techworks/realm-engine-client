@@ -23,6 +23,34 @@ void IpcBridge_RequestShutdown();
 // Queue a signed ghost-hit event for the pipe thread.
 void IpcBridge_EmitPredictedHit(int ownerObjId, int bulletId);
 
+// ── AutoNexus threat list ────────────────────────────────────────────────
+struct IpcThreat {
+    int32_t attackerObjId;
+    int32_t bulletId;
+    float   tHitMs;                 // ms from the scan instant to impact
+    int32_t fallbackDamage;         // raw projectile max damage
+    uint8_t fallbackArmorPiercing;  // 0/1
+};
+
+constexpr int kIpcMaxGroundEvents = 12;
+
+struct IpcGroundEvent {
+    int32_t rawDamage = 0;
+    float   tHitMs    = -1.f;
+};
+
+struct IpcGround {
+    int32_t rawDamage = 0;
+    float   tHitMs    = -1.f;
+
+    int32_t count = 0;
+    IpcGroundEvent events[kIpcMaxGroundEvents] = {};
+};
+
+constexpr int kIpcMaxThreats = 32;
+
+void IpcBridge_PublishThreats(const IpcThreat* threats, int count, const IpcGround& ground);
+
 // Tile walkability from tileUpdate / noWalkInit packets. Unknown means walkable.
 bool IpcBridge_IsTileWalkable(float worldX, float worldY);
 
