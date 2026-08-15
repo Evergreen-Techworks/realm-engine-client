@@ -50,7 +50,7 @@ export function register(ctx: PluginContext) {
     label: 'HP threshold %', type: 'range', value: hpThresholdPct, min: 10, max: 95, step: 5,
     warnWhen: {
       pluginId: 'auto-nexus',
-      key: 'threshold',
+      key: 'ForceAutoNexusHealth',
       cmp: 'gte',
       message: 'Auto Nexus % is at or above Auto Drink % — you may nexus before a pot can heal you. Set Auto Nexus % below Auto Drink %.',
     },

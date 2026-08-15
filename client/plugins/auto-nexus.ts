@@ -1,6 +1,9 @@
 import type { PluginContext } from '../src/plugins/PluginContext.js';
 import type { ClientConnection } from '../src/proxy/ClientConnection.js';
 import type { Packet } from '../src/packets/Packet.js';
+import { sendDllFeature } from '../src/bridge/DllFeatureBus.js';
+import { getDllThreats, getDllGround, getDllThreatsAgeMs } from '../src/bridge/DllThreatBus.js';
+import type { DllThreat } from '../src/bridge/DllThreatBus.js';
 
 /**
  * Auto Nexus — near 1:1 port of MultiTool `Class89` (minus autopot, plus close-spawn ENEMYSHOOT).
@@ -40,13 +43,6 @@ const SAFE_ZONE_MAPS = new Set([
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
-interface TrackedBullet {
-  ownerId:    number;
-  bulletType: number;
-  damage:     number;
-  ts:         number;
-}
-
 interface TrackedAoe {
   damage:      number;
   armorPierce: boolean;
@@ -66,7 +62,6 @@ interface NexusState {
   inSafeZone:   boolean;
   lastTickTime: number;
   lastSyncTick: number;
-  bullets:      Map<string, TrackedBullet>;
   pendingAoes:  TrackedAoe[];
 }
 
@@ -127,48 +122,75 @@ export function register(ctx: PluginContext) {
   ctx.name     = 'Auto Nexus';
   ctx.category = 'combat';
 
-  let enableAutoNexus      = true;  // EnableAutoNexus
-  let enableAutoNexusOnly  = true;  // EnableAutoNexusOnly (Settings default true)
-  let nexusThresholdPct    = 25;   // AutoNexusPercentageThreshold
-  let useClientHp          = true; // AutoNexusUseClientHp
-  let syncServerHp         = true; // AutoNexusSyncHp
-  let showNotification     = true; // AutoNexusShowInformation
-  /** When false: incoming `AOE` packets are ignored for simulated HP / nexus threshold (MOVE sweep skipped). */
-  let trackAoeDamage       = true;
+  let enableAutoNexus = true;  // EnableAutoNexus
 
-  ctx.registerSetting('threshold', {
-    label: 'Nexus HP %', type: 'range', value: nexusThresholdPct, min: 1, max: 95, step: 1,
+  const enableAutoNexusOnly = true; 
+  const useClientHp         = true; 
+  const syncServerHp        = true; 
+  const trackAoeDamage      = true; 
+
+  // ── Thresholds ─────────────────────────────────────────────────────────
+  let nexusThresholdPct    = 25;   // ForceAutoNexusHealth
+  let predictedNexusPct    = 10;   // PredictedAutoNexusHealth
+  let predictedNexusTimeMs = 200;  // PredictedAutoNexusTime
+  let includeGroundTicks   = true; // IncludeGroundTicks
+  let showNotification     = true; // ShowChatMessageOnNexus
+  let drawOverlay          = false; // DrawOverlay
+
+  ctx.registerSetting('ForceAutoNexusHealth', {
+    label: 'Force Nexus Health',
+    type: 'range', value: nexusThresholdPct, min: 0, max: 100, step: 1,
   }, (v: number) => { nexusThresholdPct = v; });
 
-  ctx.registerSetting('autoNexusOnly', {
-    label: 'EnableAutoNexusOnly (MultiTool gate)', advanced: true, type: 'boolean', value: enableAutoNexusOnly,
-  }, (v: boolean) => { enableAutoNexusOnly = v; });
+  ctx.registerSetting('PredictedAutoNexusHealth', {
+    label: 'Predicted Nexus Health',
+    type: 'range', value: predictedNexusPct, min: 0, max: 100, step: 1,
+  }, (v: number) => { predictedNexusPct = v; });
 
-  ctx.registerSetting('useClientHp', {
-    label: 'Use client HP (simulated)', advanced: true, type: 'boolean', value: useClientHp,
-  }, (v: boolean) => { useClientHp = v; });
+  ctx.registerSetting('PredictedAutoNexusTime', {
+    label: 'Predicted Nexus Time',
+    type: 'range', value: predictedNexusTimeMs, min: 0, max: 1000, step: 10,
+  }, (v: number) => { predictedNexusTimeMs = v; pushDllSettings(); });
 
-  ctx.registerSetting('syncHp', {
-    label: 'Sync HP to server (>30 drift)', advanced: true, type: 'boolean', value: syncServerHp,
-  }, (v: boolean) => { syncServerHp = v; });
+  ctx.registerSetting('IncludeGroundTicks', {
+    label: 'Include Ground Ticks', type: 'boolean', value: includeGroundTicks,
+  }, (v: boolean) => {
+    includeGroundTicks = v === true;
+    sendDllFeature('autoNexusTilePredict', includeGroundTicks);
+  });
 
-  ctx.registerSetting('showNotif', {
-    label: 'Show chat message on nexus', advanced: true, type: 'boolean', value: showNotification,
-  }, (v: boolean) => { showNotification = v; });
+  ctx.registerSetting('ShowChatMessageOnNexus', {
+    label: 'Show Chat Message on Nexus', advanced: true,
+    type: 'boolean', value: showNotification,
+  }, (v: boolean) => { showNotification = v === true; });
 
-  ctx.registerSetting('trackAoeDamage', {
-    label: 'Include AoE in nexus HP sim', advanced: true,
-    type: 'boolean',
-    value: trackAoeDamage,
-  }, (v: boolean) => { trackAoeDamage = v === true; });
-
-  let closeSpawnTiles = 0.15;
-  ctx.registerSetting('closeSpawn', {
-    label: 'Close-spawn radius (tiles)', advanced: true, type: 'range', value: closeSpawnTiles, min: 0, max: 0.3, step: 0.05,
-  }, (v: number) => { closeSpawnTiles = v; });
+  ctx.registerSetting('DrawOverlay', {
+    label: 'Draw Overlay', advanced: true,
+    type: 'boolean', value: drawOverlay,
+  }, (v: boolean) => {
+    drawOverlay = v === true;
+    sendDllFeature('autoNexusDebugDraw', drawOverlay ? 1 : 0);
+  });
 
   // Autopot (HP + MP) lives in the auto-drink plugin. The dashboard warns there
   // if this nexus threshold is set at/above auto-drink's HP threshold.
+
+  function pushDllSettings(): void {
+    sendDllFeature('autoNexusPredictedTimeMs', predictedNexusTimeMs);
+  }
+
+  function armDll(on: boolean): void {
+    sendDllFeature('autoNexusEnabled', on);
+    if (on) {
+      sendDllFeature('autoNexusProjPredict', true);
+      sendDllFeature('autoNexusTilePredict', includeGroundTicks);
+      sendDllFeature('autoNexusDebugDraw', drawOverlay ? 1 : 0);
+      pushDllSettings();
+    }
+  }
+  ctx.onEnabledChange(armDll);
+  armDll(ctx.enabled);
+  ctx.registerCleanup(() => sendDllFeature('autoNexusEnabled', false));
 
   const states = new WeakMap<ClientConnection, NexusState>();
 
@@ -182,18 +204,25 @@ export function register(ctx: PluginContext) {
         pendingHeal: 0,
         nexusSent: false, inSafeZone: false,
         lastTickTime: Date.now(), lastSyncTick: 0,
-        bullets: new Map(), pendingAoes: [],
+        pendingAoes: [],
       };
       states.set(client, s);
     }
     return s;
   }
 
+  let activeClient: ClientConnection | null = null;
+
   /** Run at the start of every hot path: track active client; if nexus already sent, short-circuit. */
-  function nexusPrologue(_client: ClientConnection, state: NexusState): boolean {
+  function nexusPrologue(client: ClientConnection, state: NexusState): boolean {
+    activeClient = client;
     if (state.nexusSent) return true;
     return false;
   }
+
+  ctx.on('clientDisconnected', (client) => {
+    if (activeClient === client) activeClient = null;
+  });
 
   // method_31
   function shouldNexus(state: NexusState): boolean {
@@ -209,21 +238,39 @@ export function register(ctx: PluginContext) {
   }
 
   // method_0
-  function doNexus(client: ClientConnection, state: NexusState, reason: string): void {
+  function doNexus(
+    client: ClientConnection,
+    state:  NexusState,
+    reason: string,
+    detail?: string,
+  ): void {
     if (state.nexusSent) return;
     state.nexusSent = true;
 
     const hpPct = state.maxHp > 0 ? Math.round((state.clientHp / state.maxHp) * 100) : 0;
-    ctx.log(`AUTO NEXUS — HP: ${Math.round(state.clientHp)}/${state.maxHp} (${hpPct}%) — ${reason}`);
+    const conds = describeConditions(client.playerData);
+    ctx.log(`AUTO NEXUS — HP: ${Math.round(state.clientHp)}/${state.maxHp} (${hpPct}%) — ${reason}`
+      + (conds ? ` — conditions: ${conds}` : '')
+      + (detail ? ` — ${detail.replace(/\n/g, ' | ')}` : ''));
 
     if (showNotification) {
         ctx.sendNotification(client, 'AutoNexus',
-        `AutoNexused at ${hpPct}% HP\nHP: ${Math.round(state.clientHp)}/${state.maxHp} | DEF: ${state.defense} | ServerHP: ${state.serverHp}\nSource: ${reason}`);
+        `AutoNexused at ${hpPct}% HP\nHP: ${Math.round(state.clientHp)}/${state.maxHp} | DEF: ${state.defense} | ServerHP: ${state.serverHp}`
+        + (conds ? `\nConditions: ${conds}` : '')
+        + `\nSource: ${reason}`
+        + (detail ? `\n${detail}` : ''));
     }
 
     const escape = ctx.createPacket('ESCAPE');
     escape.modified = true;
     client.sendToServer(escape);
+  }
+
+  function attackerName(client: ClientConnection, attackerObjId: number): string {
+    const type = ctx.getWorldState(client)?.getEntityType(attackerObjId);
+    if (type === undefined) return `#${attackerObjId}`;
+    const def = ctx.gameData?.getObject(type);
+    return def?.displayId || def?.id || `0x${type.toString(16)}`;
   }
 
   function getDmgFromState(
@@ -292,7 +339,7 @@ export function register(ctx: PluginContext) {
       else         state.regenAccum += num2 * num;
     }
     if (bleeding) state.regenAccum -= 20 * num;
-    if (inCombat) state.regenAccum /= 2 * num;
+    if (inCombat) state.regenAccum /= 2;
 
     const num4 = Math.trunc(state.regenAccum);
     state.regenAccum -= num4;
@@ -309,7 +356,6 @@ export function register(ctx: PluginContext) {
     state.serverHp   = 0;
     state.pendingHeal = 0;
     state.regenAccum  = 0;
-    state.bullets.clear();
     state.pendingAoes   = [];
     ctx.log(`Map: "${mapName}" — safe zone: ${state.inSafeZone}`);
   }, { prepend: true });
@@ -399,62 +445,6 @@ export function register(ctx: PluginContext) {
     }
   }, { prepend: true });
 
-  ctx.hookPacket('ENEMYSHOOT', (client, packet) => {
-    if (!packet.isDefined) return;
-    const state = getState(client);
-    if (nexusPrologue(client, state)) return;
-    if (state.nexusSent) return;
-
-    const ownerId    = packet.data.ownerId     as number;
-    const bulletType = (packet.data.bulletType as number) ?? 0;
-    const damage     = packet.data.damage      as number;
-    const numShots   = (packet.data.numShots   as number) ?? 1;
-    const actual     = (numShots === 255 || numShots === 0) ? 1 : numShots;
-    const ts         = Date.now();
-
-    // Extension: point-blank spawn nexus before bullet dict (minimum latency)
-    if (
-      closeSpawnTiles > 0 && state.maxHp > 0 && !state.inSafeZone &&
-      enableAutoNexus && enableAutoNexusOnly
-    ) {
-      const spawnPos  = (packet.data.startingPos ?? packet.data.position) as { x: number; y: number } | undefined;
-      const playerPos = client.playerData?.pos;
-      if (spawnPos && playerPos) {
-        const dx   = spawnPos.x - playerPos.x;
-        const dy   = spawnPos.y - playerPos.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist <= closeSpawnTiles) {
-          let piercing = false;
-          if (ctx.gameData && ctx.worldState) {
-            const entityType = ctx.worldState.getEntityType(ownerId);
-            if (entityType !== undefined) {
-              const proj = ctx.gameData.getProjectile(entityType, bulletType);
-              if (proj) piercing = proj.armorPiercing;
-            }
-          }
-          const perBullet = getDmgFromState(client, state, damage, piercing);
-          const totalDmg  = perBullet * actual;
-          if ((state.clientHp - totalDmg) / state.maxHp * 100 <= nexusThresholdPct) {
-            const enemyName = ctx.worldState
-              ? (ctx.gameData?.getObject(ctx.worldState.getEntityType(ownerId) ?? 0)?.id ?? `#${ownerId}`)
-              : `#${ownerId}`;
-            doNexus(client, state,
-              `close-spawn: ${actual} shot(s) from ${enemyName} (${dist.toFixed(2)} tiles, ~${Math.round(totalDmg)} dmg)`);
-            return;
-          }
-        }
-      }
-    }
-
-    const bulletId = packet.data.bulletId as number;
-    for (let i = 0; i < actual; i++) {
-      state.bullets.set(`${ownerId}:${bulletId + i}`, { ownerId, bulletType, damage, ts });
-    }
-    for (const [k, b] of state.bullets) {
-      if (ts - b.ts > 12000) state.bullets.delete(k);
-    }
-  }, { prepend: true });
-
   ctx.hookPacket('PLAYERHIT', (client, packet) => {
     if (!packet.isDefined) return;
     const state = getState(client);
@@ -462,22 +452,13 @@ export function register(ctx: PluginContext) {
     if (state.nexusSent) { packet.send = false; return; }
     if (state.maxHp <= 0) return;
 
-    const bulletId = packet.data.bulletId as number;
+    const bulletId = (packet.data.bulletId as number) & 0xffff;
     const objectId = packet.data.objectId as number;
-    const key      = `${objectId}:${bulletId}`;
-    const bullet   = state.bullets.get(key);
+    const bullet   = ctx.getProjectileTracker(client)?.getBullet(`${objectId}:${bulletId}`);
 
-    let baseDmg  = bullet ? bullet.damage : 200;
-    let piercing = !bullet;
-
-    if (bullet && ctx.gameData && ctx.worldState) {
-      const entityType = ctx.worldState.getEntityType(objectId);
-      if (entityType !== undefined) {
-        const proj = ctx.gameData.getProjectile(entityType, bullet.bulletType);
-        if (proj) piercing = proj.armorPiercing;
-      }
-      state.bullets.delete(key);
-    }
+    // Unknown bullet: assume the worst (MultiTool warns and guesses here too).
+    const baseDmg  = bullet ? bullet.damage : 200;
+    const piercing = bullet ? (bullet.projDef?.armorPiercing ?? false) : true;
 
     const dmg = getDmgFromState(client, state, baseDmg, piercing);
     applyDamage(client, state, dmg, `projectile hit (${dmg} dmg)`, packet);
@@ -544,6 +525,7 @@ export function register(ctx: PluginContext) {
 
     const int47 = damageRedIntThousand(client.playerData);
     const dmg   = Math.floor(raw * (int47 / 1000));
+
     applyDamage(
       client, state, dmg, `ground damage (${label}, raw=${raw} → ${dmg})`, packet,
     );
@@ -578,6 +560,225 @@ export function register(ctx: PluginContext) {
     }
   }, { prepend: true });
 
+  // ── Predictive path: DLL threat list ──────────────────────────────────
+  function normalizeEffect(name: string): string {
+    return name.replace(/\s+/g, '').toLowerCase();
+  }
+
+  interface PredictedConditions {
+    armorBroken: boolean;
+    armored:     boolean;
+    exposed:     boolean;
+    petrified:   boolean;
+    cursed:      boolean;
+  }
+
+  interface IncomingHit {
+    from:     string;
+    dmg:      number;
+    tHitMs:   number;
+    piercing: boolean;
+    known:    boolean;
+    applies:  string[];
+  }
+
+  const MAX_INCOMING_LINES = 10;
+
+  function describeIncoming(
+    incoming: IncomingHit[],
+    state: NexusState,
+    hpAfter: number,
+  ): string {
+    if (incoming.length === 0) return '';
+
+    const total = incoming.reduce((sum, b) => sum + b.dmg, 0);
+    const shown = incoming.slice(0, MAX_INCOMING_LINES);
+
+    const lines = shown.map((b) => {
+      const flags = (b.piercing ? ' [pierces DEF]' : '')
+        + (b.known ? '' : ' [est dmg]')
+        + (b.applies.length > 0 ? ` [applies ${b.applies.join('+')}]` : '');
+      return `  +${b.tHitMs}ms  ${b.from} — ${b.dmg} dmg${flags}`;
+    });
+    if (incoming.length > shown.length) {
+      const rest = incoming.slice(shown.length);
+      const restDmg = rest.reduce((sum, b) => sum + b.dmg, 0);
+      lines.push(`  ...+${rest.length} more — ${restDmg} dmg`);
+    }
+
+    const hpNow    = Math.round(state.clientHp);
+    const after    = Math.round(hpAfter);
+    const wouldDie = hpAfter <= 0;
+
+    return `Incoming (${incoming.length} source${incoming.length === 1 ? '' : 's'}):\n`
+      + `${lines.join('\n')}\n`
+      + `Total ${total} dmg vs ${hpNow} HP → `
+      + (wouldDie ? `DEATH (${after})` : `~${after}/${state.maxHp} HP`);
+  }
+
+  function describeConditions(pd: ClientConnection['playerData']): string {
+    const names: string[] = [];
+    if (pd.hasConditionEffect('ArmorBroken')) names.push('Armor Broken');
+    if (pd.hasConditionEffect('Armored'))     names.push('Armored');
+    if (pd.hasConditionEffect('Exposed'))     names.push('Exposed');
+    if (pd.hasConditionEffect('Curse'))       names.push('Curse');
+    if (pd.hasConditionEffect('Petrified'))   names.push('Petrified');
+    if (pd.hasConditionEffect('Sick'))        names.push('Sick');
+    if (pd.hasConditionEffect('Bleeding'))    names.push('Bleeding');
+    if (pd.hasConditionEffect('Invulnerable') || pd.hasConditionEffect('Invincible')) {
+      names.push('Invulnerable(ignored)');
+    }
+    return names.join(', ');
+  }
+
+  function evaluateThreats(): void {
+    if (!ctx.enabled) return;
+    const client = activeClient;
+    if (!client) return;
+    if (!enableAutoNexus || !enableAutoNexusOnly) return;
+
+    const state = getState(client);
+    if (state.nexusSent || state.inSafeZone || state.maxHp <= 0) return;
+
+    const threats = getDllThreats();
+    const ground = getDllGround();
+    
+    const groundDmgRaw =
+      includeGroundTicks && ground && ground.rawDamage > 0 ? ground.rawDamage : 0;
+    if (threats.length === 0 && groundDmgRaw === 0) return;
+
+    const pd = client.playerData;
+    const int47 = damageRedIntThousand(pd);
+    const cond: PredictedConditions = {
+      armorBroken: pd.hasConditionEffect('ArmorBroken'),
+      armored:     pd.hasConditionEffect('Armored'),
+      exposed:     pd.hasConditionEffect('Exposed'),
+      petrified:   pd.hasConditionEffect('Petrified'),
+      cursed:      pd.hasConditionEffect('Curse'),
+    };
+
+    const tracker = ctx.getProjectileTracker(client);
+    
+    const listAgeMs = Math.max(0, getDllThreatsAgeMs() ?? 0);
+    const sinceScan = (tHitMs: number): number => Math.max(0, tHitMs - listAgeMs);
+    
+    type Event =
+      | { kind: 'bullet'; tHitMs: number; threat: DllThreat }
+      | { kind: 'ground'; tHitMs: number; rawDamage: number };
+    const ordered: Event[] = threats.map(
+      (threat): Event => ({ kind: 'bullet', tHitMs: sinceScan(threat.tHitMs), threat }),
+    );
+    if (groundDmgRaw > 0 && ground) {
+      
+      const ticks = ground.events.length > 0
+        ? ground.events
+        : [{ rawDamage: groundDmgRaw, tHitMs: ground.tHitMs }];
+      for (const tick of ticks) {
+        if (tick.rawDamage <= 0) 
+          continue;
+        
+        ordered.push({
+          kind: 'ground',
+          tHitMs: sinceScan(tick.tHitMs),
+          rawDamage: tick.rawDamage,
+        });
+      }
+    }
+    ordered.sort((a, b) => a.tHitMs - b.tHitMs);
+
+    let hp = state.clientHp;
+    let resolved = 0;
+    let bulletCount = 0;
+    
+    const incoming: IncomingHit[] = [];
+    for (let i = 0; i < ordered.length; i++) {
+      const ev = ordered[i];
+      if (ev.tHitMs > predictedNexusTimeMs) break;
+
+      if (ev.kind === 'ground') {
+        const applied = Math.floor(ev.rawDamage * (int47 / 1000));
+        hp -= applied;
+        incoming.push({
+          from: 'damaging ground', dmg: Math.round(applied), tHitMs: Math.round(ev.tHitMs),
+          piercing: true,
+          known: true,
+          applies: [],
+        });
+        if (hp / state.maxHp * 100 <= predictedNexusPct) {
+          doNexus(client, state,
+            `predicted: standing on damaging ground in ${Math.round(ev.tHitMs)}ms `
+            + `→ ~${Math.round(hp)}/${state.maxHp} HP`,
+            describeIncoming(incoming, state, hp));
+          return;
+        }
+        continue;
+      }
+
+      const threat = ev.threat;
+      bulletCount++;
+
+      const bullet = tracker?.getBullet(`${threat.attackerObjId}:${threat.bulletId & 0xffff}`);
+      const projDef = bullet?.projDef ?? null;
+      if (bullet) resolved++;
+
+      const baseDmg  = bullet ? bullet.damage : threat.fallbackDamage;
+      const piercing = projDef ? projDef.armorPiercing : threat.fallbackArmorPiercing;
+
+      const applied = calcDamage(
+        baseDmg, state.defense, piercing,
+        cond.armorBroken, cond.armored, cond.exposed,
+        false,
+        cond.petrified, cond.cursed, int47,
+      );
+      hp -= applied;
+
+      const mitigationEffects: string[] = [];
+      for (const ce of projDef?.conditionEffects ?? []) {
+        switch (normalizeEffect(ce.effect)) {
+          case 'armorbroken': mitigationEffects.push('Armor Broken'); break;
+          case 'armored':     mitigationEffects.push('Armored');      break;
+          case 'exposed':     mitigationEffects.push('Exposed');      break;
+          case 'petrified':   mitigationEffects.push('Petrified');    break;
+          case 'curse':       mitigationEffects.push('Curse');        break;
+          default: break;
+        }
+      }
+
+      incoming.push({
+        from: attackerName(client, threat.attackerObjId),
+        dmg: Math.round(applied),
+        tHitMs: Math.round(ev.tHitMs),
+        piercing: !!piercing,
+        known: !!bullet,
+        applies: mitigationEffects,
+      });
+
+      if (hp / state.maxHp * 100 <= predictedNexusPct) {
+        doNexus(client, state,
+          `predicted: ${bulletCount} bullet(s) in ${Math.round(ev.tHitMs)}ms `
+          + `→ ~${Math.round(hp)}/${state.maxHp} HP (${resolved}/${bulletCount} resolved)`,
+          describeIncoming(incoming, state, hp));
+        return;
+      }
+
+      for (const effect of mitigationEffects) {
+        switch (effect) {
+          case 'Armor Broken': cond.armorBroken = true; break;
+          case 'Armored':      cond.armored     = true; break;
+          case 'Exposed':      cond.exposed     = true; break;
+          case 'Petrified':    cond.petrified   = true; break;
+          case 'Curse':        cond.cursed      = true; break;
+          default: break;
+        }
+      }
+    }
+  }
+
+  const threatTimer = setInterval(() => {
+    try { evaluateThreats(); } catch (err) { ctx.log(`threat eval failed: ${(err as Error).message}`); }
+  }, 20);
+  ctx.registerCleanup(() => clearInterval(threatTimer));
+
   ctx.hookCommand('an', (client, _cmd, args) => {
     const state = getState(client);
     if (args.length === 0) {
@@ -586,12 +787,12 @@ export function register(ctx: PluginContext) {
       return;
     }
     const val = parseInt(args[0], 10);
-    if (isNaN(val) || val < 1 || val > 100) {
-      ctx.sendNotification(client, 'AutoNexus', 'Usage: /an [1-100]');
+    if (isNaN(val) || val < 0 || val > 100) {
+      ctx.sendNotification(client, 'AutoNexus', 'Usage: /an [0-100]');
       return;
     }
-    nexusThresholdPct = Math.max(1, Math.min(100, val));
-    ctx.updateSetting('threshold', nexusThresholdPct);
+    nexusThresholdPct = val;
+    ctx.updateSetting('ForceAutoNexusHealth', nexusThresholdPct);
     const threshHp = Math.round(getThresholdHp(state));
     ctx.sendNotification(client, 'AutoNexus',
       `Nexus threshold set to ${nexusThresholdPct}% (${threshHp} HP)`);
@@ -613,6 +814,7 @@ export function register(ctx: PluginContext) {
   });
 
   ctx.log(
-    `Loaded — threshold: ${nexusThresholdPct}%, MultiTool gate: ${enableAutoNexusOnly}`,
+    `Loaded — force: ${nexusThresholdPct}%, predicted: ${predictedNexusPct}% within `
+    + `${predictedNexusTimeMs}ms, ground ticks: ${includeGroundTicks}`,
   );
 }
