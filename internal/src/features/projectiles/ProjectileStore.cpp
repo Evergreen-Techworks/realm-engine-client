@@ -256,6 +256,25 @@ WorldProjectile StoreProjectile(bool enemyShot, const WorldProjectile& projectil
     return snap;
 }
 
+bool RetireProjectile(const WorldProjectile& projectile)
+{
+    Initialize();
+    bool retired = false;
+    EnterCriticalSection(&g_RingCs);
+    for (int i = 0; i < kMaxTrackedProj; ++i) {
+        WorldProjectile& slot = g_Slots[i];
+        if (!slot.valid) continue;
+        if (slot.bulletId != projectile.bulletId) continue;
+        if (slot.spawnTick != projectile.spawnTick) continue;
+        if (slot.ptr && projectile.ptr && slot.ptr != projectile.ptr) continue;
+        slot.valid = false;
+        retired = true;
+        break;
+    }
+    LeaveCriticalSection(&g_RingCs);
+    return retired;
+}
+
 void SnapshotToWorld(std::vector<WorldProjectile>& out)
 {
     out.clear();
