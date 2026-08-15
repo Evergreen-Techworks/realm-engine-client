@@ -8,6 +8,7 @@
 #include "ZDodgeTarget.h"
 #include "RePP.h"
 #include "PJDodge.h"
+#include "AutoNexus.h"
 #include "DbgFileLog.h"
 #include "BootGate.h"
 #include <windows.h>
@@ -664,7 +665,8 @@ void TestTAB::Tick(bool menuVisible)
     ProjectileTracking::SetFlashSpeedMultiplier(g_flashSpeedMulUi);
 
     // ── Auto-refresh World + Camera (keep local ptr + camera live for movement)
-    if (g_followMouse || g_walkActive || IsAnyAutoDodgeEnabled()) {
+    if (g_followMouse || g_walkActive || IsAnyAutoDodgeEnabled() ||
+        CombatTAB::FeatAutoNexus::OverlayEnabled()) {
         g_refreshTimer += dt;
         if (g_refreshTimer >= g_refreshInterval) {
             g_refreshTimer = 0.f;
@@ -749,6 +751,7 @@ void TestTAB::Tick(bool menuVisible)
             if (PJDodge::IsEnabled()) {
                 PJDodge::RenderDebugOverlay(camX, camY, angleRad, zoom, cx, cy);
             }
+            CombatTAB::FeatAutoNexus::RenderDebugPath(camX, camY, angleRad, zoom, cx, cy);
         }
 
         // Locked enemy visualization — red reticle + two rings:
