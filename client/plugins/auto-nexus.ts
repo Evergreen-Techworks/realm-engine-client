@@ -79,6 +79,14 @@ interface NexusState {
   prevTickAt:   number;
   /** Pending release timers for held lethal PLAYERHITs. */
   heldTimers:   ReturnType<typeof setTimeout>[];
+  /** Trailing window of server HP loss we could not attribute to a modeled hit. */
+  unattributed: UnattributedSample[];
+  residualCarry: number;
+}
+
+interface UnattributedSample {
+  amount: number;
+  at:     number;
 }
 
 /** Class27 Int32_47: stored ×1000, default 1000. */
@@ -160,6 +168,14 @@ export function register(ctx: PluginContext) {
 
   const SENT_HIT_TTL_MS = 1000;
 
+  // ── Unattributed-damage margin (ProdMafia `effectiveAutoNexusThreshold`) ──
+  let useUnattributedMargin = true;
+
+  const UNATTRIBUTED_WINDOW_MS    = 2000;
+  const UNATTRIBUTED_REACTION_MS  = 350;
+  const UNATTRIBUTED_MAX_FRACTION = 0.12;
+  const UNATTRIBUTED_CARRY_CAP    = 0.25;
+
   ctx.registerSetting('ForceAutoNexusHealth', {
     label: 'Force Nexus Health',
     type: 'range', value: nexusThresholdPct, min: 0, max: 100, step: 1,
@@ -195,6 +211,11 @@ export function register(ctx: PluginContext) {
     label: 'Lethal Cushion HP', advanced: true,
     type: 'range', value: lethalCushionHp, min: 0, max: 500, step: 5,
   }, (v: number) => { lethalCushionHp = v; });
+
+  ctx.registerSetting('UnattributedMargin', {
+    label: 'Nexus Early on Unseen Damage',
+    type: 'boolean', value: useUnattributedMargin,
+  }, (v: boolean) => { useUnattributedMargin = v === true; });
 
   ctx.registerSetting('ShowChatMessageOnNexus', {
     label: 'Show Chat Message on Nexus', advanced: true,
@@ -243,6 +264,7 @@ export function register(ctx: PluginContext) {
         lastTickTime: Date.now(), lastSyncTick: 0,
         pendingAoes: [],
         sentHits: [], prevTickAt: 0, heldTimers: [],
+        unattributed: [], residualCarry: 0,
       };
       states.set(client, s);
     }
@@ -267,6 +289,53 @@ export function register(ctx: PluginContext) {
     let hp = state.serverHp;
     for (const hit of state.sentHits) hp -= hit.amount;
     return hp;
+  }
+
+  // ── Unattributed damage ───────────────────────────────────────────────
+  function measureUnattributed(
+    state:        NexusState,
+    actualLoss:   number,
+    modeledLoss:  number,
+  ): void {
+    let residue = actualLoss - modeledLoss + state.residualCarry;
+
+    if (residue < 0) {
+      const cap = -Math.min(modeledLoss, state.maxHp * UNATTRIBUTED_CARRY_CAP);
+      state.residualCarry = Math.max(residue, cap);
+      return;
+    }
+
+    state.residualCarry = 0;
+    if (residue > 0) {
+      state.unattributed.push({ amount: residue, at: Date.now() });
+    }
+  }
+
+  function unattributedDps(state: NexusState): number {
+    if (state.unattributed.length === 0) return 0;
+    const cutoff = Date.now() - UNATTRIBUTED_WINDOW_MS;
+    state.unattributed = state.unattributed.filter((s) => s.at > cutoff);
+    if (state.unattributed.length === 0) return 0;
+
+    let total = 0;
+    for (const sample of state.unattributed) total += sample.amount;
+    return total / (UNATTRIBUTED_WINDOW_MS / 1000);
+  }
+
+  function unattributedMarginHp(state: NexusState): number {
+    if (!useUnattributedMargin || state.maxHp <= 0) return 0;
+    const dps = unattributedDps(state);
+    if (dps <= 0) return 0;
+    const margin = dps * (UNATTRIBUTED_REACTION_MS / 1000);
+    return Math.min(margin, state.maxHp * UNATTRIBUTED_MAX_FRACTION);
+  }
+
+  function baseThresholdHp(state: NexusState): number {
+    return nexusThresholdPct * 0.01 * state.maxHp;
+  }
+
+  function effectiveThresholdHp(state: NexusState): number {
+    return baseThresholdHp(state) + unattributedMarginHp(state);
   }
 
   const liveHeldTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -302,7 +371,7 @@ export function register(ctx: PluginContext) {
     if (!enableAutoNexus || !enableAutoNexusOnly) return false;
     if (state.inSafeZone)     return false;
     if (state.maxHp <= 0)     return false;
-    const threshold = nexusThresholdPct * 0.01 * state.maxHp;
+    const threshold = effectiveThresholdHp(state);
 
     if (useClientHp) {
       return state.clientHp <= threshold;
@@ -322,13 +391,16 @@ export function register(ctx: PluginContext) {
 
     const hpPct = state.maxHp > 0 ? Math.round((state.clientHp / state.maxHp) * 100) : 0;
     const conds = describeConditions(client.playerData);
+    const thresholds = describeThresholds(state);
     ctx.log(`AUTO NEXUS — HP: ${Math.round(state.clientHp)}/${state.maxHp} (${hpPct}%) — ${reason}`
+      + ` — ${thresholds}`
       + (conds ? ` — conditions: ${conds}` : '')
       + (detail ? ` — ${detail.replace(/\n/g, ' | ')}` : ''));
 
     if (showNotification) {
         ctx.sendNotification(client, 'AutoNexus',
         `AutoNexused at ${hpPct}% HP\nHP: ${Math.round(state.clientHp)}/${state.maxHp} | DEF: ${state.defense} | ServerHP: ${state.serverHp}`
+        + `\n${thresholds}`
         + (conds ? `\nConditions: ${conds}` : '')
         + `\nSource: ${reason}`
         + (detail ? `\n${detail}` : ''));
@@ -337,6 +409,15 @@ export function register(ctx: PluginContext) {
     const escape = ctx.createPacket('ESCAPE');
     escape.modified = true;
     client.sendToServer(escape);
+  }
+
+  function describeThresholds(state: NexusState): string {
+    const base   = Math.round(baseThresholdHp(state));
+    const margin = unattributedMarginHp(state);
+    if (margin <= 0) return `threshold ${base} HP (${nexusThresholdPct}%)`;
+    return `threshold ${base} HP (${nexusThresholdPct}%) `
+      + `→ ${Math.round(base + margin)} HP `
+      + `(+${Math.round(margin)} unseen-dmg margin, ${Math.round(unattributedDps(state))} HP/s)`;
   }
 
   function attackerName(client: ClientConnection, attackerObjId: number): string {
@@ -388,9 +469,6 @@ export function register(ctx: PluginContext) {
     if (!packet || packet.send) recordSentHit(state, dmg, reason);
   }
 
-  function getThresholdHp(state: NexusState): number {
-    return nexusThresholdPct * 0.01 * state.maxHp;
-  }
 
   // method_29: num = int_13*0.001 = elapsed seconds; float_1/int_10/float_3 = 0 without method_8/12
   function regenMethod29(state: NexusState, pd: ClientConnection['playerData'], deltaSec: number): void {
@@ -433,7 +511,9 @@ export function register(ctx: PluginContext) {
     state.pendingAoes   = [];
     state.sentHits      = [];
     state.prevTickAt    = 0;
-    
+    state.unattributed  = [];
+    state.residualCarry = 0;
+
     if (state.heldTimers.length > 0) {
       ctx.log(`Dropping ${state.heldTimers.length} held PLAYERHIT(s) — map changed before release`);
       clearHeldTimers(state);
@@ -458,12 +538,23 @@ export function register(ctx: PluginContext) {
     state.defense  = pd.defense; //Actual Def
     state.vitality = pd.vitality; //Actual Vit
 
-    const serverHp = pd.health > 0 ? pd.health : state.maxHp;
+    const serverHp     = pd.health > 0 ? pd.health : state.maxHp;
+    const prevServerHp = state.serverHp;
 
+    let modeledLoss = 0;
     if (state.sentHits.length > 0) {
-      state.sentHits = state.sentHits.filter((h) => h.at > state.prevTickAt);
+      const stillInFlight: SentHit[] = [];
+      for (const hit of state.sentHits) {
+        if (hit.at > state.prevTickAt) stillInFlight.push(hit);
+        else modeledLoss += hit.amount;
+      }
+      state.sentHits = stillInFlight;
     }
     state.prevTickAt = Date.now();
+
+    if (prevServerHp > 0 && state.maxHp > 0) {
+      measureUnattributed(state, prevServerHp - serverHp, modeledLoss);
+    }
 
     if (state.clientHp <= 0) {
       state.clientHp   = serverHp;
@@ -915,8 +1006,7 @@ export function register(ctx: PluginContext) {
   ctx.hookCommand('an', (client, _cmd, args) => {
     const state = getState(client);
     if (args.length === 0) {
-      const threshHp = Math.round(getThresholdHp(state));
-      ctx.sendNotification(client, 'AutoNexus', `Nexus threshold: ${nexusThresholdPct}% (${threshHp} HP)`);
+      ctx.sendNotification(client, 'AutoNexus', `Nexus ${describeThresholds(state)}`);
       return;
     }
     const val = parseInt(args[0], 10);
@@ -926,9 +1016,8 @@ export function register(ctx: PluginContext) {
     }
     nexusThresholdPct = val;
     ctx.updateSetting('ForceAutoNexusHealth', nexusThresholdPct);
-    const threshHp = Math.round(getThresholdHp(state));
     ctx.sendNotification(client, 'AutoNexus',
-      `Nexus threshold set to ${nexusThresholdPct}% (${threshHp} HP)`);
+      `Nexus ${describeThresholds(state)}`);
     ctx.log(`/an: threshold → ${nexusThresholdPct}%`);
   });
 
