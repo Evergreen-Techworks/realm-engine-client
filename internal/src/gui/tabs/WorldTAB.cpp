@@ -2379,23 +2379,93 @@ namespace WorldTAB {
         return s_damagingMap.count(BlockedKey(tx, ty)) != 0;
     }
 
-    // ── LIVE per-square hazard check (community offsets) ─────────────────────
-    // square_lookup: Square* (__fastcall)(map, tx, ty, methodInfo) @ GameAssembly
-    // +0x1CA7B60. A tile is actually hazardous iff its ground-damage field
-    // (Square+0x58, i32) > 0 AND it is NOT covered (Square+0x48 cover ref — a
+    // ── LIVE per-square hazard check ─────────────────────────────────────────
+    // WorldManager.GetSquare(int x, int y) -> Square*. A tile is actually
+    // hazardous iff its ground-damage field is > 0 AND it is NOT covered (a
     // bridge / platform / ProtectFromGroundDamage object on top negates the
     // damage). Reads LIVE state, so it catches mid-fight tile transforms
     // (PNest solid→venom) and cover changes the cached s_damagingMap misses.
-    // Self-disables to IsDamagingTile after repeated failures (stale RVA/offset/
-    // map pointer on a game update). All three offsets are game-version-specific.
+    // Self-disables to the cached map after repeated read failures.
     using SquareLookupFn = void* (__fastcall*)(void* map, int tx, int ty, void* methodInfo);
     static SquareLookupFn s_squareLookup = nullptr;
     static bool s_liveHazResolved = false;
     static bool s_liveHazOk = true;
     static int  s_liveHazFails = 0;
-    static constexpr uintptr_t kSquareLookupRva = 0x1CA7B60;
-    static constexpr uint32_t  kSquareDamageOff = 0x58;   // i32 ground damage
-    static constexpr uint32_t  kSquareCoverOff  = 0x48;   // cover ref (0 = uncovered)
+
+    static constexpr const char* kWorldMgrClassName = "HJMBOMEHGDJ";
+    static constexpr const char* kGetSquareName     = "MPIIFPBDACN";
+    static constexpr const char* kSquareClassName   = "BGAIOPJMHLO";
+
+    static constexpr uint32_t  kSquareDamageOffFallback = 0x10;  // EAPMKCKMNDI, i32
+    static constexpr uint32_t  kSquareCoverOffFallback  = 0x48;  // JGMBPFJEGAH, ref
+    static uint32_t s_squareDamageOff = kSquareDamageOffFallback;
+    static uint32_t s_squareCoverOff  = kSquareCoverOffFallback;
+
+    static const MethodInfo* FindGetSquareMethod(Il2CppClass* wmClass)
+    {
+        void* iter = nullptr;
+        while (const MethodInfo* mi = il2cpp_class_get_methods(wmClass, &iter)) {
+            const char* name = il2cpp_method_get_name(mi);
+            if (!name || std::strcmp(name, kGetSquareName) != 0) continue;
+            if (il2cpp_method_get_param_count(mi) != 2)           continue;
+
+            // Reject the (float, float) overload — same name, same arity.
+            const Il2CppType* p0 = il2cpp_method_get_param(mi, 0);
+            const Il2CppType* p1 = il2cpp_method_get_param(mi, 1);
+            if (!p0 || !p1) continue;
+            if (il2cpp_type_get_type(p0) != IL2CPP_TYPE_I4) continue;
+            if (il2cpp_type_get_type(p1) != IL2CPP_TYPE_I4) continue;
+
+            if (mi->methodPointer) return mi;
+        }
+        return nullptr;
+    }
+
+    static uint32_t FieldOffsetOr(Il2CppClass* klass, const char* name, uint32_t fallback)
+    {
+        if (!klass) return fallback;
+        FieldInfo* f = il2cpp_class_get_field_from_name(klass, name);
+        if (!f) return fallback;
+        const size_t off = il2cpp_field_get_offset(f);
+        return (off > 0 && off < 0x1000) ? static_cast<uint32_t>(off) : fallback;
+    }
+
+    static void EnsureSquareLookupResolved()
+    {
+        if (s_liveHazResolved) return;
+        s_liveHazResolved = true;
+
+        const MethodInfo* getSquare = nullptr;
+        Resolver::Protection::safe_call([&]() {
+            Il2CppClass* wm = Resolver::FindClassLoose(kWorldMgrClassName);
+            if (!wm) return;
+            getSquare = FindGetSquareMethod(wm);
+            if (!getSquare) return;
+
+            Il2CppClass* sq = nullptr;
+            if (const Il2CppType* ret = il2cpp_method_get_return_type(getSquare))
+                sq = il2cpp_class_from_il2cpp_type(ret);
+            if (!sq) sq = Resolver::FindClassLoose(kSquareClassName);
+
+            s_squareDamageOff = FieldOffsetOr(sq, "EAPMKCKMNDI", kSquareDamageOffFallback);
+            s_squareCoverOff  = FieldOffsetOr(sq, "JGMBPFJEGAH", kSquareCoverOffFallback);
+        });
+
+        if (!getSquare) {
+            s_liveHazOk = false;
+            DBG_FILE_LOG("[WorldTAB] could not resolve " << kWorldMgrClassName << "."
+                         << kGetSquareName << "(int,int) -> live tile-damage query DISABLED,"
+                         " using cached tile map. Re-derive the BeeByte name for this"
+                         " game build from game/generated/il2cpp-functions.h.");
+            return;
+        }
+
+        s_squareLookup = reinterpret_cast<SquareLookupFn>(getSquare->methodPointer);
+        DBG_FILE_LOG("[WorldTAB] live tile-damage query armed: " << kGetSquareName
+                     << " @ " << s_squareLookup
+                     << "  dmgOff=0x" << std::hex << s_squareDamageOff
+                     << " coverOff=0x" << s_squareCoverOff << std::dec);
+    }
 
     // SEH-isolated raw call — POD locals only (no C++ unwinding → no C2712).
     // Returns 1 = hazardous, 0 = safe, -1 = call/read failed.
@@ -2405,14 +2475,14 @@ namespace WorldTAB {
         __try {
             void* sq = s_squareLookup(map, tx, ty, nullptr);
             if (!sq) {
-                result = 0;
+                result = 0;   // off-map / not loaded — harmless, not a fault
             } else {
                 const uint8_t* p = reinterpret_cast<const uint8_t*>(sq);
-                const int dmg = *reinterpret_cast<const int*>(p + kSquareDamageOff);
+                const int dmg = *reinterpret_cast<const int*>(p + s_squareDamageOff);
                 if (dmg <= 0) {
                     result = 0;
                 } else {
-                    const uint64_t cover = *reinterpret_cast<const uint64_t*>(p + kSquareCoverOff);
+                    const uint64_t cover = *reinterpret_cast<const uint64_t*>(p + s_squareCoverOff);
                     result = (cover != 0) ? 0 : 1;   // covered → safe; uncovered → hazard
                 }
             }
@@ -2424,20 +2494,15 @@ namespace WorldTAB {
 
     bool IsTileDamagingLive(int tx, int ty)
     {
-        if (!s_liveHazResolved) {
-            s_liveHazResolved = true;
-            if (HMODULE h = GetModuleHandleW(L"GameAssembly.dll"))
-                s_squareLookup = reinterpret_cast<SquareLookupFn>(
-                    reinterpret_cast<uintptr_t>(h) + kSquareLookupRva);
-        }
+        EnsureSquareLookupResolved();
         if (s_liveHazOk && s_squareLookup) {
             if (void* map = GameState::GetWorldMgr()) {
                 const int r = QuerySquareHazard(map, tx, ty);
                 if (r >= 0) { s_liveHazFails = 0; return r != 0; }
                 if (++s_liveHazFails >= 8) {
                     s_liveHazOk = false;   // latch to cache (== today's behaviour)
-                    DBG_FILE_LOG("[RePP] live hazard square_lookup faulted 8x -> latched OFF, "
-                                 "using cached IsDamagingTile. Verify the map pointer / RVA 0x1CA7B60.");
+                    DBG_FILE_LOG("[WorldTAB] live hazard GetSquare faulted 8x -> latched OFF, "
+                                 "using cached IsDamagingTile.");
                 }
             }
         }
