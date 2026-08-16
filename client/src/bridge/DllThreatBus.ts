@@ -66,21 +66,23 @@ export function parseThreatPayload(payload: string): { threats: DllThreat[]; gro
   const ground: DllGround = { rawDamage: 0, tHitMs: -1, events: [] };
   if (!payload) return { threats: out, ground };
 
-  // "<groundDmg>:<groundTHitMs>;<entries>".
+  // "<summaryDmg>:<summaryTHitMs>[|<dmg>:<t>]*;<entries>".
   let entriesPart = payload;
   const semi = payload.indexOf(';');
   if (semi >= 0) {
-    for (const ev of payload.slice(0, semi).split('|')) {
-      const g = ev.split(':');
+    const segments = payload.slice(0, semi).split('|');
+    for (let i = 1; i < segments.length; i++) {
+      const g = segments[i].split(':');
       if (g.length !== 2) continue;
       const dmg = Number(g[0]);
       const t = Number(g[1]);
       if (!Number.isFinite(dmg) || !Number.isFinite(t)) continue;
+      if (dmg <= 0) continue;
       if (ground.events.length === 0) {
         ground.rawDamage = dmg;
         ground.tHitMs = t;
       }
-      if (dmg > 0) ground.events.push({ rawDamage: dmg, tHitMs: t });
+      ground.events.push({ rawDamage: dmg, tHitMs: t });
     }
   }
   if (semi >= 0) entriesPart = payload.slice(semi + 1);
