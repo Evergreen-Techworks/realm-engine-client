@@ -9,7 +9,7 @@
  * those modules.
  */
 
-import type { PluginContext } from '../../src/plugins/PluginContext.js';
+import type { PluginContext } from '../api.js';
 import { LootCatalog } from './catalog.js';
 import { AutoLootSettings } from './settings.js';
 import { StateStore } from './state.js';

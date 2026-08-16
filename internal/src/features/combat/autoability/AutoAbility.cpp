@@ -3,6 +3,7 @@
 #include "AutoAim.h"
 #include "Il2CppResolver.h"
 #include "LocalPlayer.h"
+#include "core/runtime/MemRead.h"
 
 #include <algorithm>
 #include <atomic>
@@ -82,12 +83,7 @@ void Tick()
 
     void* lp = LocalPlayer::GetPtr();
     if (!lp) return;
-    void* eqMgr = nullptr;
-    __try {
-        eqMgr = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(lp) + s_eqMgrFieldOff);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return;
-    }
+    void* eqMgr = Mem::ReadPtr(lp, s_eqMgrFieldOff);
     if (!eqMgr) return;
 
     const int hk = g_hotkey.load(std::memory_order_relaxed);

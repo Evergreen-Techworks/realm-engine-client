@@ -4,9 +4,9 @@
  * delegated to the focused helpers; this file is the sequencing/timing glue.
  */
 
-import type { PluginContext } from '../../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../../src/proxy/ClientConnection.js';
-import type { TrackedEntity } from '../../src/state/GameWorldState.js';
+import type { PluginContext } from '../api.js';
+import type { ClientConnection } from '../api.js';
+import type { TrackedEntity } from '../api.js';
 import type { AutoLootSettings } from './settings.js';
 import { LootCatalog } from './catalog.js';
 import { StateStore, cleanupReservations, clearPendingDest, makeBagSlotKey, type AutoLootState } from './state.js';

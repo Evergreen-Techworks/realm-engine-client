@@ -11,6 +11,8 @@
 #include <cmath>
 #include "Il2CppResolver.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
+#include "game/math/MoveSpeed.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fallback offsets when IL2CPP metadata lookup fails (DIA4A / WorldTAB lineage).
@@ -237,27 +239,15 @@ static float g_autoInterval = 1.0f;
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-template<typename T>
-static bool SafeRead(const void* base, uint32_t offset, T& out)
-{
-    return Resolver::Protection::safe_call([&]() {
-        out = *reinterpret_cast<const T*>(
-            reinterpret_cast<const uint8_t*>(base) + offset);
-    });
-}
-
-static bool AddrValid(const void* p)
-{
-    uintptr_t v = reinterpret_cast<uintptr_t>(p);
-    return v > 0x10000 && v < 0x7FFFFFFFFFFull;
-}
+// Raw-memory reads and pointer validation now go through Mem::
+// (core/runtime/MemRead.h).
 
 // Read a managed Il2CppString* into a fixed-size char buffer.
 static bool ReadManagedString(const void* strPtr, char* buf, int bufSize)
 {
-    if (!AddrValid(strPtr)) return false;
+    if (!Mem::AddrOk(strPtr)) return false;
     int32_t len = 0;
-    if (!SafeRead(strPtr, 0x10u, len)) return false;
+    if (!Mem::TryRead(strPtr, 0x10u, len)) return false;
     if (len <= 0 || len >= bufSize) return false;
 
     wchar_t wbuf[128] = {};
@@ -278,7 +268,7 @@ static void ReadEquipmentSlots(void* localFk, PlayerSnap& s)
     for (int i = 0; i < kEquipSlotCount; ++i)
         s.equipment[i] = {};
 
-    if (!localFk || !AddrValid(localFk))
+    if (!localFk || !Mem::AddrOk(localFk))
         return;
 
     const uint32_t offEm    = g_fields.equipmentMgr;
@@ -289,12 +279,12 @@ static void ReadEquipmentSlots(void* localFk, PlayerSnap& s)
     const bool ok = Resolver::Protection::safe_call([&]() {
         void* em = *reinterpret_cast<void**>(
             reinterpret_cast<uint8_t*>(localFk) + offEm);
-        if (!AddrValid(em))
+        if (!Mem::AddrOk(em))
             return;
 
         void* arr = *reinterpret_cast<void**>(
             reinterpret_cast<uint8_t*>(em) + offSlots);
-        if (!AddrValid(arr))
+        if (!Mem::AddrOk(arr))
             return;
 
         const uint32_t lenU = il2cpp_array_length(reinterpret_cast<Il2CppArray*>(arr));
@@ -307,7 +297,7 @@ static void ReadEquipmentSlots(void* localFk, PlayerSnap& s)
 
         for (int i = 0; i < n; ++i) {
             void* slot = GET_ARRAY_ELEMENT(arr, i);
-            if (!AddrValid(slot))
+            if (!Mem::AddrOk(slot))
                 continue;
 
             uint8_t* sp = reinterpret_cast<uint8_t*>(slot);
@@ -316,7 +306,7 @@ static void ReadEquipmentSlots(void* localFk, PlayerSnap& s)
 
             EquipSlotSnap& es = s.equipment[i];
             es.readable = true;
-            const bool hasOp = AddrValid(op);
+            const bool hasOp = Mem::AddrOk(op);
             if (!hasOp && tid == 0)
                 es.empty = true;
             else
@@ -339,30 +329,30 @@ static void DoRefresh()
     void* lp = LocalPlayer::GetPtr();
     if (!lp) lp = WorldTAB::GetLocalPtr();  // fallback if LocalPlayer not yet warm
     g_valid = false;
-    if (!lp || !AddrValid(lp)) return;
+    if (!lp || !Mem::AddrOk(lp)) return;
 
     EnsurePlayerFieldOffsets();
 
     PlayerSnap s = {};
 
-    SafeRead(lp, g_fields.posX,    s.x);
-    SafeRead(lp, g_fields.posY,    s.y);
-    SafeRead(lp, g_fields.hp,      s.hp);
-    SafeRead(lp, g_fields.maxHp,   s.maxHp);
-    SafeRead(lp, g_fields.classNum, s.classNum);
-    SafeRead(lp, g_fields.guildRank, s.guildRank);
-    SafeRead(lp, g_fields.curMp,   s.curMp);
-    SafeRead(lp, g_fields.maxMp,   s.maxMp);
-    SafeRead(lp, g_fields.atk,     s.atk);
-    SafeRead(lp, g_fields.spd,     s.spd);
-    SafeRead(lp, g_fields.dex,     s.dex);
-    SafeRead(lp, g_fields.vit,     s.vit);
-    SafeRead(lp, g_fields.wis,     s.wis);
-    SafeRead(lp, g_fields.def,     s.def);
+    Mem::TryRead(lp, g_fields.posX,    s.x);
+    Mem::TryRead(lp, g_fields.posY,    s.y);
+    Mem::TryRead(lp, g_fields.hp,      s.hp);
+    Mem::TryRead(lp, g_fields.maxHp,   s.maxHp);
+    Mem::TryRead(lp, g_fields.classNum, s.classNum);
+    Mem::TryRead(lp, g_fields.guildRank, s.guildRank);
+    Mem::TryRead(lp, g_fields.curMp,   s.curMp);
+    Mem::TryRead(lp, g_fields.maxMp,   s.maxMp);
+    Mem::TryRead(lp, g_fields.atk,     s.atk);
+    Mem::TryRead(lp, g_fields.spd,     s.spd);
+    Mem::TryRead(lp, g_fields.dex,     s.dex);
+    Mem::TryRead(lp, g_fields.vit,     s.vit);
+    Mem::TryRead(lp, g_fields.wis,     s.wis);
+    Mem::TryRead(lp, g_fields.def,     s.def);
 
     // Player name (Il2CppString*)
     void* namePtr = nullptr;
-    if (SafeRead(lp, g_fields.nameStr, namePtr))
+    if (Mem::TryRead(lp, g_fields.nameStr, namePtr))
         ReadManagedString(namePtr, s.name, sizeof(s.name));
     if (s.name[0] == '\0')
         strcpy_s(s.name, "<?>");
@@ -372,9 +362,9 @@ static void DoRefresh()
     // [A] COHCKAPOLCA UInt32[] pointer path (same as WorldTAB / CombatTAB)
     RuntimeOffsets::TryReadMapObjectConditions(lp, &s.condLo, &s.condHi);
     // [B] MPJGAPJBBBF single-int condition field (BeeByte-resolved at runtime)
-    SafeRead(lp, g_fields.condInt, s.condInt);
+    Mem::TryRead(lp, g_fields.condInt, s.condInt);
     // [C] raw [this+0x440] — the exact offset HasConditionEffect reads in the .lst
-    SafeRead(lp, g_fields.condRaw, s.condRaw);
+    Mem::TryRead(lp, g_fields.condRaw, s.condRaw);
 
     if (!s_miCalcMoveSpeed) {
         Il2CppClass* fk = Resolver::FindClassLoose("FKALGHJIADI");
@@ -607,7 +597,7 @@ void PlayerTAB::Render()
 
     // Tiles/sec = DIA4A's autododge speed formula (same formula used for Follow Mouse movement)
     if (g_snap.spd > 0.f) {
-        const float tilesPerSec = 4.0f + 5.6f * (g_snap.spd / 75.0f);
+        const float tilesPerSec = GameMath::TilesPerSecFromSpd(g_snap.spd);
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.6f, 1.f, 0.6f, 1.f),
             "Move speed:  %.2f tiles/s  (4 + 5.6 * spd/75)", tilesPerSec);

@@ -4,7 +4,7 @@
  * decoding from bag stat 80, and the stat-pot autodrink class-cap check.
  */
 
-import type { PlayerClassStatMaxes } from '../../src/game-data/GameDataLoader.js';
+import type { PlayerClassStatMaxes } from '../api.js';
 import {
   HP_POTION_IDS,
   MP_POTION_IDS,

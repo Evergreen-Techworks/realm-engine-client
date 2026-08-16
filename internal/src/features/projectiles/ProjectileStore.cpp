@@ -4,6 +4,7 @@
 #include "ProjectileRuntimeReader.h"
 #include "ProjectileTrajectory.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
 #include "gui/tabs/WorldTAB.h"
 
 #include <atomic>
@@ -46,25 +47,12 @@ bool g_LocalCsInit = false;
 ProjectileStore::HazardSpawnCb g_HazardCb = nullptr;
 void* g_HazardCbUser = nullptr;
 
-static bool AddrOk(const void* p)
-{
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000 && a < 0x7FFFFFFFFFFFULL;
-}
-
 static bool TryReadLivePos(void* projInst, float& outX, float& outY)
 {
     outX = 0.f;
     outY = 0.f;
-    if (!AddrOk(projInst)) return false;
-    __try {
-        uint8_t* p = reinterpret_cast<uint8_t*>(projInst);
-        outX = *reinterpret_cast<float*>(p + RuntimeOffsets::PosX);
-        outY = *reinterpret_cast<float*>(p + RuntimeOffsets::PosY);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    return Mem::TryRead(projInst, RuntimeOffsets::PosX, outX)
+        && Mem::TryRead(projInst, RuntimeOffsets::PosY, outY);
 }
 
 static void EnsureLocalCs()
@@ -81,7 +69,7 @@ static void EnsureLocalCs()
 // (= true model error, recorded as residual). Caller holds the slot lock.
 static void CalibrateSlotClock(WorldProjectile& slot, double qpcNow)
 {
-    if (slot.spawnQpcMs <= 0.0 || !AddrOk(slot.ptr)) return;
+    if (slot.spawnQpcMs <= 0.0 || !Mem::AddrOk(slot.ptr)) return;
     if (qpcNow - slot.lastCalibQpcMs < kCalibThrottleMs) return;
     slot.lastCalibQpcMs = qpcNow;
 
@@ -138,7 +126,7 @@ static void FillOutFromSlot(WorldProjectile& dst, WorldProjectile& src, ULONGLON
 
     dst = src;
     if (!src.valid) return;
-    if (AddrOk(src.ptr)) {
+    if (Mem::AddrOk(src.ptr)) {
         float runtimeHalf = 0.f;
         ProjectileRuntimeReader::TryReadRuntimeChebyshevHalf(src.ptr, runtimeHalf);
         dst.runtimeChebyshevHalf = (runtimeHalf > 1e-5f) ? runtimeHalf : src.runtimeChebyshevHalf;
@@ -158,7 +146,7 @@ static void FillOutFromSlot(WorldProjectile& dst, WorldProjectile& src, ULONGLON
     }
 
     const float elapsed = static_cast<float>(now - src.spawnTick);
-    if (livePos && AddrOk(src.ptr) && TryReadLivePos(src.ptr, dst.x, dst.y))
+    if (livePos && Mem::AddrOk(src.ptr) && TryReadLivePos(src.ptr, dst.x, dst.y))
         return;
 
     if (elapsed >= 0.f && ProjectileTrajectory::GetPositionAtTime(

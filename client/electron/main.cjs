@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { WindowHostBridge } = require('./services/window-host-bridge.cjs');
 const { InstanceManager } = require('./services/instance-manager.cjs');
+const { IPC } = require('./ipc-channels.cjs');
 
 const APP_NAME = 'Realm Engine';
 const APP_USER_MODEL_ID = 'com.realmengine.app';
@@ -219,8 +220,8 @@ function createWindow() {
     show: false,
   });
 
-  mainWindow.on('maximize', () => mainWindow.webContents.send('window:maximized'));
-  mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:unmaximized'));
+  mainWindow.on('maximize', () => mainWindow.webContents.send(IPC.WINDOW_MAXIMIZED));
+  mainWindow.on('unmaximize', () => mainWindow.webContents.send(IPC.WINDOW_UNMAXIMIZED));
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -232,7 +233,7 @@ function createWindow() {
   instanceManager.on('update', (state) => {
     try {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('instanceHost:update', state);
+        mainWindow.webContents.send(IPC.INSTANCE_HOST_UPDATE, state);
       }
     } catch {}
   });
@@ -368,23 +369,23 @@ function startProxy() {
 
 // ── IPC handlers ─────────────────────────────────────────────────────────────
 
-ipcMain.on('window:minimize', () => mainWindow?.minimize());
-ipcMain.on('window:maximize', () => {
+ipcMain.on(IPC.WINDOW_MINIMIZE, () => mainWindow?.minimize());
+ipcMain.on(IPC.WINDOW_MAXIMIZE, () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize();
   else mainWindow?.maximize();
 });
-ipcMain.on('window:close', () => mainWindow?.close());
-ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false);
-ipcMain.handle('instanceHost:isSupported', () => windowHostBridge.isSupported());
-ipcMain.handle('instanceHost:listInstances', () => instanceManager.list());
-ipcMain.handle('instanceHost:listWindows', async () => windowHostBridge.listTopLevelWindows());
-ipcMain.handle('instanceHost:listAttachments', () => windowHostBridge.listAttachments());
-ipcMain.handle('instanceHost:launch', async (_event, payload) => instanceManager.launch(payload || {}));
-ipcMain.handle('instanceHost:trackByPid', async (_event, payload) => instanceManager.trackByPid(payload || {}));
-ipcMain.handle('instanceHost:stop', async (_event, payload) => instanceManager.stop(payload?.instanceId));
-ipcMain.handle('instanceHost:discoverWindow', async (_event, payload) => instanceManager.discoverWindow(payload?.instanceId));
-ipcMain.handle('instanceHost:focus', async (_event, payload) => instanceManager.focus(payload?.instanceId));
-ipcMain.handle('instanceHost:attach', async (_event, payload) => {
+ipcMain.on(IPC.WINDOW_CLOSE, () => mainWindow?.close());
+ipcMain.handle(IPC.WINDOW_IS_MAXIMIZED, () => mainWindow?.isMaximized() ?? false);
+ipcMain.handle(IPC.INSTANCE_HOST_IS_SUPPORTED, () => windowHostBridge.isSupported());
+ipcMain.handle(IPC.INSTANCE_HOST_LIST_INSTANCES, () => instanceManager.list());
+ipcMain.handle(IPC.INSTANCE_HOST_LIST_WINDOWS, async () => windowHostBridge.listTopLevelWindows());
+ipcMain.handle(IPC.INSTANCE_HOST_LIST_ATTACHMENTS, () => windowHostBridge.listAttachments());
+ipcMain.handle(IPC.INSTANCE_HOST_LAUNCH, async (_event, payload) => instanceManager.launch(payload || {}));
+ipcMain.handle(IPC.INSTANCE_HOST_TRACK_BY_PID, async (_event, payload) => instanceManager.trackByPid(payload || {}));
+ipcMain.handle(IPC.INSTANCE_HOST_STOP, async (_event, payload) => instanceManager.stop(payload?.instanceId));
+ipcMain.handle(IPC.INSTANCE_HOST_DISCOVER_WINDOW, async (_event, payload) => instanceManager.discoverWindow(payload?.instanceId));
+ipcMain.handle(IPC.INSTANCE_HOST_FOCUS, async (_event, payload) => instanceManager.focus(payload?.instanceId));
+ipcMain.handle(IPC.INSTANCE_HOST_ATTACH, async (_event, payload) => {
   const hostHwnd = payload?.hostHwnd || getMainWindowHwndDecimal();
   return instanceManager.attach({
     instanceId: payload?.instanceId,
@@ -392,8 +393,8 @@ ipcMain.handle('instanceHost:attach', async (_event, payload) => {
     hostHwnd,
   });
 });
-ipcMain.handle('instanceHost:detach', async (_event, payload) => instanceManager.detach(payload?.slotId));
-ipcMain.handle('instanceHost:resizeSlot', async (_event, payload) => {
+ipcMain.handle(IPC.INSTANCE_HOST_DETACH, async (_event, payload) => instanceManager.detach(payload?.slotId));
+ipcMain.handle(IPC.INSTANCE_HOST_RESIZE_SLOT, async (_event, payload) => {
   return instanceManager.resizeSlot(payload?.slotId, payload?.bounds || {});
 });
 
@@ -464,7 +465,7 @@ function tryBase64Decode(s) {
 // internal DLL's AppEngineManager.Connect hook. Returns one record per unique
 // GUID (keeps the newest secret per GUID — handles password rotations and
 // post-Steam-relink updates correctly).
-ipcMain.handle('rotmg:readCaptureLog', async () => {
+ipcMain.handle(IPC.ROTMG_READ_CAPTURE_LOG, async () => {
   try {
     const fs = require('fs');
     const os = require('os');
@@ -509,7 +510,7 @@ ipcMain.handle('rotmg:readCaptureLog', async () => {
   }
 });
 
-ipcMain.handle('rotmg:readLauncherCreds', async () => {
+ipcMain.handle(IPC.ROTMG_READ_LAUNCHER_CREDS, async () => {
   return new Promise((resolve) => {
     const { spawn } = require('child_process');
     const proc = spawn('reg.exe', ['query', REG_PATH], { windowsHide: true });
@@ -551,7 +552,7 @@ ipcMain.handle('rotmg:readLauncherCreds', async () => {
   });
 });
 
-ipcMain.handle('steam:connect', () => new Promise((resolve) => {
+ipcMain.handle(IPC.STEAM_CONNECT, () => new Promise((resolve) => {
   let resolved = false;
   const done = (result) => { if (!resolved) { resolved = true; resolve(result); } };
   const authWin = new BrowserWindow({

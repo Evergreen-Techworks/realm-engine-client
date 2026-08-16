@@ -1,5 +1,5 @@
-import type { PluginContext } from '../../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../../src/proxy/ClientConnection.js';
+import type { PluginContext } from '../api.js';
+import type { ClientConnection } from '../api.js';
 import { SAFE_ZONE_MAPS, BELT_SLOT_BASE, clampPct } from './constants.js';
 import { loadPotIds } from './catalog.js';
 import { findBeltSlot, findInventorySlot } from './slots.js';

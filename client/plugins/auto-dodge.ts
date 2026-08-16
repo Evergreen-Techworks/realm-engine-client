@@ -1,5 +1,5 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
-import { sendDllFeature } from '../src/bridge/DllFeatureBus.js';
+import type { PluginContext } from './api.js';
+import { sendDllFeature } from './api.js';
 
 // Maps the dashboard string value to the C++ TestTAB::DodgeMode enum.
 // Off=0, XDodge=1, RolloutGrid=2, RolloutQuad=3, zDodge=4, RePP=5.
@@ -392,7 +392,7 @@ export function register(ctx: PluginContext) {
     sendDllFeature('xdodgeFutureHorizon',  ctx.getSetting<number>('xdodgeFutureHorizon'));
     sendDllFeature('xdodgeFutureStride',   ctx.getSetting<number>('xdodgeFutureStride'));
     sendDllFeature('dodgeHitScale',        ctx.getSetting<number>('dodgeHitScale'));
-    for (const k of ['xdodgeAstar', 'xdodgeWeighting', 'xdodgeSmartGoal', 'xdodgePerpBias', 'xdodgeSpeedMatch', 'xdodgeLockFollow', 'xdodgeWalkCache', 'xdodgeWallAvoid', 'xdodgeArbiter', 'xdodgeBfsBias', 'xdodgeCcd', 'xdodgeCatalog', 'xdodgeLosGoal', 'xdodgeWasdYield', 'xdodgeLateralPref', 'xdodgeGoalSticky', 'xdodgeAvoidEnemies', 'xdodgeGhostHit', 'xdodgeDrawPath'])
+    for (const k of ['xdodgeAstar', 'xdodgeWeighting', 'xdodgeSmartGoal', 'xdodgePerpBias', 'xdodgeSpeedMatch', 'xdodgeLockFollow', 'xdodgeWalkCache', 'xdodgeWallAvoid', 'xdodgeArbiter', 'xdodgeBfsBias', 'xdodgeCcd', 'xdodgeCatalog', 'xdodgeLosGoal', 'xdodgeWasdYield', 'xdodgeLateralPref', 'xdodgeGoalSticky', 'xdodgeAvoidEnemies', 'xdodgeGhostHit', 'xdodgeDrawPath'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     sendDllFeature('xdodgeCcdPad', ctx.getSetting<number>('xdodgeCcdPad'));
     const al = ctx.getSetting<string>('enemyAutoLock');
@@ -404,7 +404,7 @@ export function register(ctx: PluginContext) {
     sendDllFeature('rolloutHitScale',      ctx.getSetting<number>('rolloutHitScale'));
     sendDllFeature('rolloutIntentWeight',  ctx.getSetting<number>('rolloutIntentWeight'));
     sendDllFeature('rolloutRebuildN',      ctx.getSetting<number>('rolloutRebuildN'));
-    for (const k of ['rolloutAvoidEnemies', 'rolloutWasdYield', 'rolloutCommitDwell', 'rolloutDrawPath'])
+    for (const k of ['rolloutAvoidEnemies', 'rolloutWasdYield', 'rolloutCommitDwell', 'rolloutDrawPath'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     // zDodge settings.
     sendDllFeature('zdodgeReactWindowMs', ctx.getSetting<number>('zdodgeReactWindowMs'));
@@ -412,7 +412,7 @@ export function register(ctx: PluginContext) {
     sendDllFeature('zdodgePlayerRadius', ctx.getSetting<number>('zdodgePlayerRadius'));
     sendDllFeature('zdodgeProjectileRadiusFallback', ctx.getSetting<number>('zdodgeProjectileRadiusFallback'));
     sendDllFeature('zdodgeDamageThresholdPct', ctx.getSetting<number>('zdodgeDamageThresholdPct'));
-    for (const k of ['zdodgeDebugOverlay', 'zdodgeCandidateOverlay'])
+    for (const k of ['zdodgeDebugOverlay', 'zdodgeCandidateOverlay'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     // RE++ settings.
     sendDllFeature('reppReactWindowMs', ctx.getSetting<number>('reppReactWindowMs'));
@@ -421,13 +421,13 @@ export function register(ctx: PluginContext) {
     sendDllFeature('reppDangerWeight', ctx.getSetting<number>('reppDangerWeight'));
     sendDllFeature('reppMode', ctx.getSetting<string>('reppMode') === 'autopilot' ? 1 : 0);
     sendDllFeature('reppStandOnType', ctx.getSetting<number>('reppStandOnType'));
-    for (const k of ['reppFollowLantern', 'reppAvoidHazards', 'reppDebugOverlay'])
+    for (const k of ['reppFollowLantern', 'reppAvoidHazards', 'reppDebugOverlay'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     // PJDodge settings.
     sendDllFeature('pjdodgeHorizonMs', ctx.getSetting<number>('pjdodgeHorizonMs'));
     sendDllFeature('pjdodgeLeadMs', ctx.getSetting<number>('pjdodgeLeadMs'));
     sendDllFeature('pjdodgeHitScale', ctx.getSetting<number>('pjdodgeHitScale'));
-    for (const k of ['pjdodgeSafeWalk', 'pjdodgeSpeedScale', 'pjdodgePredictionAccuracy', 'pjdodgeDebugOverlay', 'pjdodgeLockFollow'])
+    for (const k of ['pjdodgeSafeWalk', 'pjdodgeSpeedScale', 'pjdodgePredictionAccuracy', 'pjdodgeDebugOverlay', 'pjdodgeLockFollow'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     // Re-apply the 60fps cap here too. The onEnabledChange / clientConnected
     // handlers were the only places setting targetFrameRate, so if the cap

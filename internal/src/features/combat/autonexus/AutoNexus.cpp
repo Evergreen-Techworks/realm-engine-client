@@ -6,6 +6,7 @@
 #include "SharedMemory.h"
 #include "RuntimeOffsets.h"
 #include "Il2CppResolver.h"
+#include "core/runtime/MemRead.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdint>
@@ -375,13 +376,7 @@ static void ResolveAutoPotOnce()
 static void* ReadEquipmentManagerPtr(void* localPlayer)
 {
     if (!localPlayer || !s_eqMgrFieldOff) return nullptr;
-    void* eqMgr = nullptr;
-    __try {
-        eqMgr = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(localPlayer) + s_eqMgrFieldOff);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return nullptr;
-    }
-    return eqMgr;
+    return Mem::ReadPtr(localPlayer, s_eqMgrFieldOff);
 }
 
 static void TryDrinkHotkey(int hotkey, ULONGLONG& lastTickMs)

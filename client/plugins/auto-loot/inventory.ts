@@ -7,9 +7,9 @@
  * {@link QUICKSLOT_PACKET_BASE}.
  */
 
-import type { PluginContext } from '../../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../../src/proxy/ClientConnection.js';
-import type { TrackedEntity } from '../../src/state/GameWorldState.js';
+import type { PluginContext } from '../api.js';
+import type { ClientConnection } from '../api.js';
+import type { TrackedEntity } from '../api.js';
 import type { LootCatalog } from './catalog.js';
 import { isReservedDestination, type AutoLootState } from './state.js';
 import { isHpOrMpPotion } from './items.js';

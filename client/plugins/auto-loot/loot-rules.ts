@@ -3,8 +3,8 @@
  * potions, marks/eggs, whitelist/blacklist, and the minimum-enchant gate.
  */
 
-import type { PluginContext } from '../../src/plugins/PluginContext.js';
-import type { TrackedEntity } from '../../src/state/GameWorldState.js';
+import type { PluginContext } from '../api.js';
+import type { TrackedEntity } from '../api.js';
 import type { AutoLootSettings } from './settings.js';
 import { LootCatalog, getGearCategory, isMultitoolUtTier, type GearCategory } from './catalog.js';
 import { getBagSlotEnchantIds, isAnyPotion } from './items.js';

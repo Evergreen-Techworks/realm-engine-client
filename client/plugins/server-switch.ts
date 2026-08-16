@@ -1,8 +1,8 @@
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import type { PluginContext } from '../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../src/proxy/ClientConnection.js';
+import type { PluginContext } from './api.js';
+import type { ClientConnection } from './api.js';
 import { fetchServerList } from '../src/services/ServerListFetcher.js';
 import { getBakedServers } from '../src/config/BakedData.js';
 

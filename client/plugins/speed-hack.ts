@@ -1,5 +1,5 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
-import { sendDllFeature } from '../src/bridge/DllFeatureBus.js';
+import type { PluginContext } from './api.js';
+import { sendDllFeature } from './api.js';
 
 export function register(ctx: PluginContext) {
   ctx.name = 'Speed Hack';

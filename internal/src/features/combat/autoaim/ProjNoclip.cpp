@@ -2,6 +2,8 @@
 #include "ProjNoclip.h"
 #include "Il2CppResolver.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
+#include "platform/hooks/Il2CppHook.h"
 #include "minhook/MinHook.h"
 
 #include <Windows.h>
@@ -34,12 +36,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 namespace {
-
-static inline bool AddrOk(const void* p)
-{
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000u && a < 0x7FFFFFFFFFFFull;
-}
 
 // ── Runtime field offsets (resolved once at Install time) ────────────────────
 // No ACTK shift: HBEAKBIHANL and BGAIOPJMHLO are both non-LKHPPBEGNOM classes.
@@ -82,7 +78,7 @@ static bool __fastcall IACODGNOFMH_hook(void* thisPtr, int32_t a, int32_t b, voi
 
     if (origResult && s_enabled.load(std::memory_order_relaxed) && !s_noclipApplied)
     {
-        if (s_npmOff != 0 && AddrOk(thisPtr))
+        if (s_npmOff != 0 && Mem::AddrOk(thisPtr))
         {
             __try {
                 const bool npm = *reinterpret_cast<bool*>(
@@ -91,7 +87,7 @@ static bool __fastcall IACODGNOFMH_hook(void* thisPtr, int32_t a, int32_t b, voi
                 {
                     void* tile = *reinterpret_cast<void**>(
                         reinterpret_cast<uint8_t*>(thisPtr) + s_eokOff);
-                    if (AddrOk(tile))
+                    if (Mem::AddrOk(tile))
                     {
                         int32_t* layerPtr = reinterpret_cast<int32_t*>(
                             reinterpret_cast<uint8_t*>(tile) + s_ebclOff);
@@ -117,7 +113,7 @@ static bool __fastcall GJFKGLJEGKO_hook(void* thisPtr, int32_t x, int32_t y, voi
 
     const bool result = g_origGJFK(thisPtr, x, y, methodInfo);
 
-    if (s_noclipApplied && AddrOk(s_savedTile))
+    if (s_noclipApplied && Mem::AddrOk(s_savedTile))
     {
         __try {
             *reinterpret_cast<int32_t*>(
@@ -196,26 +192,16 @@ void Install()
         s_mhInit = true;
     }
 
-    if (MH_CreateHook(s_gjfkTarget,
+    if (!Il2CppHook::InstallMinHook(s_gjfkTarget,
             reinterpret_cast<void*>(&GJFKGLJEGKO_hook),
-            reinterpret_cast<void**>(&g_origGJFK)) != MH_OK)
+            reinterpret_cast<void**>(&g_origGJFK), "ProjNoclip.GJFK"))
         return;
-    if (MH_EnableHook(s_gjfkTarget) != MH_OK) {
-        MH_RemoveHook(s_gjfkTarget);
-        return;
-    }
 
-    if (MH_CreateHook(s_iacodTarget,
+    if (!Il2CppHook::InstallMinHook(s_iacodTarget,
             reinterpret_cast<void*>(&IACODGNOFMH_hook),
-            reinterpret_cast<void**>(&g_origIACOD)) != MH_OK) {
+            reinterpret_cast<void**>(&g_origIACOD), "ProjNoclip.IACOD")) {
         MH_DisableHook(s_gjfkTarget);
         MH_RemoveHook(s_gjfkTarget);
-        return;
-    }
-    if (MH_EnableHook(s_iacodTarget) != MH_OK) {
-        MH_DisableHook(s_gjfkTarget);
-        MH_RemoveHook(s_gjfkTarget);
-        MH_RemoveHook(s_iacodTarget);
         return;
     }
 

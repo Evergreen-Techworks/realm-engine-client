@@ -1,7 +1,7 @@
 /** Per-client Auto Loot state, kept in a WeakMap keyed by the connection. */
 
-import type { ClientConnection } from '../../src/proxy/ClientConnection.js';
-import type { TrackedEntity } from '../../src/state/GameWorldState.js';
+import type { ClientConnection } from '../api.js';
+import type { TrackedEntity } from '../api.js';
 
 /** Per-client runtime state, discarded with the connection (WeakMap-keyed). */
 export interface AutoLootState {

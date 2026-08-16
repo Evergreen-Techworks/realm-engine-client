@@ -1,6 +1,6 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../src/proxy/ClientConnection.js';
-import type { Packet } from '../src/packets/Packet.js';
+import type { PluginContext } from './api.js';
+import type { ClientConnection } from './api.js';
+import type { Packet } from './api.js';
 
 /**
  * Auto Nexus — near 1:1 port of MultiTool `Class89` (minus autopot, plus close-spawn ENEMYSHOOT).

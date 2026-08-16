@@ -1,5 +1,5 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../src/proxy/ClientConnection.js';
+import type { PluginContext } from './api.js';
+import type { ClientConnection } from './api.js';
 
 // Safe floor replacement target — mirrors Multitool Class97 `ushort_0`.
 const SAFE_FLOOR_NAME = 'EH Secret Floor';

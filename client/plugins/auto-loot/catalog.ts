@@ -3,7 +3,7 @@
  * UT / ST / tier / gear-category buckets, plus display-name resolution.
  */
 
-import type { PluginContext } from '../../src/plugins/PluginContext.js';
+import type { PluginContext } from '../api.js';
 import {
   WEAPON_SLOT_TYPES,
   ABILITY_SLOT_TYPES,

@@ -1,6 +1,6 @@
 /** Auto Drink — locate a usable potion in the belt / inventory / backpack. */
 
-import type { ClientConnection } from '../../src/proxy/ClientConnection.js';
+import type { ClientConnection } from '../api.js';
 import { BELT_SLOT_BASE } from './constants.js';
 
 /** A potion found in a slot, with the USEITEM packet slot id to use. */

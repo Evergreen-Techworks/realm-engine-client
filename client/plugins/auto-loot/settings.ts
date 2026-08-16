@@ -10,7 +10,7 @@
 import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import type { PluginContext } from '../../src/plugins/PluginContext.js';
+import type { PluginContext } from '../api.js';
 import { minEnchantSelectToCount } from './items.js';
 import {
   DEFAULT_MIN_WEAPON_TIER,

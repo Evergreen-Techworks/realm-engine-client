@@ -67,6 +67,8 @@ function isHwidBindingError(rawError: string): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 import { getClientToken, clearCachedHwid } from '../../util/Hwid.js';
 import { ConditionEffect } from '../../constants/ConditionEffect.js';
+import { WS_MSG } from '../wsMessageTypes.js';
+import { GAME_PORT } from '../../constants/GameId.js';
 import type { ScriptHost } from '../../scripts/ScriptHost.js';
 import type { InternalBridge } from '../../bridge/InternalBridge.js';
 import type {
@@ -1028,7 +1030,7 @@ export class DevServer {
       this.observeTradePacket(pkt);
     });
     this.lab.on('update', () => {
-      const msg = JSON.stringify({ type: 'labUpdate', unknowns: this.lab.getUnknowns() });
+      const msg = JSON.stringify({ type: WS_MSG.LAB_UPDATE, unknowns: this.lab.getUnknowns() });
       for (const client of this.wss.clients) {
         if (client.readyState === WebSocket.OPEN) client.send(msg);
       }
@@ -1076,7 +1078,7 @@ export class DevServer {
 
     // Subscribe to dashboard-only plugin logs
     this.pluginManager.onDashboardLog((pluginName, message) => {
-      const msg = JSON.stringify({ type: 'pluginLog', plugin: pluginName, message });
+      const msg = JSON.stringify({ type: WS_MSG.PLUGIN_LOG, plugin: pluginName, message });
       for (const client of this.wss.clients) {
         if (client.readyState === WebSocket.OPEN) {
           client.send(msg);
@@ -1086,7 +1088,7 @@ export class DevServer {
 
     // Subscribe to structured plugin data broadcasts
     this.pluginManager.onBroadcastData((pluginId, type, data) => {
-      const msg = JSON.stringify({ type: 'pluginData', pluginId, dataType: type, data });
+      const msg = JSON.stringify({ type: WS_MSG.PLUGIN_DATA, pluginId, dataType: type, data });
       for (const client of this.wss.clients) {
         if (client.readyState === WebSocket.OPEN) {
           client.send(msg);
@@ -1280,7 +1282,7 @@ export class DevServer {
 
         const effectivePos = this.getEffectivePlayerPos();
         const msg = JSON.stringify({
-          type: 'playerData',
+          type: WS_MSG.PLAYER_DATA,
           clientId,
           name: pd.name || '',
           classType: pd.classType,
@@ -1809,7 +1811,7 @@ export class DevServer {
 
   private buildConfigMessage(): string {
     return JSON.stringify({
-      type: 'config',
+      type: WS_MSG.CONFIG,
       rotmgPath: this.getRotmgPath() || '',
       rotmgPathSource: this.config.rotmgPath ? 'custom' : (this.detectedGamePath ? 'auto' : 'none'),
       rotmgExtractorGameDataPath: (this.config.rotmgExtractorGameDataPath || '').trim(),
@@ -1831,7 +1833,7 @@ export class DevServer {
 
   private broadcastInternalState(): void {
     const msg = JSON.stringify({
-      type: 'internalState',
+      type: WS_MSG.INTERNAL_STATE,
       connected: this.internalBridge?.isConnected ?? false,
     });
     for (const client of this.wss.clients) {
@@ -1840,7 +1842,7 @@ export class DevServer {
   }
 
   private broadcastUnresolvedClasses(classes: string[]): void {
-    const msg = JSON.stringify({ type: 'unresolvedClasses', classes });
+    const msg = JSON.stringify({ type: WS_MSG.UNRESOLVED_CLASSES, classes });
     for (const client of this.wss.clients) {
       if (client.readyState === WebSocket.OPEN) client.send(msg);
     }
@@ -1848,7 +1850,7 @@ export class DevServer {
 
   private broadcastGameClientState(): void {
     const msg = JSON.stringify({
-      type: 'gameClient',
+      type: WS_MSG.GAME_CLIENT,
       connected: this.gameClientConnected,
     });
     for (const client of this.wss.clients) {
@@ -1873,7 +1875,7 @@ export class DevServer {
         server: this.ipToServerName[serverIp] || serverIp || '--',
       };
     });
-    const msg = JSON.stringify({ type: 'clientList', clients });
+    const msg = JSON.stringify({ type: WS_MSG.CLIENT_LIST, clients });
     for (const ws of this.wss.clients) {
       if (ws.readyState === WebSocket.OPEN) ws.send(msg);
     }
@@ -1943,7 +1945,7 @@ export class DevServer {
   /** TCP connect to each server:2050, return name -> ms. Failed/timeout omitted. */
   private pingAllServers(): Promise<Record<string, number>> {
     const timeoutMs = 3000;
-    const port = 2050;
+    const port = GAME_PORT;
     const entries = Object.entries(this.servers);
     return Promise.all(
       entries.map(
@@ -3433,7 +3435,7 @@ export class DevServer {
   }
 
   private broadcastMulingStatus(status: unknown): void {
-    const msg = JSON.stringify({ type: 'muling_status', status });
+    const msg = JSON.stringify({ type: WS_MSG.MULING_STATUS, status });
     for (const client of this.wss.clients) {
       if (client.readyState === WebSocket.OPEN) client.send(msg);
     }
@@ -3444,30 +3446,30 @@ export class DevServer {
 
     // Send current plugin state
     ws.send(JSON.stringify({
-      type: 'plugins',
+      type: WS_MSG.PLUGINS,
       data: this.pluginManager.getPlugins(),
     }));
 
     // Send current game client state
     ws.send(JSON.stringify({
-      type: 'gameClient',
+      type: WS_MSG.GAME_CLIENT,
       connected: this.gameClientConnected,
     }));
 
     // Send current internal (DLL pipe) state
     ws.send(JSON.stringify({
-      type: 'internalState',
+      type: WS_MSG.INTERNAL_STATE,
       connected: this.internalBridge?.isConnected ?? false,
     }));
 
     if (this.lastUnresolvedClasses !== null) {
-      ws.send(JSON.stringify({ type: 'unresolvedClasses', classes: this.lastUnresolvedClasses }));
+      ws.send(JSON.stringify({ type: WS_MSG.UNRESOLVED_CLASSES, classes: this.lastUnresolvedClasses }));
     }
 
     // Send recent packets
     const recent = this.inspector.getRecent(100);
     ws.send(JSON.stringify({
-      type: 'history',
+      type: WS_MSG.HISTORY,
       data: recent,
     }));
 
@@ -3475,7 +3477,7 @@ export class DevServer {
     const damageHistory = this.pluginManager.getPluginData('damage-sniffer', 'damageHistory');
     if (damageHistory !== undefined) {
       ws.send(JSON.stringify({
-        type: 'pluginData',
+        type: WS_MSG.PLUGIN_DATA,
         pluginId: 'damage-sniffer',
         dataType: 'damageHistory',
         data: damageHistory,
@@ -3484,7 +3486,7 @@ export class DevServer {
     const damageLive = this.pluginManager.getPluginData('damage-sniffer', 'damageLive');
     if (damageLive !== undefined) {
       ws.send(JSON.stringify({
-        type: 'pluginData',
+        type: WS_MSG.PLUGIN_DATA,
         pluginId: 'damage-sniffer',
         dataType: 'damageLive',
         data: damageLive,
@@ -3495,7 +3497,7 @@ export class DevServer {
     const encounters = this.pluginManager.getPluginData('damage-sniffer', 'encounterHistory');
     if (encounters !== undefined) {
       ws.send(JSON.stringify({
-        type: 'pluginData',
+        type: WS_MSG.PLUGIN_DATA,
         pluginId: 'damage-sniffer',
         dataType: 'encounterHistory',
         data: encounters,
@@ -3505,7 +3507,7 @@ export class DevServer {
     // Subscribe to real-time packets
     const unsub = this.inspector.subscribe((packet: CapturedPacket) => {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'packet', data: packet }));
+        ws.send(JSON.stringify({ type: WS_MSG.PACKET, data: packet }));
       }
     });
 
@@ -3513,11 +3515,11 @@ export class DevServer {
     ws.send(this.buildConfigMessage());
 
     // Send current Packet Lab state
-    ws.send(JSON.stringify({ type: 'labUpdate', unknowns: this.lab.getUnknowns() }));
+    ws.send(JSON.stringify({ type: WS_MSG.LAB_UPDATE, unknowns: this.lab.getUnknowns() }));
 
     // Admin dev: always report logged-in with all plans active.
     ws.send(JSON.stringify({
-      type: 'gemStatus',
+      type: WS_MSG.GEM_STATUS,
       loggedIn: true,
       gem_balance: 999999,
       active: true,
@@ -3532,7 +3534,7 @@ export class DevServer {
         if (msg.type === 'togglePlugin') {
           const result = this.pluginManager.togglePlugin(msg.pluginId, msg.enabled);
           if (!result.ok && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'pluginToggleError', pluginId: msg.pluginId, reason: result.reason, requiredPlan: result.requiredPlan ?? null }));
+            ws.send(JSON.stringify({ type: WS_MSG.PLUGIN_TOGGLE_ERROR, pluginId: msg.pluginId, reason: result.reason, requiredPlan: result.requiredPlan ?? null }));
           }
           this.broadcastPluginState();
           this.scheduleAutosave();
@@ -3555,7 +3557,7 @@ export class DevServer {
         } else if (msg.type === 'updateSetting') {
           const settingOk = this.pluginManager.updateSetting(msg.pluginId, msg.key, msg.value);
           if (!settingOk && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'settingUpdateError', pluginId: msg.pluginId, key: msg.key }));
+            ws.send(JSON.stringify({ type: WS_MSG.SETTING_UPDATE_ERROR, pluginId: msg.pluginId, key: msg.key }));
           }
           this.broadcastPluginState();
           this.scheduleAutosave();
@@ -3563,7 +3565,7 @@ export class DevServer {
           const result = this.pluginManager.updatePluginHotkey(msg.pluginId, msg.hotkey);
           if (!result.ok && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
-              type: 'pluginHotkeyUpdateError',
+              type: WS_MSG.PLUGIN_HOTKEY_UPDATE_ERROR,
               pluginId: msg.pluginId,
               reason: result.reason,
               conflictPluginId: result.conflictPluginId ?? null,
@@ -3576,7 +3578,7 @@ export class DevServer {
           const changed = this.pluginManager.resetPluginSettings(String(msg.pluginId ?? ''));
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
-              type: 'pluginSettingsReset',
+              type: WS_MSG.PLUGIN_SETTINGS_RESET,
               pluginId: msg.pluginId,
               changedKeys: changed,
             }));
@@ -3585,7 +3587,7 @@ export class DevServer {
           this.scheduleAutosave();
         } else if (msg.type === 'launchGame') {
           const result = this.launchGame();
-          ws.send(JSON.stringify({ type: 'launchGameResult', ...result }));
+          ws.send(JSON.stringify({ type: WS_MSG.LAUNCH_GAME_RESULT, ...result }));
         } else if (msg.type === 'launchGameWithCredentials') {
           const email = String(msg.email ?? '').trim();
           const password = String(msg.password ?? '');
@@ -3622,17 +3624,17 @@ export class DevServer {
           }).then(
             (result) => {
               if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'launchGameResult', ...result }));
+                ws.send(JSON.stringify({ type: WS_MSG.LAUNCH_GAME_RESULT, ...result }));
               }
             },
           );
         } else if (msg.type === 'probePacket') {
           const result = this.lab.probe(Number(msg.id), String(msg.spec ?? ''));
-          ws.send(JSON.stringify({ type: 'probeResult', id: msg.id, result }));
+          ws.send(JSON.stringify({ type: WS_MSG.PROBE_RESULT, id: msg.id, result }));
         } else if (msg.type === 'sendLabPacket') {
           const result = this.sendLabPacket(msg.packetName, msg.data);
           ws.send(JSON.stringify({
-            type: 'labPacketSendResult',
+            type: WS_MSG.LAB_PACKET_SEND_RESULT,
             requestId: msg.requestId ?? null,
             result,
           }));
@@ -3640,12 +3642,12 @@ export class DevServer {
           if (this.worldState && this.gameData) {
             const payload = this.worldState.getObjectsForDashboard(this.gameData);
             const beaconTypes = this.gameData.getBeaconTypes();
-            const objectsMsg = JSON.stringify({ type: 'objectsData', ...payload, beaconTypes });
+            const objectsMsg = JSON.stringify({ type: WS_MSG.OBJECTS_DATA, ...payload, beaconTypes });
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(objectsMsg);
             }
           } else {
-            const emptyMsg = JSON.stringify({ type: 'objectsData', portals: [], beacons: [], categories: [], beaconTypes: [] });
+            const emptyMsg = JSON.stringify({ type: WS_MSG.OBJECTS_DATA, portals: [], beacons: [], categories: [], beaconTypes: [] });
             if (ws.readyState === WebSocket.OPEN) ws.send(emptyMsg);
           }
         } else if (msg.type === 'requestGameWikiCatalog') {
@@ -3656,7 +3658,7 @@ export class DevServer {
           if (!this.gameData) {
             ws.send(
               JSON.stringify({
-                type: 'gameWikiCatalog',
+                type: WS_MSG.GAME_WIKI_CATALOG,
                 objectSummaries: [],
                 objectDetails: {},
                 tiles: [],
@@ -3670,7 +3672,7 @@ export class DevServer {
           if (!this.gameWikiCatalogJson) {
             const { objectSummaries, objectDetails, tiles } = this.gameData.getGameWikiCatalog();
             this.gameWikiCatalogJson = JSON.stringify({
-              type: 'gameWikiCatalog',
+              type: WS_MSG.GAME_WIKI_CATALOG,
               objectSummaries,
               objectDetails,
               tiles,
@@ -3683,7 +3685,7 @@ export class DevServer {
           if (ws.readyState !== WebSocket.OPEN || !this.gameData) return;
           const t = Number(msg.objectType);
           ws.send(JSON.stringify({
-            type: 'objectXmlResult',
+            type: WS_MSG.OBJECT_XML_RESULT,
             objectType: t,
             rawXml: Number.isFinite(t) ? (this.gameData.getRawObjectXml(t) ?? null) : null,
           }));
@@ -3691,7 +3693,7 @@ export class DevServer {
           if (ws.readyState !== WebSocket.OPEN || !this.gameData) return;
           const t = Number(msg.tileType);
           ws.send(JSON.stringify({
-            type: 'tileXmlResult',
+            type: WS_MSG.TILE_XML_RESULT,
             tileType: t,
             rawXml: Number.isFinite(t) ? (this.gameData.getRawTileXml(t) ?? null) : null,
           }));
@@ -3718,10 +3720,10 @@ export class DevServer {
               );
             }
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'tilesData', ...payload }));
+              ws.send(JSON.stringify({ type: WS_MSG.TILES_DATA, ...payload }));
             }
           } else if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'tilesData', center: { x: 0, y: 0 }, radius: 12, groups: [] }));
+            ws.send(JSON.stringify({ type: WS_MSG.TILES_DATA, center: { x: 0, y: 0 }, radius: 12, groups: [] }));
           }
         } else if (msg.type === 'requestNearbyPlayers') {
           if (this.worldState && this.gameData && this.currentClient?.playerData) {
@@ -3732,11 +3734,11 @@ export class DevServer {
               this.currentClient.objectId,
             );
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'nearbyPlayersData', players: payload }));
+              ws.send(JSON.stringify({ type: WS_MSG.NEARBY_PLAYERS_DATA, players: payload }));
             }
           } else {
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'nearbyPlayersData', players: [] }));
+              ws.send(JSON.stringify({ type: WS_MSG.NEARBY_PLAYERS_DATA, players: [] }));
             }
           }
         } else if (msg.type === 'requestAllPlayersRawStats') {
@@ -3750,7 +3752,7 @@ export class DevServer {
                 : [];
             ws.send(
               JSON.stringify({
-                type: 'allPlayersRawStats',
+                type: WS_MSG.ALL_PLAYERS_RAW_STATS,
                 capturedAt: Date.now(),
                 map: this.currentClient?.playerData?.mapName ?? null,
                 gameId: this.currentClient?.state?.gameId ?? null,
@@ -3761,7 +3763,7 @@ export class DevServer {
           } else {
             ws.send(
               JSON.stringify({
-                type: 'allPlayersRawStats',
+                type: WS_MSG.ALL_PLAYERS_RAW_STATS,
                 capturedAt: Date.now(),
                 map: null,
                 gameId: null,
@@ -3775,13 +3777,13 @@ export class DevServer {
           const vaultState = this.currentClient ? getVaultStore(this.currentClient) : null;
           if (!vaultState) {
             ws.send(JSON.stringify({
-              type: 'vaultData',
+              type: WS_MSG.VAULT_DATA,
               error: 'Vault data not available — enter the vault first.',
               capturedAt: null,
             }));
           } else {
             ws.send(JSON.stringify({
-              type: 'vaultData',
+              type: WS_MSG.VAULT_DATA,
               capturedAt: vaultState.capturedAt,
               map: this.currentClient?.playerData?.mapName ?? null,
               gameId: this.currentClient?.state?.gameId ?? null,
@@ -3809,11 +3811,11 @@ export class DevServer {
             const myPos = this.currentClient.playerData.pos ?? null;
             const debug = this.worldState.getNearbyPlayerDebugForDashboard(this.gameData, myPos, oid);
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'nearbyPlayerDebug', objectId: oid, debug }));
+              ws.send(JSON.stringify({ type: WS_MSG.NEARBY_PLAYER_DEBUG, objectId: oid, debug }));
             }
           } else {
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'nearbyPlayerDebug', objectId: oid, debug: null }));
+              ws.send(JSON.stringify({ type: WS_MSG.NEARBY_PLAYER_DEBUG, objectId: oid, debug: null }));
             }
           }
         } else if (msg.type === 'updateRotmgPath') {
@@ -3850,7 +3852,7 @@ export class DevServer {
 
   broadcastPluginState(): void {
     const pluginData = JSON.stringify({
-      type: 'plugins',
+      type: WS_MSG.PLUGINS,
       data: this.pluginManager.getPlugins(),
     });
     for (const client of this.wss.clients) {
@@ -3940,7 +3942,7 @@ export class DevServer {
   broadcastScriptsState(): void {
     const scripts = this.scriptHost?.list() ?? [];
     const dir = this.scriptHost?.getScriptsDir() ?? null;
-    const msg = JSON.stringify({ type: 'scriptsState', scripts, dir });
+    const msg = JSON.stringify({ type: WS_MSG.SCRIPTS_STATE, scripts, dir });
     for (const client of this.wss.clients) {
       if (client.readyState === WebSocket.OPEN) {
         client.send(msg);
@@ -3953,7 +3955,7 @@ export class DevServer {
     line: string,
     level: 'info' | 'warn' | 'error' = 'info',
   ): void {
-    const msg = JSON.stringify({ type: 'scriptLog', id, line, level });
+    const msg = JSON.stringify({ type: WS_MSG.SCRIPT_LOG, id, line, level });
     for (const client of this.wss.clients) {
       if (client.readyState === WebSocket.OPEN) {
         client.send(msg);
@@ -3978,7 +3980,7 @@ export class DevServer {
       const snap = this.scriptHost.getPanelSnapshot(scriptId);
       if (!snap) continue;
       const msg: ScriptPanelOutboundMessage = {
-        type: 'scriptPanelState',
+        type: WS_MSG.SCRIPT_PANEL_STATE,
         scriptId,
         def: snap.def,
         isOpen: snap.isOpen,

@@ -2,6 +2,7 @@
 #include "PlayerCollider.h"
 #include "Il2CppResolver.h"
 #include "RuntimeOffsets.h"
+#include "MemRead.h"
 
 #include <cstring>
 
@@ -31,12 +32,6 @@ uint32_t g_collisionMultiplierOffset = kOffCollisionMultiplierFallback;
 struct EntityCandidate {
     void* ptr = nullptr;
 };
-
-bool IsPlausiblePointer(const void* ptr)
-{
-    const uintptr_t address = reinterpret_cast<uintptr_t>(ptr);
-    return address > 0x10000ULL && address < 0x7FFFFFFFFFFFULL;
-}
 
 FieldInfo* FindFieldOnHierarchy(Il2CppClass* klass, const char* fieldName)
 {
@@ -101,7 +96,7 @@ void* ReadPointerRef(void* basePtr, uint32_t offset)
     __except (EXCEPTION_EXECUTE_HANDLER) {
         ptr = nullptr;
     }
-    return IsPlausiblePointer(ptr) ? ptr : nullptr;
+    return Mem::AddrOk(ptr) ? ptr : nullptr;
 }
 
 void* ReadObjectPropertiesRef(void* entityPtr, uint32_t offset)
@@ -197,7 +192,7 @@ bool FindTrackedOriginal(void* properties, float& outOriginal)
 void RestoreTrackedColliders()
 {
     for (size_t i = 0; i < g_trackedCount; ++i) {
-        if (g_tracked[i].ptr && g_tracked[i].hasOriginal && IsPlausiblePointer(g_tracked[i].ptr))
+        if (g_tracked[i].ptr && g_tracked[i].hasOriginal && Mem::AddrOk(g_tracked[i].ptr))
             WriteCollisionMultiplier(g_tracked[i].ptr, g_tracked[i].originalMultiplier);
     }
     for (TrackedProperty& tracked : g_tracked) tracked = TrackedProperty{};

@@ -41,6 +41,7 @@ if (process.send) {
 import { resolve, dirname, join } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
+import { GAME_PORT } from './constants/GameId.js';
 import { existsSync, readFileSync, readdirSync, unlinkSync, copyFileSync, statSync } from 'fs';
 import { Proxy } from './proxy/Proxy.js';
 import { PacketFactory } from './packets/PacketFactory.js';
@@ -179,7 +180,7 @@ async function main() {
   // #endregion
   if (!hookInstalled) {
     Logger.warn('Main', 'Game hook not installed - see warnings above.');
-    Logger.warn('Main', 'Proxy will still run, but game must be manually pointed to 127.0.0.1:2050.');
+    Logger.warn('Main', `Proxy will still run, but game must be manually pointed to 127.0.0.1:${GAME_PORT}.`);
   }
 
   // 0b. Deploy cheat DLL (version.dll) to game directory
@@ -476,9 +477,9 @@ async function main() {
   }
 
   // 8. Start proxy
-  proxy.start('127.0.0.1', 2050);
+  proxy.start('127.0.0.1', GAME_PORT);
 
-  Logger.log('Main', 'Proxy ready on 127.0.0.1:2050');
+  Logger.log('Main', `Proxy ready on 127.0.0.1:${GAME_PORT}`);
   if (hookInstalled) {
     Logger.log('Main', `Game hook active - Exalt at ${hooker.gameDirectory}`);
   }

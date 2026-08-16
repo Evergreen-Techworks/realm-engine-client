@@ -19,6 +19,7 @@ import { createHash, createHmac, randomBytes } from 'crypto';
 import { Logger } from '../util/Logger.js';
 import { EventEmitter } from 'events';
 import { signalHelloEvent } from '../native/hello-event.js';
+import { BRIDGE, DllMessageType } from './contract.js';
 
 declare const __HANDSHAKE_KEY__: string | undefined;
 declare const __PIPE_NAME__: string | undefined;
@@ -31,7 +32,7 @@ const PIPE_PATH = (() => {
     const s = String(raw || '').trim();
     if (s.startsWith('\\\\.\\pipe\\')) return s;
   } catch {}
-  return '\\\\.\\pipe\\lfg-dev-bridge';
+  return BRIDGE.DEV_PIPE_NAME;
 })();
 
 /** RotMG Exalt + DLL use Windows named pipes; Node cannot expose them on Linux/WSL/macOS. */
@@ -285,7 +286,7 @@ export class InternalBridge extends EventEmitter {
   setFeature(key: string, value: boolean | number | string): void {
     const valueType: 'b' | 'n' | 's'
       = typeof value === 'boolean' ? 'b' : (typeof value === 'number' ? 'n' : 's');
-    const msg: DllMessage = { type: 'setFeature', key, valueType, value };
+    const msg: DllMessage = { type: DllMessageType.SetFeature, key, valueType, value };
     if (key !== 'internalUnloadDll') {
       this.lastSentFeatures.set(key, { ...msg });
     }
@@ -302,29 +303,29 @@ export class InternalBridge extends EventEmitter {
 
   private getSignedFields(msg: DllMessage): SignedFields | null {
     switch (msg.type) {
-      case 'heartbeat': {
+      case DllMessageType.Heartbeat: {
         const nonce = msg.nonce;
         if (!isHexNonce(nonce)) return null;
         return { payload: nonce };
       }
-      case 'heartbeatResp': {
+      case DllMessageType.HeartbeatResp: {
         const response = msg.response;
         if (!isHexNonce(response)) return null;
         return { payload: response };
       }
-      case 'clearTiles':
+      case DllMessageType.ClearTiles:
         return { payload: '' };
-      case 'noWalkInit': {
+      case DllMessageType.NoWalkInit: {
         const types = typeof msg.types === 'string' ? msg.types : null;
         if (types === null) return null;
         return { payload: types };
       }
-      case 'tileUpdate': {
+      case DllMessageType.TileUpdate: {
         const tiles = typeof msg.tiles === 'string' ? msg.tiles : null;
         if (tiles === null) return null;
         return { payload: tiles };
       }
-      case 'setFeature': {
+      case DllMessageType.SetFeature: {
         const key = typeof msg.key === 'string' ? msg.key : null;
         const valueType = msg.valueType === 'b' || msg.valueType === 'n' || msg.valueType === 's' ? msg.valueType : null;
         if (!key || !valueType) return null;
@@ -469,25 +470,25 @@ export class InternalBridge extends EventEmitter {
 
   private handleMessage(msg: DllMessage): void {
     switch (msg.type) {
-      case 'hello':
+      case DllMessageType.Hello:
         this.handleHello(msg);
         break;
-      case 'authResult':
+      case DllMessageType.AuthResult:
         this.handleAuthResult(msg);
         break;
-      case 'heartbeat':
+      case DllMessageType.Heartbeat:
         this.handleHeartbeat(msg);
         break;
-      case 'heartbeatResp':
+      case DllMessageType.HeartbeatResp:
         this.handleHeartbeatResp(msg);
         break;
-      case 'player':
+      case DllMessageType.Player:
         this.handlePlayer(msg);
         break;
-      case 'hotkeyEvent':
+      case DllMessageType.HotkeyEvent:
         this.handleHotkeyEvent(msg);
         break;
-      case 'unresolvedClasses':
+      case DllMessageType.UnresolvedClasses:
         this.handleUnresolvedClasses(msg);
         break;
       default:
@@ -508,7 +509,7 @@ export class InternalBridge extends EventEmitter {
     const version = Number(msg.version ?? 0);
     const protocol = String(msg.protocol ?? '');
     const challenge = msg.challenge;
-    if (version !== 3 || protocol !== 'bridge-v3' || !isHexNonce(challenge)) {
+    if (version !== BRIDGE.PROTOCOL_VERSION || protocol !== BRIDGE.PROTOCOL_TAG || !isHexNonce(challenge)) {
       Logger.error('InternalBridge', 'Hello missing challenge or wrong protocol/version');
       this.disconnect();
       return;
@@ -529,7 +530,7 @@ export class InternalBridge extends EventEmitter {
 
     this.writeMessage(JSON.stringify({
       type: 'auth',
-      protocol: 'bridge-v3',
+      protocol: BRIDGE.PROTOCOL_TAG,
       clientPid: String(process.pid),
       userId: bid,
       response,
@@ -578,7 +579,7 @@ export class InternalBridge extends EventEmitter {
     // Admin dev: respond to DLL heartbeat without verifying incoming seq/mac.
     const nonce = typeof msg.nonce === 'string' ? msg.nonce : randomNonce();
     const response = hmacResponse(nonce) ?? '0'.repeat(64);
-    const signed = this.signOutgoingMessage({ type: 'heartbeatResp', response });
+    const signed = this.signOutgoingMessage({ type: DllMessageType.HeartbeatResp, response });
     if (signed) this.writeMessage(JSON.stringify(signed));
   }
 
@@ -645,7 +646,7 @@ export class InternalBridge extends EventEmitter {
       const nonce = randomNonce();
       this.pendingChallenge = nonce;
       const signed = this.signOutgoingMessage({
-        type: 'heartbeat',
+        type: DllMessageType.Heartbeat,
         nonce,
       });
       if (!signed) {

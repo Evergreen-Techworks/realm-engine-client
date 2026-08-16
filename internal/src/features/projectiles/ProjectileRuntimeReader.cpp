@@ -3,18 +3,19 @@
 #include "ProjectileRuntimeReader.h"
 #include "ProjectileTrajectory.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
+#include "game/objects/GameObjects.h"
 #include "gui/tabs/WorldTAB.h"
 
 #include <cmath>
 
 namespace {
 
-static bool AddrOk(const void* p)
-{
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000 && a < 0x7FFFFFFFFFFFULL;
-}
-
+// Hot-loop guard: `props` is validated by the caller (ApplyProperties null-checks
+// projProps and runs the whole field sweep inside one __try). The raw reads below
+// stay raw on purpose — a fault mid-sweep must abort the whole apply (return
+// false via the outer __except), which per-field Mem::ReadOr fallbacks would not
+// reproduce. See the note in ApplyProperties.
 static void ReadCollisionHalf(WorldProjectile& dst, void* projectilePtr, uint8_t* props,
                               ProjectileCollisionFallback fallbackMode)
 {
@@ -28,7 +29,7 @@ static void ReadCollisionHalf(WorldProjectile& dst, void* projectilePtr, uint8_t
     float baseRadius = 0.f;
     float scale = 0.f;
     float skinWidth = 0.f;
-    if (AddrOk(projectilePtr)) {
+    if (Mem::AddrOk(projectilePtr)) {
         __try {
             uint8_t* proj = reinterpret_cast<uint8_t*>(projectilePtr);
             if (RuntimeOffsets::KJ_BaseRadius && RuntimeOffsets::KJ_BaseRadius < 0x8000)
@@ -57,47 +58,38 @@ namespace ProjectileRuntimeReader {
 
 void* EffectivePropsFromProjectile(void* projectilePtr, void* fallbackProps)
 {
-    if (AddrOk(projectilePtr)) {
-        __try {
-            void* props = *reinterpret_cast<void**>(
-                reinterpret_cast<uint8_t*>(projectilePtr) + RuntimeOffsets::Hbeak_ProjPropsPtr);
-            if (AddrOk(props)) return props;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    }
+    // Projectile::Props() wraps Mem::ReadPtr — nullptr unless the read succeeds AND
+    // the result is itself AddrOk, matching the old read + AddrOk(props) guard exactly.
+    void* props = Game::Projectile(projectilePtr).Props();
+    if (props) return props;
     return fallbackProps;
 }
 
 bool TryReadRuntimeChebyshevHalf(void* projectilePtr, float& outHalf)
 {
     outHalf = 0.f;
-    if (!AddrOk(projectilePtr)) return false;
     const uint32_t off = RuntimeOffsets::Hbeak_ProjRadius;
     if (off == 0u || off >= 0x8000u) return false;
-    __try {
-        const float half = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(projectilePtr) + off);
-        if (half > 1e-4f && half < 16.f && std::isfinite(half)) {
-            outHalf = half;
-            return true;
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    float half = 0.f;
+    if (!Mem::TryRead(projectilePtr, off, half)) return false;
+    if (half > 1e-4f && half < 16.f && std::isfinite(half)) {
+        outHalf = half;
+        return true;
+    }
     return false;
 }
 
 bool TryReadLiveDamage(void* projectilePtr, int32_t& outDamage)
 {
     outDamage = 0;
-    if (!AddrOk(projectilePtr)) return false;
-    __try {
-        // HBEAKBIHANL.DBNNDLKNECM — per-instance damage Int32 (confirmed correct field).
-        // Read live at draw time; the game populates it shortly after spawn.
-        int32_t dmg = *reinterpret_cast<int32_t*>(
-            reinterpret_cast<uint8_t*>(projectilePtr) + RuntimeOffsets::Hbeak_InstanceDamage);
-        if (dmg > 0 && dmg < 1000000) {
-            outDamage = dmg;
-            return true;
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
+    // HBEAKBIHANL.DBNNDLKNECM — per-instance damage Int32 (confirmed correct field).
+    // Read live at draw time; the game populates it shortly after spawn. Projectile::
+    // Damage() returns 0 on a faulted/unresolved read, which the range check rejects
+    // exactly as the old Mem::TryRead-failure path did.
+    const int32_t dmg = Game::Projectile(projectilePtr).Damage();
+    if (dmg > 0 && dmg < 1000000) {
+        outDamage = dmg;
+        return true;
     }
     return false;
 }
@@ -105,7 +97,12 @@ bool TryReadLiveDamage(void* projectilePtr, int32_t& outDamage)
 bool ApplyProperties(WorldProjectile& dst, void* projectilePtr, void* projProps,
                      ProjectileCollisionFallback collisionFallback)
 {
-    if (!AddrOk(projProps)) return false;
+    if (!Mem::AddrOk(projProps)) return false;
+    // Hot-loop guard: the entire ~40-field sweep of the validated `props` pointer
+    // runs inside this one __try. The reads stay raw *reinterpret_cast on purpose
+    // — a fault on any field must abort the whole apply (return false via the
+    // __except), and per-field Mem::TryRead/ReadOr would instead continue with
+    // fallbacks and report success, which is not behavior-preserving here.
     __try {
         uint8_t* props = reinterpret_cast<uint8_t*>(projProps);
         dst.projPropsPtr = projProps;
@@ -123,7 +120,7 @@ bool ApplyProperties(WorldProjectile& dst, void* projectilePtr, void* projProps,
         // TryReadLiveDamage (see ProjectileStore::FillOutFromSlot).
         dst.damage = 0;
         dst.minDamage = 0;
-        if (AddrOk(projectilePtr)) {
+        if (Mem::AddrOk(projectilePtr)) {
             int32_t instDamage = *reinterpret_cast<int32_t*>(
                 reinterpret_cast<uint8_t*>(projectilePtr) + RuntimeOffsets::Hbeak_InstanceDamage);
             if (instDamage > 0) {
@@ -173,7 +170,7 @@ bool ApplyProperties(WorldProjectile& dst, void* projectilePtr, void* projProps,
         dst.hasCustomHitbox = *reinterpret_cast<bool*>(props + RuntimeOffsets::PP_HasCustomHitbox);
         if (dst.hasCustomHitbox) {
             void* customHitbox = *reinterpret_cast<void**>(props + RuntimeOffsets::PP_CustomHitbox);
-            if (AddrOk(customHitbox)) {
+            if (Mem::AddrOk(customHitbox)) {
                 uint8_t* hitbox = reinterpret_cast<uint8_t*>(customHitbox);
                 dst.customOffsetX = *reinterpret_cast<float*>(hitbox + RuntimeOffsets::CH_OffsetX);
                 dst.customOffsetY = *reinterpret_cast<float*>(hitbox + RuntimeOffsets::CH_OffsetY);

@@ -1,6 +1,9 @@
 import type { Proxy } from '../proxy/Proxy.js';
 import { Logger } from '../util/Logger.js';
 import type { PluginCategory, SettingDef } from './PluginContext.js';
+// The community-facing shape is authored ONCE in the SDK; this runtime class is
+// checked against it via `implements` so the two can no longer drift silently.
+import type { UserPluginContext as UserPluginContextContract } from '@realmengine/sdk';
 
 /**
  * Cleanup callback an optional community plugin may return from its
@@ -35,7 +38,7 @@ export type UserPluginCleanup = () => void;
  * broadcasts, packet access, proxy events) is deliberately absent from this
  * surface and stays on the bundled {@link PluginContext}.
  */
-export class UserPluginContext {
+export class UserPluginContext implements UserPluginContextContract {
   private _enabled = true;
   private _name: string;
   private _category: PluginCategory | undefined;

@@ -5,6 +5,8 @@
 #include "GameState.h"
 #include "RuntimeOffsets.h"
 #include "Il2CppResolver.h"
+#include "core/runtime/MemRead.h"
+#include "platform/hooks/Il2CppHook.h"
 #include "minhook/MinHook.h"
 
 #include <Windows.h>
@@ -51,11 +53,6 @@ static void* g_swaTarget = nullptr;
 static void* g_sspTarget = nullptr;
 static bool  s_installed = false;
 
-static inline bool AddrOk(const void* p) {
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000 && a < 0x7FFFFFFFFFFFULL;
-}
-
 static float ApplyWeaponTweaks(float angle)
 {
     const int32_t pid = WeaponCalibrator::GetProfile().projId;
@@ -70,7 +67,7 @@ static bool ShouldRedirect(void* player)
 {
     if (!s_enabled.load(std::memory_order_relaxed)) return false;
     if (!s_hasTarget.load(std::memory_order_relaxed)) return false;
-    if (!AddrOk(player)) return false;
+    if (!Mem::AddrOk(player)) return false;
     void* local = GameState::GetLocalPtr();
     return local && player == local;
 }
@@ -116,8 +113,8 @@ void __fastcall ShootWithAngleDetour(void* player, float angle, void* method)
 
 void __fastcall SendShotPacketDetour(void* player, void* shotData, int32_t projCount, void* method)
 {
-    if (ShouldRedirect(player) && AddrOk(shotData) &&
-        AddrOk(reinterpret_cast<const uint8_t*>(shotData) + 0x24) && projCount > 0)
+    if (ShouldRedirect(player) && Mem::AddrOk(shotData) &&
+        Mem::AddrOk(reinterpret_cast<const uint8_t*>(shotData) + 0x24) && projCount > 0)
     {
         float px = 0.f, py = 0.f;
         bool ok = false;
@@ -143,14 +140,6 @@ void __fastcall SendShotPacketDetour(void* player, void* shotData, int32_t projC
     g_sspOrig(player, shotData, projCount, method);
 }
 
-static void* ResolveMethod(const char* cls, const char* method, int params)
-{
-    Il2CppClass* klass = Resolver::GetClass("", cls);
-    if (!klass) return nullptr;
-    const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, method, params);
-    return (mi && mi->methodPointer) ? reinterpret_cast<void*>(mi->methodPointer) : nullptr;
-}
-
 } // namespace
 
 namespace AimHooks {
@@ -159,9 +148,11 @@ bool Install()
 {
     if (s_installed) return true;
 
-    g_csaTarget = ResolveMethod(kPlayerClass, kCSAMethod, 4);
-    g_swaTarget = ResolveMethod(kShootClass,  kSWAMethod, 1);
-    g_sspTarget = ResolveMethod(kShootClass,  kSSPMethod, 2);
+    // kPlayerClass / kShootClass are BeeByte-obfuscated tokens matched exactly
+    // (loose=false → Resolver::GetClass, identical to the prior local resolver).
+    g_csaTarget = Il2CppHook::ResolveMethod(kPlayerClass, kCSAMethod, 4, /*loose*/false);
+    g_swaTarget = Il2CppHook::ResolveMethod(kShootClass,  kSWAMethod, 1, /*loose*/false);
+    g_sspTarget = Il2CppHook::ResolveMethod(kShootClass,  kSSPMethod, 2, /*loose*/false);
     if (!g_csaTarget || !g_swaTarget || !g_sspTarget) return false;
 
     static bool s_mhInit = false;
@@ -171,16 +162,12 @@ bool Install()
         s_mhInit = true;
     }
 
-    if (MH_CreateHook(g_csaTarget, reinterpret_cast<void*>(&ComputeShootAngleDetour),
-                      reinterpret_cast<void**>(&g_csaOrig)) != MH_OK) return false;
-    if (MH_CreateHook(g_swaTarget, reinterpret_cast<void*>(&ShootWithAngleDetour),
-                      reinterpret_cast<void**>(&g_swaOrig)) != MH_OK) return false;
-    if (MH_CreateHook(g_sspTarget, reinterpret_cast<void*>(&SendShotPacketDetour),
-                      reinterpret_cast<void**>(&g_sspOrig)) != MH_OK) return false;
-
-    MH_EnableHook(g_csaTarget);
-    MH_EnableHook(g_swaTarget);
-    MH_EnableHook(g_sspTarget);
+    if (!Il2CppHook::InstallMinHook(g_csaTarget, reinterpret_cast<void*>(&ComputeShootAngleDetour),
+                                    reinterpret_cast<void**>(&g_csaOrig), "AutoAim.CSA")) return false;
+    if (!Il2CppHook::InstallMinHook(g_swaTarget, reinterpret_cast<void*>(&ShootWithAngleDetour),
+                                    reinterpret_cast<void**>(&g_swaOrig), "AutoAim.SWA")) return false;
+    if (!Il2CppHook::InstallMinHook(g_sspTarget, reinterpret_cast<void*>(&SendShotPacketDetour),
+                                    reinterpret_cast<void**>(&g_sspOrig), "AutoAim.SSP")) return false;
 
     s_installed = true;
     return true;

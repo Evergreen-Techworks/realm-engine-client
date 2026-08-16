@@ -1,7 +1,7 @@
 /** Auto Drink — build and send the USEITEM packet that drinks a potion. */
 
-import type { PluginContext } from '../../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../../src/proxy/ClientConnection.js';
+import type { PluginContext } from '../api.js';
+import type { ClientConnection } from '../api.js';
 
 /**
  * Send a USEITEM for the potion at `slotId`.

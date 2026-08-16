@@ -9,6 +9,8 @@
 #include "features/projectiles/ProjectileTrajectory.h"
 #include "Il2CppResolver.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
+#include "core/il2cpp/Il2CppContainers.h"
 #include "GameState.h"
 #include "DbgFileLog.h"
 #include "LocalPlayer.h"
@@ -70,12 +72,9 @@ static const uint32_t& OFF_TP_MAXDMG       = RuntimeOffsets::TP_MaxDmg;
 static const uint32_t& OFF_TP_PUSH         = RuntimeOffsets::TP_Push;
 static const uint32_t& OFF_TP_ALPHA        = RuntimeOffsets::TP_Alpha;
 static const uint32_t& OFF_TP_SINKING      = RuntimeOffsets::TP_Sinking;
-// IL2CPP System.String layout: +0x10 = int32 length, +0x14 = UTF-16LE chars[]
-static constexpr uint32_t OFF_STR_LEN       = 0x10;
-static constexpr uint32_t OFF_STR_CHARS     = 0x14;
+// IL2CPP System.String / List<T> / Array / Dictionary layouts now live in
+// Il2CppC:: (core/il2cpp/Il2CppContainers.h).
 // Tile/object condition flags defined in WorldTAB.h (TCOND_*, OCOND_*)
-static constexpr uint32_t OFF_LIST_ITEMS    = 0x10;   // IL2CPP List<T>._items
-static constexpr uint32_t OFF_LIST_SIZE     = 0x18;   // IL2CPP List<T>._size
 static constexpr uint32_t MAX_TILES         = 65536;
 static const uint32_t& OFF_WM_LOCAL         = RuntimeOffsets::WM_Local;
 
@@ -120,19 +119,8 @@ static constexpr uint32_t OFF_WM_FLOAT_F8   = 0xF8;
 static constexpr uint32_t OFF_WM_INT_FC     = 0xFC;
 static constexpr uint32_t OFF_WM_INT_100    = 0x100;
 
-// IL2CPP Dictionary<int, ptr> layout
-static constexpr uint32_t OFF_DICT_ENTRIES  = 0x18;
-static constexpr uint32_t OFF_DICT_COUNT    = 0x20;
-
-// IL2CPP Array layout
-static constexpr uint32_t OFF_ARR_MAXLEN    = 0x18;
-static constexpr uint32_t OFF_ARR_DATA      = 0x20;
-
-// Dictionary Entry layout (24 bytes: hash+next+key+pad+value*)
-static constexpr uint32_t DICT_ENTRY_SIZE   = 24;
-static constexpr uint32_t OFF_ENTRY_HASH    = 0;
-static constexpr uint32_t OFF_ENTRY_KEY     = 8;
-static constexpr uint32_t OFF_ENTRY_VALUE   = 16;
+// IL2CPP Dictionary / Array / entry layouts now live in Il2CppC::
+// (core/il2cpp/Il2CppContainers.h).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entity classification
@@ -319,62 +307,14 @@ static Il2CppClass* FindClassByName(const char* name)
     return ctx.result;
 }
 
-template<typename T>
-static bool SafeRead(const void* base, uint32_t offset, T& out)
-{
-    return Resolver::Protection::safe_call([&]() {
-        out = *reinterpret_cast<const T*>(
-            reinterpret_cast<const uint8_t*>(base) + offset);
-    });
-}
+// Raw-memory reads and pointer validation now go through Mem::
+// (core/runtime/MemRead.h); the Dictionary<int,ptr> walk goes through
+// Il2CppC::WalkDict (core/il2cpp/Il2CppContainers.h).
 
 static float Distance(float ax, float ay, float bx, float by)
 {
     float dx = ax - bx, dy = ay - by;
     return sqrtf(dx * dx + dy * dy);
-}
-
-static bool AddrValid(const void* p)
-{
-    uintptr_t v = reinterpret_cast<uintptr_t>(p);
-    return v > 0x10000 && v < 0x7FFFFFFFFFFull;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Walk IL2CPP Dictionary<int, ptr> (same layout as entity dict @ WM+0xB0)
-// ─────────────────────────────────────────────────────────────────────────────
-template<typename Cb>
-static void WalkDict(void* dictPtr, int maxEntries, Cb cb)
-{
-    if (!AddrValid(dictPtr)) return;
-
-    void*   entriesArr = nullptr;
-    int32_t count      = 0;
-    SafeRead(dictPtr, OFF_DICT_ENTRIES, entriesArr);
-    SafeRead(dictPtr, OFF_DICT_COUNT,   count);
-    if (!AddrValid(entriesArr)) return;
-
-    int32_t maxLen = 0;
-    SafeRead(entriesArr, OFF_ARR_MAXLEN, maxLen);
-    if (maxLen <= 0 || maxLen > 65536) maxLen = maxEntries;
-    if (count  <= 0 || count  > maxLen) count = maxLen;
-
-    for (int32_t i = 0; i < count; ++i) {
-        const uint8_t* entry = reinterpret_cast<const uint8_t*>(entriesArr)
-                             + OFF_ARR_DATA
-                             + static_cast<size_t>(i) * DICT_ENTRY_SIZE;
-        int32_t hashCode = 0;
-        if (!SafeRead(entry, OFF_ENTRY_HASH, hashCode)) continue;
-        if (hashCode < 0) continue;
-
-        int32_t key   = 0;
-        void*   value = nullptr;
-        if (!SafeRead(entry, OFF_ENTRY_KEY,   key))   continue;
-        if (!SafeRead(entry, OFF_ENTRY_VALUE, value)) continue;
-        if (!AddrValid(value))                         continue;
-
-        cb(key, value);
-    }
 }
 
 // HBEAKBIHANL (runtime projectile) — klass cached here; FOMOIBCKIFP offset via RuntimeOffsets.
@@ -387,16 +327,6 @@ static Il2CppClass* GetHbeakProjectileClass()
     return s_hbeakKlass;
 }
 
-// MSVC C2712: __try cannot be used in the same function as parameters like std::vector& / std::unordered_set&.
-static float SehReadProjectileAngle148(void* elem)
-{
-    float a = 0.f;
-    __try {
-        a = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(elem) + RuntimeOffsets::Hbeak_Angle);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    return a;
-}
-
 // If `elem` is HBEAKBIHANL (or subclass), append to `out`. DIA4A: HBEAKBIHANL : KJMONHENJEN.
 static void TryAppendHbeakFromElem(
     void*        elem,
@@ -405,10 +335,10 @@ static void TryAppendHbeakFromElem(
     std::vector<WorldProjectile>&     out,
     std::unordered_set<uintptr_t>&    seenPtrs)
 {
-    if (!AddrValid(elem) || !hbeakKlass) return;
+    if (!Mem::AddrOk(elem) || !hbeakKlass) return;
 
     void* klassRaw = nullptr;
-    if (!SafeRead(elem, 0u, klassRaw) || !AddrValid(klassRaw)) return;
+    if (!Mem::TryRead(elem, 0u, klassRaw) || !Mem::AddrOk(klassRaw)) return;
     auto* elemKlass = reinterpret_cast<Il2CppClass*>(klassRaw);
     if (!il2cpp_class_is_assignable_from(hbeakKlass, elemKlass)) return;
 
@@ -425,12 +355,12 @@ static void TryAppendHbeakFromElem(
     wp.speed = 5000.f;
     wp.damage = 0;
     wp.bulletId = 0;
-    SafeRead(elem, OFF_POS_X, wp.x);
-    SafeRead(elem, OFF_POS_Y, wp.y);
-    wp.angle = SehReadProjectileAngle148(elem);
+    Mem::TryRead(elem, OFF_POS_X, wp.x);
+    Mem::TryRead(elem, OFF_POS_Y, wp.y);
+    wp.angle = Mem::ReadOr<float>(elem, RuntimeOffsets::Hbeak_Angle, 0.f);
 
     void* projProps = nullptr;
-    if (SafeRead(elem, offProjPropsField, projProps) && AddrValid(projProps)) {
+    if (Mem::TryRead(elem, offProjPropsField, projProps) && Mem::AddrOk(projProps)) {
         ProjectileRuntimeReader::ApplyProperties(
             wp, elem, projProps, ProjectileCollisionFallback::WorldManager);
         if (wp.lifetime < 50.f || wp.lifetime > 600000.f)
@@ -446,7 +376,7 @@ static void TryAppendHbeakFromElem(
     // spawn-age (GLEGBLDBOJF) is now a registry entry (Hbeak_SpawnAgeMs) so it
     // self-heals on an offset shift and surfaces in the audit/recovery screen.
     int32_t                   ageMs               = -1;
-    SafeRead(elem, RuntimeOffsets::Hbeak_SpawnAgeMs, ageMs);
+    Mem::TryRead(elem, RuntimeOffsets::Hbeak_SpawnAgeMs, ageMs);
     if (ageMs >= 0 && static_cast<float>(ageMs) < wp.lifetime * 1.05f && static_cast<float>(ageMs) < 120000.f)
         wp.spawnTick = nowTick - static_cast<uint64_t>(ageMs);
 
@@ -477,8 +407,8 @@ static void TryMergeProjectileDict(
     std::vector<WorldProjectile>&  out,
     std::unordered_set<uintptr_t>&   seenPtrs)
 {
-    if (!AddrValid(dictPtr) || !hbeakKlass) return;
-    WalkDict(dictPtr, 8192, [&](int32_t /*key*/, void* value) {
+    if (!Mem::AddrOk(dictPtr) || !hbeakKlass) return;
+    Il2CppC::WalkDict(dictPtr, 8192, [&](int32_t /*key*/, void* value) {
         TryAppendHbeakFromElem(value, hbeakKlass, offProjPropsField, out, seenPtrs);
     });
 }
@@ -491,23 +421,23 @@ static void TryMergeKjmonProjectileList(
     std::vector<WorldProjectile>&  out,
     std::unordered_set<uintptr_t>&   seenPtrs)
 {
-    if (!AddrValid(listObj) || !hbeakKlass) return;
+    if (!Mem::AddrOk(listObj) || !hbeakKlass) return;
 
     int32_t listSize = 0;
     void*   itemsArr = nullptr;
-    if (!SafeRead(listObj, OFF_LIST_SIZE, listSize)) return;
-    if (!SafeRead(listObj, OFF_LIST_ITEMS, itemsArr)) return;
-    if (!AddrValid(itemsArr) || listSize <= 0 || listSize > 8192) return;
+    if (!Mem::TryRead(listObj, Il2CppC::kListSize, listSize)) return;
+    if (!Mem::TryRead(listObj, Il2CppC::kListItems, itemsArr)) return;
+    if (!Mem::AddrOk(itemsArr) || listSize <= 0 || listSize > 8192) return;
 
     int32_t arrMax = 0;
-    SafeRead(itemsArr, OFF_ARR_MAXLEN, arrMax);
+    Mem::TryRead(itemsArr, Il2CppC::kArrMaxLen, arrMax);
     if (arrMax <= 0 || arrMax > 65536) arrMax = listSize;
     int32_t cap = (listSize < arrMax) ? listSize : arrMax;
 
-    const uint8_t* itemBase = reinterpret_cast<const uint8_t*>(itemsArr) + OFF_ARR_DATA;
+    const uint8_t* itemBase = reinterpret_cast<const uint8_t*>(itemsArr) + Il2CppC::kArrData;
     for (int32_t i = 0; i < cap; ++i) {
         void* elem = nullptr;
-        if (!SafeRead(itemBase + static_cast<size_t>(i) * sizeof(void*), 0u, elem) || !AddrValid(elem))
+        if (!Mem::TryRead(itemBase + static_cast<size_t>(i) * sizeof(void*), 0u, elem) || !Mem::AddrOk(elem))
             continue;
         TryAppendHbeakFromElem(elem, hbeakKlass, offProjPropsField, out, seenPtrs);
     }
@@ -523,11 +453,11 @@ static void MergeProjectilePoolsFromWorldManager(void* worldMgr, std::vector<Wor
     void* dictA = nullptr;
     void* dictB = nullptr;
     void* listKj = nullptr;
-    if (SafeRead(worldMgr, OFF_WM_MAPOBJ_DICT_A, dictA) && AddrValid(dictA))
+    if (Mem::TryRead(worldMgr, OFF_WM_MAPOBJ_DICT_A, dictA) && Mem::AddrOk(dictA))
         TryMergeProjectileDict(dictA, hbeak, offProjProps, out, seenPtrs);
-    if (SafeRead(worldMgr, OFF_WM_MAPOBJ_DICT_B, dictB) && AddrValid(dictB))
+    if (Mem::TryRead(worldMgr, OFF_WM_MAPOBJ_DICT_B, dictB) && Mem::AddrOk(dictB))
         TryMergeProjectileDict(dictB, hbeak, offProjProps, out, seenPtrs);
-    if (SafeRead(worldMgr, OFF_WM_KJMON_LIST, listKj) && AddrValid(listKj))
+    if (Mem::TryRead(worldMgr, OFF_WM_KJMON_LIST, listKj) && Mem::AddrOk(listKj))
         TryMergeKjmonProjectileList(listKj, hbeak, offProjProps, out, seenPtrs);
 }
 
@@ -567,15 +497,15 @@ static bool MatchesCat(const WorldEntity& e, EntityCat cat)
 // Read a short IL2CPP System.String into a char buffer (ASCII-safe). Returns false if null/empty.
 static bool ReadIl2CppString(void* strPtr, char* buf, int bufLen)
 {
-    if (!AddrValid(strPtr) || bufLen <= 0) return false;
+    if (!Mem::AddrOk(strPtr) || bufLen <= 0) return false;
     int32_t len = 0;
-    SafeRead(strPtr, OFF_STR_LEN, len);
+    Mem::TryRead(strPtr, Il2CppC::kStrLen, len);
     if (len <= 0 || len > 256) return false;
     if (len > bufLen - 1) len = bufLen - 1;
-    const uint8_t* chars = reinterpret_cast<const uint8_t*>(strPtr) + OFF_STR_CHARS;
+    const uint8_t* chars = reinterpret_cast<const uint8_t*>(strPtr) + Il2CppC::kStrChars;
     for (int i = 0; i < len; ++i) {
         uint16_t ch = 0;
-        SafeRead(chars + (size_t)i * 2u, 0u, ch);
+        Mem::TryRead(chars + (size_t)i * 2u, 0u, ch);
         buf[i] = (char)(ch & 0x7F);
     }
     buf[len] = '\0';
@@ -592,28 +522,28 @@ static bool ReadIl2CppString(void* strPtr, char* buf, int bufLen)
 static void ReadTileProps(void* tp, WorldTile& t)
 {
     void* props = nullptr;
-    SafeRead(tp, OFF_TILE_PROPS, props);
-    if (!AddrValid(props)) return;
+    Mem::TryRead(tp, OFF_TILE_PROPS, props);
+    if (!Mem::AddrOk(props)) return;
 
     void* sinkStr = nullptr, *pushStr = nullptr, *alphaStr = nullptr,
           *sinkingStr = nullptr, *nowalkStr = nullptr;
-    SafeRead(props, OFF_TP_SINK,    sinkStr);
-    SafeRead(props, OFF_TP_PUSH,    pushStr);
-    SafeRead(props, OFF_TP_ALPHA,   alphaStr);
-    SafeRead(props, OFF_TP_SINKING, sinkingStr);
-    SafeRead(props, OFF_TP_NOWALK,  nowalkStr);
+    Mem::TryRead(props, OFF_TP_SINK,    sinkStr);
+    Mem::TryRead(props, OFF_TP_PUSH,    pushStr);
+    Mem::TryRead(props, OFF_TP_ALPHA,   alphaStr);
+    Mem::TryRead(props, OFF_TP_SINKING, sinkingStr);
+    Mem::TryRead(props, OFF_TP_NOWALK,  nowalkStr);
 
-    if (AddrValid(sinkStr))    t.conds |= TCOND_SINK;
-    if (AddrValid(pushStr))    t.conds |= TCOND_PUSH;
-    if (AddrValid(alphaStr))   t.conds |= TCOND_ALPHA;
-    if (AddrValid(sinkingStr)) t.conds |= TCOND_SINKING;
-    if (AddrValid(nowalkStr))  t.conds |= TCOND_NOWALK;
+    if (Mem::AddrOk(sinkStr))    t.conds |= TCOND_SINK;
+    if (Mem::AddrOk(pushStr))    t.conds |= TCOND_PUSH;
+    if (Mem::AddrOk(alphaStr))   t.conds |= TCOND_ALPHA;
+    if (Mem::AddrOk(sinkingStr)) t.conds |= TCOND_SINKING;
+    if (Mem::AddrOk(nowalkStr))  t.conds |= TCOND_NOWALK;
 
     // Damage: parse from CMFPKCJHKKB XML strings (raw ints at 0x70/0x74 are wrong)
     {
         void* minStr = nullptr;
-        SafeRead(props, OFF_TP_MINDMG, minStr);
-        if (AddrValid(minStr)) {
+        Mem::TryRead(props, OFF_TP_MINDMG, minStr);
+        if (Mem::AddrOk(minStr)) {
             char buf[32] = {};
             if (ReadIl2CppString(minStr, buf, sizeof(buf)))
                 t.minDmg = (int32_t)std::strtol(buf, nullptr, 10);
@@ -621,8 +551,8 @@ static void ReadTileProps(void* tp, WorldTile& t)
     }
     {
         void* maxStr = nullptr;
-        SafeRead(props, OFF_TP_MAXDMG, maxStr);
-        if (AddrValid(maxStr)) {
+        Mem::TryRead(props, OFF_TP_MAXDMG, maxStr);
+        if (Mem::AddrOk(maxStr)) {
             char buf[32] = {};
             if (ReadIl2CppString(maxStr, buf, sizeof(buf)))
                 t.maxDmg = (int32_t)std::strtol(buf, nullptr, 10);
@@ -633,8 +563,8 @@ static void ReadTileProps(void* tp, WorldTile& t)
     // t.speed stays 0 (no modifier) if the string is absent.
     {
         void* spStr = nullptr;
-        SafeRead(props, OFF_TP_SPEED, spStr);
-        if (AddrValid(spStr)) {
+        Mem::TryRead(props, OFF_TP_SPEED, spStr);
+        if (Mem::AddrOk(spStr)) {
             char buf[32] = {};
             if (ReadIl2CppString(spStr, buf, sizeof(buf)))
                 t.speed = std::strtof(buf, nullptr);
@@ -666,45 +596,45 @@ static void DoRefresh()
     }
     g_worldMgrPtr = reinterpret_cast<uintptr_t>(worldMgr);
 
-    SafeRead(worldMgr, OFF_WM_UINT_D8,  g_wm_d8);
-    SafeRead(worldMgr, OFF_WM_UINT_DC,  g_wm_dc);
-    SafeRead(worldMgr, OFF_WM_UINT_E0,  g_wm_e0);
-    SafeRead(worldMgr, OFF_WM_FLOAT_F4, g_wm_f4);
-    SafeRead(worldMgr, OFF_WM_FLOAT_F8, g_wm_f8);
-    SafeRead(worldMgr, OFF_WM_INT_FC,   g_wm_fc);
-    SafeRead(worldMgr, OFF_WM_INT_100,  g_wm_100);
+    Mem::TryRead(worldMgr, OFF_WM_UINT_D8,  g_wm_d8);
+    Mem::TryRead(worldMgr, OFF_WM_UINT_DC,  g_wm_dc);
+    Mem::TryRead(worldMgr, OFF_WM_UINT_E0,  g_wm_e0);
+    Mem::TryRead(worldMgr, OFF_WM_FLOAT_F4, g_wm_f4);
+    Mem::TryRead(worldMgr, OFF_WM_FLOAT_F8, g_wm_f8);
+    Mem::TryRead(worldMgr, OFF_WM_INT_FC,   g_wm_fc);
+    Mem::TryRead(worldMgr, OFF_WM_INT_100,  g_wm_100);
 
     // Local player — read from GameState (already resolved this frame).
     void* localPtr = GameState::GetLocalPtr();
-    if (localPtr && AddrValid(localPtr)) {
+    if (localPtr && Mem::AddrOk(localPtr)) {
         g_localPtr = localPtr;
-        SafeRead(localPtr, OFF_POS_X, g_localX);
-        SafeRead(localPtr, OFF_POS_Y, g_localY);
+        Mem::TryRead(localPtr, OFF_POS_X, g_localX);
+        Mem::TryRead(localPtr, OFF_POS_Y, g_localY);
     }
 
     // ── Scan entity dict (DFALIKKKGLI @ 0xB0) ───────────────────────────────
     void* entDictPtr = nullptr;
-    SafeRead(worldMgr, OFF_WM_ALL_DICT, entDictPtr);
-    if (!AddrValid(entDictPtr)) {
+    Mem::TryRead(worldMgr, OFF_WM_ALL_DICT, entDictPtr);
+    if (!Mem::AddrOk(entDictPtr)) {
         g_status = "ERROR: Entity dict null (offset 0xB0). Not in-game?"; g_statusOk = false; return;
     }
 
     ProjectileTracking::OnWorldRefreshBegin();
 
-    WalkDict(entDictPtr, 4096, [&](int32_t key, void* value) {
+    Il2CppC::WalkDict(entDictPtr, 4096, [&](int32_t key, void* value) {
         WorldEntity ent;
         ent.objectId = key;
         ent.ptr      = value;
 
-        SafeRead(value, OFF_POS_X,  ent.x);
-        SafeRead(value, OFF_POS_Y,  ent.y);
-        SafeRead(value, OFF_HP,     ent.hp);
-        SafeRead(value, OFF_MAX_HP, ent.maxHp);
+        Mem::TryRead(value, OFF_POS_X,  ent.x);
+        Mem::TryRead(value, OFF_POS_Y,  ent.y);
+        Mem::TryRead(value, OFF_HP,     ent.hp);
+        Mem::TryRead(value, OFF_MAX_HP, ent.maxHp);
 
         RuntimeOffsets::TryReadMapObjectConditions(value, &ent.condLo, &ent.condHi);
 
         void* klass = nullptr;
-        if (SafeRead(value, 0u, klass) && AddrValid(klass)) {
+        if (Mem::TryRead(value, 0u, klass) && Mem::AddrOk(klass)) {
             ent.klass = klass;
             Resolver::Protection::safe_call([&]() {
                 const char* cn = il2cpp_class_get_name(reinterpret_cast<Il2CppClass*>(klass));
@@ -714,7 +644,7 @@ static void DoRefresh()
 
         // HFDNHJFNEKA (objectType) @ 0x30 — no ACTK shift (same as X/Y)
         if (ent.typeName[0] && strcmp(ent.typeName, "KJMONHENJEN") != 0)
-            SafeRead(value, 0x30u, ent.objType);
+            Mem::TryRead(value, 0x30u, ent.objType);
 
         // Player name — probe multiple candidate offsets to find the IGN string.
         // H1: 0x4B8 (NFJGJKLPLBA, dump 0x468 + 0x50 ACTK)
@@ -724,46 +654,46 @@ static void DoRefresh()
         if (strcmp(ent.typeName, "FKALGHJIADI") == 0) {
             // IGN: DPGEBOCBKEF @ 0x178 (no ACTK shift — confirmed by blind scan)
             void* nameStr = nullptr;
-            if (SafeRead(value, OFF_PLAYER_IGN, nameStr) && AddrValid(nameStr))
+            if (Mem::TryRead(value, OFF_PLAYER_IGN, nameStr) && Mem::AddrOk(nameStr))
                 ReadIl2CppString(nameStr, ent.playerName, sizeof(ent.playerName));
         }
 
         // XML object name + conditions via KJMONHENJEN.OBAKMCCDBJA @ 0x18 → ObjectProperties
         {
             void* op = nullptr;
-            if (SafeRead(value, OFF_KJM_OBJPROPS, op) && AddrValid(op)) {
+            if (Mem::TryRead(value, OFF_KJM_OBJPROPS, op) && Mem::AddrOk(op)) {
                 // Name
                 void* idStr = nullptr;
-                if (SafeRead(op, OFF_OP_ID_STR, idStr) && AddrValid(idStr))
+                if (Mem::TryRead(op, OFF_OP_ID_STR, idStr) && Mem::AddrOk(idStr))
                     ReadIl2CppString(idStr, ent.objName, sizeof(ent.objName));
                 // ObjectProperties condition fields are not real XML conditions on players
                 // (FKALGHJIADI); memory may still expose flags — leave objConds blank until mapped elsewhere.
                 if (!IsPlayerClass(ent)) {
                     uint8_t b = 0;
-                    if (SafeRead(op, OFF_OP_OCCUPY_SQ,  b) && b) ent.objConds |= OCOND_OCCUPY_SQ;
-                    if (SafeRead(op, OFF_OP_FULL_OCC,   b) && b) ent.objConds |= OCOND_FULL_OCC;
-                    if (SafeRead(op, OFF_OP_ENEMY_OCC,  b) && b) ent.objConds |= OCOND_ENEMY_OCC;
-                    if (SafeRead(op, OFF_OP_IS_ENEMY,   b) && b) ent.objConds |= OCOND_IS_ENEMY;
-                    if (SafeRead(op, OFF_OP_IS_STATIC,  b) && b) ent.objConds |= OCOND_STATIC;
-                    if (SafeRead(op, OFF_OP_BLOCK_PROJ, b) && b) ent.objConds |= OCOND_BLOCK_PROJ;
-                    if (SafeRead(op, OFF_OP_PROT_GND,   b) && b) ent.objConds |= OCOND_PROT_GND;
-                    if (SafeRead(op, OFF_OP_PROT_SINK,  b) && b) ent.objConds |= OCOND_PROT_SINK;
-                    if (SafeRead(op, OFF_OP_FLYING,     b) && b) ent.objConds |= OCOND_FLYING;
+                    if (Mem::TryRead(op, OFF_OP_OCCUPY_SQ,  b) && b) ent.objConds |= OCOND_OCCUPY_SQ;
+                    if (Mem::TryRead(op, OFF_OP_FULL_OCC,   b) && b) ent.objConds |= OCOND_FULL_OCC;
+                    if (Mem::TryRead(op, OFF_OP_ENEMY_OCC,  b) && b) ent.objConds |= OCOND_ENEMY_OCC;
+                    if (Mem::TryRead(op, OFF_OP_IS_ENEMY,   b) && b) ent.objConds |= OCOND_IS_ENEMY;
+                    if (Mem::TryRead(op, OFF_OP_IS_STATIC,  b) && b) ent.objConds |= OCOND_STATIC;
+                    if (Mem::TryRead(op, OFF_OP_BLOCK_PROJ, b) && b) ent.objConds |= OCOND_BLOCK_PROJ;
+                    if (Mem::TryRead(op, OFF_OP_PROT_GND,   b) && b) ent.objConds |= OCOND_PROT_GND;
+                    if (Mem::TryRead(op, OFF_OP_PROT_SINK,  b) && b) ent.objConds |= OCOND_PROT_SINK;
+                    if (Mem::TryRead(op, OFF_OP_FLYING,     b) && b) ent.objConds |= OCOND_FLYING;
                     // String element conditions (non-null pointer = flag set)
                     void* sp = nullptr;
-                    if (SafeRead(op, OFF_OP_NOCOVER,    sp) && AddrValid(sp)) ent.objConds |= OCOND_NO_COVER;
-                    if (SafeRead(op, OFF_OP_NOWALL_RPT, sp) && AddrValid(sp)) ent.objConds |= OCOND_NO_WALL_RPT;
+                    if (Mem::TryRead(op, OFF_OP_NOCOVER,    sp) && Mem::AddrOk(sp)) ent.objConds |= OCOND_NO_COVER;
+                    if (Mem::TryRead(op, OFF_OP_NOWALL_RPT, sp) && Mem::AddrOk(sp)) ent.objConds |= OCOND_NO_WALL_RPT;
                     // connectType int (non-zero = Connects)
                     int32_t ct = 0;
-                    if (SafeRead(op, OFF_OP_CONNECT_T,  ct) && ct != 0) ent.objConds |= OCOND_CONNECTS;
+                    if (Mem::TryRead(op, OFF_OP_CONNECT_T,  ct) && ct != 0) ent.objConds |= OCOND_CONNECTS;
                 }
             }
         }
 
         if (localPtr && value == localPtr) {
             ent.isLocal = true;
-            SafeRead(value, OFF_POS_X, g_localX);
-            SafeRead(value, OFF_POS_Y, g_localY);
+            Mem::TryRead(value, OFF_POS_X, g_localX);
+            Mem::TryRead(value, OFF_POS_Y, g_localY);
             ProjectileTracking::SetLocalPlayerObjectId(key);
         }
 
@@ -772,9 +702,9 @@ static void DoRefresh()
         g_entities.push_back(ent);
     });
 
-    if (localPtr && AddrValid(localPtr) && ProjectileTracking::GetLocalPlayerObjectId() == 0) {
+    if (localPtr && Mem::AddrOk(localPtr) && ProjectileTracking::GetLocalPlayerObjectId() == 0) {
         int32_t oidFromField = 0;
-        if (SafeRead(localPtr, OFF_KJM_OBJECT_ID, oidFromField) && oidFromField != 0)
+        if (Mem::TryRead(localPtr, OFF_KJM_OBJECT_ID, oidFromField) && oidFromField != 0)
             ProjectileTracking::SetLocalPlayerObjectId(oidFromField);
     }
 
@@ -785,18 +715,18 @@ static void DoRefresh()
     // H-D: int tileX/Y @ tile+0x38/0x3C are integer grid coords
     void* tileArrPtr  = nullptr;
     void* tileListPtr = nullptr;
-    SafeRead(worldMgr, OFF_WM_TILE_ARR,  tileArrPtr);
-    SafeRead(worldMgr, OFF_WM_TILE_LIST, tileListPtr);
+    Mem::TryRead(worldMgr, OFF_WM_TILE_ARR,  tileArrPtr);
+    Mem::TryRead(worldMgr, OFF_WM_TILE_LIST, tileListPtr);
 
     int32_t arrLen    = 0;
     int32_t listSize  = 0;
     void*   listItems = nullptr;
 
-    if (AddrValid(tileArrPtr))
-        SafeRead(tileArrPtr, OFF_ARR_MAXLEN, arrLen);
-    if (AddrValid(tileListPtr)) {
-        SafeRead(tileListPtr, OFF_LIST_SIZE, listSize);
-        SafeRead(tileListPtr, OFF_LIST_ITEMS, listItems);
+    if (Mem::AddrOk(tileArrPtr))
+        Mem::TryRead(tileArrPtr, Il2CppC::kArrMaxLen, arrLen);
+    if (Mem::AddrOk(tileListPtr)) {
+        Mem::TryRead(tileListPtr, Il2CppC::kListSize, listSize);
+        Mem::TryRead(tileListPtr, Il2CppC::kListItems, listItems);
     }
 
     // CONFIRMED by logs:
@@ -806,33 +736,33 @@ static void DoRefresh()
     static constexpr uint16_t TILE_VOID = 255;   // BGAIOPJMHLO.PFHFAHFGIOB = 255 = unset/void
 
     // Primary: List<BGAIOPJMHLO> @ wm+0x60 — all tiles received this session
-    if (AddrValid(listItems) && listSize > 0) {
+    if (Mem::AddrOk(listItems) && listSize > 0) {
         int32_t cap = listSize < (int32_t)MAX_TILES ? listSize : (int32_t)MAX_TILES;
-        const uint8_t* base = reinterpret_cast<const uint8_t*>(listItems) + OFF_ARR_DATA;
+        const uint8_t* base = reinterpret_cast<const uint8_t*>(listItems) + Il2CppC::kArrData;
         for (int32_t i = 0; i < cap; ++i) {
             void* tp = nullptr;
-            if (!SafeRead(base + (size_t)i * sizeof(void*), 0u, tp) || !AddrValid(tp)) continue;
+            if (!Mem::TryRead(base + (size_t)i * sizeof(void*), 0u, tp) || !Mem::AddrOk(tp)) continue;
             WorldTile t;
             t.ptr = tp;
             g_sampleTilePtr = tp;   // A4: any valid tile instance (ptr is good regardless of offset staleness)
-            SafeRead(tp, OFF_TILE_X,    t.tileX);
-            SafeRead(tp, OFF_TILE_Y,    t.tileY);
-            SafeRead(tp, OFF_TILE_TYPE, t.tileType);
+            Mem::TryRead(tp, OFF_TILE_X,    t.tileX);
+            Mem::TryRead(tp, OFF_TILE_Y,    t.tileY);
+            Mem::TryRead(tp, OFF_TILE_TYPE, t.tileType);
             if (t.tileType == TILE_VOID) continue;   // skip void/unset slots
             ReadTileProps(tp, t);
             
             // Read Discord method cached values from the Square object directly
-            SafeRead(tp, 0x10, t.damageCached);
+            Mem::TryRead(tp, 0x10, t.damageCached);
             void* coverPtr = nullptr;
-            if (SafeRead(tp, 0x48, coverPtr) && coverPtr != nullptr) {
+            if (Mem::TryRead(tp, 0x48, coverPtr) && coverPtr != nullptr) {
                 t.hasCover = true;
             }
             // Tile XML name via same chain as entities: KJMONHENJEN.OBAKMCCDBJA[0x18] → ObjectProperties.id[0x38]
             {
                 void* op = nullptr;
                 void* idStr = nullptr;
-                if (SafeRead(tp, OFF_KJM_OBJPROPS, op) && AddrValid(op) &&
-                    SafeRead(op, OFF_OP_ID_STR, idStr) && AddrValid(idStr))
+                if (Mem::TryRead(tp, OFF_KJM_OBJPROPS, op) && Mem::AddrOk(op) &&
+                    Mem::TryRead(op, OFF_OP_ID_STR, idStr) && Mem::AddrOk(idStr))
                     ReadIl2CppString(idStr, t.tileName, sizeof(t.tileName));
             }
             g_tiles.push_back(t);
@@ -1584,7 +1514,7 @@ static void DrawProjectileTable(const std::vector<const WorldProjectile*>& shown
         ImGui::TableNextRow();
 
         float lx = p->x, ly = p->y;
-        if (p->ptr && AddrValid(p->ptr)) {
+        if (p->ptr && Mem::AddrOk(p->ptr)) {
             __try {
                 uint8_t* pi = reinterpret_cast<uint8_t*>(p->ptr);
                 lx = *reinterpret_cast<float*>(pi + OFF_POS_X);
@@ -2284,9 +2214,9 @@ namespace WorldTAB {
     {
         for (const WorldEntity& e : g_entities) {
             if (e.objectId != objectId) continue;
-            if (!AddrValid(e.ptr)) return false;
+            if (!Mem::AddrOk(e.ptr)) return false;
             float lx = 0.f, ly = 0.f;
-            bool ok = SafeRead(e.ptr, OFF_POS_X, lx) && SafeRead(e.ptr, OFF_POS_Y, ly);
+            bool ok = Mem::TryRead(e.ptr, OFF_POS_X, lx) && Mem::TryRead(e.ptr, OFF_POS_Y, ly);
             if (ok) { outX = lx; outY = ly; return true; }
             return false;
         }

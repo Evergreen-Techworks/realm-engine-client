@@ -5,9 +5,11 @@
 #include "gui/tabs/CameraTAB.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
+#include "gui/CamState.h"
 #include "W2S.h"
 #include "Il2CppResolver.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
 #include "DirectX.h"
 #include "FeatureState.h"
 #include "DbgFileLog.h"
@@ -95,20 +97,8 @@ static Il2CppClass* FindClassByName(const char* name)
     return ctx.result;
 }
 
-template<typename T>
-static bool SafeRead(const void* base, uint32_t offset, T& out)
-{
-    return Resolver::Protection::safe_call([&]() {
-        out = *reinterpret_cast<const T*>(
-            reinterpret_cast<const uint8_t*>(base) + offset);
-    });
-}
-
-static bool AddrValid(const void* p)
-{
-    uintptr_t v = reinterpret_cast<uintptr_t>(p);
-    return v > 0x10000 && v < 0x7FFFFFFFFFFull;
-}
+// Raw-memory reads and pointer validation now go through Mem::
+// (core/runtime/MemRead.h).
 
 static bool IsPlausibleOrtho(float f) { return (f == f) && f > 0.05f && f < 500.f; }
 
@@ -177,7 +167,7 @@ static void DoRefresh()
 
     // ── Cached CameraManager lookup — avoids FindObjectsByType every refresh ──
     auto ValidateCamMgr = [&]() -> bool {
-        if (!AddrValid(s_cachedCamMgr)) return false;
+        if (!Mem::AddrOk(s_cachedCamMgr)) return false;
         void* k = nullptr;
         if (!Resolver::Protection::safe_call([&](){
             k = *reinterpret_cast<void**>(s_cachedCamMgr);
@@ -204,7 +194,7 @@ static void DoRefresh()
     }
 
     Il2CppObject* camMgrObj = s_cachedCamMgr;
-    if (!AddrValid(camMgrObj)) {
+    if (!Mem::AddrOk(camMgrObj)) {
         g_status  = "ERROR: CameraManager pointer invalid.";
         g_statusOk = false;
         return;
@@ -217,8 +207,8 @@ static void DoRefresh()
     // (NHPPJHAMCBL getter returns 0 even after angle change — not the angle field)
     {
         void* xfrmForAngle = nullptr;
-        SafeRead(camMgrObj, OFF_CM_TRANSFORM, xfrmForAngle);
-        if (AddrValid(xfrmForAngle)) {
+        Mem::TryRead(camMgrObj, OFF_CM_TRANSFORM, xfrmForAngle);
+        if (Mem::AddrOk(xfrmForAngle)) {
             Il2CppClass* xk = il2cpp_object_get_class(reinterpret_cast<Il2CppObject*>(xfrmForAngle));
             if (xk) {
                 const MethodInfo* getEuler = il2cpp_class_get_method_from_name(xk, "get_eulerAngles", 0);
@@ -277,8 +267,8 @@ static void DoRefresh()
         }
     }
     void* unityCam = nullptr;
-    SafeRead(camMgrObj, camFieldOff, unityCam);
-    if (AddrValid(unityCam)) {
+    Mem::TryRead(camMgrObj, camFieldOff, unityCam);
+    if (Mem::AddrOk(unityCam)) {
         g_unityCamPtr = reinterpret_cast<uintptr_t>(unityCam);
         g_zoom = Resolver::GetProperty<float>(reinterpret_cast<Il2CppObject*>(unityCam), "orthographicSize");
         if (g_setZoom == 8.0f && IsPlausibleOrtho(g_zoom))
@@ -312,8 +302,8 @@ static void DoRefresh()
     // return localPosition in local space (always 0,0 for anchored containers).
     // Call get_position() to get world-space coordinates.
     void* xfrm = nullptr;
-    SafeRead(camMgrObj, OFF_CM_TRANSFORM, xfrm);
-    if (AddrValid(xfrm)) {
+    Mem::TryRead(camMgrObj, OFF_CM_TRANSFORM, xfrm);
+    if (Mem::AddrOk(xfrm)) {
         Il2CppClass* xfrmKlass = il2cpp_object_get_class(reinterpret_cast<Il2CppObject*>(xfrm));
         if (xfrmKlass) {
             const MethodInfo* getPos = il2cpp_class_get_method_from_name(xfrmKlass, "get_position", 0);
@@ -364,13 +354,13 @@ static void DoRefresh()
 static void ApplyZoom(float newZoom)
 {
     Il2CppObject* unityCam = reinterpret_cast<Il2CppObject*>(g_unityCamPtr);
-    if (!AddrValid(unityCam)) {
+    if (!Mem::AddrOk(unityCam)) {
         // Lazy-resolve on first apply so the dashboard doesn't need the user to
         // open the DLL menu and click Refresh before camera controls work.
         DoRefresh();
         unityCam = reinterpret_cast<Il2CppObject*>(g_unityCamPtr);
         DBG_FILE_LOG("[ApplyZoom] DoRefresh after null ptr — unityCam=" << (void*)unityCam);
-        if (!AddrValid(unityCam)) {
+        if (!Mem::AddrOk(unityCam)) {
             g_status  = "ERROR: Unity Camera not resolved (lazy refresh failed).";
             g_statusOk = false;
             return;
@@ -387,7 +377,7 @@ static void ApplyZoom(float newZoom)
 static void ApplyAngle(int newAngle)
 {
     Il2CppObject* camMgrObj = reinterpret_cast<Il2CppObject*>(g_camMgrPtr);
-    if (!AddrValid(camMgrObj)) {
+    if (!Mem::AddrOk(camMgrObj)) {
         g_status  = "ERROR: CameraManager not resolved — press Refresh first.";
         g_statusOk = false;
         return;
@@ -455,7 +445,7 @@ void CameraTAB::Render()
 
     // ── Live IOABMGFJLLP read — re-read every frame so in-game hotkey changes are tracked ──
     // BeeByte names the getter ANBDPNHJBHG (same VA as the property accessor get_IOABMGFJLLP).
-    if (AddrValid(s_cachedCamMgr)) {
+    if (Mem::AddrOk(s_cachedCamMgr)) {
         static const MethodInfo* s_getterIOAB = nullptr;
         static bool s_getterSearched = false;
         if (!s_getterIOAB && !s_getterSearched) {
@@ -619,43 +609,22 @@ void CameraTAB::Render()
     ImGui::Indent(8.f);
 
     {
-        static constexpr float kPI = 3.14159265358979323846f;
+        // Per-frame camera/W2S state — the shared CamState snapshot that also
+        // feeds the Test-tab overlays (built once per frame by CamState::Tick).
+        const CamState::Snapshot& cs = CamState::Get();
+        float camX     = cs.camX;
+        float camY     = cs.camY;
+        float angleRad = cs.angleRad;
+        float cx       = cs.cx;
+        float cy       = cs.cy;
+        float zoom     = cs.zoom;
+        float screenW  = cs.screenW;
+        float screenH  = cs.screenH;
 
-        // Build per-frame camera state (same logic as TestTAB::BuildCamState)
-        void* livePlayer = WorldTAB::GetLocalPtr();
-        float camX = WorldTAB::GetLocalX();
-        float camY = WorldTAB::GetLocalY();
-        if (livePlayer) {
-            __try {
-                float lx = *(float*)((uint8_t*)livePlayer + 0x3C);
-                float ly = *(float*)((uint8_t*)livePlayer + 0x40);
-                if (lx != 0.f || ly != 0.f) { camX = lx; camY = ly; }
-            } __except (EXCEPTION_EXECUTE_HANDLER) {}
-        }
-
+        // OrthoSize / angle are shown straight from the camera state readouts.
         float angleDeg = g_angle;
         float ortho    = g_zoom;
         if (ortho == 0.f) ortho = 8.f;
-        float angleRad = angleDeg * (kPI / 180.f);
-
-        HWND wnd = DirectX::window;
-        float screenW = 0.f, screenH = 0.f;
-        if (wnd) {
-            RECT r; GetClientRect(wnd, &r);
-            screenW = static_cast<float>(r.right  - r.left);
-            screenH = static_cast<float>(r.bottom - r.top);
-        }
-
-        float cx, cy, zoom;
-        if (g_pixelRectW > 16.f && g_pixelRectH > 16.f) {
-            cx   = g_pixelRectX + g_pixelRectW * 0.5f;
-            cy   = screenH - (g_pixelRectY + g_pixelRectH * 0.5f);
-            zoom = g_pixelRectH / (2.f * ortho);
-        } else {
-            cx   = screenW * 0.5f;
-            cy   = screenH * 0.5f;
-            zoom = screenH / (2.f * ortho);
-        }
 
         bool stateOk = (screenW > 0.f && (camX != 0.f || camY != 0.f));
         bool w2sOk   = TestTAB::IsW2SValid();
@@ -727,7 +696,7 @@ namespace CameraTAB {
         if (!playerPtr || !(clientW > 0.f) || !(clientH > 0.f)) return false;
 
         auto* camObj = reinterpret_cast<Il2CppObject*>(g_unityCamPtr);
-        if (!AddrValid(camObj)) 
+        if (!Mem::AddrOk(camObj)) 
             return false;
 
         if (!s_worldToScreenPointMethod) {
@@ -750,7 +719,7 @@ namespace CameraTAB {
         // on a game patch, so a bad read is plausible and would otherwise be
         // handed straight to Unity.
         Vec3 playerWorld{};
-        if (!SafeRead(playerPtr, RuntimeOffsets::KJ_Float3Pos, playerWorld)) return false;
+        if (!Mem::TryRead(playerPtr, RuntimeOffsets::KJ_Float3Pos, playerWorld)) return false;
         if (!std::isfinite(playerWorld.x) ||
                 !std::isfinite(playerWorld.y) ||
                 !std::isfinite(playerWorld.z))
@@ -824,12 +793,12 @@ namespace CameraTAB {
     }
     void  SetCenteredOnPlayer(bool centered)
     {
-        if (!AddrValid(reinterpret_cast<void*>(g_camMgrPtr)))
+        if (!Mem::AddrOk(reinterpret_cast<void*>(g_camMgrPtr)))
             return;
         // Read live state instead of relying on cached g_offsetMode which may be stale.
         // The Render() function reads the live getter every frame, so piggyback on s_cachedCamMgr.
         bool liveOffsetMode = g_offsetMode;
-        if (AddrValid(s_cachedCamMgr)) {
+        if (Mem::AddrOk(s_cachedCamMgr)) {
             Il2CppClass* k = il2cpp_object_get_class(s_cachedCamMgr);
             if (k) {
                 const MethodInfo* getter = il2cpp_class_get_method_from_name(k, "ANBDPNHJBHG", 0);

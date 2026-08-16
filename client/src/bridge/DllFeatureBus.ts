@@ -1,5 +1,7 @@
+import type { DllFeatureKey } from './contract.js';
+
 type DllFeatureValue = boolean | number | string;
-type DllFeatureSender = (key: string, value: DllFeatureValue) => void;
+type DllFeatureSender = (key: DllFeatureKey, value: DllFeatureValue) => void;
 
 /** Plugins are esbuild-bundled separately; each bundle inlines this module unless externalized.
  *  The main app sets the sender here — use a process-global slot so every copy shares it. */
@@ -25,7 +27,7 @@ export function setDllFeatureSender(next: DllFeatureSender | null): void {
   // #endregion
 }
 
-export function sendDllFeature(key: string, value: DllFeatureValue): boolean {
+export function sendDllFeature(key: DllFeatureKey, value: DllFeatureValue): boolean {
   const slot = getBusSlot();
   // #region agent log
   // #endregion

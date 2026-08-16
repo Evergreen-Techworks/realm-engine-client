@@ -2,6 +2,7 @@
 #include "SpeedHack.h"
 
 #include "Il2CppResolver.h"
+#include "MemRead.h"
 #include "detours/detours.h"
 
 #include <atomic>
@@ -67,15 +68,9 @@ static double GetTime() { return g_virtualTime; }
 static float GetTimeF() { return static_cast<float>(g_virtualTime); }
 }
 
-static bool AddrOk(const void* p)
-{
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a >= 0x10000u && a <= 0x7FFFFFFFFFFFull;
-}
-
 static bool LooksLikeUnityTimeThunk(void* thunkPtr)
 {
-    if (!AddrOk(thunkPtr))
+    if (!Mem::AddrOk(thunkPtr))
         return false;
 
     __try {
@@ -243,7 +238,7 @@ static void AssignMethod(Fn& target, Il2CppClass* klass, const char* methodName)
 
 static TimeIcallFn* TimeIcallSlotFromThunk(void* thunkPtr)
 {
-    if (!AddrOk(thunkPtr))
+    if (!Mem::AddrOk(thunkPtr))
         return nullptr;
 
     TimeIcallFn* slot = nullptr;
@@ -255,7 +250,7 @@ static TimeIcallFn* TimeIcallSlotFromThunk(void* thunkPtr)
             mov[3] | (mov[4] << 8) | (mov[5] << 16) | (mov[6] << 24));
         const uintptr_t rip = reinterpret_cast<uintptr_t>(mov) + 7;
         slot = reinterpret_cast<TimeIcallFn*>(rip + static_cast<std::intptr_t>(disp));
-        if (!AddrOk(slot) || !AddrOk(*slot))
+        if (!Mem::AddrOk(slot) || !Mem::AddrOk(*slot))
             slot = nullptr;
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -269,7 +264,7 @@ static float CallIcall(TimeIcallFn* slot, decltype(app::Time_1_get_deltaTime) fa
     if (slot) {
         __try {
             TimeIcallFn fn = *slot;
-            if (AddrOk(reinterpret_cast<const void*>(fn)))
+            if (Mem::AddrOk(reinterpret_cast<const void*>(fn)))
                 return fn();
         }
         __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -282,7 +277,7 @@ static double CallIcallDouble(DoubleTimeIcallFn* slot, decltype(app::Time_1_get_
     if (slot) {
         __try {
             DoubleTimeIcallFn fn = *slot;
-            if (AddrOk(reinterpret_cast<const void*>(fn)))
+            if (Mem::AddrOk(reinterpret_cast<const void*>(fn)))
                 return fn();
         }
         __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -385,7 +380,7 @@ static void dSpeedHackDetector_Update(app::SpeedHackDetector* self, MethodInfo* 
 template <typename Fn>
 static bool HookOne(Fn& target, Fn detour, Fn& original)
 {
-    if (!AddrOk(reinterpret_cast<void*>(target)) || !detour)
+    if (!Mem::AddrOk(reinterpret_cast<void*>(target)) || !detour)
         return false;
     if (DetourAttach(&(PVOID&)target, reinterpret_cast<PVOID>(detour)) != NO_ERROR) {
         original = nullptr;
@@ -398,7 +393,7 @@ static bool HookOne(Fn& target, Fn detour, Fn& original)
 template <typename Fn>
 static void UnhookOne(Fn& target, Fn detour, Fn original)
 {
-    if (!original || !AddrOk(reinterpret_cast<void*>(target)) || !detour)
+    if (!original || !Mem::AddrOk(reinterpret_cast<void*>(target)) || !detour)
         return;
     DetourDetach(&(PVOID&)target, reinterpret_cast<PVOID>(detour));
 }

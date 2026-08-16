@@ -3,6 +3,9 @@
 #include "EnemyTracker.h"
 #include "GameState.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
+#include "core/il2cpp/Il2CppContainers.h"
+#include "game/objects/GameObjects.h"
 
 #include <Windows.h>
 #include <atomic>
@@ -25,13 +28,6 @@ static const uint32_t& kOffOpInvincElem  = RuntimeOffsets::OP_InvincibleElem;
 static const uint32_t& kOffObjType       = RuntimeOffsets::ObjType;
 static const uint32_t& kOffWmDict        = RuntimeOffsets::WM_AllDict;
 
-// IL2CPP Dictionary<int,T> layout constants
-constexpr uint32_t kOffDictEnt  = 0x18;
-constexpr uint32_t kOffDictCnt  = 0x20;
-constexpr uint32_t kOffArrMax   = 0x18;
-constexpr uint32_t kOffArrData  = 0x20;
-constexpr int      kEntryStride = 24;
-
 // ── Object type lists ────────────────────────────────────────────────────────
 // Non-enemy entity types to reject outright, and whitelisted types that bypass
 // the maxHp==200 decoy heuristic. Quest/fallback tiering lives in TargetSelector.
@@ -45,11 +41,6 @@ static bool IsIgnoredType(int32_t t) {
 static bool IsWhitelistedType(int32_t t) {
     for (int32_t v : kWhitelistedTypes) if (v == t) return true;
     return false;
-}
-
-static inline bool AddrOk(const void* p) {
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000 && a < 0x7FFFFFFFFFFFULL;
 }
 
 // ── Velocity tracking ────────────────────────────────────────────────────────
@@ -72,21 +63,19 @@ static void UpdateVelocity(int32_t id, float ex, float ey, ULONGLONG now, void* 
 {
     float moVx = 0.f, moVy = 0.f;
     bool  haveMo = false;
-    const uint32_t velOff = RuntimeOffsets::MoVelocity;
-    if (velOff != 0 && AddrOk(entity)) {
-        __try {
-            uint8_t* ent = reinterpret_cast<uint8_t*>(entity);
-            float rvx = *reinterpret_cast<float*>(ent + velOff);
-            float rvy = *reinterpret_cast<float*>(ent + velOff + 4);
-            // Only use MoVelocity when it reports actual movement — the field reads
-            // 0.0 on enemies when the offset is wrong or the entity is stationary,
-            // which would otherwise drive chord-estimated velocity toward 0 via blending.
-            if (std::isfinite(rvx) && std::isfinite(rvy) &&
-                fabsf(rvx) < kMaxVelTilesPerMs && fabsf(rvy) < kMaxVelTilesPerMs &&
-                (fabsf(rvx) > 1e-5f || fabsf(rvy) > 1e-5f)) {
-                moVx = rvx; moVy = rvy; haveMo = true;
-            }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    float rvx = 0.f, rvy = 0.f;
+    // Character::Velocity reads the MoVelocity Vector2 under a single SEH guard and
+    // returns false if the offset is unresolved (0) / the pointer is bad / the read
+    // faults — the exact guard the hand-rolled __try provided.
+    if (Game::Character(entity).Velocity(rvx, rvy)) {
+        // Only use MoVelocity when it reports actual movement — the field reads
+        // 0.0 on enemies when the offset is wrong or the entity is stationary,
+        // which would otherwise drive chord-estimated velocity toward 0 via blending.
+        if (std::isfinite(rvx) && std::isfinite(rvy) &&
+            fabsf(rvx) < kMaxVelTilesPerMs && fabsf(rvy) < kMaxVelTilesPerMs &&
+            (fabsf(rvx) > 1e-5f || fabsf(rvy) > 1e-5f)) {
+            moVx = rvx; moVy = rvy; haveMo = true;
+        }
     }
 
     auto it = s_velMap.find(id);
@@ -152,19 +141,16 @@ struct CandidateOut {
 // Returns true if the dict entry describes a targetable enemy.
 // Soft properties (invulnerable, hasHealthBar) are always populated so callers
 // can apply their own targeting policies.
-static bool SehReadCandidate(uint8_t* entry, void* local, uint64_t localKlass, CandidateOut& out)
+static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t localKlass, CandidateOut& out)
 {
     __try {
-        if (*reinterpret_cast<int32_t*>(entry) < 0)
-            return false;
-        void* entity = *reinterpret_cast<void**>(entry + 16);
         if (!entity || entity == local)
             return false;
         if (*reinterpret_cast<uint64_t*>(entity) == localKlass)
             return false;
 
         void* objProps = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(entity) + kOffObjProps);
-        if (!AddrOk(objProps))
+        if (!Mem::AddrOk(objProps))
             return false;
         uint8_t* op  = reinterpret_cast<uint8_t*>(objProps);
         uint8_t* ent = reinterpret_cast<uint8_t*>(entity);
@@ -177,7 +163,7 @@ static bool SehReadCandidate(uint8_t* entry, void* local, uint64_t localKlass, C
 
         // XML <Invincible/> — reject if InvincibleElement pointer exists (regardless of string)
         void* invPtr = *reinterpret_cast<void**>(op + kOffOpInvincElem);
-        if (invPtr && AddrOk(invPtr))
+        if (invPtr && Mem::AddrOk(invPtr))
             return false;
 
         bool isInvuln = false;
@@ -206,7 +192,7 @@ static bool SehReadCandidate(uint8_t* entry, void* local, uint64_t localKlass, C
         if (!std::isfinite(ex2) || !std::isfinite(ey2) || (ex2 == 0.f && ey2 == 0.f))
             return false;
 
-        out.id            = *reinterpret_cast<int32_t*>(entry + 8);
+        out.id            = id;
         out.objType       = objType;
         out.hp            = hp;
         out.maxHp         = maxHp;
@@ -248,49 +234,24 @@ void Tick()
         return;
 
     void* wm = GameState::GetWorldMgr();
-    if (!AddrOk(wm)) return;
+    if (!Mem::AddrOk(wm)) return;
 
-    void* allDict = nullptr;
-    __try { allDict = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(wm) + kOffWmDict); }
-    __except (EXCEPTION_EXECUTE_HANDLER) { return; }
-    if (!AddrOk(allDict)) return;
+    void* allDict = Mem::ReadPtr(wm, kOffWmDict);
+    if (!Mem::AddrOk(allDict)) return;
 
-    void*   entries = nullptr;
-    int32_t count   = 0;
-    __try {
-        entries = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(allDict) + kOffDictEnt);
-        count   = *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(allDict) + kOffDictCnt);
-    } __except (EXCEPTION_EXECUTE_HANDLER) { return; }
-    if (!AddrOk(entries) || count <= 0) return;
+    s_snapshot.reserve(256);
 
-    int32_t maxLen = 0;
-    __try { maxLen = *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(entries) + kOffArrMax); }
-    __except (EXCEPTION_EXECUTE_HANDLER) { return; }
-
-    const int32_t limit = (count < maxLen ? count : maxLen) < 4096
-                        ? (count < maxLen ? count : maxLen) : 4096;
-
-    uint8_t* base = reinterpret_cast<uint8_t*>(entries) + kOffArrData;
-
-    s_snapshot.reserve(static_cast<size_t>(limit / 4));
-
-    for (int32_t i = 0; i < limit; ++i) {
-        uint8_t* entry = base + i * kEntryStride;
-
-        // Opportunistically capture local player's dict key.
-        // The entry at offset +8 is the dict key (object ID); +16 is the entity pointer.
-        __try {
-            if (*reinterpret_cast<int32_t*>(entry) >= 0) {
-                void* ent = *reinterpret_cast<void**>(entry + 16);
-                if (ent == local)
-                    s_localPlayerObjectId.store(*reinterpret_cast<int32_t*>(entry + 8),
-                                                std::memory_order_relaxed);
-            }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    // Walk the world's Dictionary<int, entity>. WalkDict skips free/tombstone
+    // slots (hashCode < 0) — the same slots the candidate check already discarded
+    // — and clamps a corrupt count to 4096, matching the prior hand loop.
+    Il2CppC::WalkDict(allDict, /*maxEntries*/4096, [&](int32_t key, void* entity) {
+        // Opportunistically capture local player's dict key (object ID).
+        if (entity == local)
+            s_localPlayerObjectId.store(key, std::memory_order_relaxed);
 
         CandidateOut cand{};
-        if (!SehReadCandidate(entry, local, localKlass, cand))
-            continue;
+        if (!SehReadCandidate(entity, key, local, localKlass, cand))
+            return;
 
         UpdateVelocity(cand.id, cand.x, cand.y, now, cand.ptr);
 
@@ -312,7 +273,7 @@ void Tick()
             e.vy = it->second.vy;
         }
         s_snapshot.push_back(e);
-    }
+    });
 
     // Prune stale velocity entries every 5 seconds
     if (now >= s_pruneAt) {

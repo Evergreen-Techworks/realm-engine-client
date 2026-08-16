@@ -1,6 +1,6 @@
 /** Auto Drink — HP/MP potion id catalog. */
 
-import type { PluginContext } from '../../src/plugins/PluginContext.js';
+import type { PluginContext } from '../api.js';
 import {
   POTION_SLOT_TYPE,
   FALLBACK_HP_POT_IDS,

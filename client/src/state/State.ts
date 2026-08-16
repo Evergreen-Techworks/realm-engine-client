@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import type { ClientConnection } from '../proxy/ClientConnection.js';
+import { GAME_PORT } from '../constants/GameId.js';
 
 /**
  * Per-connection state, persisted across reconnects.
@@ -10,7 +11,7 @@ export class State {
   client: ClientConnection;
   accountId = '';
   conTargetAddress = '54.241.208.233'; // Default: USWest
-  conTargetPort = 2050;
+  conTargetPort = GAME_PORT;
   /** GameId from HELLO/RECONNECT. Used as a coarse "current map" identifier. */
   gameId = -2;
   conRealKey: Buffer = Buffer.alloc(0);

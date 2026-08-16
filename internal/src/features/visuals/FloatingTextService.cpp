@@ -2,6 +2,7 @@
 #include "RuntimeOffsets.h"
 #include "GameState.h"
 #include "Il2CppResolver.h"
+#include "core/runtime/MemRead.h"
 #include <mutex>
 #include <cstring>
 #include "FloatingTextService.h"
@@ -43,7 +44,7 @@ void FloatingTextService::ApplyPendingPluginText()
     void* local = GameState::GetLocalPtr();
 
     Resolver::Protection::safe_call([&]() {
-        auto* localView = *reinterpret_cast<app::ViewHandler**>(reinterpret_cast<uintptr_t>(local) + RuntimeOffsets::KJ_ViewHandler);
+        auto* localView = static_cast<app::ViewHandler*>(Mem::ReadPtr(local, RuntimeOffsets::KJ_ViewHandler));
         if (localView) localMgr = localView->fields.GUIManager;
     });
 

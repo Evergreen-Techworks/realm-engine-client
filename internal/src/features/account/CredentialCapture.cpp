@@ -1,6 +1,7 @@
 #include "pch-il2cpp.h"
 #include "CredentialCapture.h"
 #include "Il2CppResolver.h"
+#include "platform/hooks/Il2CppHook.h"
 #include "DbgFileLog.h"
 #include "helpers.h"
 
@@ -157,25 +158,13 @@ void __fastcall HookedSetSteamId(void* __this, app::String* steamId, MethodInfo*
 }
 
 // ── IL2CPP resolution + MinHook install ─────────────────────────────────
-void* ResolveMethod(const char* className, const char* methodName, int paramCount)
-{
-    Il2CppClass* klass = Resolver::GetClass("", className);
-    if (!klass) return nullptr;
-    const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, methodName, paramCount);
-    if (!mi || !mi->methodPointer) return nullptr;
-    return reinterpret_cast<void*>(mi->methodPointer);
-}
-
 void TryInstall()
 {
     if (s_hooksInstalled.load(std::memory_order_acquire)) return;
 
-    void* connectFn   = nullptr;
-    void* setSteamFn  = nullptr;
-    Resolver::Protection::safe_call([&]() {
-        connectFn  = ResolveMethod("AppEngineManager", "Connect", 3);
-        setSteamFn = ResolveMethod("AppEngineManager", "SetSteamId", 1);
-    });
+    // Exact (readable) class name — resolve with loose=false (Resolver::GetClass).
+    void* connectFn  = Il2CppHook::ResolveMethod("AppEngineManager", "Connect", 3, /*loose*/false);
+    void* setSteamFn = Il2CppHook::ResolveMethod("AppEngineManager", "SetSteamId", 1, /*loose*/false);
 
     if (!connectFn) {
         // Game/IL2CPP isn't ready yet — retry on next Tick.
@@ -185,26 +174,19 @@ void TryInstall()
     s_connectTarget    = connectFn;
     s_setSteamIdTarget = setSteamFn;
 
-    MH_STATUS cs = MH_CreateHook(s_connectTarget,
-        reinterpret_cast<void*>(&HookedConnect),
-        reinterpret_cast<void**>(&s_origConnect));
-    if (cs != MH_OK) {
-        DBG_FILE_LOG("[credcap] MH_CreateHook(Connect) failed: " << cs);
+    if (!Il2CppHook::InstallMinHook(s_connectTarget,
+            reinterpret_cast<void*>(&HookedConnect),
+            reinterpret_cast<void**>(&s_origConnect), "credcap.Connect")) {
         s_connectTarget = nullptr;
         return;
     }
-    MH_EnableHook(s_connectTarget);
 
     if (s_setSteamIdTarget) {
-        MH_STATUS ss = MH_CreateHook(s_setSteamIdTarget,
-            reinterpret_cast<void*>(&HookedSetSteamId),
-            reinterpret_cast<void**>(&s_origSetSteamId));
-        if (ss == MH_OK) {
-            MH_EnableHook(s_setSteamIdTarget);
-        } else {
-            // Non-fatal — Steam-flow accounts simply won't have a steamId
-            // captured. Connect-only capture still works.
-            DBG_FILE_LOG("[credcap] MH_CreateHook(SetSteamId) failed: " << ss);
+        // Non-fatal — Steam-flow accounts simply won't have a steamId
+        // captured. Connect-only capture still works.
+        if (!Il2CppHook::InstallMinHook(s_setSteamIdTarget,
+                reinterpret_cast<void*>(&HookedSetSteamId),
+                reinterpret_cast<void**>(&s_origSetSteamId), "credcap.SetSteamId")) {
             s_setSteamIdTarget = nullptr;
         }
     }

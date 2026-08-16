@@ -3,6 +3,7 @@
 #include "WeaponProfile.h"
 #include "AimMath.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
 #include "ProjectileTracking.h"
 
 #include <atomic>
@@ -17,17 +18,12 @@ static constexpr uint32_t kOffCharLifetimeMul = 0x18C;
 static constexpr uint32_t kOffCharRangeMul    = 0x6B8;
 static constexpr uint32_t kOffProjId          = 0x15C;
 
-static inline bool AddrOk(const void* p) {
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000 && a < 0x7FFFFFFFFFFFULL;
-}
-
 static std::atomic<void*> s_projProps{ nullptr };
 static WeaponProfile      s_profile;
 
 static bool ReadPlayerTuners(void* local, float& outSpeedMul, float& outLifetimeMul, float& outRangeMul)
 {
-    if (!AddrOk(local)) return false;
+    if (!Mem::AddrOk(local)) return false;
     __try {
         uint8_t* p = reinterpret_cast<uint8_t*>(local);
         outSpeedMul    = *reinterpret_cast<float*>(p + kOffCharSpeedMul);
@@ -49,7 +45,7 @@ static bool ReadPlayerTuners(void* local, float& outSpeedMul, float& outLifetime
 static void Recalculate(void* local)
 {
     void* pp = s_projProps.load(std::memory_order_relaxed);
-    if (!AddrOk(pp) || !AddrOk(local))
+    if (!Mem::AddrOk(pp) || !Mem::AddrOk(local))
         return;
 
     float speedMul = 1.f, lifetimeMul = 1.f, rangeMul = 1.f;
@@ -59,10 +55,10 @@ static void Recalculate(void* local)
     __try {
         uint8_t* p = reinterpret_cast<uint8_t*>(pp);
 
-        const bool isParam      = *reinterpret_cast<bool*>(p + RuntimeOffsets::PP_IsParametric);
-        const int32_t rawSpeedI = *reinterpret_cast<int32_t*>(p + RuntimeOffsets::PP_Speed);
-        const float rawLife     = *reinterpret_cast<float*>(p + RuntimeOffsets::PP_Lifetime);
-        const float mag         = *reinterpret_cast<float*>(p + RuntimeOffsets::PP_Magnitude);
+        const bool isParam      = Mem::ReadOr<bool>(p, RuntimeOffsets::PP_IsParametric, false);
+        const int32_t rawSpeedI = Mem::ReadOr<int32_t>(p, RuntimeOffsets::PP_Speed, 0);
+        const float rawLife     = Mem::ReadOr<float>(p, RuntimeOffsets::PP_Lifetime, 0.f);
+        const float mag         = Mem::ReadOr<float>(p, RuntimeOffsets::PP_Magnitude, 0.f);
 
         // Check parametric FIRST — swords/daggers/other fixed-arc weapons store
         // PP_Speed = 0 (unused), which would fail the speed validation below.

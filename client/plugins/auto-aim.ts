@@ -1,10 +1,10 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
+import type { PluginContext } from './api.js';
 import {
   DEFENSE_UNSET,
   openShared,
   readPosition,
 } from '../src/native/rotmg-shared.js';
-import { sendDllFeature } from '../src/bridge/DllFeatureBus.js';
+import { sendDllFeature } from './api.js';
 
 /**
  * Auto-aim: enable/mode are driven over the DLL pipe.

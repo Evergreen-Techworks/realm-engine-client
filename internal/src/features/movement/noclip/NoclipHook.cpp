@@ -2,18 +2,14 @@
 #include "NoclipHook.h"
 #include "Noclip.h"
 #include "Il2CppResolver.h"
+#include "Il2CppHook.h"
+#include "MemRead.h"
 #include "minhook/MinHook.h"
 
 #include <Windows.h>
 #include <cstdint>
 
 namespace {
-
-static inline bool AddrOk(const void* p)
-{
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000u && a < 0x7FFFFFFFFFFFull;
-}
 
 static bool EnsureIl2CppThreadAttached()
 {
@@ -29,36 +25,6 @@ static bool EnsureIl2CppThreadAttached()
 
     attached = il2cpp_thread_attach(domain) != nullptr;
     return attached;
-}
-
-static const MethodInfo* FindMethod(Il2CppClass* klass, const char* name, int argc)
-{
-    const MethodInfo* method = nullptr;
-    Resolver::Protection::safe_call([&]() {
-        method = klass ? il2cpp_class_get_method_from_name(klass, name, argc) : nullptr;
-    });
-    return method && method->methodPointer ? method : nullptr;
-}
-
-static Il2CppClass* FindClassAny(const char* namespaze, const char* name)
-{
-    Il2CppClass* klass = nullptr;
-    Resolver::Protection::safe_call([&]() {
-        klass = Resolver::FindClass(namespaze, name);
-        if (!klass)
-            klass = Resolver::FindClassLoose(name);
-        if (!klass)
-            klass = Resolver::GetClass(namespaze, name);
-    });
-    return klass;
-}
-
-template <typename Fn>
-static void AssignMethod(Fn& target, Il2CppClass* klass, const char* methodName)
-{
-    const MethodInfo* method = FindMethod(klass, methodName, 2);
-    if (method && AddrOk(method->methodPointer))
-        target = reinterpret_cast<Fn>(method->methodPointer);
 }
 
 static decltype(app::HJMBOMEHGDJ_PEGDEDNHEHD) s_origPegdednhehd = nullptr;
@@ -90,17 +56,12 @@ static void ResolveTargets()
     if (!EnsureIl2CppThreadAttached())
         return;
 
-    Il2CppClass* mapViewService = FindClassAny("", "HJMBOMEHGDJ");
-    if (!mapViewService)
-        return;
+    // ResolveMethod uses FindClassLoose (the BeeByte-rename-proof path the old
+    // FindClassAny already preferred) then the argc-2 method pointer.
+    s_pegTarget = Il2CppHook::ResolveMethod("HJMBOMEHGDJ", "PEGDEDNHEHD", 2, /*loose*/true);
+    s_lhgTarget = Il2CppHook::ResolveMethod("HJMBOMEHGDJ", "LHGGJIAKLMJ", 2, /*loose*/true);
 
-    AssignMethod(app::HJMBOMEHGDJ_PEGDEDNHEHD, mapViewService, "PEGDEDNHEHD");
-    AssignMethod(app::HJMBOMEHGDJ_LHGGJIAKLMJ, mapViewService, "LHGGJIAKLMJ");
-
-    s_pegTarget = reinterpret_cast<void*>(app::HJMBOMEHGDJ_PEGDEDNHEHD);
-    s_lhgTarget = reinterpret_cast<void*>(app::HJMBOMEHGDJ_LHGGJIAKLMJ);
-
-    s_resolved = AddrOk(s_pegTarget) && AddrOk(s_lhgTarget);
+    s_resolved = Mem::AddrOk(s_pegTarget) && Mem::AddrOk(s_lhgTarget);
 }
 
 static bool EnsureMinHook()
@@ -126,30 +87,19 @@ static void TryInstall()
     if (!s_resolved || !EnsureMinHook())
         return;
 
-    if (MH_CreateHook(s_pegTarget,
+    if (!Il2CppHook::InstallMinHook(s_pegTarget,
             reinterpret_cast<void*>(&dHJMBOMEHGDJ_PEGDEDNHEHD),
-            reinterpret_cast<void**>(&s_origPegdednhehd)) != MH_OK)
-        return;
-
-    if (MH_EnableHook(s_pegTarget) != MH_OK) {
-        MH_RemoveHook(s_pegTarget);
+            reinterpret_cast<void**>(&s_origPegdednhehd), "Noclip:PEG")) {
         s_origPegdednhehd = nullptr;
         return;
     }
 
-    if (MH_CreateHook(s_lhgTarget,
+    if (!Il2CppHook::InstallMinHook(s_lhgTarget,
             reinterpret_cast<void*>(&dHJMBOMEHGDJ_LHGGJIAKLMJ),
-            reinterpret_cast<void**>(&s_origLhggjiaklmj)) != MH_OK) {
+            reinterpret_cast<void**>(&s_origLhggjiaklmj), "Noclip:LHG")) {
+        // Roll back the first hook so we never leave PEG installed alone.
         MH_DisableHook(s_pegTarget);
         MH_RemoveHook(s_pegTarget);
-        s_origPegdednhehd = nullptr;
-        return;
-    }
-
-    if (MH_EnableHook(s_lhgTarget) != MH_OK) {
-        MH_DisableHook(s_pegTarget);
-        MH_RemoveHook(s_pegTarget);
-        MH_RemoveHook(s_lhgTarget);
         s_origPegdednhehd = nullptr;
         s_origLhggjiaklmj = nullptr;
         return;

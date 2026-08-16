@@ -1,7 +1,7 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../src/proxy/ClientConnection.js';
-import { RuntimeScheduler } from '../src/util/RuntimeScheduler.js';
-import { sendDllFeature } from '../src/bridge/DllFeatureBus.js';
+import type { PluginContext } from './api.js';
+import type { ClientConnection } from './api.js';
+import { RuntimeScheduler } from './api.js';
+import { sendDllFeature } from './api.js';
 
 /**
  * Socket plugin.

@@ -3,6 +3,7 @@ import type { ClientConnection } from './ClientConnection.js';
 import type { Packet } from '../packets/Packet.js';
 import { Logger } from '../util/Logger.js';
 import { DebugManager } from '../util/DebugManager.js';
+import { GAME_PORT } from '../constants/GameId.js';
 import { signalHelloEvent } from '../native/hello-event.js';
 import { sendDllFeature } from '../bridge/DllFeatureBus.js';
 
@@ -216,7 +217,7 @@ export class ReconnectHandler {
     const raw = packet.rawBytes;
     const guidBuf = Buffer.from(client.state.guid, 'utf8');
     const newHost = '127.0.0.1';
-    const newPort = 2050;
+    const newPort = GAME_PORT;
 
     try {
       let off = 5; // skip header

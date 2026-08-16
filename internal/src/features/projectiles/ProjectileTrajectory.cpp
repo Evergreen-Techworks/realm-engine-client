@@ -4,6 +4,7 @@
 #include "gui/tabs/WorldTAB.h"
 #include "Il2CppResolver.h"
 #include "BeebyteName.h"
+#include "core/runtime/MemRead.h"
 
 #include <cmath>
 
@@ -67,15 +68,9 @@ static bool IsFiniteWorldPoint(float x, float y)
     return std::isfinite(x) && std::isfinite(y) && fabsf(x) < 10000.f && fabsf(y) < 10000.f;
 }
 
-static bool AddrOk(const void* p)
-{
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000 && a < 0x7FFFFFFFFFFFULL;
-}
-
 static bool ReadGamePositionAtTime(void* projectilePtr, float tMs, float& outX, float& outY)
 {
-    if (!AddrOk(projectilePtr)) return false;
+    if (!Mem::AddrOk(projectilePtr)) return false;
     const PosAtMethod& m = GetPosAtMethod();
     if (!m.ok || !m.fn) return false;
     bool ok = false;

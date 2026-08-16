@@ -7,6 +7,7 @@
 #include "features/combat/enemytracker/EnemyTracker.h"
 #include "GameState.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
 #include "ProjectileTracking.h"
 #include "AoeTracking.h"
 
@@ -16,11 +17,6 @@
 #include <cstdint>
 
 namespace {
-
-static inline bool AddrOk(const void* p) {
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000 && a < 0x7FFFFFFFFFFFULL;
-}
 
 // ── Frame-level state ─────────────────────────────────────────────────────────
 static std::atomic<bool>    s_enabled{ false };
@@ -50,7 +46,7 @@ static ULONGLONG s_lastThrottleMs = 0;
 static bool LocalStealthBlocksAim(void* player)
 {
     if (s_shootWhileStealthed.load(std::memory_order_relaxed)) return false;
-    if (!AddrOk(player)) return false;
+    if (!Mem::AddrOk(player)) return false;
     uint32_t w0 = 0, w1 = 0;
     if (!RuntimeOffsets::TryReadMapObjectConditions(player, &w0, &w1)) return false;
     const uint64_t full = RuntimeOffsets::GetFullConditions(w0, w1);
@@ -78,11 +74,8 @@ static void RunTick()
     EnemyTracker::Tick();
 
     float px = 0.f, py = 0.f;
-    __try {
-        uint8_t* lp = reinterpret_cast<uint8_t*>(local);
-        px = *reinterpret_cast<float*>(lp + RuntimeOffsets::PosX);
-        py = *reinterpret_cast<float*>(lp + RuntimeOffsets::PosY);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    if (!Mem::TryRead(local, RuntimeOffsets::PosX, px) ||
+        !Mem::TryRead(local, RuntimeOffsets::PosY, py)) {
         s_hasTarget.store(false, std::memory_order_relaxed);
         AimHooks::SetTarget(false, 0.f, 0.f);
         return;

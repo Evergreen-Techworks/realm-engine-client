@@ -2,6 +2,7 @@
 
 #include "AimMath.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
 #include "ProjectileTracking.h"
 
 #include <cmath>
@@ -50,16 +51,16 @@ float QuadraticIntercept(float px, float py,
 
 static float ResolveLinearAccel(uint8_t* pp)
 {
-    const float a = *reinterpret_cast<float*>(pp + RuntimeOffsets::PP_Acceleration);
+    const float a = Mem::ReadOr<float>(pp, RuntimeOffsets::PP_Acceleration, 0.f);
     if (std::isfinite(a) && fabsf(a) > 1e-6f) return a;
 
-    const float ai = *reinterpret_cast<float*>(pp + RuntimeOffsets::PP_AccelerationInv);
+    const float ai = Mem::ReadOr<float>(pp, RuntimeOffsets::PP_AccelerationInv, 0.f);
     if (std::isfinite(ai) && fabsf(ai) > 1e-12f) return 1.f / ai;
 
-    const float vr = *reinterpret_cast<float*>(pp + RuntimeOffsets::PP_VelocityChangeRate);
+    const float vr = Mem::ReadOr<float>(pp, RuntimeOffsets::PP_VelocityChangeRate, 0.f);
     if (std::isfinite(vr) && fabsf(vr) > 1e-6f) return vr;
 
-    const float vi = *reinterpret_cast<float*>(pp + RuntimeOffsets::PP_VelocityChangeRateInv);
+    const float vi = Mem::ReadOr<float>(pp, RuntimeOffsets::PP_VelocityChangeRateInv, 0.f);
     if (std::isfinite(vi) && fabsf(vi) > 1e-12f) return 1.f / vi;
 
     return 0.f;
@@ -72,7 +73,7 @@ float IntegratedProjectileDistance(uint8_t* projProps, float lifetimeMs, float s
     if (!(lifetimeMs > 0.f)) return 0.f;
 
     float accel = ResolveLinearAccel(projProps);
-    const bool isBoomerang = *reinterpret_cast<bool*>(projProps + RuntimeOffsets::PP_IsBoomerang);
+    const bool isBoomerang = Mem::ReadOr<bool>(projProps, RuntimeOffsets::PP_IsBoomerang, false);
     if (fabsf(accel) <= 1e-6f && isBoomerang && lifetimeMs > 1e-3f && rawSpeed > 1.f && rawSpeed <= 50000.f)
         accel = -2.f * rawSpeed / lifetimeMs;
 
@@ -80,7 +81,7 @@ float IntegratedProjectileDistance(uint8_t* projProps, float lifetimeMs, float s
         return lifetimeMs * baseTpMs;
 
     const float accelTpMs2 = (accel / 1000000.f) * clampedMul;
-    const float rawDelay   = *reinterpret_cast<float*>(projProps + RuntimeOffsets::PP_AccelDelay);
+    const float rawDelay   = Mem::ReadOr<float>(projProps, RuntimeOffsets::PP_AccelDelay, 0.f);
     const float delayMs    = ProjectileTracking::NormalizeAccelDelayMs(rawDelay);
     const float scaledDelay = (delayMs > 0.f) ? delayMs / clampedMul : 0.f;
 
@@ -91,7 +92,7 @@ float IntegratedProjectileDistance(uint8_t* projProps, float lifetimeMs, float s
     const float accelTime  = lifetimeMs - scaledDelay;
     float accelDist = baseTpMs * accelTime + 0.5f * accelTpMs2 * accelTime * accelTime;
 
-    const float clampVal = *reinterpret_cast<float*>(projProps + RuntimeOffsets::PP_SpeedClamp);
+    const float clampVal = Mem::ReadOr<float>(projProps, RuntimeOffsets::PP_SpeedClamp, 0.f);
     if (clampVal > 0.f && std::isfinite(clampVal)) {
         const float clampTpMs = (clampVal / 1000.f) * clampedMul;
         if (accelTpMs2 > 1e-12f && clampTpMs > baseTpMs) {

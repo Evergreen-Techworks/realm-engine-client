@@ -14,6 +14,8 @@
 #include "DbgFileLog.h"
 #include "BeebyteName.h"
 #include "RuntimeOffsets.h"
+#include "MemRead.h"
+#include "Il2CppHook.h"
 
 #include <windows.h>
 #include "minhook/MinHook.h"
@@ -98,13 +100,6 @@ bool                      g_EntCsInit = false;
 
 std::atomic<uint32_t>     g_hbeakSpeedMulFieldOff{ 0 }; // 0 = unresolved
 
-static inline bool AddrOk(const void* p)
-{
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000 && a < 0x7FFFFFFFFFFFULL;
-}
-
-
 static void EnsureHbeakSpeedMulFieldOffset()
 {
     uint32_t cur = g_hbeakSpeedMulFieldOff.load(std::memory_order_relaxed);
@@ -127,12 +122,10 @@ static float ComputeEffectiveSpeedMulFromInstance(void* hbeakInstance)
 
     float inst = 1.f;
     const uint32_t off = g_hbeakSpeedMulFieldOff.load(std::memory_order_relaxed);
-    if (AddrOk(hbeakInstance) && off != 0u) {
-        __try {
-            float v = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(hbeakInstance) + off);
-            if (std::isfinite(v) && v > 1e-6f && v < 100.f)
-                inst = v;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    float v;
+    if (off != 0u && Mem::TryRead(hbeakInstance, off, v)) {
+        if (std::isfinite(v) && v > 1e-6f && v < 100.f)
+            inst = v;
     }
 
     float p = inst * flashTune;
@@ -145,15 +138,9 @@ static bool TryReadLivePos(void* projInst, float& outX, float& outY)
 {
     outX = 0.f;
     outY = 0.f;
-    if (!AddrOk(projInst)) return false;
-    __try {
-        uint8_t* p = reinterpret_cast<uint8_t*>(projInst);
-        outX = *reinterpret_cast<float*>(p + RuntimeOffsets::PosX);
-        outY = *reinterpret_cast<float*>(p + RuntimeOffsets::PosY);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    if (!Mem::TryRead(projInst, RuntimeOffsets::PosX, outX)) return false;
+    if (!Mem::TryRead(projInst, RuntimeOffsets::PosY, outY)) return false;
+    return true;
 }
 
 static void LookupShooterOrigin(int32_t attackerObjId, uint32_t ownerObjId, float& originX, float& originY)
@@ -179,12 +166,7 @@ static void LookupShooterOrigin(int32_t attackerObjId, uint32_t ownerObjId, floa
 static bool TryReadObjectPropertiesIsEnemy(void* objProps, bool& outIsEnemy)
 {
     outIsEnemy = false;
-    if (!AddrOk(objProps)) return false;
-    __try {
-        outIsEnemy = *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(objProps) + RuntimeOffsets::OP_IsEnemy);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    return false;
+    return Mem::TryRead(objProps, RuntimeOffsets::OP_IsEnemy, outIsEnemy);
 }
 
 void* __fastcall SpawnProjectileDetour(
@@ -268,7 +250,7 @@ void* __fastcall SpawnProjectileDetour(
         projInstance, objProps, projProps, attackerObjId, ownerObjId, angle, bulletId,
         name, group, spawnX, spawnY, canHitPlayer, isAbility, methodInfo);
 
-    if (!AddrOk(ret))
+    if (!Mem::AddrOk(ret))
         return ret;
 
     bool ownerIsEnemy = false;
@@ -336,19 +318,11 @@ void* __fastcall SpawnProjectileDetour(
 
     p.speedMul = ComputeEffectiveSpeedMulFromInstance(ret);
 
-    if (AddrOk(ret)) {
-        __try {
-            uint8_t* pi = reinterpret_cast<uint8_t*>(ret);
-            p.x = *reinterpret_cast<float*>(pi + RuntimeOffsets::PosX);
-            p.y = *reinterpret_cast<float*>(pi + RuntimeOffsets::PosY);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            float posX = p.x;
-            float posY = p.y;
-            if (ProjectileTrajectory::GetPositionAtTime(p, 0.f, posX, posY)) {
-                p.x = posX;
-                p.y = posY;
-            }
-        }
+    float livePosX, livePosY;
+    if (Mem::TryRead(ret, RuntimeOffsets::PosX, livePosX) &&
+        Mem::TryRead(ret, RuntimeOffsets::PosY, livePosY)) {
+        p.x = livePosX;
+        p.y = livePosY;
     } else {
         float posX = p.x;
         float posY = p.y;
@@ -438,11 +412,10 @@ void Install()
         s_mhInit = true;
     }
 
-    if (MH_CreateHook(g_spawnTarget,
+    if (!Il2CppHook::InstallMinHook(g_spawnTarget,
             reinterpret_cast<void*>(&SpawnProjectileDetour),
-            reinterpret_cast<void**>(&g_OriginalSpawn)) != MH_OK)
-        return;
-    if (MH_EnableHook(g_spawnTarget) != MH_OK)
+            reinterpret_cast<void**>(&g_OriginalSpawn),
+            "ProjectileTracking"))
         return;
 
     EnsureHbeakSpeedMulFieldOffset();
@@ -607,11 +580,7 @@ bool TryReadProjRadiusFromInstance(void* hbeakInstance, float& outRadius)
 {
     outRadius = 0.f;
     if (!hbeakInstance) return false;
-    __try {
-        outRadius = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(hbeakInstance) + RuntimeOffsets::Hbeak_ProjRadius);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    return false;
+    return Mem::TryRead(hbeakInstance, RuntimeOffsets::Hbeak_ProjRadius, outRadius);
 }
 
 uint32_t GetHbeakProjRadiusOffset()

@@ -3588,13 +3588,13 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
       switch (msg.type) {
-        case 'packet':
+        case window.WS_MSG.PACKET:
           onPacket(msg.data);
           break;
-        case 'history':
+        case window.WS_MSG.HISTORY:
           msg.data.forEach(p => onPacket(p, true));
           break;
-        case 'plugins': {
+        case window.WS_MSG.PLUGINS: {
           var pl = Array.isArray(msg.data) ? msg.data : [];
           if (pl.length > 0) pluginsReceived = true;
           allPluginsData = pl;
@@ -3604,33 +3604,33 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
           renderDamageSettings(pl);
           break;
         }
-        case 'pluginHotkeyUpdateError':
+        case window.WS_MSG.PLUGIN_HOTKEY_UPDATE_ERROR:
           setHotkeysStatus(msg.reason || 'Could not update hotkey.', 'error');
           capturePluginHotkeyId = null;
           renderHotkeysTab();
           break;
-        case 'gameClient':
+        case window.WS_MSG.GAME_CLIENT:
           updateGameStatus(msg.connected);
           break;
-        case 'internalState':
+        case window.WS_MSG.INTERNAL_STATE:
           updateInternalState(msg.connected);
           break;
-        case 'unresolvedClasses':
+        case window.WS_MSG.UNRESOLVED_CLASSES:
           updateUnresolvedClasses(msg.classes || []);
           break;
-        case 'pluginLog':
+        case window.WS_MSG.PLUGIN_LOG:
           addPluginLog(msg.plugin, msg.message);
           break;
-        case 'playerData':
+        case window.WS_MSG.PLAYER_DATA:
           updatePlayerCard(msg);
           // Feed the inventory diff into the session tracker so it can
           // detect white-bag-tier pickups and shiny items.
           try { window._AccountSessions && window._AccountSessions.observePlayerData(msg); } catch (_) {}
           break;
-        case 'pluginData':
+        case window.WS_MSG.PLUGIN_DATA:
           handlePluginData(msg);
           break;
-        case 'objectsData':
+        case window.WS_MSG.OBJECTS_DATA:
           lastObjectsData = {
             portals: msg.portals || [],
             beacons: msg.beacons || [],
@@ -3640,7 +3640,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
           renderObjectsTree(lastObjectsData);
           updateTeleportBeaconDropdown(false);
           break;
-        case 'tilesData':
+        case window.WS_MSG.TILES_DATA:
           lastTilesData = {
             center: msg.center || { x: 0, y: 0 },
             radius: msg.radius || 12,
@@ -3648,10 +3648,10 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
           };
           if (activeTab === 'tilemap') renderTilemapTree(lastTilesData);
           break;
-        case 'gameWikiCatalog':
+        case window.WS_MSG.GAME_WIKI_CATALOG:
           handleGameWikiCatalog(msg);
           break;
-        case 'objectXmlResult':
+        case window.WS_MSG.OBJECT_XML_RESULT:
           (function () {
             var k = 'o:' + String(msg.objectType);
             delete gameWikiObjectXmlInFlight[k];
@@ -3668,7 +3668,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
             }
           })();
           break;
-        case 'tileXmlResult':
+        case window.WS_MSG.TILE_XML_RESULT:
           (function () {
             var k = 't:' + String(msg.tileType);
             delete gameWikiTileXmlInFlight[k];
@@ -3683,17 +3683,17 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
             }
           })();
           break;
-        case 'nearbyPlayersData':
+        case window.WS_MSG.NEARBY_PLAYERS_DATA:
           lastNearbyPlayers = msg.players || [];
           if (activeTab === 'nearby') renderNearbyPlayersTab();
           break;
-        case 'nearbyPlayerDebug':
+        case window.WS_MSG.NEARBY_PLAYER_DEBUG:
           if (msg && msg.objectId != null && msg.objectId === selectedNearbyPlayerId) {
             lastNearbyPlayerDebug = msg.debug || null;
             if (activeTab === 'nearby') renderNearbyPlayerDebug();
           }
           break;
-        case 'allPlayersRawStats':
+        case window.WS_MSG.ALL_PLAYERS_RAW_STATS:
           if (pendingAllPlayersRawStatsCb) {
             if (pendingAllPlayersRawStatsTimer) {
               clearTimeout(pendingAllPlayersRawStatsTimer);
@@ -3704,7 +3704,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
             fn(msg);
           }
           break;
-        case 'vaultData':
+        case window.WS_MSG.VAULT_DATA:
           if (pendingVaultChestRawStatsCb) {
             if (pendingVaultChestRawStatsTimer) {
               clearTimeout(pendingVaultChestRawStatsTimer);
@@ -3715,33 +3715,33 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
             fnVault(msg);
           }
           break;
-        case 'config':
+        case window.WS_MSG.CONFIG:
           handleConfig(msg);
           break;
-        case 'launchGameResult':
+        case window.WS_MSG.LAUNCH_GAME_RESULT:
           handleLaunchResult(msg);
           break;
-        case 'labUpdate':
+        case window.WS_MSG.LAB_UPDATE:
           handleLabUpdate(msg.unknowns);
           break;
-        case 'probeResult':
+        case window.WS_MSG.PROBE_RESULT:
           handleProbeResult(msg.result);
           break;
-        case 'labPacketSendResult':
+        case window.WS_MSG.LAB_PACKET_SEND_RESULT:
           handleLabPacketSendResult(msg);
           break;
-        case 'pluginToggleError':
+        case window.WS_MSG.PLUGIN_TOGGLE_ERROR:
           handlePluginToggleError(msg);
           break;
-        case 'scriptLog':
+        case window.WS_MSG.SCRIPT_LOG:
           if (msg.line != null) {
             appendScriptLogLine(String(msg.line), msg.level || 'info', msg.id || '');
           }
           break;
-        case 'scriptsState':
+        case window.WS_MSG.SCRIPTS_STATE:
           applyScriptsStateFromSocket(msg);
           break;
-        case 'scriptPanelState':
+        case window.WS_MSG.SCRIPT_PANEL_STATE:
           handleScriptPanelState(msg);
           break;
         case 'scriptPanelPatches':
@@ -3753,7 +3753,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
         case 'scriptPanelClose':
           closeScriptPanelById(msg && msg.scriptId, { notifyServer: false });
           break;
-        case 'muling_status':
+        case window.WS_MSG.MULING_STATUS:
           handleMulingStatus(msg.status);
           break;
       }

@@ -33,6 +33,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="src\core\il2cpp\il2cpp-init.cpp" />
+    <ClCompile Include="src\core\il2cpp\Il2CppContainers.cpp" />
     <ClCompile Include="src\core\il2cpp\pch-il2cpp.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
@@ -51,6 +52,7 @@
     <ClCompile Include="src\core\ipc\IpcSession.cpp" />
     <ClCompile Include="src\core\ipc\IpcTileState.cpp" />
     <ClCompile Include="src\core\ipc\Handshake.cpp" />
+    <ClCompile Include="src\gui\CamState.cpp" />
     <ClCompile Include="src\gui\tabs\CameraTAB.cpp" />
     <ClCompile Include="src\gui\tabs\WorldTAB.cpp" />
     <ClCompile Include="src\gui\tabs\PlayerTAB.cpp" />
@@ -88,6 +90,7 @@
     <ClCompile Include="src\gui\tabs\VisualsTAB.cpp" />
     <ClCompile Include="src\platform\hooks\DirectX.cpp" />
     <ClCompile Include="src\platform\hooks\InitHooks.cpp" />
+    <ClCompile Include="src\platform\hooks\Il2CppHook.cpp" />
     <ClCompile Include="src\features\movement\dodge\ProjectileTracking.cpp" />
     <ClCompile Include="src\features\projectiles\ProjectileRuntimeReader.cpp" />
     <ClCompile Include="src\features\projectiles\ProjectileStore.cpp" />
@@ -188,6 +191,8 @@
     <ClInclude Include="src\core\logging\helpers.h" />
     <ClInclude Include="src\core\il2cpp\il2cpp-appdata.h" />
     <ClInclude Include="src\core\il2cpp\il2cpp-init.h" />
+    <ClInclude Include="src\core\il2cpp\Il2CppContainers.h" />
+    <ClInclude Include="src\game\objects\GameObjects.h" />
     <ClInclude Include="src\core\il2cpp\pch-il2cpp.h" />
     <ClInclude Include="src\bootstrap\version.h" />
     <ClInclude Include="src\platform\dx11\Dx11.h" />
@@ -198,6 +203,7 @@
     <ClInclude Include="src\core\ipc\IpcSession.h" />
     <ClInclude Include="src\core\ipc\IpcTileState.h" />
     <ClInclude Include="src\core\ipc\Handshake.h" />
+    <ClInclude Include="src\gui\CamState.h" />
     <ClInclude Include="src\gui\tabs\CameraTAB.h" />
     <ClInclude Include="src\gui\tabs\WorldTAB.h" />
     <ClInclude Include="src\gui\tabs\PlayerTAB.h" />
@@ -205,8 +211,10 @@
     <ClInclude Include="src\gui\tabs\CombatTab\CombatTAB.h" />
     <ClInclude Include="src\gui\tabs\VisualsTAB.h" />
     <ClInclude Include="src\game\math\W2S.h" />
+    <ClInclude Include="src\game\math\MoveSpeed.h" />
     <ClInclude Include="src\platform\hooks\DirectX.h" />
     <ClInclude Include="src\platform\hooks\InitHooks.h" />
+    <ClInclude Include="src\platform\hooks\Il2CppHook.h" />
     <ClInclude Include="src\features\movement\dodge\ProjectileTracking.h" />
     <ClInclude Include="src\features\projectiles\ProjectileRuntimeReader.h" />
     <ClInclude Include="src\features\projectiles\ProjectileStore.h" />

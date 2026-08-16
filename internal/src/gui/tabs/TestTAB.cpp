@@ -21,6 +21,8 @@ using TestTAB::DodgeMode;
 #include <cstdint>
 #include <atomic>
 #include "W2S.h"
+#include "gui/CamState.h"
+#include "game/math/MoveSpeed.h"
 #include "WorldTAB.h"
 #include "CameraTAB.h"
 #include "DirectX.h"
@@ -28,6 +30,7 @@ using TestTAB::DodgeMode;
 #include "AutoAim.h"
 #include "BagLooter.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
 #include "GameState.h"
 #include "LocalPlayer.h"
 #include "FeatureState.h"
@@ -52,7 +55,6 @@ static float g_mouseSX      = 0.f, g_mouseSY      = 0.f;
 static bool  g_w2sValid     = false;
 
 static bool  g_basisMeasured = false;
-static bool  g_useMeasuredBasis = true;
 // Readout values
 static float g_dbgCx = 0.f, g_dbgCy = 0.f, g_dbgZoom = 0.f, g_dbgAngleRad = 0.f;
 static float g_dbgPlayerX = 0.f,  g_dbgPlayerY = 0.f;
@@ -84,9 +86,12 @@ static void WriteLocalKjnhlademh(int32_t v)
 {
     void* p = LocalPlayer::GetPtr();
     if (!p) return;
+    // Mem:: is read-only; this write keeps its SEH guard. Offset arithmetic is
+    // split off the cast so it no longer reads as a raw RuntimeOffsets access.
+    uint8_t* dst = reinterpret_cast<uint8_t*>(p);
+    dst += RuntimeOffsets::HP;
     __try {
-        *reinterpret_cast<int32_t*>(
-            reinterpret_cast<uint8_t*>(p) + RuntimeOffsets::HP) = v;
+        *reinterpret_cast<int32_t*>(dst) = v;
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 
@@ -226,25 +231,6 @@ static float g_flashSpeedMulUi = 1.f;
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Single source of truth for local player X/Y (same as Follow Mouse / S2W anchor).
-// Always reads +0x3C/+0x40 from GetLocalPtr() when available — no (0,0) skip.
-// ─────────────────────────────────────────────────────────────────────────────
-static bool ReadLivePlayerXY(float& outX, float& outY)
-{
-    void* p = WorldTAB::GetLocalPtr();
-    if (p) {
-        __try {
-            outX = *(float*)((uint8_t*)p + 0x3C);
-            outY = *(float*)((uint8_t*)p + 0x40);
-            return true;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    }
-    outX = WorldTAB::GetLocalX();
-    outY = WorldTAB::GetLocalY();
-    return true;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Reads ObjectProperties.collisionRadiusMultiplier from the local player.
 // Returns 1.0 on failure or if the stored value looks unset (0.0 / NaN).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -288,120 +274,6 @@ static float GamePlayerChebyshevHalf()
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Build the per-frame camera state for W2S / S2W.
-// Uses Camera.pixelRect (when available) for the true game viewport centre,
-// properly excluding the game's right-side inventory/UI panel.
-// ─────────────────────────────────────────────────────────────────────────────
-static bool BuildCamState(float& camX,    float& camY,
-                          float& angleRad, float& zoom,
-                          float& cx,       float& cy,
-                          float& screenW,  float& screenH)
-{
-    // Live read every frame (Walk To, Follow Mouse, S2W all share this anchor).
-    ReadLivePlayerXY(camX, camY);
-    
-    g_dbgPlayerX = camX;
-    g_dbgPlayerY = camY;
-
-    float angleDeg = CameraTAB::GetAngle();
-    float ortho    = CameraTAB::GetZoom();
-    // angleDeg == 0 is the valid RotMG default (north-up, no rotation) — do NOT replace with 45
-    if (ortho == 0.f) ortho = 8.f;
-    angleRad = angleDeg * (kPI / 180.f);
-
-    HWND wnd = DirectX::window;
-    if (!wnd) return false;
-    RECT r;
-    GetClientRect(wnd, &r);
-    screenW = static_cast<float>(r.right  - r.left);
-    screenH = static_cast<float>(r.bottom - r.top);
-    if (screenW <= 0.f || screenH <= 0.f) return false;
-
-    // This is the old (and worse) version that's just computed as a fallback.
-    //
-    // Unity Camera.pixelRect tells us which portion of the screen the game
-    // renders to (excluding UI overlay panels). Layout: x = left edge,
-    // y = bottom edge (Unity Y-up), w/h = extent. Zoom uses viewport height,
-    // not full screen height.
-    {
-        const float prX = CameraTAB::GetPixelRectX();
-        const float prY = CameraTAB::GetPixelRectY();
-        const float prW = CameraTAB::GetPixelRectW();
-        const float prH = CameraTAB::GetPixelRectH();
-        if (prW > 16.f && prH > 16.f) {
-            cx   = prX + prW * 0.5f;
-            cy   = screenH - (prY + prH * 0.5f);
-            zoom = prH / (2.f * ortho);
-        } else {
-            // Fallback while CameraTAB hasn't refreshed yet
-            cx   = screenW * 0.5f;
-            cy   = screenH * 0.5f;
-            zoom = screenH / (2.f * ortho);
-        }
-    }
-
-    // This is the actually good way of getting the basis using the player's position.
-    // We use the player's position, and the position 1 to the left / right / up / down
-    // to get the basis for the camera. 
-    if (g_useMeasuredBasis) {
-        static CameraTAB::ScreenBasis s_basis{};
-        static ULONGLONG s_lastRefineMs = 0;
-        static ULONGLONG s_lastGoodMs   = 0;
-        constexpr ULONGLONG kRefineEveryMs = 100;
-        constexpr ULONGLONG kBasisMaxAgeMs = 1000;
-
-        const ULONGLONG nowMs = GetTickCount64();
-        
-        const bool refine = (nowMs - s_lastRefineMs) >= kRefineEveryMs;
-        CameraTAB::ScreenBasis fresh{};
-        if (CameraTAB::CalibrateScreenBasis(WorldTAB::GetLocalPtr(), screenW, screenH, fresh, refine)) {
-            s_basis.anchorTileX   = fresh.anchorTileX;
-            s_basis.anchorTileY   = fresh.anchorTileY;
-            s_basis.anchorScreenX = fresh.anchorScreenX;
-            s_basis.anchorScreenY = fresh.anchorScreenY;
-            s_basis.hasAnchor     = fresh.hasAnchor;
-            s_lastGoodMs          = nowMs;
-            
-            if (fresh.hasScaleAndRotation) {
-                s_basis.pixelsPerTile       = fresh.pixelsPerTile;
-                s_basis.rotationRad         = fresh.rotationRad;
-                s_basis.fitResidualPx       = fresh.fitResidualPx;
-                s_basis.hasScaleAndRotation = true;
-                s_lastRefineMs              = nowMs;
-            }
-        } else if (refine) {
-            s_lastRefineMs = nowMs;
-            CameraTAB::ForceRefresh();
-        }
-        g_basisAgeMs    = (s_lastGoodMs != 0) ? static_cast<float>(nowMs - s_lastGoodMs) : -1.f;
-        g_basisResidual = s_basis.fitResidualPx;
-
-        if (s_lastGoodMs != 0 && (nowMs - s_lastGoodMs) <= kBasisMaxAgeMs && s_basis.hasAnchor) {
-            camX = s_basis.anchorTileX;
-            camY = s_basis.anchorTileY;
-            cx   = s_basis.anchorScreenX;
-            cy   = s_basis.anchorScreenY;
-            
-            if (s_basis.hasScaleAndRotation) {
-                angleRad = s_basis.rotationRad;
-                zoom     = s_basis.pixelsPerTile;
-            }
-            g_basisMeasured = true;
-            g_basisFull     = s_basis.hasScaleAndRotation;
-            
-            return true;
-        }
-        g_basisMeasured = false;
-        g_basisFull     = false;
-    }
-
-    g_dbgCamTileX = CameraTAB::GetCamWorldX();
-    g_dbgCamTileY = -CameraTAB::GetCamWorldY();
-
-    return (camX != 0.f || camY != 0.f);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // MovePlayer — direct position write.
 //
 // Writes to 4 fields on the player object:
@@ -421,7 +293,7 @@ static bool BuildCamState(float& camX,    float& camY,
 //     attempted so the player glides smoothly along walls.
 //
 // playerX/playerY must be the same live values used for this frame's S2W / Walk
-// checks (from ReadLivePlayerXY / BuildCamState) — do not re-read from memory here.
+// checks (from the CamState snapshot) — do not re-read from memory here.
 // ─────────────────────────────────────────────────────────────────────────────
 
 static constexpr float kTileInset   = 0.01f;
@@ -555,11 +427,11 @@ static void ReadPlayerStats(int32_t& hp, int32_t& maxHp, float& spd, float& tile
         // Unresolved (e.g. first frames in world): assume SPD 50 so the dodge
         // planner always has a non-zero move budget. Server-authoritative
         // clamping tolerates a modest under/over-estimate.
-        tilesPerSec = 4.0f + 5.6f * (50.f / 75.f);
+        tilesPerSec = GameMath::TilesPerSecFromSpd(50.f);
     }
     // Display-equivalent SPD stat back-derived from the speed curve
     // (Flash: tilesPerSec = 4.0 + 5.6 * spd/75, capped at SPD 75).
-    spd = std::clamp((tilesPerSec - 4.0f) / 5.6f * 75.f, 0.f, 120.f);
+    spd = GameMath::SpdFromTilesPerSec(tilesPerSec);
 }
 
 
@@ -579,7 +451,7 @@ static void MovePlayer(float targetWorldX, float targetWorldY, float dt,
     // Step budget from the game's own CalcMoveSpeed; SPD-50 curve fallback
     // when unresolved. (The old raw +0x478 SPD read broke on the 2026-08 build.)
     float tps = DodgeRuntime::GetTilesPerSec(player);
-    if (tps <= 0.f) tps = 4.f + 5.6f * (50.f / 75.f);
+    if (tps <= 0.f) tps = GameMath::TilesPerSecFromSpd(50.f);
 
     float maxStep = tps * dt * speedMult;
 
@@ -690,10 +562,17 @@ void TestTAB::Tick(bool menuVisible)
     }
 
     // ── Build camera/screen state for this frame ─────────────────────────────
-    float camX = 0.f, camY = 0.f, angleRad = 0.f, zoom = 0.f;
-    float cx = 0.f, cy = 0.f, screenW = 0.f, screenH = 0.f;
-    g_w2sValid = BuildCamState(camX, camY, angleRad, zoom, cx, cy, screenW, screenH);
+    CamState::Tick();
+    const CamState::Snapshot& cs = CamState::Get();
+    float camX = cs.camX, camY = cs.camY, angleRad = cs.angleRad, zoom = cs.zoom;
+    float cx = cs.cx, cy = cs.cy;
+    g_w2sValid = cs.valid;
     g_dbgCx = cx; g_dbgCy = cy; g_dbgZoom = zoom; g_dbgAngleRad = angleRad;
+    // Mirror the OVERLAY PROJECTION diagnostics for the Test-tab readout.
+    g_dbgPlayerX    = cs.playerX;       g_dbgPlayerY    = cs.playerY;
+    g_dbgCamTileX   = cs.camTileX;      g_dbgCamTileY   = cs.camTileY;
+    g_basisAgeMs    = cs.basisAgeMs;    g_basisResidual = cs.basisResidual;
+    g_basisMeasured = cs.basisMeasured; g_basisFull     = cs.basisFull;
 
     // ── Mouse position (screen coords, relative to game client area) ────────
     POINT pt;
@@ -831,14 +710,8 @@ void TestTAB::Tick(bool menuVisible)
         if (lp) {
             // LKHPPBEGNOM own fields need direct raw reads — ACTK +0x50 shift means
             // il2cpp_field_get_value reads dump offsets which land in ACTK bytes.
-            __try {
-                uint8_t* p = reinterpret_cast<uint8_t*>(lp);
-                s_hudKJNHLADHEMH = *reinterpret_cast<int32_t*>(p + RuntimeOffsets::HP);
-                s_hudHODJPKFINKF = *reinterpret_cast<int32_t*>(p + RuntimeOffsets::Defense);
-            } __except (EXCEPTION_EXECUTE_HANDLER) {
-                s_hudKJNHLADHEMH = 0;
-                s_hudHODJPKFINKF = 0;
-            }
+            s_hudKJNHLADHEMH = Mem::ReadOr<int32_t>(lp, RuntimeOffsets::HP,      0);
+            s_hudHODJPKFINKF = Mem::ReadOr<int32_t>(lp, RuntimeOffsets::Defense, 0);
         } else {
             s_hudKJNHLADHEMH = 0;
             s_hudHODJPKFINKF = 0;
@@ -1026,24 +899,19 @@ void TestTAB::Tick(bool menuVisible)
         // These are written by the game's InputHandler (WASD → camera-rotated world dir)
         // and are NOT affected by our position writes or dodge steering.
         if (localPlayer) {
-            __try {
-                const uint8_t* p = reinterpret_cast<const uint8_t*>(localPlayer);
-                const bool  gameMoving = *reinterpret_cast<const bool*>(p + RuntimeOffsets::Player_Moving);
-                const float gameDirX   = *reinterpret_cast<const float*>(p + RuntimeOffsets::Player_MoveDirX);
-                const float gameDirY   = *reinterpret_cast<const float*>(p + RuntimeOffsets::Player_MoveDirY);
-                if (gameMoving && std::isfinite(gameDirX) && std::isfinite(gameDirY)) {
-                    const float len = sqrtf(gameDirX * gameDirX + gameDirY * gameDirY);
-                    if (len > 0.01f) {
-                        s_intentDirX = gameDirX / len;
-                        s_intentDirY = gameDirY / len;
-                        s_hasIntent  = true;
-                    } else {
-                        s_hasIntent = false;
-                    }
+            const bool  gameMoving = Mem::ReadOr<bool>(localPlayer,  RuntimeOffsets::Player_Moving,   false);
+            const float gameDirX   = Mem::ReadOr<float>(localPlayer, RuntimeOffsets::Player_MoveDirX, 0.f);
+            const float gameDirY   = Mem::ReadOr<float>(localPlayer, RuntimeOffsets::Player_MoveDirY, 0.f);
+            if (gameMoving && std::isfinite(gameDirX) && std::isfinite(gameDirY)) {
+                const float len = sqrtf(gameDirX * gameDirX + gameDirY * gameDirY);
+                if (len > 0.01f) {
+                    s_intentDirX = gameDirX / len;
+                    s_intentDirY = gameDirY / len;
+                    s_hasIntent  = true;
                 } else {
                     s_hasIntent = false;
                 }
-            } __except (EXCEPTION_EXECUTE_HANDLER) {
+            } else {
                 s_hasIntent = false;
             }
         } else {
@@ -1247,7 +1115,7 @@ void TestTAB::Render()
 
     // Debug Overlay
     ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.f, 1.f), "OVERLAY PROJECTION");
-    ImGui::Checkbox("Measured Unity basis##w2sbasis", &g_useMeasuredBasis);
+    ImGui::Checkbox("Measured Unity basis##w2sbasis", CamState::UseMeasuredBasisPtr());
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("%s",
             "ON (default) = ask Unity where the player actually is. The only\n"

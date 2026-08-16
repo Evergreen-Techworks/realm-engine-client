@@ -3,6 +3,10 @@
 #include "Il2CppResolver.h"
 #include "GameState.h"
 #include "RuntimeOffsets.h"
+#include "MemRead.h"
+#include "Il2CppContainers.h"
+#include "game/objects/GameObjects.h"
+#include "Il2CppHook.h"
 #include "DbgFileLog.h"
 #include "BootGate.h"
 #include "minhook/MinHook.h"
@@ -142,88 +146,49 @@ static std::atomic<uint32_t> g_DbgFhohSkipOriginLogs{ 0 };
 static std::atomic<uint32_t> g_DbgFhohSehOnce{ 0 };
 static std::atomic<uint32_t> g_DbgExplLogs{ 0 };
 
-static inline bool AddrOk(const void* p)
-{
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000 && a < 0x7FFFFFFFFFFFULL;
-}
-
 static bool TryReadAnchorXY(void* anchor, float& outX, float& outY)
 {
-    if (!AddrOk(anchor)) return false;
-    __try {
-        uint8_t* p = reinterpret_cast<uint8_t*>(anchor);
-        const uint32_t ox = RuntimeOffsets::PosX;
-        const uint32_t oy = RuntimeOffsets::PosY;
-        float x = *reinterpret_cast<float*>(p + ox);
-        float y = *reinterpret_cast<float*>(p + oy);
-        if (x != x || y != y) return false;
-        outX = x;
-        outY = y;
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    float x, y;
+    if (!Mem::TryRead(anchor, RuntimeOffsets::PosX, x)) return false;
+    if (!Mem::TryRead(anchor, RuntimeOffsets::PosY, y)) return false;
+    if (x != x || y != y) return false;
+    outX = x;
+    outY = y;
+    return true;
 }
 
-// SEH must live in functions without C++ unwinding (MSVC C2712). Keep only raw reads here.
 static bool TryReadCeeDistanceUnsafe(void* ep, float& outDist)
 {
-    if (!AddrOk(ep)) return false;
-    __try {
-        outDist = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(ep) + RuntimeOffsets::Cee_Distance);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    return Mem::TryRead(ep, RuntimeOffsets::Cee_Distance, outDist);
 }
 
 static bool TryReadCeeSpeedUnsafe(void* ep, float& outSpeed)
 {
-    if (!AddrOk(ep)) return false;
-    __try {
-        outSpeed = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(ep) + RuntimeOffsets::Cee_Speed);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    return Mem::TryRead(ep, RuntimeOffsets::Cee_Speed, outSpeed);
 }
 
-// SEH must live in functions with no C++ unwinding (MSVC C2712). Callers may use std:: types.
 static bool TryReadGjjFromSelf(void* self, float& ox, float& oy, float& dx, float& dy,
     int32_t& durMs)
 {
-    if (!AddrOk(self)) return false;
-    __try {
-        uint8_t* base = reinterpret_cast<uint8_t*>(self);
-        ox    = *reinterpret_cast<float*>(base + RuntimeOffsets::Gjj_OriginX);
-        oy    = *reinterpret_cast<float*>(base + RuntimeOffsets::Gjj_OriginY);
-        dx    = *reinterpret_cast<float*>(base + RuntimeOffsets::Gjj_DestX);
-        dy    = *reinterpret_cast<float*>(base + RuntimeOffsets::Gjj_DestY);
-        durMs = *reinterpret_cast<int32_t*>(base + RuntimeOffsets::Gjj_DurationMs);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_OriginX,    ox))    return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_OriginY,    oy))    return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_DestX,      dx))    return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_DestY,      dy))    return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_DurationMs, durMs)) return false;
+    return true;
 }
 
-// FHOH field reader — same SEH constraint as TryReadGjjFromSelf.
+// FHOH field reader.
 // Origin (ox/oy) comes from the inherited BMO world position (RuntimeOffsets::PosX/PosY).
 static bool TryReadFhohFromSelf(void* self, float& ox, float& oy, float& dx, float& dy,
     int32_t& durMs)
 {
-    if (!AddrOk(self)) return false;
-    __try {
-        uint8_t* base = reinterpret_cast<uint8_t*>(self);
-        ox    = *reinterpret_cast<float*>(base + RuntimeOffsets::PosX);
-        oy    = *reinterpret_cast<float*>(base + RuntimeOffsets::PosY);
-        dx    = *reinterpret_cast<float*>(base + RuntimeOffsets::Fhoh_DestX);
-        dy    = *reinterpret_cast<float*>(base + RuntimeOffsets::Fhoh_DestY);
-        durMs = *reinterpret_cast<int32_t*>(base + RuntimeOffsets::Fhoh_DurationMs);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    if (!Mem::TryRead(self, RuntimeOffsets::PosX,            ox))    return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::PosY,            oy))    return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::Fhoh_DestX,      dx))    return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::Fhoh_DestY,      dy))    return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::Fhoh_DurationMs, durMs)) return false;
+    return true;
 }
 
 // Returns true if there is already an active AOE entry with dest within kDedupTolSq of (tdx,tdy).
@@ -248,15 +213,9 @@ static bool HasActiveAoeAtDest(float tdx, float tdy)
 static bool TryReadIsEnemy(void* entity, bool& outIsEnemy)
 {
     outIsEnemy = false;
-    if (!AddrOk(entity)) return false;
-    __try {
-        void* props = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(entity) + RuntimeOffsets::ObjProps);
-        if (!AddrOk(props)) return false;
-        outIsEnemy = *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(props) + RuntimeOffsets::OP_IsEnemy);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    void* props = Game::Entity(entity).Props();
+    if (!props) return false;
+    return Mem::TryRead(props, RuntimeOffsets::OP_IsEnemy, outIsEnemy);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -265,72 +224,30 @@ static bool TryReadIsEnemy(void* entity, bool& outIsEnemy)
 // Returns: 0 = no entity found at position (unresolved)
 //          1 = entity found, isEnemy=true  (enemy throwable)
 //          2 = entity found, isEnemy=false (friendly throwable)
-//
-// SEH-safe: all pointer chasing is inside __try. No C++ objects with dtors.
-// ─────────────────────────────────────────────────────────────────────────────
-// IL2CPP Dictionary<int,T> layout constants (same as WorldTAB.cpp)
-static constexpr uint32_t kDict_Entries    = 0x18;
-static constexpr uint32_t kDict_Count      = 0x20;
-static constexpr uint32_t kArr_MaxLen      = 0x18;
-static constexpr uint32_t kArr_Data        = 0x20;
-static constexpr uint32_t kEntrySize       = 24;
-static constexpr uint32_t kEntry_Hash      = 0;
-static constexpr uint32_t kEntry_Value     = 16;
-static constexpr uint32_t kEntry_Key       = 8;   // Dictionary<int,T> key field (int32)
-
 static int FindOwnerIsEnemyAtPos(float targetX, float targetY)
 {
-    void* wm = GameState::GetWorldMgr();
-    if (!AddrOk(wm)) return 0;
-    __try {
-        void* dictPtr = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(wm) + RuntimeOffsets::WM_AllDict);
-        if (!AddrOk(dictPtr)) return 0;
+    void* dictPtr = Mem::ReadPtr(GameState::GetWorldMgr(), RuntimeOffsets::WM_AllDict);
+    const float kTol = 0.5f;          // half-tile tolerance
+    int result = 0;                   // 0=unresolved, 1=enemy, 2=friendly
+    Il2CppC::WalkDict(dictPtr, 4096, [&](int32_t /*key*/, void* entity) {
+        if (result != 0) return;      // first match at throw origin wins
+        Game::Entity e(entity);
+        if (!e.Ok()) return;
 
-        void* entriesArr = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(dictPtr) + kDict_Entries);
-        int32_t count = *reinterpret_cast<int32_t*>(
-            reinterpret_cast<uint8_t*>(dictPtr) + kDict_Count);
-        if (!AddrOk(entriesArr)) return 0;
+        float dx = e.X() - targetX;
+        float dy = e.Y() - targetY;
+        if (dx * dx + dy * dy > kTol * kTol) return;
 
-        int32_t maxLen = *reinterpret_cast<int32_t*>(
-            reinterpret_cast<uint8_t*>(entriesArr) + kArr_MaxLen);
-        if (maxLen <= 0 || maxLen > 65536) maxLen = 4096;
-        if (count  <= 0 || count  > maxLen) count  = maxLen;
-
-        const uint32_t offPX = RuntimeOffsets::PosX;
-        const uint32_t offPY = RuntimeOffsets::PosY;
-        const uint32_t offOP = RuntimeOffsets::OP_IsEnemy;
-        const float kTol = 0.5f;          // half-tile tolerance
-
-        for (int32_t i = 0; i < count; ++i) {
-            const uint8_t* entry = reinterpret_cast<const uint8_t*>(entriesArr)
-                                 + kArr_Data
-                                 + static_cast<size_t>(i) * kEntrySize;
-
-            int32_t hash = *reinterpret_cast<const int32_t*>(entry + kEntry_Hash);
-            if (hash < 0) continue;
-
-            void* entity = *reinterpret_cast<void* const*>(entry + kEntry_Value);
-            if (!AddrOk(entity)) continue;
-
-            uint8_t* ep = reinterpret_cast<uint8_t*>(entity);
-            float ex = *reinterpret_cast<float*>(ep + offPX);
-            float ey = *reinterpret_cast<float*>(ep + offPY);
-
-            float dx = ex - targetX;
-            float dy = ey - targetY;
-            if (dx * dx + dy * dy > kTol * kTol) continue;
-
-            // Found entity at throw origin — check its isEnemy
-            void* props = *reinterpret_cast<void**>(ep + RuntimeOffsets::ObjProps);
-            if (!AddrOk(props)) continue;
-            bool isEn = *reinterpret_cast<bool*>(
-                reinterpret_cast<uint8_t*>(props) + offOP);
-            return isEn ? 1 : 2;   // 1=enemy, 2=friendly
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    return 0;   // unresolved
+        // Found entity at throw origin — check its isEnemy. Keep the raw isEnemy
+        // read: props-null and a faulted read both skip (result stays unresolved so
+        // a later entity can win), which Entity::IsEnemy()'s bool collapse loses.
+        void* props = e.Props();
+        if (!props) return;
+        bool isEn;
+        if (!Mem::TryRead(props, RuntimeOffsets::OP_IsEnemy, isEn)) return;
+        result = isEn ? 1 : 2;
+    });
+    return result;
 }
 
 // Walk WorldManager.allDict by key (objectId) to find an entity and check isEnemy.
@@ -339,80 +256,41 @@ static int FindOwnerIsEnemyAtPos(float targetX, float targetY)
 static int FindEntityIsEnemyById(int32_t targetId)
 {
     if (targetId <= 0) return 0;
-    void* wm = GameState::GetWorldMgr();
-    if (!AddrOk(wm)) return 0;
-    __try {
-        void* dictPtr = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(wm) + RuntimeOffsets::WM_AllDict);
-        if (!AddrOk(dictPtr)) return 0;
+    void* dictPtr = Mem::ReadPtr(GameState::GetWorldMgr(), RuntimeOffsets::WM_AllDict);
+    int result = 0;
+    Il2CppC::WalkDict(dictPtr, 4096, [&](int32_t key, void* entity) {
+        if (result != 0) return;
+        if (key != targetId) return;
+        Game::Entity e(entity);
+        if (!e.Ok()) return;
 
-        void* entriesArr = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(dictPtr) + kDict_Entries);
-        int32_t count = *reinterpret_cast<int32_t*>(
-            reinterpret_cast<uint8_t*>(dictPtr) + kDict_Count);
-        if (!AddrOk(entriesArr)) return 0;
-
-        int32_t maxLen = *reinterpret_cast<int32_t*>(
-            reinterpret_cast<uint8_t*>(entriesArr) + kArr_MaxLen);
-        if (maxLen <= 0 || maxLen > 65536) maxLen = 4096;
-        if (count  <= 0 || count  > maxLen) count  = maxLen;
-
-        const uint32_t offOP = RuntimeOffsets::OP_IsEnemy;
-
-        for (int32_t i = 0; i < count; ++i) {
-            const uint8_t* entry = reinterpret_cast<const uint8_t*>(entriesArr)
-                                 + kArr_Data
-                                 + static_cast<size_t>(i) * kEntrySize;
-
-            int32_t hash = *reinterpret_cast<const int32_t*>(entry + kEntry_Hash);
-            if (hash < 0) continue;  // empty slot
-
-            int32_t key = *reinterpret_cast<const int32_t*>(entry + kEntry_Key);
-            if (key != targetId) continue;
-
-            void* entity = *reinterpret_cast<void* const*>(entry + kEntry_Value);
-            if (!AddrOk(entity)) continue;
-
-            void* props = *reinterpret_cast<void**>(
-                reinterpret_cast<uint8_t*>(entity) + RuntimeOffsets::ObjProps);
-            if (!AddrOk(props)) continue;
-            bool isEn = *reinterpret_cast<bool*>(
-                reinterpret_cast<uint8_t*>(props) + offOP);
-            return isEn ? 1 : 2;
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    return 0;
+        void* props = e.Props();
+        if (!props) return;
+        bool isEn;
+        if (!Mem::TryRead(props, RuntimeOffsets::OP_IsEnemy, isEn)) return;
+        result = isEn ? 1 : 2;
+    });
+    return result;
 }
 
 // Read HHPOJBFICAH (objectId, BMO +0x034) from any BMO-derived object.
 static int32_t TryReadObjectId(void* base)
 {
-    if (!AddrOk(base)) return 0;
-    __try {
-        return *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(base) + RuntimeOffsets::ObjId);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0;
-    }
+    return Game::Entity(base).ObjId();
 }
 
 // SEH-safe reader for COEFCBBIBMC (ShowEffect packet) fields.
 static bool TryReadShowEffectFields(void* msg, int32_t& outType, int32_t& outObjId,
     float& outP1X, float& outP1Y, float& outP2X, float& outP2Y, float& outDur)
 {
-    if (!AddrOk(msg)) return false;
-    __try {
-        uint8_t* p = reinterpret_cast<uint8_t*>(msg);
-        outType  = *reinterpret_cast<int32_t*>(p + RuntimeOffsets::Sfx_EffectType);
-        outObjId = *reinterpret_cast<int32_t*>(p + RuntimeOffsets::Sfx_TargetObjId);
-        outP1X   = *reinterpret_cast<float*>(p + RuntimeOffsets::Sfx_Pos1X);
-        outP1Y   = *reinterpret_cast<float*>(p + RuntimeOffsets::Sfx_Pos1Y);
-        outP2X   = *reinterpret_cast<float*>(p + RuntimeOffsets::Sfx_Pos2X);
-        outP2Y   = *reinterpret_cast<float*>(p + RuntimeOffsets::Sfx_Pos2Y);
-        outDur   = *reinterpret_cast<float*>(p + RuntimeOffsets::Sfx_Duration);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_EffectType,  outType))  return false;
+    if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_TargetObjId, outObjId)) return false;
+    if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_Pos1X,       outP1X))   return false;
+    if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_Pos1Y,       outP1Y))   return false;
+    if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_Pos2X,       outP2X))   return false;
+    if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_Pos2Y,       outP2Y))   return false;
+    if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_Duration,    outDur))   return false;
+    return true;
 }
 
 static void RecordAoe(float originX, float originY,
@@ -486,7 +364,7 @@ static uint32_t          g_gjjResolvedDestOff   = 0;
 // faults into __except and returns 0. Returns the byte offset, or 0 if not found.
 static uint32_t FindVec2FieldOffset(void* self, float vx, float vy)
 {
-    if (!AddrOk(self)) return 0;
+    if (!Mem::AddrOk(self)) return 0;
     __try {
         const uint8_t* base = reinterpret_cast<const uint8_t*>(self);
         for (uint32_t off = 0x10u; off + 8u <= 0x800u; off += 4u) {
@@ -510,7 +388,7 @@ static void* __fastcall GjjKobDetour(void* self, int64_t origin, int64_t dest,
     // Self-heal the GJJ origin/dest field offsets from the method params (ground
     // truth, rename-proof). One matched throwable corrects RuntimeOffsets::Gjj_*,
     // so TryReadGjjFromSelf below reads the right place even after a BeeByte rename.
-    if (AddrOk(self) && !g_gjjFieldsResolved.load(std::memory_order_relaxed)) {
+    if (Mem::AddrOk(self) && !g_gjjFieldsResolved.load(std::memory_order_relaxed)) {
         const uint32_t olo = static_cast<uint32_t>(static_cast<uint64_t>(origin));
         const uint32_t ohi = static_cast<uint32_t>(static_cast<uint64_t>(origin) >> 32);
         const uint32_t dlo = static_cast<uint32_t>(static_cast<uint64_t>(dest));
@@ -537,7 +415,7 @@ static void* __fastcall GjjKobDetour(void* self, int64_t origin, int64_t dest,
     }
 
     // #region agent log
-    if (!AddrOk(self)) {
+    if (!Mem::AddrOk(self)) {
         const uint32_t n = g_DbgFhohBadSelfLogs.fetch_add(1, std::memory_order_relaxed);
         if (n < 5u)
             AgentLogAoe("H3", "AoeTracking.cpp:GjjKobDetour", "bad_self",
@@ -620,7 +498,7 @@ static void __fastcall FhohKobDetour(void* self, int32_t animIdx, void* colorPtr
     if (g_OrigFhohKob)
         g_OrigFhohKob(self, animIdx, colorPtr, durMs, origin, dest, method);
 
-    if (!AddrOk(self)) return;
+    if (!Mem::AddrOk(self)) return;
 
     float ox = 0.f, oy = 0.f, dx = 0.f, dy = 0.f;
     int32_t fhohDurMs = 0;
@@ -745,7 +623,7 @@ static void __fastcall ShowEffectDetour(void* self, void* msg, void* method)
     if (g_OrigShowEffect)
         g_OrigShowEffect(self, msg, method);
 
-    if (!AddrOk(msg)) return;
+    if (!Mem::AddrOk(msg)) return;
 
     int32_t effectType = 0, targetObjId = 0;
     float p1x = 0.f, p1y = 0.f, p2x = 0.f, p2y = 0.f, dur = 0.f;
@@ -838,17 +716,11 @@ static bool HookShowEffectPath()
 
     void* target = reinterpret_cast<void*>(mi->methodPointer);
     g_OrigShowEffect = nullptr;
-    if (MH_CreateHook(target, reinterpret_cast<void*>(&ShowEffectDetour),
-            reinterpret_cast<void**>(&g_OrigShowEffect)) != MH_OK) {
+    if (!Il2CppHook::InstallMinHook(target, reinterpret_cast<void*>(&ShowEffectDetour),
+            reinterpret_cast<void**>(&g_OrigShowEffect), "AoeTracking:ShowEffect")) {
         g_OrigShowEffect = nullptr;
-        AgentLogAoe("H2", "AoeTracking.cpp:HookShowEffectPath", "mh_create_fail",
+        AgentLogAoe("H2", "AoeTracking.cpp:HookShowEffectPath", "mh_install_fail",
             "{\"target\":" + std::to_string(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(target))) + "}");
-        return false;
-    }
-    if (MH_EnableHook(target) != MH_OK) {
-        MH_RemoveHook(target);
-        g_OrigShowEffect = nullptr;
-        AgentLogAoe("H2", "AoeTracking.cpp:HookShowEffectPath", "mh_enable_fail", "{}");
         return false;
     }
     g_SfxTarget = target;
@@ -905,20 +777,12 @@ static bool HookThrowablePath()
 
     void* target = reinterpret_cast<void*>(mi->methodPointer);
     g_OrigGjjKob = nullptr;
-    if (MH_CreateHook(target, reinterpret_cast<void*>(&GjjKobDetour),
-            reinterpret_cast<void**>(&g_OrigGjjKob)) != MH_OK) {
+    if (!Il2CppHook::InstallMinHook(target, reinterpret_cast<void*>(&GjjKobDetour),
+            reinterpret_cast<void**>(&g_OrigGjjKob), "AoeTracking:GjjKob")) {
         g_OrigGjjKob = nullptr;
         // #region agent log
-        AgentLogAoe("H2", "AoeTracking.cpp:HookThrowablePath", "mh_create_fail",
+        AgentLogAoe("H2", "AoeTracking.cpp:HookThrowablePath", "mh_install_fail",
             "{\"target\":" + std::to_string(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(target))) + "}");
-        // #endregion
-        return false;
-    }
-    if (MH_EnableHook(target) != MH_OK) {
-        MH_RemoveHook(target);
-        g_OrigGjjKob = nullptr;
-        // #region agent log
-        AgentLogAoe("H2", "AoeTracking.cpp:HookThrowablePath", "mh_enable_fail", "{}");
         // #endregion
         return false;
     }
@@ -940,13 +804,8 @@ static bool HookFhohPath()
 
     void* target = reinterpret_cast<void*>(mi->methodPointer);
     g_OrigFhohKob = nullptr;
-    if (MH_CreateHook(target, reinterpret_cast<void*>(&FhohKobDetour),
-            reinterpret_cast<void**>(&g_OrigFhohKob)) != MH_OK) {
-        g_OrigFhohKob = nullptr;
-        return false;
-    }
-    if (MH_EnableHook(target) != MH_OK) {
-        MH_RemoveHook(target);
+    if (!Il2CppHook::InstallMinHook(target, reinterpret_cast<void*>(&FhohKobDetour),
+            reinterpret_cast<void**>(&g_OrigFhohKob), "AoeTracking:FhohKob")) {
         g_OrigFhohKob = nullptr;
         return false;
     }
@@ -978,20 +837,12 @@ static bool HookExplosionPath()
 
     void* target = reinterpret_cast<void*>(mi->methodPointer);
     g_OrigExplSpawn = nullptr;
-    if (MH_CreateHook(target, reinterpret_cast<void*>(&ExplSpawnDetour),
-            reinterpret_cast<void**>(&g_OrigExplSpawn)) != MH_OK) {
+    if (!Il2CppHook::InstallMinHook(target, reinterpret_cast<void*>(&ExplSpawnDetour),
+            reinterpret_cast<void**>(&g_OrigExplSpawn), "AoeTracking:ExplSpawn")) {
         g_OrigExplSpawn = nullptr;
         // #region agent log
-        AgentLogAoe("H2", "AoeTracking.cpp:HookExplosionPath", "mh_create_fail",
+        AgentLogAoe("H2", "AoeTracking.cpp:HookExplosionPath", "mh_install_fail",
             "{\"target\":" + std::to_string(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(target))) + "}");
-        // #endregion
-        return false;
-    }
-    if (MH_EnableHook(target) != MH_OK) {
-        MH_RemoveHook(target);
-        g_OrigExplSpawn = nullptr;
-        // #region agent log
-        AgentLogAoe("H2", "AoeTracking.cpp:HookExplosionPath", "mh_enable_fail", "{}");
         // #endregion
         return false;
     }
@@ -1151,7 +1002,7 @@ void CopyActiveForDraw(std::vector<WorldAoe>& out)
 
         out.push_back(a);
         ++emitted;
-        if (AddrOk(a.ptr))
+        if (Mem::AddrOk(a.ptr))
             ++withPtr;
         if (a.radius > maxR)
             maxR = a.radius;

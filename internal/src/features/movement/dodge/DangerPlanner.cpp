@@ -15,6 +15,8 @@
 #include "GameState.h"
 #include "Il2CppResolver.h"
 #include "RuntimeOffsets.h"
+#include "MemRead.h"
+#include "Il2CppHook.h"
 #include "BootGate.h"
 #include "helpers.h"
 #include "AutoAim.h"
@@ -61,13 +63,8 @@ bool ReadLivePlayerPosition(void* player, float& outX, float& outY)
     outX = 0.f;
     outY = 0.f;
     if (!player) return false;
-    __try {
-        const uint8_t* lp = reinterpret_cast<const uint8_t*>(player);
-        outX = *reinterpret_cast<const float*>(lp + RuntimeOffsets::PosX);
-        outY = *reinterpret_cast<const float*>(lp + RuntimeOffsets::PosY);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    if (!Mem::TryRead(player, RuntimeOffsets::PosX, outX)) return false;
+    if (!Mem::TryRead(player, RuntimeOffsets::PosY, outY)) return false;
     return std::isfinite(outX) && std::isfinite(outY);
 }
 
@@ -857,14 +854,11 @@ void TryInstall()
         }
         s_mhInit = true;
     }
-    if (MH_CreateHook(target,
-                      reinterpret_cast<void*>(&Detour_AppEngineUpdate),
-                      reinterpret_cast<void**>(&s_origUpdate)) != MH_OK) {
-        DBG_FILE_LOG("[DangerPlanner] TryInstall: MH_CreateHook FAILED");
-        return;
-    }
-    if (MH_EnableHook(target) != MH_OK) {
-        DBG_FILE_LOG("[DangerPlanner] TryInstall: MH_EnableHook FAILED");
+    if (!Il2CppHook::InstallMinHook(target,
+                                    reinterpret_cast<void*>(&Detour_AppEngineUpdate),
+                                    reinterpret_cast<void**>(&s_origUpdate),
+                                    "DangerPlanner")) {
+        DBG_FILE_LOG("[DangerPlanner] TryInstall: hook install FAILED");
         return;
     }
 
