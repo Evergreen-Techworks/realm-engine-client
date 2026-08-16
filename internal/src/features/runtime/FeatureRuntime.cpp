@@ -19,6 +19,7 @@
 #include "AutoAim.h"
 #include "ProjNoclip.h"
 #include "Noclip.h"
+#include "NoclipHook.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/CombatTab/CombatTAB.h"
 #include "gui/tabs/CameraTAB.h"
@@ -109,6 +110,10 @@ namespace {
             FeatureState::SetPendingPlayerNoclipEnabled(enabled);
         }
         s_lastHotkeyDown = hotkeyDown;
+        // Install only while enabled: the first pass does an IL2CPP class walk +
+        // MinHook ops on the render thread, so it must not run every frame for
+        // everyone. NoclipHook::Tick throttles its own retries.
+        if (enabled) NoclipHook::Tick();
         if (enabled != s_lastEnabled) { s_lastEnabled = enabled; Noclip::SetEnabled(enabled != 0); Noclip::SetMode(enabled != 0 ? 1 : 0); }
     }
 
