@@ -14113,6 +14113,17 @@ body {
   overflow-y: auto;
 }
 
+/* Right column: fixed-height updater card on top, accounts card eats the rest. */
+.hs-right-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.hs-right-col .hs-updater-card { flex: 0 0 auto; }
+.hs-right-col .hs-accounts-col { flex: 1; }
+
 .hs-accounts-col {
   display: flex;
   flex-direction: column;

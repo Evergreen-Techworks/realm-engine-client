@@ -341,8 +341,10 @@
                 <div id="home-script-note" hidden></div>
                 <button id="home-script-browse-btn" hidden></button>
               </div>
+            </div>
 
-              <div class="hs-card">
+            <div class="hs-right-col">
+              <div class="hs-card hs-updater-card">
                 <div class="hs-card-label">Game Updater</div>
                 <div id="home-updater-status" class="hs-script-name">Checking for updates…</div>
                 <div class="hs-stats-grid">
@@ -360,20 +362,20 @@
                   <button type="button" id="home-updater-check-btn" class="hs-browse-btn">Check for updates</button>
                 </div>
               </div>
-            </div>
 
-            <div class="hs-card hs-accounts-col">
-              <div class="hs-card-hdr">
-                <span class="hs-card-label">Your Accounts</span>
-                <select id="home-accounts-sort" class="hs-sort-sel">
-                  <option value="newest">Newest</option>
-                  <option value="oldest">Oldest</option>
-                  <option value="alphabetical">A–Z</option>
-                  <option value="fame">Fame</option>
-                </select>
+              <div class="hs-card hs-accounts-col">
+                <div class="hs-card-hdr">
+                  <span class="hs-card-label">Your Accounts</span>
+                  <select id="home-accounts-sort" class="hs-sort-sel">
+                    <option value="newest">Newest</option>
+                    <option value="oldest">Oldest</option>
+                    <option value="alphabetical">A–Z</option>
+                    <option value="fame">Fame</option>
+                  </select>
+                </div>
+                <input type="search" id="hs-accounts-search" class="hs-accounts-search" placeholder="Search accounts…" autocomplete="off" spellcheck="false">
+                <div id="home-accounts-roster" class="hs-roster"></div>
               </div>
-              <input type="search" id="hs-accounts-search" class="hs-accounts-search" placeholder="Search accounts…" autocomplete="off" spellcheck="false">
-              <div id="home-accounts-roster" class="hs-roster"></div>
             </div>
 
           </div>
