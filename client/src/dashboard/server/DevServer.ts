@@ -15,6 +15,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { XMLParser } from 'fast-xml-parser';
 import { PacketInspector, type CapturedPacket } from './PacketInspector.js';
 import { PacketLab } from './PacketLab.js';
+import { GameUpdater, type GameUpdateStatus } from './GameUpdater.js';
 import type { PluginManager } from '../../plugins/PluginManager.js';
 import type { Proxy } from '../../proxy/Proxy.js';
 import type { GameWorldState } from '../../state/GameWorldState.js';
@@ -412,6 +413,10 @@ export class DevServer {
   };
   /** Parsed `spritesheet.xml` from extractor dump; invalidated when mtime changes. */
   private wikiSprites!: WikiSpriteService;
+  /** RotMG game-file updater (Deca CDN); state is broadcast as `gameUpdateStatus`. */
+  private gameUpdater!: GameUpdater;
+  /** One automatic update check per process, fired when a dashboard first connects. */
+  private autoUpdateCheckDone = false;
   private serverNames: string[] = [];
   private servers: Record<string, string> = {};
   private lastSeedToken: string | null = null;
@@ -1019,6 +1024,12 @@ export class DevServer {
       publicDir,
       () => this.getRotmgPath(),
       () => this.config.rotmgExtractorGameDataPath,
+    );
+
+    this.gameUpdater = new GameUpdater(
+      () => this.getRotmgPath(),
+      () => this.getRunningRotmgExaltProcessCount() > 0,
+      (status) => this.broadcastGameUpdateStatus(status),
     );
 
     // Packet Lab — captures undefined packets for live analysis
@@ -1828,6 +1839,13 @@ export class DevServer {
     }
   }
 
+
+  private broadcastGameUpdateStatus(status: GameUpdateStatus): void {
+    const msg = JSON.stringify({ type: 'gameUpdateStatus', status });
+    for (const client of this.wss.clients) {
+      if (client.readyState === WebSocket.OPEN) client.send(msg);
+    }
+  }
 
   private broadcastInternalState(): void {
     const msg = JSON.stringify({
@@ -3515,6 +3533,14 @@ export class DevServer {
     // Send current Packet Lab state
     ws.send(JSON.stringify({ type: 'labUpdate', unknowns: this.lab.getUnknowns() }));
 
+    // Game updater: hand over whatever we know, then run one check per process
+    // so a stale install is visible without the user asking.
+    ws.send(JSON.stringify({ type: 'gameUpdateStatus', status: this.gameUpdater.getStatus() }));
+    if (!this.autoUpdateCheckDone) {
+      this.autoUpdateCheckDone = true;
+      void this.gameUpdater.check();
+    }
+
     // Admin dev: always report logged-in with all plans active.
     ws.send(JSON.stringify({
       type: 'gemStatus',
@@ -3816,6 +3842,10 @@ export class DevServer {
               ws.send(JSON.stringify({ type: 'nearbyPlayerDebug', objectId: oid, debug: null }));
             }
           }
+        } else if (msg.type === 'checkGameUpdate') {
+          void this.gameUpdater.check();
+        } else if (msg.type === 'performGameUpdate') {
+          void this.gameUpdater.update();
         } else if (msg.type === 'updateRotmgPath') {
           const newPath = (msg.path || '').trim();
           if (newPath) {

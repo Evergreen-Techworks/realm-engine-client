@@ -743,6 +743,11 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   const rotmgPathDesc = document.getElementById('rotmg-path-desc');
   const saveRotmgPathBtn = document.getElementById('btn-save-rotmg-path');
   const resetRotmgPathBtn = document.getElementById('btn-reset-rotmg-path');
+  const updaterStatusEl = document.getElementById('home-updater-status');
+  const updaterBuildEl = document.getElementById('home-updater-build');
+  const updaterLastCheckEl = document.getElementById('home-updater-last-check');
+  const updaterCheckBtn = document.getElementById('home-updater-check-btn');
+  const updaterUpdateBtn = document.getElementById('home-updater-update-btn');
   const pluginConfigSelect = document.getElementById('setting-plugin-config-select');
   const pluginConfigNameInput = document.getElementById('setting-plugin-config-name');
   const pluginConfigStatus = document.getElementById('plugin-config-status');
@@ -3717,6 +3722,9 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
           break;
         case 'config':
           handleConfig(msg);
+          break;
+        case 'gameUpdateStatus':
+          renderGameUpdater(msg.status);
           break;
         case 'launchGameResult':
           handleLaunchResult(msg);
@@ -13939,6 +13947,66 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     rotmgPathInput.value = '';
     ws.send(JSON.stringify({ type: 'updateRotmgPath', path: '' }));
   });
+
+  // ─── Game updater (Home card) ─────────────────────────
+
+  function formatUpdateBytes(bytes) {
+    const n = Number(bytes) || 0;
+    if (n < 1024 * 1024) return Math.max(1, Math.round(n / 1024)) + ' KB';
+    const mb = n / (1024 * 1024);
+    return mb < 10 ? mb.toFixed(1) + ' MB' : Math.round(mb) + ' MB';
+  }
+
+  function renderGameUpdater(status) {
+    if (!updaterStatusEl) return;
+    const s = status || {};
+    const busy = s.state === 'checking' || s.state === 'updating';
+    const stale = Number(s.filesToUpdate) || 0;
+
+    let text;
+    if (s.state === 'checking') {
+      text = 'Checking for updates…';
+    } else if (s.state === 'updating') {
+      text = 'Downloading ' + (s.filesDone || 0) + ' / ' + stale + ' files · ' +
+        formatUpdateBytes(s.bytesDone) + ' of ' + formatUpdateBytes(s.bytesToUpdate);
+    } else if (s.error) {
+      text = s.error;
+    } else if (stale > 0) {
+      text = stale + (stale === 1 ? ' file' : ' files') + ' out of date · ' +
+        formatUpdateBytes(s.bytesToUpdate) + ' to download';
+    } else {
+      text = s.lastCheck ? 'Game is up to date' : 'Not checked yet';
+    }
+
+    updaterStatusEl.textContent = text;
+    updaterStatusEl.classList.toggle('hs-updater-error', !busy && !!s.error);
+
+    if (updaterBuildEl) updaterBuildEl.textContent = s.buildId || '--';
+    if (updaterLastCheckEl) {
+      updaterLastCheckEl.textContent = s.lastCheck
+        ? new Date(s.lastCheck).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : 'never';
+    }
+    if (updaterCheckBtn) updaterCheckBtn.disabled = busy;
+    if (updaterUpdateBtn) {
+      // Kept visible (disabled) mid-download, and after a failed run so the
+      // user can retry the remaining files without re-checking.
+      updaterUpdateBtn.hidden = stale === 0;
+      updaterUpdateBtn.disabled = busy;
+    }
+  }
+
+  function sendUpdaterCommand(type) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type }));
+  }
+
+  if (updaterCheckBtn) {
+    updaterCheckBtn.addEventListener('click', () => sendUpdaterCommand('checkGameUpdate'));
+  }
+  if (updaterUpdateBtn) {
+    updaterUpdateBtn.addEventListener('click', () => sendUpdaterCommand('performGameUpdate'));
+  }
 
 
 
