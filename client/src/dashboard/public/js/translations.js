@@ -137,7 +137,7 @@ export const TRANSLATIONS = {
       'multibox.presetTitle4': 'Kronk-style: 2 left + wide main top + bottom bar',
       'multibox.presetTitle6': 'Kronk-style: main top-right (~half), two left stacks, bottom row ×3 — like boxed multibox tools',
       'multibox.presetTitle8': 'Eight clients: wide main top-right, left ×2 stacks, bottom row ×5',
-      'tab.developer': 'Developer',
+      'tab.developer': 'DEV',
       'sidebar.balance': 'Balance', 'sidebar.plan': 'Plan', 'sidebar.account': 'Account',
       'sidebar.server': 'Server', 'sidebar.ipConnect': 'IP Connect',
       'btn.connect': 'Connect', 'btn.launch': 'Launch', 'btn.save': 'Save',
