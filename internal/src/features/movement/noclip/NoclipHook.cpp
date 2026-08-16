@@ -5,9 +5,52 @@
 #include "minhook/MinHook.h"
 
 #include <Windows.h>
+#include <array>
+#include <atomic>
 #include <cstdint>
+#include <utility>
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NoclipHook — detours Map's (HJMBOMEHGDJ) walkability predicates so the game's
+// own movement validation reports "walkable" while noclip is on.
+//
+// Which predicate actually gates player movement is not RE'd. All seven
+// bool(float,float) predicates on Map are hooked; every one bumps a call
+// counter, but only entries with `force >= 0` have their result overridden.
+// Test → PLAYER NOCLIP shows the counters, so walking into a wall identifies
+// the real gate empirically.
+// ponytail: counters instead of a blind guess. Once the winner is known, drop
+// the observe-only rows and keep the one that matters.
+// ─────────────────────────────────────────────────────────────────────────────
 
 namespace {
+
+struct Target {
+    const char* name;
+    int         force;   // -1 = count only; 0/1 = value returned while noclip is on
+};
+
+constexpr Target kTargets[] = {
+    { "PEGDEDNHEHD",  1 },
+    { "LHGGJIAKLMJ",  1 },
+    { "GIACHFPEJOC", -1 },
+    { "OKFBFBNJEBH", -1 },
+    { "HKELLOCLLCG", -1 },
+    { "IGINLFBOICF", -1 },
+    { "FNFKBDOLKDF", -1 },
+};
+constexpr int kCount = static_cast<int>(sizeof(kTargets) / sizeof(kTargets[0]));
+
+using PredFn = bool(__fastcall*)(void*, float, float, void*);
+
+static PredFn                s_orig[kCount]   = {};
+static void*                 s_target[kCount] = {};
+static bool                  s_hooked[kCount] = {};
+static std::atomic<uint32_t> s_hits[kCount]   = {};
+
+static bool     s_resolved   = false;
+static bool     s_installed  = false;
+static uint64_t s_nextTryMs  = 0;
 
 static inline bool AddrOk(const void* p)
 {
@@ -31,76 +74,57 @@ static bool EnsureIl2CppThreadAttached()
     return attached;
 }
 
-static const MethodInfo* FindMethod(Il2CppClass* klass, const char* name, int argc)
+template <int I>
+static bool __fastcall Detour(void* self, float x, float y, void* method)
 {
-    const MethodInfo* method = nullptr;
-    Resolver::Protection::safe_call([&]() {
-        method = klass ? il2cpp_class_get_method_from_name(klass, name, argc) : nullptr;
-    });
-    return method && method->methodPointer ? method : nullptr;
+    s_hits[I].fetch_add(1, std::memory_order_relaxed);
+    if (kTargets[I].force >= 0 && Noclip::ShouldBypassWalkable())
+        return kTargets[I].force != 0;
+    return s_orig[I](self, x, y, method);
 }
 
-static Il2CppClass* FindClassAny(const char* namespaze, const char* name)
+template <int... I>
+static std::array<void*, kCount> MakeDetours(std::integer_sequence<int, I...>)
 {
-    Il2CppClass* klass = nullptr;
-    Resolver::Protection::safe_call([&]() {
-        klass = Resolver::FindClass(namespaze, name);
-        if (!klass)
-            klass = Resolver::FindClassLoose(name);
-        if (!klass)
-            klass = Resolver::GetClass(namespaze, name);
-    });
-    return klass;
+    return { reinterpret_cast<void*>(&Detour<I>)... };
 }
+static const std::array<void*, kCount> s_detour =
+    MakeDetours(std::make_integer_sequence<int, kCount>{});
 
-template <typename Fn>
-static void AssignMethod(Fn& target, Il2CppClass* klass, const char* methodName)
-{
-    const MethodInfo* method = FindMethod(klass, methodName, 2);
-    if (method && AddrOk(method->methodPointer))
-        target = reinterpret_cast<Fn>(method->methodPointer);
-}
-
-static decltype(app::HJMBOMEHGDJ_PEGDEDNHEHD) s_origPegdednhehd = nullptr;
-static decltype(app::HJMBOMEHGDJ_LHGGJIAKLMJ) s_origLhggjiaklmj = nullptr;
-
-static bool s_resolved = false;
-static bool s_installed = false;
-static void* s_pegTarget = nullptr;
-static void* s_lhgTarget = nullptr;
-
-static bool dHJMBOMEHGDJ_PEGDEDNHEHD(app::HJMBOMEHGDJ* self, float x, float y, MethodInfo* method)
-{
-    if (Noclip::ShouldBypassWalkable())
-        return true;
-    return s_origPegdednhehd ? s_origPegdednhehd(self, x, y, method) : false;
-}
-
-static bool dHJMBOMEHGDJ_LHGGJIAKLMJ(app::HJMBOMEHGDJ* self, float x, float y, MethodInfo* method)
-{
-    if (Noclip::ShouldBypassWalkable())
-        return true;
-    return s_origLhggjiaklmj ? s_origLhggjiaklmj(self, x, y, method) : false;
-}
-
+// Resolving the class is a full IL2CPP metadata walk — throttle to 1 Hz so a
+// miss (not in a world yet, renamed after a patch) can't stall the render thread.
 static void ResolveTargets()
 {
     if (s_resolved)
         return;
+
+    const uint64_t now = GetTickCount64();
+    if (now < s_nextTryMs)
+        return;
+    s_nextTryMs = now + 1000;
+
     if (!EnsureIl2CppThreadAttached())
         return;
 
-    Il2CppClass* mapViewService = FindClassAny("", "HJMBOMEHGDJ");
-    if (!mapViewService)
+    Il2CppClass* map = nullptr;
+    Resolver::Protection::safe_call([&]() {
+        map = Resolver::GetClass("", "HJMBOMEHGDJ");
+    });
+    if (!map)
         return;
 
-    AssignMethod(app::HJMBOMEHGDJ_PEGDEDNHEHD, mapViewService, "PEGDEDNHEHD");
-    AssignMethod(app::HJMBOMEHGDJ_LHGGJIAKLMJ, mapViewService, "LHGGJIAKLMJ");
-
-    s_pegTarget = reinterpret_cast<void*>(app::HJMBOMEHGDJ_PEGDEDNHEHD);
-    s_lhgTarget = reinterpret_cast<void*>(app::HJMBOMEHGDJ_LHGGJIAKLMJ);
-
-    s_resolved = AddrOk(s_pegTarget) && AddrOk(s_lhgTarget);
+    int found = 0;
+    for (int i = 0; i < kCount; ++i) {
+        const MethodInfo* mi = nullptr;
+        Resolver::Protection::safe_call([&]() {
+            mi = il2cpp_class_get_method_from_name(map, kTargets[i].name, 2);
+        });
+        if (mi && AddrOk(mi->methodPointer)) {
+            s_target[i] = reinterpret_cast<void*>(mi->methodPointer);
+            ++found;
+        }
+    }
+    s_resolved = found > 0;
 }
 
 static bool EnsureMinHook()
@@ -117,6 +141,7 @@ static bool EnsureMinHook()
     return true;
 }
 
+// Per-entry install: one predicate failing to hook must not sink the others.
 static void TryInstall()
 {
     if (s_installed)
@@ -126,36 +151,25 @@ static void TryInstall()
     if (!s_resolved || !EnsureMinHook())
         return;
 
-    if (MH_CreateHook(s_pegTarget,
-            reinterpret_cast<void*>(&dHJMBOMEHGDJ_PEGDEDNHEHD),
-            reinterpret_cast<void**>(&s_origPegdednhehd)) != MH_OK)
-        return;
-
-    if (MH_EnableHook(s_pegTarget) != MH_OK) {
-        MH_RemoveHook(s_pegTarget);
-        s_origPegdednhehd = nullptr;
-        return;
+    for (int i = 0; i < kCount; ++i) {
+        if (s_hooked[i] || !s_target[i])
+            continue;
+        s_orig[i] = reinterpret_cast<PredFn>(s_target[i]);
+        if (MH_CreateHook(s_target[i], s_detour[i],
+                reinterpret_cast<void**>(&s_orig[i])) != MH_OK) {
+            s_orig[i] = nullptr;
+            s_target[i] = nullptr;
+            continue;
+        }
+        if (MH_EnableHook(s_target[i]) != MH_OK) {
+            MH_RemoveHook(s_target[i]);
+            s_orig[i] = nullptr;
+            s_target[i] = nullptr;
+            continue;
+        }
+        s_hooked[i] = true;
+        s_installed = true;
     }
-
-    if (MH_CreateHook(s_lhgTarget,
-            reinterpret_cast<void*>(&dHJMBOMEHGDJ_LHGGJIAKLMJ),
-            reinterpret_cast<void**>(&s_origLhggjiaklmj)) != MH_OK) {
-        MH_DisableHook(s_pegTarget);
-        MH_RemoveHook(s_pegTarget);
-        s_origPegdednhehd = nullptr;
-        return;
-    }
-
-    if (MH_EnableHook(s_lhgTarget) != MH_OK) {
-        MH_DisableHook(s_pegTarget);
-        MH_RemoveHook(s_pegTarget);
-        MH_RemoveHook(s_lhgTarget);
-        s_origPegdednhehd = nullptr;
-        s_origLhggjiaklmj = nullptr;
-        return;
-    }
-
-    s_installed = true;
 }
 
 } // namespace
@@ -172,31 +186,33 @@ void Uninstall()
     if (!s_installed)
         return;
 
-    if (s_lhgTarget) {
-        MH_DisableHook(s_lhgTarget);
-        MH_RemoveHook(s_lhgTarget);
-        s_lhgTarget = nullptr;
+    for (int i = kCount - 1; i >= 0; --i) {
+        if (!s_hooked[i])
+            continue;
+        MH_DisableHook(s_target[i]);
+        MH_RemoveHook(s_target[i]);
+        s_hooked[i] = false;
+        s_target[i] = nullptr;
+        s_orig[i]   = nullptr;
     }
-    if (s_pegTarget) {
-        MH_DisableHook(s_pegTarget);
-        MH_RemoveHook(s_pegTarget);
-        s_pegTarget = nullptr;
-    }
-
-    s_origPegdednhehd = nullptr;
-    s_origLhggjiaklmj = nullptr;
     s_installed = false;
 }
 
-bool IsInstalled()
-{
-    return s_installed;
-}
+bool IsInstalled() { return s_installed; }
 
 bool IsResolved()
 {
     ResolveTargets();
     return s_resolved;
+}
+
+int         Count()             { return kCount; }
+const char* TargetName(int i)   { return (i >= 0 && i < kCount) ? kTargets[i].name : ""; }
+bool        TargetHooked(int i) { return (i >= 0 && i < kCount) && s_hooked[i]; }
+bool        TargetForced(int i) { return (i >= 0 && i < kCount) && kTargets[i].force >= 0; }
+uint32_t    TargetHits(int i)
+{
+    return (i >= 0 && i < kCount) ? s_hits[i].load(std::memory_order_relaxed) : 0u;
 }
 
 } // namespace NoclipHook

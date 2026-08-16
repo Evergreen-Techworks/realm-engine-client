@@ -29,7 +29,6 @@
 #include "FeatureRuntime.h"
 #include "ChatToast.h"
 #include "HwidCapture.h"
-#include "NoclipHook.h"
 #include "keybinds.h"
 #include "gui/tabs/WorldTAB.h"
 
@@ -184,13 +183,9 @@ HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags
 	GameState::Tick();       // resolves AppMgr/WorldMgr/LocalPtr — must be first
 	HwidCapture::Tick();     // one-shot per session — calls Deca's DeviceIdHolder.GetDeviceId once IL2CPP is up, writes hwid.txt
 	LocalPlayer::Tick();     // reads stats from GameState::GetLocalPtr()
-	// DEBUG BISECT: temporarily disabled to test whether NoclipHook is the
-	// cause of "injects then freezes" on the latest build. NoclipHook::Tick's
-	// first-call path does IL2CPP class resolution + 4 MinHook ops on the
-	// render thread; if any of that hangs (IL2CPP not fully ready, hook
-	// target in a hot loop, MinHook contending), dPresent blocks → game
-	// freezes. Re-enable once the underlying issue is fixed.
-	// NoclipHook::Tick();      // drives player tileSwapInProgress flag (xdecomp noclip)
+	// NoclipHook installs from FeatureRuntime::ApplyOverrides (below), and only
+	// while player noclip is enabled — the unconditional per-frame call that used
+	// to live here re-ran a full IL2CPP metadata walk every frame and froze the game.
 	SharedMemory::Tick();    // shared mapping telemetry (pos + legacy bridges still using shared memory)
 	FeatureRuntime::ApplyOverrides(); // unified pipe-driven feature sync
 	SkinChanger::Tick();     // writes skin when ptr changes — uses GameState
