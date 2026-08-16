@@ -8,6 +8,7 @@
 #include <algorithm>
 #include "Il2CppResolver.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
 #include "SkinChanger.h"
 #include "FeatureState.h"
 #include "SkinDatabase.h"
@@ -19,21 +20,9 @@
 // LKHPPBEGNOM own fields >= dump 0x1B8 — +0x50 ACTK shift.
 // FKALGHJIADI own fields — +0x50 ACTK shift.
 
-static bool AddrValid(const void* p)
-{
-    if (!p)
-        return false;
-    MEMORY_BASIC_INFORMATION mbi{};
-    if (VirtualQuery(p, &mbi, sizeof(mbi)) == 0)
-        return false;
-    return (mbi.State == MEM_COMMIT)
-        && (mbi.Protect
-            & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_READONLY | PAGE_EXECUTE_READ));
-}
-
 static int32_t ReadInt32At(void* local, uint32_t fieldOffset)
 {
-    if (!local || !AddrValid(local))
+    if (!local || !Mem::PageReadable(local))
         return 0;
     int32_t v = 0;
     __try {
@@ -46,7 +35,7 @@ static int32_t ReadInt32At(void* local, uint32_t fieldOffset)
 
 static void WriteInt32At(void* local, uint32_t fieldOffset, int32_t v)
 {
-    if (!local || !AddrValid(local))
+    if (!local || !Mem::PageReadable(local))
         return;
     __try {
         *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(local) + fieldOffset) = v;
@@ -99,7 +88,7 @@ namespace VisualsTAB {
 void Tick(bool /*menuVisible*/)
 {
     void* lp = WorldTAB::GetLocalPtr();
-    g_hadLocalLastTick = (lp != nullptr && AddrValid(lp));
+    g_hadLocalLastTick = (lp != nullptr && Mem::PageReadable(lp));
 
     if (g_hadLocalLastTick) {
         g_kjnhlLastRead    = ReadInt32At(lp, RuntimeOffsets::MaxHP);
@@ -115,7 +104,7 @@ void Tick(bool /*menuVisible*/)
 void Render()
 {
     void* lp = WorldTAB::GetLocalPtr();
-    const bool haveLocal = (lp != nullptr && AddrValid(lp));
+    const bool haveLocal = (lp != nullptr && Mem::PageReadable(lp));
 
     ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.f, 1.f), "Max HP (NCBIICBDGAG)");
     ImGui::TextWrapped(

@@ -95,6 +95,20 @@ to by their subpath (e.g. `#include "core/runtime/RuntimeOffsets.h"`,
 `#include "gui/tabs/PlayerTAB.h"`). PCH is `src/core/il2cpp/pch-il2cpp.h`
 (built by `pch-il2cpp.cpp`).
 
+**Raw access is forbidden in `features/` and `gui/`.** Read game memory through
+`Mem::` (`core/runtime/MemRead.h` — the one SEH-safe pointer-check + typed
+offset read), walk .NET containers through `Il2CppC::`
+(`core/il2cpp/Il2CppContainers.h`), install method hooks through `Il2CppHook::`
+(`platform/hooks/Il2CppHook.h`), and prefer the typed `Game::` object views
+(`game/objects/`) over pairing a raw pointer with a raw offset. Do **not**
+re-introduce a local `AddrOk`/`AddrValid` copy, an open-coded
+`reinterpret_cast<…>(ptr + RuntimeOffsets::…)` read, a private dict/array
+layout constant, or a bare `MH_CreateHook` in feature/GUI code — those belong
+only to the sanctioned homes above. `internal/tools/check-raw-access.sh`
+(and its `.ps1` mirror, run by `build-and-test.bat`) is the ratchet that
+enforces this; a genuinely necessary hot-loop raw read may stay only with a
+same-line `raw-access-ok` comment explaining why.
+
 ## Startup flow
 
 ```

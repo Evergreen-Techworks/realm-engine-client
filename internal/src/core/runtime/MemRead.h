@@ -13,6 +13,21 @@ namespace Mem {
         return a > 0x10000 && a < 0x7FFFFFFFFFFFULL;
     }
 
+    // Page-protection validity check via VirtualQuery — stricter and costlier
+    // than AddrOk (an actual committed, readable/writable page rather than a
+    // numeric-range guess). Use only where the extra syscall is warranted (e.g.
+    // validating a hand-walked local pointer before an SEH read); AddrOk is the
+    // hot-path default. Relies on <windows.h> from the PCH.
+    inline bool PageReadable(const void* p) {
+        if (!p) return false;
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (VirtualQuery(p, &mbi, sizeof(mbi)) == 0)
+            return false;
+        return (mbi.State == MEM_COMMIT)
+            && (mbi.Protect
+                & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_READONLY | PAGE_EXECUTE_READ));
+    }
+
     // SEH-safe read of a T at (base + off). Returns false and leaves `out`
     // untouched on null base or access violation.
     template<typename T>

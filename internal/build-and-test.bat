@@ -53,6 +53,12 @@ if not exist "%OUTDLL%" (
 echo(
 echo BUILD OK -^> %OUTDLL%
 
+echo(
+echo === [2.5/3] Raw-access guardrails ===
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%tools\check-raw-access.ps1"
+if errorlevel 1 ( echo GUARDRAIL FAILURE - see above & exit /b 1 )
+echo Guardrails OK - no forbidden raw access in features/ or gui/.
+
 if defined GAME_DIR (
   if exist "%GAME_DIR%\GameAssembly.dll" (
     echo Deploying version.dll to "%GAME_DIR%"
