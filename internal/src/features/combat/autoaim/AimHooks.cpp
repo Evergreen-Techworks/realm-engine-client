@@ -127,10 +127,7 @@ void __fastcall SendShotPacketDetour(void* player, void* shotData, int32_t projC
                 s_targetY.load(std::memory_order_relaxed) - py,
                 s_targetX.load(std::memory_order_relaxed) - px));
             Mem::TryWrite<float>(shotData, kOffShotAngle, newAngle);
-            __try {
-                *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(player) +
-                    RuntimeOffsets::Player_FacingAngle) = newAngle;
-            } __except (EXCEPTION_EXECUTE_HANDLER) {}
+            Mem::TryWrite<float>(player, RuntimeOffsets::Player_FacingAngle, newAngle);
         }
     }
     g_sspOrig(player, shotData, projCount, method);
