@@ -88,13 +88,7 @@ static void WriteLocalKjnhlademh(int32_t v)
 {
     void* p = LocalPlayer::GetPtr();
     if (!p) return;
-    // Mem:: is read-only; this write keeps its SEH guard. Offset arithmetic is
-    // split off the cast so it no longer reads as a raw RuntimeOffsets access.
-    uint8_t* dst = reinterpret_cast<uint8_t*>(p);
-    dst += RuntimeOffsets::HP;
-    __try {
-        *reinterpret_cast<int32_t*>(dst) = v;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    Mem::TryWrite<int32_t>(p, RuntimeOffsets::HP, v);
 }
 
 // Walk To target
@@ -241,11 +235,10 @@ static float ReadCollisionMult(void* entityPtr)
     if (!entityPtr) return 1.0f;
     __try {
         uint8_t* e = reinterpret_cast<uint8_t*>(entityPtr);
-        void* op = *reinterpret_cast<void**>(e + kOffObjProps1);
+        void* op = *reinterpret_cast<void**>(e + kOffObjProps1);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (!op) return 1.0f;
-        uintptr_t opa = reinterpret_cast<uintptr_t>(op);
-        if (opa < 0x10000 || opa > 0x7FFFFFFFFFFFULL) return 1.0f;
-        float mult = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(op) + kOffCollisionMult);
+        if (!Mem::AddrOk(op)) return 1.0f;
+        float mult = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(op) + kOffCollisionMult);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (mult != mult || mult < 0.f || mult > 20.f) return 1.0f;  // NaN / invalid
         return mult;
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -257,11 +250,10 @@ static float ReadCollisionMultAlt(void* entityPtr)
     if (!entityPtr) return 1.0f;
     __try {
         uint8_t* e = reinterpret_cast<uint8_t*>(entityPtr);
-        void* op = *reinterpret_cast<void**>(e + kOffObjProps2);
+        void* op = *reinterpret_cast<void**>(e + kOffObjProps2);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (!op) return 1.0f;
-        uintptr_t opa = reinterpret_cast<uintptr_t>(op);
-        if (opa < 0x10000 || opa > 0x7FFFFFFFFFFFULL) return 1.0f;
-        float mult = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(op) + kOffCollisionMult);
+        if (!Mem::AddrOk(op)) return 1.0f;
+        float mult = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(op) + kOffCollisionMult);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (mult != mult || mult < 0.f || mult > 20.f) return 1.0f;
         return mult;
     } __except (EXCEPTION_EXECUTE_HANDLER) {}

@@ -41,48 +41,24 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Game-specific field offsets — resolved at runtime by RuntimeOffsets::EnsureAll().
 // These aliases let the rest of this file stay unchanged.
-static const uint32_t& OFF_POS_X           = RuntimeOffsets::PosX;
-static const uint32_t& OFF_POS_Y           = RuntimeOffsets::PosY;
-static const uint32_t& OFF_HP              = RuntimeOffsets::HP;
-static const uint32_t& OFF_MAX_HP          = RuntimeOffsets::MaxHP;
 
 // WorldManager (HJMBOMEHGDJ)
-static const uint32_t& OFF_WM_ALL_DICT      = RuntimeOffsets::WM_AllDict;
-static const uint32_t& OFF_WM_MAPOBJ_DICT_A = RuntimeOffsets::WM_MapDictA;
-static const uint32_t& OFF_WM_MAPOBJ_DICT_B = RuntimeOffsets::WM_MapDictB;
-static const uint32_t& OFF_WM_KJMON_LIST    = RuntimeOffsets::WM_KjmonList;
 // NOTE: raw ints at tile 0x70/0x74 are NOT minDmg/maxDmg — 0x74 is a tick counter.
 // A4 tile recovery: a sample live BGAIOPJMHLO instance cached during the tile walk
 // (render-thread only; plain pointer store is atomic on x64).
 static void* g_sampleTilePtr = nullptr;
 
 // BGAIOPJMHLO tile instance fields:
-static const uint32_t& OFF_WM_TILE_ARR     = RuntimeOffsets::WM_TileArr;
-static const uint32_t& OFF_WM_TILE_LIST    = RuntimeOffsets::WM_TileList;
-static const uint32_t& OFF_TILE_X          = RuntimeOffsets::TileX;
-static const uint32_t& OFF_TILE_Y          = RuntimeOffsets::TileY;
-static const uint32_t& OFF_TILE_TYPE       = RuntimeOffsets::TileType;
-static const uint32_t& OFF_TILE_PROPS      = RuntimeOffsets::TileProps;
 // CMFPKCJHKKB (XmlTileProperties) string fields — non-null means condition present:
-static const uint32_t& OFF_TP_SPEED        = RuntimeOffsets::TP_Speed;
-static const uint32_t& OFF_TP_SINK         = RuntimeOffsets::TP_Sink;
-static const uint32_t& OFF_TP_NOWALK       = RuntimeOffsets::TP_NoWalk;
-static const uint32_t& OFF_TP_MINDMG       = RuntimeOffsets::TP_MinDmg;
-static const uint32_t& OFF_TP_MAXDMG       = RuntimeOffsets::TP_MaxDmg;
-static const uint32_t& OFF_TP_PUSH         = RuntimeOffsets::TP_Push;
-static const uint32_t& OFF_TP_ALPHA        = RuntimeOffsets::TP_Alpha;
-static const uint32_t& OFF_TP_SINKING      = RuntimeOffsets::TP_Sinking;
 // IL2CPP System.String / List<T> / Array / Dictionary layouts now live in
 // Il2CppC:: (core/il2cpp/Il2CppContainers.h).
 // Tile/object condition flags defined in WorldTAB.h (TCOND_*, OCOND_*)
 static constexpr uint32_t MAX_TILES         = 65536;
-static const uint32_t& OFF_WM_LOCAL         = RuntimeOffsets::WM_Local;
 
 // FKALGHJIADI / LKHPPBEGNOM player name fields — confirmed by runtime blind scan:
 // IGN (DPGEBOCBKEF @ LKHPPBEGNOM dump 0x178) is at runtime 0x178 — NO ACTK shift (below insertion point)
 // Guild name (NFJGJKLPLBA @ FKALGHJIADI dump 0x468) is at runtime 0x468 — dump offsets for FKALGHJIADI
 // own fields ARE the runtime offsets (the dump was generated from the already-patched binary).
-static const uint32_t& OFF_PLAYER_IGN       = RuntimeOffsets::PlayerIGN;
 static constexpr uint32_t OFF_PLAYER_GUILD  = 0x468;  // string NFJGJKLPLBA — guild name (empty if no guild)
 // KJMONHENJEN.FDNHINDAEHK — dict key / object id when pointer match fails vs GameState::GetLocalPtr()
 static constexpr uint32_t OFF_KJM_OBJECT_ID = 0xC0;
@@ -94,20 +70,6 @@ static constexpr uint32_t OFF_KJM_OBJECT_ID = 0xC0;
 // then int32 type @0x69C; after displayId/displayIdWithQty pointers, isEnemy @0x6D1 (live-client
 // verified; stale dump said 0x6C9 — note this collides with the dump's fullOccupy @0x6D1),
 // enemyOccupySquare @0x6D2, isStatic @0x6D3, blockProjectiles @0x6D4; protect* @0x6DC/0x6DD; flying @0x6E4
-static const uint32_t& OFF_KJM_OBJPROPS     = RuntimeOffsets::ObjProps;
-static const uint32_t& OFF_OP_ID_STR        = RuntimeOffsets::OP_IdStr;
-static const uint32_t& OFF_OP_NOCOVER       = RuntimeOffsets::OP_NoCover;
-static const uint32_t& OFF_OP_NOWALL_RPT    = RuntimeOffsets::OP_NoWallRpt;
-static const uint32_t& OFF_OP_OCCUPY_SQ     = RuntimeOffsets::OP_OccupySq;
-static const uint32_t& OFF_OP_FULL_OCC      = RuntimeOffsets::OP_FullOcc;
-static const uint32_t& OFF_OP_ENEMY_OCC     = RuntimeOffsets::OP_EnemyOcc;
-static const uint32_t& OFF_OP_IS_ENEMY      = RuntimeOffsets::OP_IsEnemy;
-static const uint32_t& OFF_OP_IS_STATIC     = RuntimeOffsets::OP_IsStatic;
-static const uint32_t& OFF_OP_BLOCK_PROJ    = RuntimeOffsets::OP_BlockProj;
-static const uint32_t& OFF_OP_PROT_GND      = RuntimeOffsets::OP_ProtGnd;
-static const uint32_t& OFF_OP_PROT_SINK     = RuntimeOffsets::OP_ProtSink;
-static const uint32_t& OFF_OP_FLYING        = RuntimeOffsets::OP_Flying;
-static const uint32_t& OFF_OP_CONNECT_T     = RuntimeOffsets::OP_ConnectT;
 // Object condition bitmask flags — defined in WorldTAB.h
 
 // WorldManager time/tick display fields
@@ -361,8 +323,8 @@ static void TryAppendHbeakFromElem(
     wp.speed = 5000.f;
     wp.damage = 0;
     wp.bulletId = 0;
-    Mem::TryRead(elem, OFF_POS_X, wp.x);
-    Mem::TryRead(elem, OFF_POS_Y, wp.y);
+    Mem::TryRead(elem, RuntimeOffsets::PosX, wp.x);
+    Mem::TryRead(elem, RuntimeOffsets::PosY, wp.y);
     wp.angle = Mem::ReadOr<float>(elem, RuntimeOffsets::Hbeak_Angle, 0.f);
 
     void* projProps = nullptr;
@@ -459,11 +421,11 @@ static void MergeProjectilePoolsFromWorldManager(void* worldMgr, std::vector<Wor
     void* dictA = nullptr;
     void* dictB = nullptr;
     void* listKj = nullptr;
-    if (Mem::TryRead(worldMgr, OFF_WM_MAPOBJ_DICT_A, dictA) && Mem::AddrOk(dictA))
+    if (Mem::TryRead(worldMgr, RuntimeOffsets::WM_MapDictA, dictA) && Mem::AddrOk(dictA))
         TryMergeProjectileDict(dictA, hbeak, offProjProps, out, seenPtrs);
-    if (Mem::TryRead(worldMgr, OFF_WM_MAPOBJ_DICT_B, dictB) && Mem::AddrOk(dictB))
+    if (Mem::TryRead(worldMgr, RuntimeOffsets::WM_MapDictB, dictB) && Mem::AddrOk(dictB))
         TryMergeProjectileDict(dictB, hbeak, offProjProps, out, seenPtrs);
-    if (Mem::TryRead(worldMgr, OFF_WM_KJMON_LIST, listKj) && Mem::AddrOk(listKj))
+    if (Mem::TryRead(worldMgr, RuntimeOffsets::WM_KjmonList, listKj) && Mem::AddrOk(listKj))
         TryMergeKjmonProjectileList(listKj, hbeak, offProjProps, out, seenPtrs);
 }
 
@@ -528,16 +490,16 @@ static bool ReadIl2CppString(void* strPtr, char* buf, int bufLen)
 static void ReadTileProps(void* tp, WorldTile& t)
 {
     void* props = nullptr;
-    Mem::TryRead(tp, OFF_TILE_PROPS, props);
+    Mem::TryRead(tp, RuntimeOffsets::TileProps, props);
     if (!Mem::AddrOk(props)) return;
 
     void* sinkStr = nullptr, *pushStr = nullptr, *alphaStr = nullptr,
           *sinkingStr = nullptr, *nowalkStr = nullptr;
-    Mem::TryRead(props, OFF_TP_SINK,    sinkStr);
-    Mem::TryRead(props, OFF_TP_PUSH,    pushStr);
-    Mem::TryRead(props, OFF_TP_ALPHA,   alphaStr);
-    Mem::TryRead(props, OFF_TP_SINKING, sinkingStr);
-    Mem::TryRead(props, OFF_TP_NOWALK,  nowalkStr);
+    Mem::TryRead(props, RuntimeOffsets::TP_Sink,    sinkStr);
+    Mem::TryRead(props, RuntimeOffsets::TP_Push,    pushStr);
+    Mem::TryRead(props, RuntimeOffsets::TP_Alpha,   alphaStr);
+    Mem::TryRead(props, RuntimeOffsets::TP_Sinking, sinkingStr);
+    Mem::TryRead(props, RuntimeOffsets::TP_NoWalk,  nowalkStr);
 
     if (Mem::AddrOk(sinkStr))    t.conds |= TCOND_SINK;
     if (Mem::AddrOk(pushStr))    t.conds |= TCOND_PUSH;
@@ -548,7 +510,7 @@ static void ReadTileProps(void* tp, WorldTile& t)
     // Damage: parse from CMFPKCJHKKB XML strings (raw ints at 0x70/0x74 are wrong)
     {
         void* minStr = nullptr;
-        Mem::TryRead(props, OFF_TP_MINDMG, minStr);
+        Mem::TryRead(props, RuntimeOffsets::TP_MinDmg, minStr);
         if (Mem::AddrOk(minStr)) {
             char buf[32] = {};
             if (ReadIl2CppString(minStr, buf, sizeof(buf)))
@@ -557,7 +519,7 @@ static void ReadTileProps(void* tp, WorldTile& t)
     }
     {
         void* maxStr = nullptr;
-        Mem::TryRead(props, OFF_TP_MAXDMG, maxStr);
+        Mem::TryRead(props, RuntimeOffsets::TP_MaxDmg, maxStr);
         if (Mem::AddrOk(maxStr)) {
             char buf[32] = {};
             if (ReadIl2CppString(maxStr, buf, sizeof(buf)))
@@ -569,7 +531,7 @@ static void ReadTileProps(void* tp, WorldTile& t)
     // t.speed stays 0 (no modifier) if the string is absent.
     {
         void* spStr = nullptr;
-        Mem::TryRead(props, OFF_TP_SPEED, spStr);
+        Mem::TryRead(props, RuntimeOffsets::TP_Speed, spStr);
         if (Mem::AddrOk(spStr)) {
             char buf[32] = {};
             if (ReadIl2CppString(spStr, buf, sizeof(buf)))
@@ -614,13 +576,13 @@ static void DoRefresh()
     void* localPtr = GameState::GetLocalPtr();
     if (localPtr && Mem::AddrOk(localPtr)) {
         g_localPtr = localPtr;
-        Mem::TryRead(localPtr, OFF_POS_X, g_localX);
-        Mem::TryRead(localPtr, OFF_POS_Y, g_localY);
+        Mem::TryRead(localPtr, RuntimeOffsets::PosX, g_localX);
+        Mem::TryRead(localPtr, RuntimeOffsets::PosY, g_localY);
     }
 
     // ── Scan entity dict (DFALIKKKGLI @ 0xB0) ───────────────────────────────
     void* entDictPtr = nullptr;
-    Mem::TryRead(worldMgr, OFF_WM_ALL_DICT, entDictPtr);
+    Mem::TryRead(worldMgr, RuntimeOffsets::WM_AllDict, entDictPtr);
     if (!Mem::AddrOk(entDictPtr)) {
         g_status = "ERROR: Entity dict null (offset 0xB0). Not in-game?"; g_statusOk = false; return;
     }
@@ -632,10 +594,10 @@ static void DoRefresh()
         ent.objectId = key;
         ent.ptr      = value;
 
-        Mem::TryRead(value, OFF_POS_X,  ent.x);
-        Mem::TryRead(value, OFF_POS_Y,  ent.y);
-        Mem::TryRead(value, OFF_HP,     ent.hp);
-        Mem::TryRead(value, OFF_MAX_HP, ent.maxHp);
+        Mem::TryRead(value, RuntimeOffsets::PosX,  ent.x);
+        Mem::TryRead(value, RuntimeOffsets::PosY,  ent.y);
+        Mem::TryRead(value, RuntimeOffsets::HP,     ent.hp);
+        Mem::TryRead(value, RuntimeOffsets::MaxHP, ent.maxHp);
 
         RuntimeOffsets::TryReadMapObjectConditions(value, &ent.condLo, &ent.condHi);
 
@@ -660,46 +622,46 @@ static void DoRefresh()
         if (strcmp(ent.typeName, "FKALGHJIADI") == 0) {
             // IGN: DPGEBOCBKEF @ 0x178 (no ACTK shift — confirmed by blind scan)
             void* nameStr = nullptr;
-            if (Mem::TryRead(value, OFF_PLAYER_IGN, nameStr) && Mem::AddrOk(nameStr))
+            if (Mem::TryRead(value, RuntimeOffsets::PlayerIGN, nameStr) && Mem::AddrOk(nameStr))
                 ReadIl2CppString(nameStr, ent.playerName, sizeof(ent.playerName));
         }
 
         // XML object name + conditions via KJMONHENJEN.OBAKMCCDBJA @ 0x18 → ObjectProperties
         {
             void* op = nullptr;
-            if (Mem::TryRead(value, OFF_KJM_OBJPROPS, op) && Mem::AddrOk(op)) {
+            if (Mem::TryRead(value, RuntimeOffsets::ObjProps, op) && Mem::AddrOk(op)) {
                 // Name
                 void* idStr = nullptr;
-                if (Mem::TryRead(op, OFF_OP_ID_STR, idStr) && Mem::AddrOk(idStr))
+                if (Mem::TryRead(op, RuntimeOffsets::OP_IdStr, idStr) && Mem::AddrOk(idStr))
                     ReadIl2CppString(idStr, ent.objName, sizeof(ent.objName));
                 // ObjectProperties condition fields are not real XML conditions on players
                 // (FKALGHJIADI); memory may still expose flags — leave objConds blank until mapped elsewhere.
                 if (!IsPlayerClass(ent)) {
                     uint8_t b = 0;
-                    if (Mem::TryRead(op, OFF_OP_OCCUPY_SQ,  b) && b) ent.objConds |= OCOND_OCCUPY_SQ;
-                    if (Mem::TryRead(op, OFF_OP_FULL_OCC,   b) && b) ent.objConds |= OCOND_FULL_OCC;
-                    if (Mem::TryRead(op, OFF_OP_ENEMY_OCC,  b) && b) ent.objConds |= OCOND_ENEMY_OCC;
-                    if (Mem::TryRead(op, OFF_OP_IS_ENEMY,   b) && b) ent.objConds |= OCOND_IS_ENEMY;
-                    if (Mem::TryRead(op, OFF_OP_IS_STATIC,  b) && b) ent.objConds |= OCOND_STATIC;
-                    if (Mem::TryRead(op, OFF_OP_BLOCK_PROJ, b) && b) ent.objConds |= OCOND_BLOCK_PROJ;
-                    if (Mem::TryRead(op, OFF_OP_PROT_GND,   b) && b) ent.objConds |= OCOND_PROT_GND;
-                    if (Mem::TryRead(op, OFF_OP_PROT_SINK,  b) && b) ent.objConds |= OCOND_PROT_SINK;
-                    if (Mem::TryRead(op, OFF_OP_FLYING,     b) && b) ent.objConds |= OCOND_FLYING;
+                    if (Mem::TryRead(op, RuntimeOffsets::OP_OccupySq,  b) && b) ent.objConds |= OCOND_OCCUPY_SQ;
+                    if (Mem::TryRead(op, RuntimeOffsets::OP_FullOcc,   b) && b) ent.objConds |= OCOND_FULL_OCC;
+                    if (Mem::TryRead(op, RuntimeOffsets::OP_EnemyOcc,  b) && b) ent.objConds |= OCOND_ENEMY_OCC;
+                    if (Mem::TryRead(op, RuntimeOffsets::OP_IsEnemy,   b) && b) ent.objConds |= OCOND_IS_ENEMY;
+                    if (Mem::TryRead(op, RuntimeOffsets::OP_IsStatic,  b) && b) ent.objConds |= OCOND_STATIC;
+                    if (Mem::TryRead(op, RuntimeOffsets::OP_BlockProj, b) && b) ent.objConds |= OCOND_BLOCK_PROJ;
+                    if (Mem::TryRead(op, RuntimeOffsets::OP_ProtGnd,   b) && b) ent.objConds |= OCOND_PROT_GND;
+                    if (Mem::TryRead(op, RuntimeOffsets::OP_ProtSink,  b) && b) ent.objConds |= OCOND_PROT_SINK;
+                    if (Mem::TryRead(op, RuntimeOffsets::OP_Flying,     b) && b) ent.objConds |= OCOND_FLYING;
                     // String element conditions (non-null pointer = flag set)
                     void* sp = nullptr;
-                    if (Mem::TryRead(op, OFF_OP_NOCOVER,    sp) && Mem::AddrOk(sp)) ent.objConds |= OCOND_NO_COVER;
-                    if (Mem::TryRead(op, OFF_OP_NOWALL_RPT, sp) && Mem::AddrOk(sp)) ent.objConds |= OCOND_NO_WALL_RPT;
+                    if (Mem::TryRead(op, RuntimeOffsets::OP_NoCover,    sp) && Mem::AddrOk(sp)) ent.objConds |= OCOND_NO_COVER;
+                    if (Mem::TryRead(op, RuntimeOffsets::OP_NoWallRpt, sp) && Mem::AddrOk(sp)) ent.objConds |= OCOND_NO_WALL_RPT;
                     // connectType int (non-zero = Connects)
                     int32_t ct = 0;
-                    if (Mem::TryRead(op, OFF_OP_CONNECT_T,  ct) && ct != 0) ent.objConds |= OCOND_CONNECTS;
+                    if (Mem::TryRead(op, RuntimeOffsets::OP_ConnectT,  ct) && ct != 0) ent.objConds |= OCOND_CONNECTS;
                 }
             }
         }
 
         if (localPtr && value == localPtr) {
             ent.isLocal = true;
-            Mem::TryRead(value, OFF_POS_X, g_localX);
-            Mem::TryRead(value, OFF_POS_Y, g_localY);
+            Mem::TryRead(value, RuntimeOffsets::PosX, g_localX);
+            Mem::TryRead(value, RuntimeOffsets::PosY, g_localY);
             ProjectileTracking::SetLocalPlayerObjectId(key);
         }
 
@@ -721,8 +683,8 @@ static void DoRefresh()
     // H-D: int tileX/Y @ tile+0x38/0x3C are integer grid coords
     void* tileArrPtr  = nullptr;
     void* tileListPtr = nullptr;
-    Mem::TryRead(worldMgr, OFF_WM_TILE_ARR,  tileArrPtr);
-    Mem::TryRead(worldMgr, OFF_WM_TILE_LIST, tileListPtr);
+    Mem::TryRead(worldMgr, RuntimeOffsets::WM_TileArr,  tileArrPtr);
+    Mem::TryRead(worldMgr, RuntimeOffsets::WM_TileList, tileListPtr);
 
     int32_t arrLen    = 0;
     int32_t listSize  = 0;
@@ -751,9 +713,9 @@ static void DoRefresh()
             WorldTile t;
             t.ptr = tp;
             g_sampleTilePtr = tp;   // A4: any valid tile instance (ptr is good regardless of offset staleness)
-            Mem::TryRead(tp, OFF_TILE_X,    t.tileX);
-            Mem::TryRead(tp, OFF_TILE_Y,    t.tileY);
-            Mem::TryRead(tp, OFF_TILE_TYPE, t.tileType);
+            Mem::TryRead(tp, RuntimeOffsets::TileX,    t.tileX);
+            Mem::TryRead(tp, RuntimeOffsets::TileY,    t.tileY);
+            Mem::TryRead(tp, RuntimeOffsets::TileType, t.tileType);
             if (t.tileType == TILE_VOID) continue;   // skip void/unset slots
             ReadTileProps(tp, t);
             
@@ -767,8 +729,8 @@ static void DoRefresh()
             {
                 void* op = nullptr;
                 void* idStr = nullptr;
-                if (Mem::TryRead(tp, OFF_KJM_OBJPROPS, op) && Mem::AddrOk(op) &&
-                    Mem::TryRead(op, OFF_OP_ID_STR, idStr) && Mem::AddrOk(idStr))
+                if (Mem::TryRead(tp, RuntimeOffsets::ObjProps, op) && Mem::AddrOk(op) &&
+                    Mem::TryRead(op, RuntimeOffsets::OP_IdStr, idStr) && Mem::AddrOk(idStr))
                     ReadIl2CppString(idStr, t.tileName, sizeof(t.tileName));
             }
             g_tiles.push_back(t);
@@ -789,7 +751,7 @@ static void DoRefresh()
     snprintf(buf, sizeof(buf),
         "Objects: %zu  |  Tiles: %zu  |  Projectiles: %zu (ring %d)  |  WM dict+0x%X list+0x%X + hook",
         g_entities.size(), g_tiles.size(), g_projectiles.size(),
-        ProjectileTracking::CountValidForDiagnostics(), OFF_WM_MAPOBJ_DICT_A, OFF_WM_KJMON_LIST);
+        ProjectileTracking::CountValidForDiagnostics(), RuntimeOffsets::WM_MapDictA, RuntimeOffsets::WM_KjmonList);
     g_status   = buf;
     g_statusOk = true;
 }
@@ -1523,8 +1485,8 @@ static void DrawProjectileTable(const std::vector<const WorldProjectile*>& shown
         if (p->ptr && Mem::AddrOk(p->ptr)) {
             __try {
                 uint8_t* pi = reinterpret_cast<uint8_t*>(p->ptr);
-                lx = *reinterpret_cast<float*>(pi + OFF_POS_X);
-                ly = *reinterpret_cast<float*>(pi + OFF_POS_Y);
+                lx = *reinterpret_cast<float*>(pi + RuntimeOffsets::PosX);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+                ly = *reinterpret_cast<float*>(pi + RuntimeOffsets::PosY);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
             } __except (EXCEPTION_EXECUTE_HANDLER) {}
         }
 
@@ -1628,7 +1590,7 @@ void WorldTAB::Render()
             ImGui::Text("+0xF8 float = %.3f", g_wm_f8);
             ImGui::Text("+0xFC int   = %d",   g_wm_fc);
             ImGui::Text("+0x100 int  = %d",   g_wm_100);
-            ImGui::TextDisabled("Projectiles: WM dicts +0xB8/+0xC0, List +0x%X (HBEAKBIHANL) + SpawnProjectile hook.", OFF_WM_KJMON_LIST);
+            ImGui::TextDisabled("Projectiles: WM dicts +0xB8/+0xC0, List +0x%X (HBEAKBIHANL) + SpawnProjectile hook.", RuntimeOffsets::WM_KjmonList);
             ImGui::Unindent(8.f);
         }
         ImGui::Spacing();
@@ -2130,23 +2092,12 @@ static bool SehReadStringField(void* wm, uint32_t fieldOffset, char* buf, int bu
     __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
     if (!strPtr) return false;
 
-    int32_t len = 0;
-    __try { len = *reinterpret_cast<int32_t*>((uint8_t*)strPtr + 0x10); }
-    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
-    if (len <= 0 || len > 64) return false;
-
-    int copyLen = (len < bufLen - 1) ? len : bufLen - 1;
-    __try {
-        const wchar_t* chars = reinterpret_cast<const wchar_t*>((uint8_t*)strPtr + 0x14);
-        for (int i = 0; i < copyLen; i++)
-            buf[i] = (chars[i] >= 0x20 && chars[i] < 0x7F) ? (char)chars[i] : '\0';
-        buf[copyLen] = '\0';
-    } __except(EXCEPTION_EXECUTE_HANDLER) { buf[0] = '\0'; return false; }
-
-    for (int i = 0; i < copyLen; i++)
-        if (buf[i] == '\0') { buf[0] = '\0'; return false; }
-
-    return true;
+    // Route the managed-string walk through the sanctioned home (same 0x10/0x14
+    // layout constants). DIVERGENCE (plan 16): Il2CppC::ReadString does NOT reject
+    // len>64 and masks each char to 7-bit (ch & 0x7F) instead of blanking
+    // non-printables to '\0' — a superset for the display-only map-name label;
+    // pathological non-ASCII names now render as low-ASCII rather than being cut.
+    return Il2CppC::ReadString(strPtr, buf, bufLen) > 0;
 }
 
 // Probes known HJMBOMEHGDJ (WorldManager) string fields in order:
@@ -2222,7 +2173,7 @@ namespace WorldTAB {
             if (e.objectId != objectId) continue;
             if (!Mem::AddrOk(e.ptr)) return false;
             float lx = 0.f, ly = 0.f;
-            bool ok = Mem::TryRead(e.ptr, OFF_POS_X, lx) && Mem::TryRead(e.ptr, OFF_POS_Y, ly);
+            bool ok = Mem::TryRead(e.ptr, RuntimeOffsets::PosX, lx) && Mem::TryRead(e.ptr, RuntimeOffsets::PosY, ly);
             if (ok) { outX = lx; outY = ly; return true; }
             return false;
         }
@@ -2425,7 +2376,7 @@ namespace WorldTAB {
         }
 
         int best = 0;
-        for (const uint32_t off : { OFF_TP_MINDMG, OFF_TP_MAXDMG }) {
+        for (const uint32_t off : { RuntimeOffsets::TP_MinDmg, RuntimeOffsets::TP_MaxDmg }) {
             void* s = Mem::ReadPtr(props, off);
             if (!s) continue;
             char buf[32] = {};
@@ -2453,10 +2404,10 @@ namespace WorldTAB {
             if (!sq) return true;
 
             const uint8_t* p = reinterpret_cast<const uint8_t*>(sq);
-            out->dmgCached = *reinterpret_cast<const int*>(p + s_squareDamageOff);
-            out->covered   = *reinterpret_cast<const uint64_t*>(p + s_squareCoverOff) != 0;
-            out->tileType  = *reinterpret_cast<const uint16_t*>(p + OFF_TILE_TYPE);
-            out->props     = *reinterpret_cast<void* const*>(p + OFF_TILE_PROPS);
+            out->dmgCached = *reinterpret_cast<const int*>(p + s_squareDamageOff);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+            out->covered   = *reinterpret_cast<const uint64_t*>(p + s_squareCoverOff) != 0;  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+            out->tileType  = *reinterpret_cast<const uint16_t*>(p + RuntimeOffsets::TileType);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+            out->props     = *reinterpret_cast<void* const*>(p + RuntimeOffsets::TileProps);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
             return true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return false;

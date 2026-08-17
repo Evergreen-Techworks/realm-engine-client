@@ -6,8 +6,9 @@
 # once features/ and gui/ read memory through Mem::, walk containers through
 # Il2CppC::, install hooks through Il2CppHook::, and talk to game objects
 # through Game::, new code cannot quietly re-introduce a local AddrOk copy, an
-# open-coded offset read, a private dict-layout constant, or a bare
-# MH_CreateHook. Any hit exits nonzero.
+# open-coded offset read, a private dict-layout constant, a bare MH_CreateHook,
+# an offset ALIAS that hides a raw read from check 2 (check 5), or an inline
+# copy of the AddrOk ceiling bound (check 6). Any hit exits nonzero.
 #
 # Sanctioned homes (these are WHERE the primitives live, so they are NOT in
 # scope below): core/runtime/MemRead.h, core/il2cpp/Il2CppContainers.*,
@@ -18,8 +19,9 @@
 # documented reason (e.g. a per-frame field sweep inside one shared __try whose
 # fault must abort the whole sweep — see ProjectileRuntimeReader.cpp) is
 # exempted from check 2 by putting `raw-access-ok` in a comment ON THE SAME
-# LINE. There is deliberately no whole-file exemption: every kept raw read must
-# carry its own marker so a NEW un-marked read is still caught.
+# LINE (checks 5 and 6 honor the same same-line marker). There is deliberately
+# no whole-file exemption: every kept raw read must carry its own marker so a
+# NEW un-marked read is still caught.
 #
 # Usage:  internal/tools/check-raw-access.sh   (exit 0 = clean, 1 = violation)
 set -u
@@ -58,5 +60,26 @@ check "dict layout consts" -E 'kDict_|kOffDict|OFF_DICT_|kEntryStride|kEntrySize
 # 4. Bare MinHook installs (use Il2CppHook::InstallMinHook).
 #    platform/hooks/ (the sanctioned home) is out of scope by construction.
 check "bare MH_CreateHook" -F 'MH_CreateHook' "${scope_feat[@]}"
+
+# 5. Offset aliasing — binding a local name to a RuntimeOffsets:: member by
+#    reference to hide the read site from check 2. Reading RuntimeOffsets::X
+#    directly (or passing it straight into Mem::TryRead) is fine and never needs
+#    an alias. A same-line `raw-access-ok` marker exempts the rare justified case.
+hits5="$(grep -rnE '(&|\bconst[^=]*&)[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*RuntimeOffsets::' "${scope_feat[@]}" 2>/dev/null | grep -v 'raw-access-ok')"
+if [ -n "$hits5" ]; then
+  echo "FORBIDDEN [offset aliasing]:"
+  echo "$hits5"
+  fail=1
+fi
+
+# 6. Inline AddrOk bounds — the numeric ceiling literal open-coded outside the
+#    sanctioned home (core/runtime/MemRead.h). Use Mem::AddrOk. A same-line
+#    `raw-access-ok` marker exempts the rare justified case.
+hits6="$(grep -rnF '0x7FFFFFFFFFFF' "${scope_feat[@]}" 2>/dev/null | grep -v 'raw-access-ok')"
+if [ -n "$hits6" ]; then
+  echo "FORBIDDEN [inline AddrOk bound]:"
+  echo "$hits6"
+  fail=1
+fi
 
 exit $fail

@@ -16,18 +16,6 @@
 
 namespace {
 
-// ── Offset aliases ───────────────────────────────────────────────────────────
-static const uint32_t& kOffPosX          = RuntimeOffsets::PosX;
-static const uint32_t& kOffPosY          = RuntimeOffsets::PosY;
-static const uint32_t& kOffHp            = RuntimeOffsets::HP;
-static const uint32_t& kOffMaxHp         = RuntimeOffsets::MaxHP;
-static const uint32_t& kOffObjProps      = RuntimeOffsets::ObjProps;
-static const uint32_t& kOffOpIsEnemy     = RuntimeOffsets::OP_IsEnemy;
-static const uint32_t& kOffOpNoHealthBar = RuntimeOffsets::OP_NoHealthBar;
-static const uint32_t& kOffOpInvincElem  = RuntimeOffsets::OP_InvincibleElem;
-static const uint32_t& kOffObjType       = RuntimeOffsets::ObjType;
-static const uint32_t& kOffWmDict        = RuntimeOffsets::WM_AllDict;
-
 // ── Object type lists ────────────────────────────────────────────────────────
 // Non-enemy entity types to reject outright, and whitelisted types that bypass
 // the maxHp==200 decoy heuristic. Quest/fallback tiering lives in TargetSelector.
@@ -124,9 +112,9 @@ static bool SehReadLocalKlassAndPos(void* local, float* outX, float* outY, uint6
 {
     __try {
         uint8_t* lp = reinterpret_cast<uint8_t*>(local);
-        *outX   = *reinterpret_cast<float*>(lp + kOffPosX);
-        *outY   = *reinterpret_cast<float*>(lp + kOffPosY);
-        *outKlass = *reinterpret_cast<uint64_t*>(lp);
+        *outX   = *reinterpret_cast<float*>(lp + RuntimeOffsets::PosX);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        *outY   = *reinterpret_cast<float*>(lp + RuntimeOffsets::PosY);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        *outKlass = *reinterpret_cast<uint64_t*>(lp);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
@@ -146,34 +134,34 @@ static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t loc
     __try {
         if (!entity || entity == local)
             return false;
-        if (*reinterpret_cast<uint64_t*>(entity) == localKlass)
+        if (*reinterpret_cast<uint64_t*>(entity) == localKlass)  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
             return false;
 
-        void* objProps = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(entity) + kOffObjProps);
+        void* objProps = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(entity) + RuntimeOffsets::ObjProps);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (!Mem::AddrOk(objProps))
             return false;
         uint8_t* op  = reinterpret_cast<uint8_t*>(objProps);
         uint8_t* ent = reinterpret_cast<uint8_t*>(entity);
 
-        if (!*reinterpret_cast<uint8_t*>(op + kOffOpIsEnemy))
+        if (!*reinterpret_cast<uint8_t*>(op + RuntimeOffsets::OP_IsEnemy))  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
             return false;
 
         // noHealthBar (walls/destructibles) — stored as metadata, not hard-rejected
-        const uint8_t noHB = *reinterpret_cast<uint8_t*>(op + kOffOpNoHealthBar);
+        const uint8_t noHB = *reinterpret_cast<uint8_t*>(op + RuntimeOffsets::OP_NoHealthBar);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
 
         // XML <Invincible/> — reject if InvincibleElement pointer exists (regardless of string)
-        void* invPtr = *reinterpret_cast<void**>(op + kOffOpInvincElem);
+        void* invPtr = *reinterpret_cast<void**>(op + RuntimeOffsets::OP_InvincibleElem);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (invPtr && Mem::AddrOk(invPtr))
             return false;
 
         bool isInvuln = false;
 
-        const int32_t hp    = *reinterpret_cast<int32_t*>(ent + kOffHp);
-        const int32_t maxHp = *reinterpret_cast<int32_t*>(ent + kOffMaxHp);
+        const int32_t hp    = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::HP);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        const int32_t maxHp = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::MaxHP);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (hp <= 0 || maxHp <= 0 || hp > maxHp)
             return false;
 
-        const int32_t objType = *reinterpret_cast<int32_t*>(ent + kOffObjType);
+        const int32_t objType = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::ObjType);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (!IsWhitelistedType(objType)) {
             if (maxHp == 200)
                 return false;
@@ -187,8 +175,8 @@ static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t loc
         if (condOk && (cond0 | cond1) && RuntimeOffsets::MapObjectConditionsMakeUntargetable(cond0, cond1))
             return false;
 
-        const float ex2 = *reinterpret_cast<float*>(ent + kOffPosX);
-        const float ey2 = *reinterpret_cast<float*>(ent + kOffPosY);
+        const float ex2 = *reinterpret_cast<float*>(ent + RuntimeOffsets::PosX);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        const float ey2 = *reinterpret_cast<float*>(ent + RuntimeOffsets::PosY);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (!std::isfinite(ex2) || !std::isfinite(ey2) || (ex2 == 0.f && ey2 == 0.f))
             return false;
 
@@ -236,7 +224,7 @@ void Tick()
     void* wm = GameState::GetWorldMgr();
     if (!Mem::AddrOk(wm)) return;
 
-    void* allDict = Mem::ReadPtr(wm, kOffWmDict);
+    void* allDict = Mem::ReadPtr(wm, RuntimeOffsets::WM_AllDict);
     if (!Mem::AddrOk(allDict)) return;
 
     s_snapshot.reserve(256);

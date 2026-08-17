@@ -26,13 +26,13 @@ static bool ReadPlayerTuners(void* local, float& outSpeedMul, float& outLifetime
     if (!Mem::AddrOk(local)) return false;
     __try {
         uint8_t* p = reinterpret_cast<uint8_t*>(local);
-        outSpeedMul    = *reinterpret_cast<float*>(p + kOffCharSpeedMul);
-        outLifetimeMul = *reinterpret_cast<float*>(p + kOffCharLifetimeMul);
+        outSpeedMul    = *reinterpret_cast<float*>(p + kOffCharSpeedMul);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        outLifetimeMul = *reinterpret_cast<float*>(p + kOffCharLifetimeMul);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 
     outRangeMul = 1.f;
     __try {
-        outRangeMul = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(local) + kOffCharRangeMul);
+        outRangeMul = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(local) + kOffCharRangeMul);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
 
     auto clamp1 = [](float v) { return (std::isfinite(v) && v > 0.f && v < 100.f) ? v : 1.f; };
@@ -114,7 +114,7 @@ void OnProjectileSpawn(void* projProps, void* localPlayer)
     // Read projId immediately while the pointer is hot.
     __try {
         s_profile.projId = *reinterpret_cast<int32_t*>(
-            reinterpret_cast<uint8_t*>(projProps) + kOffProjId);
+            reinterpret_cast<uint8_t*>(projProps) + kOffProjId);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         s_profile.projId = 0;
     }

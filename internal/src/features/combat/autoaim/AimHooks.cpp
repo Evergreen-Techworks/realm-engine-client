@@ -23,8 +23,6 @@ static const char* kCSAMethod     = "ELCBJAFBLJG"; // ComputeShootAngle
 static const char* kSWAMethod     = "EHGHCACPAGH"; // ShootWithAngle
 static const char* kSSPMethod     = "PMIANFBMMNN"; // SendShotPacket
 
-static const uint32_t& kOffPosX       = RuntimeOffsets::PosX;
-static const uint32_t& kOffPosY       = RuntimeOffsets::PosY;
 // shotData+0x1C is the angle field in the SHOOT packet struct
 static constexpr uint32_t kOffShotAngle = 0x1C;
 
@@ -82,8 +80,8 @@ void __fastcall ComputeShootAngleDetour(
     float px = 0.f, py = 0.f;
     __try {
         uint8_t* lp = reinterpret_cast<uint8_t*>(player);
-        px = *reinterpret_cast<float*>(lp + kOffPosX);
-        py = *reinterpret_cast<float*>(lp + kOffPosY);
+        px = *reinterpret_cast<float*>(lp + RuntimeOffsets::PosX);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        py = *reinterpret_cast<float*>(lp + RuntimeOffsets::PosY);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
     } __except (EXCEPTION_EXECUTE_HANDLER) { return; }
 
     *outAngle = ApplyWeaponTweaks(atan2f(
@@ -98,8 +96,8 @@ void __fastcall ShootWithAngleDetour(void* player, float angle, void* method)
         bool ok = false;
         __try {
             uint8_t* lp = reinterpret_cast<uint8_t*>(player);
-            px = *reinterpret_cast<float*>(lp + kOffPosX);
-            py = *reinterpret_cast<float*>(lp + kOffPosY);
+            px = *reinterpret_cast<float*>(lp + RuntimeOffsets::PosX);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+            py = *reinterpret_cast<float*>(lp + RuntimeOffsets::PosY);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
             ok = true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
         if (ok) {
@@ -120,17 +118,15 @@ void __fastcall SendShotPacketDetour(void* player, void* shotData, int32_t projC
         bool ok = false;
         __try {
             uint8_t* lp = reinterpret_cast<uint8_t*>(player);
-            px = *reinterpret_cast<float*>(lp + kOffPosX);
-            py = *reinterpret_cast<float*>(lp + kOffPosY);
+            px = *reinterpret_cast<float*>(lp + RuntimeOffsets::PosX);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+            py = *reinterpret_cast<float*>(lp + RuntimeOffsets::PosY);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
             ok = true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
         if (ok) {
             const float newAngle = ApplyWeaponTweaks(atan2f(
                 s_targetY.load(std::memory_order_relaxed) - py,
                 s_targetX.load(std::memory_order_relaxed) - px));
-            __try {
-                *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(shotData) + kOffShotAngle) = newAngle;
-            } __except (EXCEPTION_EXECUTE_HANDLER) {}
+            Mem::TryWrite<float>(shotData, kOffShotAngle, newAngle);
             __try {
                 *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(player) +
                     RuntimeOffsets::Player_FacingAngle) = newAngle;
