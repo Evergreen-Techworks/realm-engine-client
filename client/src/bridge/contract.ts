@@ -53,6 +53,8 @@ export type DllMessageType = typeof DllMessageType[keyof typeof DllMessageType];
 export const DLL_FEATURE_KEYS = [
   'autoAbilityEnabled', 'autoAbilityMpPct', 'autoAbilityWizardMode', 'autoAimEnabled',
   'autoAimIgnoreWalls', 'autoAimMode', 'autoAimPrioritizeBosses', 'autoDodgeMode',
+  'autoNexusDebugDraw', 'autoNexusEnabled', 'autoNexusPredictedTimeMs', 'autoNexusProjPredict',
+  'autoNexusTilePredict',
   'cameraAngleActive', 'cameraAngleValue', 'cameraCentered', 'cameraCenteringActive',
   'cameraZoomActive', 'cameraZoomValue', 'clientClassType', 'clientDefense',
   'clientSpeed', 'colliderEnabled', 'colliderMultiplier', 'dodgeHitScale',

@@ -31,7 +31,8 @@ export function register(ctx: PluginContext) {
   ctx.category = 'combat';
 
   function flush(forceOff = false) {
-    const mode = forceOff ? 0 : modeToIdx(ctx.getSetting<string>('dodgeMode'));
+    const off = forceOff || !ctx.enabled;
+    const mode = off ? 0 : modeToIdx(ctx.getSetting<string>('dodgeMode'));
     sendDllFeature('autoDodgeMode', mode);
   }
 

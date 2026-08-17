@@ -24,9 +24,11 @@ export type { ClientConnection } from '../src/proxy/ClientConnection.js';
 export type { Packet } from '../src/packets/Packet.js';
 export type { GameWorldState, TrackedEntity } from '../src/state/GameWorldState.js';
 export type { GameDataLoader, PlayerClassStatMaxes } from '../src/game-data/GameDataLoader.js';
+export type { DllThreat, DllGround } from '../src/bridge/DllThreatBus.js';
 
 // ── Values (core infra) ──────────────────────────────────────────────
 export { sendDllFeature } from '../src/bridge/DllFeatureBus.js'; // typed via plan 12
 export { StatType } from '../src/constants/StatType.js';
 export { ConditionEffect } from '../src/constants/ConditionEffect.js';
 export { RuntimeScheduler } from '../src/util/RuntimeScheduler.js';
+export { getDllThreats, getDllGround, getDllThreatsAgeMs } from '../src/bridge/DllThreatBus.js';

@@ -30,9 +30,20 @@ SLN="${REPO_WIN}\\il2cpp-dll-injection.sln"
 OUT="C:\\rebuild\\${CONFIG}"
 
 VSWHERE="/mnt/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
-MSBUILD="$("$VSWHERE" -latest -requires Microsoft.Component.MSBuild \
-  -find 'MSBuild\**\Bin\MSBuild.exe' | tr -d '\r')"
-MSBUILD_WSL="$(printf '%s' "$MSBUILD" | sed 's|C:|/mnt/c|; s|\\|/|g')"
+# Derive MSBuild from the install root (robust across VS version bumps, e.g. the
+# 2022 -> "18" in-place upgrade that moved the install path). The `-find` form is
+# avoided: its component metadata can go stale after an in-place upgrade and
+# return nothing.
+INSTALL_WIN="$("$VSWHERE" -latest -property installationPath | tr -d '\r')"
+INSTALL_WSL="$(printf '%s' "$INSTALL_WIN" | sed 's|^C:|/mnt/c|; s|\\|/|g')"
+MSBUILD_WSL="$INSTALL_WSL/MSBuild/Current/Bin/MSBuild.exe"
+if [[ ! -f "$MSBUILD_WSL" ]]; then
+  MSBUILD_WSL="$(find "$INSTALL_WSL/MSBuild" -name MSBuild.exe -path '*Bin*' 2>/dev/null | head -1)"
+fi
+if [[ -z "$MSBUILD_WSL" || ! -f "$MSBUILD_WSL" ]]; then
+  echo "ERROR: MSBuild.exe not found under $INSTALL_WSL (VS install moved?)." >&2
+  exit 1
+fi
 
 GEN="$(dirname "$0")/../src/game/generated/il2cpp-types.h"
 if [[ ! -f "$GEN" ]]; then

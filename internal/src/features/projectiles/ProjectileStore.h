@@ -32,6 +32,8 @@ namespace ProjectileStore {
 
     WorldProjectile StoreProjectile(bool enemyShot, const WorldProjectile& projectile);
 
+    bool RetireProjectile(const WorldProjectile& projectile);
+
     void SnapshotToWorld(std::vector<WorldProjectile>& out);
     void CopyActiveForDraw(std::vector<WorldProjectile>& out);
     void CopyActiveLocalForDraw(std::vector<WorldProjectile>& out);

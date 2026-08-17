@@ -4,6 +4,7 @@
 #include "Il2CppResolver.h"
 #include "core/runtime/MemRead.h"
 #include <mutex>
+#include <cstdio>
 #include <cstring>
 #include "FloatingTextService.h"
 
@@ -31,11 +32,26 @@ void FloatingTextService::QueuePluginText(const char* text)
 
 void FloatingTextService::ApplyPendingPluginText()
 {
-    char text[128] = {};
+    char raw[128] = {};
     {
         std::lock_guard<std::mutex> lk(s_pluginFloatingTextMutex);
         if (!s_pluginFloatingTextPending) return;
-        strncpy_s(text, sizeof(text), s_pluginFloatingText, _TRUNCATE);
+        strncpy_s(raw, sizeof(raw), s_pluginFloatingText, _TRUNCATE);
+    }
+
+    // Optional trailing "|#RRGGBB" picks the colour explicitly (noclip's
+    // socket-hold countdown ramps green -> red). Without it the old
+    // green / red-on-"Disabled" default stands. `raw` stays intact for the
+    // pending-flag compare below; `text` is what the game gets shown.
+    char text[128] = {};
+    strncpy_s(text, sizeof(text), raw, _TRUNCATE);
+    uint32_t forcedRgba = 0;
+    if (char* tag = strstr(text, "|#"); tag && strlen(tag) == 8) {
+        unsigned r = 0, g = 0, b = 0;
+        if (sscanf_s(tag + 2, "%2x%2x%2x", &r, &g, &b) == 3) {
+            forcedRgba = PackColor32(uint8_t(r), uint8_t(g), uint8_t(b));
+            *tag = '\0';
+        }
     }
 
     Il2CppClass* klass = Resolver::FindClassLoose("MapObjectUIManager");
@@ -57,7 +73,8 @@ void FloatingTextService::ApplyPendingPluginText()
     const bool off = strstr(text, "Disabled") != nullptr;
 
     UnityNullableColor32Abi col{};
-    col.hasValue = true; col.rgba = off ? PackColor32(255, 0, 25) : PackColor32(32, 220, 0);
+    col.hasValue = true;
+    col.rgba = forcedRgba ? forcedRgba : (off ? PackColor32(255, 0, 25) : PackColor32(32, 220, 0));
 
     static void* s_primedReceiver = nullptr;
     if (s_primedReceiver != receiver) {
@@ -71,6 +88,6 @@ void FloatingTextService::ApplyPendingPluginText()
     const bool ok = Resolver::Protection::safe_call([&]() { showFloatingText(receiver, app::DGKAANOAENH__Enum::Xp, ilText, col, 0.f, 0.f, 0.f, mi); });
     if (ok) {
         std::lock_guard<std::mutex> lk(s_pluginFloatingTextMutex);
-        if (strcmp(s_pluginFloatingText, text) == 0) s_pluginFloatingTextPending = false;
+        if (strcmp(s_pluginFloatingText, raw) == 0) s_pluginFloatingTextPending = false;
     }
 }

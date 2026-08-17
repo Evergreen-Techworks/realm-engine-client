@@ -525,6 +525,11 @@ void CopyActiveLocalForDraw(std::vector<WorldProjectile>& out)
     ProjectileStore::CopyActiveLocalForDraw(out);
 }
 
+bool RetireProjectile(const WorldProjectile& proj)
+{
+    return ProjectileStore::RetireProjectile(proj);
+}
+
 void ComputePosAt(const WorldProjectile& proj, float tMs, float& outX, float& outY)
 {
     const float fallbackX = outX;

@@ -1,6 +1,11 @@
 #include "pch-il2cpp.h"
 #include "GhostHit.h"
 #include "../../movement/dodge/ProjectileTracking.h"
+#include "DodgeHit.h"
+#include "DodgeGeometry.h"
+#include "XDodge.h"
+#include "RolloutDodge.h"
+#include "SpeedHack.h"
 #include "gui/tabs/WorldTAB.h"   // WorldProjectile
 #include "IpcBridge.h"
 
@@ -26,7 +31,6 @@ namespace GhostHit {
 //                  full lifetime; short enough that ids can be recycled.
 //
 constexpr float    kHitPadTiles    = 0.04f;
-constexpr float    kPlayerHalf     = 0.2139f;   // RotMG player half-hitbox
 constexpr uint64_t kSignaledTtlMs  = 2500;
 constexpr int      kPrevMapSize    = 512;
 constexpr int      kSignaledMapSize = 256;
@@ -53,15 +57,6 @@ static SignaledKey s_signaled[kSignaledMapSize];
 static std::atomic<bool> s_enabled{ true };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-static float ChebyshevHalf(const WorldProjectile& b)
-{
-    if (b.runtimeChebyshevHalf > 1e-5f && std::isfinite(b.runtimeChebyshevHalf))
-        return b.runtimeChebyshevHalf;
-    if (b.projHalfSize > 1e-6f && std::isfinite(b.projHalfSize))
-        return b.projHalfSize;
-    return 0.5f;
-}
 
 // Open-addressed lookup keyed by bulletId — collision-skip on mismatch.
 static PrevPos* PrevSlotFor(int32_t bulletId)
@@ -109,25 +104,17 @@ static void MarkSignaled(int32_t ownerId, int32_t bulletId, uint64_t nowMs)
     s_signaled[oldestIdx] = SignaledKey{ ownerId, bulletId, nowMs, true };
 }
 
-// Minimum distance from point P=(px,py) to line segment from A=(ax,ay) to
-// B=(bx,by). Standard projection-clamp implementation.
-static float MinDistPointToSegment(
-    float px, float py, float ax, float ay, float bx, float by)
-{
-    const float dx = bx - ax, dy = by - ay;
-    const float L2 = dx * dx + dy * dy;
-    float t = (L2 > 1e-9f) ? ((px - ax) * dx + (py - ay) * dy) / L2 : 0.f;
-    t = std::clamp(t, 0.f, 1.f);
-    const float cx = ax + t * dx, cy = ay + t * dy;
-    const float ddx = px - cx, ddy = py - cy;
-    return std::sqrt(ddx * ddx + ddy * ddy);
-}
-
 // ── Public API ───────────────────────────────────────────────────────────────
+
+static bool PhaseThroughPossible()
+{
+    return SpeedHack::IsActive() || XDodge::IsEnabled() || RolloutDodge::IsEnabled();
+}
 
 void Tick(void* /*player*/, float playerX, float playerY)
 {
     if (!s_enabled.load(std::memory_order_relaxed)) return;
+    if (!PhaseThroughPossible()) return;
 
     std::vector<WorldProjectile> projs;
     ProjectileTracking::CopyActiveForDraw(projs);
@@ -159,13 +146,13 @@ void Tick(void* /*player*/, float playerX, float playerY)
         // Effective hit radius — bullet's Chebyshev half + player half + pad.
         // Matches the danger-grid stamping envelope (sans the catalog
         // inflation we hard-disabled).
-        const float effHalf = ChebyshevHalf(b) + kPlayerHalf + kHitPadTiles;
+        const float effHalf = DodgeHit::EffectiveHalf(b, 1.f, kHitPadTiles);
 
         // Swept-segment-to-point distance. If the closest approach of the
         // bullet's segment to the player is inside the combined hitbox,
         // this is a hit the game's per-frame check could have missed if
         // the bullet's per-tick step exceeded the hitbox diameter.
-        const float minDist = MinDistPointToSegment(
+        const float minDist = DodgeGeometry::MinDistPointToSegment(
             playerX, playerY, prevX, prevY, curX, curY);
         if (minDist < effHalf) {
             if (!IsSignaled(b.attackerObjId, b.bulletId, nowMs)) {

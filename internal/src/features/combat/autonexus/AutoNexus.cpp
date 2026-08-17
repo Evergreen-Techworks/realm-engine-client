@@ -1,9 +1,13 @@
 #include "pch-il2cpp.h"
 #include "AutoNexus.h"
 #include "ProjectileTracking.h"
+#include "AoeTracking.h"
+#include "DodgeHit.h"
+#include "DodgeGeometry.h"
+#include "IpcBridge.h"
+#include "W2S.h"
 #include "gui/tabs/WorldTAB.h"
 #include "LocalPlayer.h"
-#include "SharedMemory.h"
 #include "RuntimeOffsets.h"
 #include "Il2CppResolver.h"
 #include "core/runtime/MemRead.h"
@@ -17,24 +21,12 @@
 namespace CombatTAB {
 namespace FeatAutoNexus {
 
-static bool  g_autoNexus    = false;
-static float g_nexusHpPct   = 30.f;
-static bool  g_nexusProjDmg = true;
-static bool  g_nexusTileDmg = true;
-
-// ── Autopot state (xrDriver-pattern: folded into AutoNexus) ──────────────
-// Two independent toggles (HP / MP) so users can run pot-only without
-// AutoNexus or AutoNexus-only without pots. Cooldowns prevent burning a
-// whole pot stack on one HP dip.
-static bool  g_autoPotHp      = false;
-static float g_autoPotHpPct   = 65.f;
-static int   g_autoPotHpHotkey = 4;     // F by default (first inv slot)
-static bool  g_autoPotMp      = false;
-static float g_autoPotMpPct   = 30.f;
-static int   g_autoPotMpHotkey = 5;     // G by default (second inv slot)
-static ULONGLONG s_lastHpPotMs = 0;
-static ULONGLONG s_lastMpPotMs = 0;
-static constexpr ULONGLONG kPotCooldownMs = 800ULL;
+// ── Settings ─────────────────────────────────────────────────────────────
+static bool  g_autoNexus     = false;
+static float g_predTimeMs    = 200.f;
+static bool  g_nexusProjDmg  = true;
+static bool  g_nexusTileDmg  = true;
+static bool  g_debugDraw     = false;
 
 // EquipmentManager.UseInventoryItemByHotkey — resolved lazily on first
 // use so the module costs nothing at startup. Cached forever once
@@ -44,54 +36,223 @@ static UseInvByHotkeyFn s_fnUseInvByHotkey = nullptr;
 static uint32_t          s_eqMgrFieldOff   = 0;   // FKALGHJIADI.AJJJBDBNBLM offset
 static bool              s_autoPotResolved = false;
 
-static ULONGLONG s_lastNexusTick     = 0;
 static ULONGLONG s_lastAutoNexusTick = 0;
 
-static constexpr float kNexusProjImminentMs    = 30.f;
-static constexpr float kNexusProjHitScanStepMs = 10.f;
 static constexpr ULONGLONG kAutoNexusPollMs = 16ULL;
 
-// ── xrDriver-style multi-source HP trackers (Phase 1) ───────────────────
-// xrDriver maintains TWO predicted HP values alongside the game's reported
-// HP, and nexuses if ANY of the three drop below threshold. This catches
-// the case where the game-reported HP is stale (server-tick lag) but the
-// client has already taken / will imminently take damage.
-//
-//   g_gameHp       = read live from LocalPlayer::GetHP()  (authoritative
-//                    but lags ~1 tick behind real damage events)
-//   g_predClientHp = decrements on EVERY predicted hit (projectile/tile/
-//                    packet). May over-predict (false-positive) when a
-//                    predicted projectile actually misses, BUT is the
-//                    earliest signal.
-//   g_predRealHp   = decrements only on hits we believe are committed
-//                    (silent=false). More conservative than predClientHp,
-//                    less stale than gameHp.
-//
-// On HP gain (heal / server resync), both trackers snap up to current
-// gameHp. This avoids permanent drift after a near-miss where we predicted
-// damage that didn't materialize. Trackers are also clamped to maxHp.
-static int32_t g_predClientHp = 0;
-static int32_t g_predRealHp   = 0;
-static int32_t g_lastGameHp   = 0;   // for rise-detection vs predicted decay
+// ── Scan geometry ────────────────────────────────────────────────────────
+static constexpr float kBroadStepMs = 50.f;
+static constexpr float kFineStepMs  = 10.f;
+static constexpr float kNexusHitPadTiles = 0.04f;
+static constexpr float kMaxHorizonMs = 1000.f;
+static constexpr float kMaxRetroWindowMs = 200.f;
 
-static void ResetPredictedHpTo(int32_t newHp, int32_t maxHp)
+static ULONGLONG s_lastScanMs   = 0;
+static float     s_prevPlayerX  = 0.f;
+static float     s_prevPlayerY  = 0.f;
+static bool      s_havePrevScan = false;
+
+// ── Player motion ────────────────────────────────────────────────────────
+struct PlayerMotion {
+    float x  = 0.f, y  = 0.f;
+    float vx = 0.f, vy = 0.f;   // tiles per millisecond
+};
+
+static constexpr float kSpdFallback = 50.f;
+
+// Movement-affecting conditions.
+//   Paralyzed / Petrified / Stasis → the player does not move at all;
+//   Slowed                         → speed is pinned at MIN_MOVE_SPEED
+//   Speedy / NinjaSpeedy           → x1.5 on top of the SPD curve.
+static constexpr float kMinTilesPerSec = 4.0f;
+static constexpr float kSpeedyMult     = 1.5f;
+
+static PlayerMotion ReadPlayerMotion(void* lp, uint64_t conds)
 {
-    if (newHp < 0)         newHp = 0;
-    if (newHp > maxHp * 2) newHp = maxHp;  // sanity cap on absurd values
-    g_predClientHp = newHp;
-    g_predRealHp   = newHp;
-    g_lastGameHp   = newHp;
+    PlayerMotion m{};
+    m.x = LocalPlayer::GetX();
+    m.y = LocalPlayer::GetY();
+    if (!lp) return m;
+
+    using CE = RuntimeOffsets::ConditionEffects;
+    if (RuntimeOffsets::HasCondition(conds, CE::Paralyzed) ||
+        RuntimeOffsets::HasCondition(conds, CE::Petrified) ||
+        RuntimeOffsets::HasCondition(conds, CE::Stasis))
+        return m;
+
+    // Each field read is individually SEH-safe via Mem::ReadOr; a bad page
+    // falls each back to its default. On such a fault `moving` becomes false,
+    // and the !moving guard below returns `m` — the same outcome the old shared
+    // __try produced when it aborted the whole read.
+    const bool  moving = Mem::ReadOr<bool>(lp, RuntimeOffsets::Player_Moving, false);
+    const float dirX   = Mem::ReadOr<float>(lp, RuntimeOffsets::Player_MoveDirX, 0.f);
+    const float dirY   = Mem::ReadOr<float>(lp, RuntimeOffsets::Player_MoveDirY, 0.f);
+    float spd = kSpdFallback;
+    const float s = Mem::ReadOr<float>(lp, RuntimeOffsets::Player_Spd, kSpdFallback);
+    if (std::isfinite(s) && s > 0.f && s <= 120.f) spd = s;
+
+    if (!moving || !std::isfinite(dirX) || !std::isfinite(dirY)) return m;
+    const float len = std::sqrt(dirX * dirX + dirY * dirY);
+    if (!(len > 0.01f)) return m;
+
+    // Flash caps speed scaling at SPD=75; stats above that give no extra
+    // movement (same clamp TestTAB::ReadPlayerStats applies).
+    const float effSpd      = (spd > 75.f) ? 75.f : spd;
+    float tilesPerSec = kMinTilesPerSec + 5.6f * (effSpd / 75.0f);
+    if (RuntimeOffsets::HasCondition(conds, CE::Slowed)) {
+        tilesPerSec = kMinTilesPerSec;                 // pinned, not scaled
+    } else if (RuntimeOffsets::HasCondition(conds, CE::Speedy) ||
+               RuntimeOffsets::HasCondition(conds, CE::NinjaSpeedy)) {
+        tilesPerSec *= kSpeedyMult;
+    }
+    const float perMs       = tilesPerSec / 1000.f;
+    m.vx = (dirX / len) * perMs;
+    m.vy = (dirY / len) * perMs;
+    return m;
 }
 
-// xrDriver mirror: drop dmg from one or both trackers and immediately
-// check the multi-source nexus condition. Returns true if Nexus fired.
-//
-//   silent=true:  decrement clientHp only (e.g. our projectile-imminent
-//                 scan — predicted, not yet confirmed)
-//   silent=false: decrement both (e.g. tile-damage on the player's tile —
-//                 essentially guaranteed)
-static bool SubtractDamage(int32_t dmg, int32_t gameHp, int32_t maxHp, float thresholdPct,
-                           const char* /*source*/, bool silent);
+// ── Observed velocity ────────────────────────────────────────────────────
+static constexpr float kObsMinDtMs        = 8.f;   // below this, dt noise dominates
+static constexpr float kObsMaxTilesPerSec = 20.f;  // hard cap on a believable speed
+static constexpr float kObsTeleportTiles  = 4.f;   // portal / map change / position write
+static constexpr float kObsSmoothing      = 0.35f;
+
+struct ObservedMotion {
+    bool          seeded = false;
+    float         px = 0.f, py = 0.f;
+    LARGE_INTEGER at{};
+    float         vx = 0.f, vy = 0.f;
+};
+static ObservedMotion s_obs;
+
+static void ObserveVelocity(float x, float y, float& outVx, float& outVy)
+{
+    LARGE_INTEGER freq{}, now{};
+    if (!QueryPerformanceFrequency(&freq) || freq.QuadPart == 0 ||
+        !QueryPerformanceCounter(&now)) { outVx = 0.f; outVy = 0.f; return; }
+
+    if (!s_obs.seeded) {
+        s_obs = ObservedMotion{};
+        s_obs.seeded = true;
+        s_obs.px = x; s_obs.py = y; s_obs.at = now;
+        outVx = 0.f; outVy = 0.f;
+        return;
+    }
+
+    const double dtMs = static_cast<double>(now.QuadPart - s_obs.at.QuadPart)
+                      * 1000.0 / static_cast<double>(freq.QuadPart);
+    if (dtMs < kObsMinDtMs)
+    {
+        outVx = s_obs.vx; outVy = s_obs.vy; return;
+    }
+
+    const float dx = x - s_obs.px;
+    const float dy = y - s_obs.py;
+    s_obs.px = x; s_obs.py = y; s_obs.at = now;
+
+    if (std::sqrt(dx * dx + dy * dy) > kObsTeleportTiles) {
+        s_obs.vx = 0.f; s_obs.vy = 0.f;
+        outVx = 0.f; outVy = 0.f;
+        return;
+    }
+
+    float rawVx = dx / static_cast<float>(dtMs);
+    float rawVy = dy / static_cast<float>(dtMs);
+    const float speed = std::sqrt(rawVx * rawVx + rawVy * rawVy);
+    const float cap   = kObsMaxTilesPerSec / 1000.f;
+    if (speed > cap && speed > 0.f) { rawVx *= cap / speed; rawVy *= cap / speed; }
+
+    s_obs.vx += kObsSmoothing * (rawVx - s_obs.vx);
+    s_obs.vy += kObsSmoothing * (rawVy - s_obs.vy);
+    outVx = s_obs.vx;
+    outVy = s_obs.vy;
+}
+
+// ── Threat list ──────────────────────────────────────────────────────────
+struct Threat {
+    int32_t attackerObjId = 0;
+    int32_t bulletId      = 0;
+    float   tHitMs        = 0.f;
+    int32_t rawDamage     = 0;
+    bool    armorPiercing = false;
+};
+
+// ── Debug path capture ───────────────────────────────────────────────────
+static constexpr int kMaxVizProjs   = 96;
+static constexpr int kVizSamples    = 32;
+static float g_vizX[kMaxVizProjs * kVizSamples];
+static float g_vizY[kMaxVizProjs * kVizSamples];
+static int   g_vizLen[kMaxVizProjs]  = { 0 };
+static bool  g_vizHit[kMaxVizProjs]  = { false };
+static int   g_vizCount = 0;
+
+// ── Predicted-player / ground-sample viz ─────────────────────────────────
+static constexpr int kMaxGroundVizTiles = 48;
+static int   g_gvTileX[kMaxGroundVizTiles]   = { 0 };
+static int   g_gvTileY[kMaxGroundVizTiles]   = { 0 };
+static int   g_gvTileDmg[kMaxGroundVizTiles] = { 0 };
+static int   g_gvTileCount = 0;
+static float g_gvNowX = 0.f, g_gvNowY = 0.f;
+static float g_gvEndX = 0.f, g_gvEndY = 0.f;
+static float g_gvVx   = 0.f, g_gvVy   = 0.f;
+static float g_gvFieldVx = 0.f, g_gvFieldVy = 0.f;
+static float g_gvFieldEndX = 0.f, g_gvFieldEndY = 0.f;
+static float g_gvHorizonMs = 0.f;
+static int   g_gvEvents    = 0;
+static bool  g_gvMotion    = false;
+static bool  g_gvTiles     = false;
+
+static void CaptureGroundTile(int tx, int ty, int dmg)
+{
+    if (g_gvTileCount >= kMaxGroundVizTiles) return;
+    g_gvTileX[g_gvTileCount]   = tx;
+    g_gvTileY[g_gvTileCount]   = ty;
+    g_gvTileDmg[g_gvTileCount] = dmg;
+    ++g_gvTileCount;
+}
+
+// ── Instance liveness ────────────────────────────────────────────────────
+static constexpr float kDeadDivergeTiles = 2.0f;
+static constexpr float kLivenessGraceMs  = 60.f;
+
+// Unfortunately this is really just our best guess of whether or not the 
+// projectile is removed, as I don't know if there's a function that I could
+// hook for it. If there is, please let me know and I'll change this. 
+static bool InstanceLooksAlive(const WorldProjectile& proj, float elapsedNow)
+{
+    if (!proj.ptr) return true;
+    if (elapsedNow < kLivenessGraceMs) return true;
+    float bx = proj.x, by = proj.y;
+    ProjectileTracking::ComputePosAtSafe(proj, elapsedNow, bx, by);
+    if (!std::isfinite(bx) || !std::isfinite(by)) return true;
+    const float dx = proj.x - bx;
+    const float dy = proj.y - by;
+    return (dx * dx + dy * dy) <= kDeadDivergeTiles * kDeadDivergeTiles;
+}
+
+static void CaptureVizPath(const WorldProjectile& proj, float elapsedNow, bool willHit)
+{
+    if (g_vizCount >= kMaxVizProjs) return;
+    if (!InstanceLooksAlive(proj, elapsedNow)) return;
+    const float remain = proj.lifetime - elapsedNow;
+    if (!(remain > 0.f) || !std::isfinite(remain)) return;
+    const float step = remain / static_cast<float>(kVizSamples - 1);
+
+    const int base = g_vizCount * kVizSamples;
+    int n = 0;
+    for (int i = 0; i < kVizSamples; ++i) {
+        float bx = proj.x, by = proj.y;
+        ProjectileTracking::ComputePosAtSafe(proj, elapsedNow + step * i, bx, by);
+        if (!std::isfinite(bx) || !std::isfinite(by)) break;
+        g_vizX[base + n] = bx;
+        g_vizY[base + n] = by;
+        ++n;
+    }
+    if (n < 2) return;
+    g_vizLen[g_vizCount] = n;
+    g_vizHit[g_vizCount] = willHit;
+    ++g_vizCount;
+}
 
 static bool ReadPlayerStatsCached(int32_t& hp, int32_t& maxHp, int32_t& defense)
 {
@@ -109,112 +270,208 @@ static bool ReadPlayerStatsCached(int32_t& hp, int32_t& maxHp, int32_t& defense)
     return LocalPlayer::GetPtr() != nullptr;
 }
 
-// Maintain predicted trackers against the live game HP. Call once per
-// RunAutoNexus tick BEFORE doing any damage prediction. Handles:
-//   - First-ever read: trackers initialize to current HP.
-//   - HP rose since last tick (heal, server caught up, near-miss): snap
-//     trackers up to live HP so we don't permanently under-estimate.
-//   - HP fell since last tick (real damage applied): re-baseline
-//     predRealHp to live HP (server confirmed it) so we don't double-
-//     count. predClientHp is NOT snapped down — if we already predicted
-//     more damage than the server confirmed, keep the safer (lower)
-//     estimate until a future heal resets it.
-//   - Always clamp both trackers to [0, maxHp].
-static void SyncPredictedHpTo(int32_t gameHp, int32_t maxHp)
+static bool OverlapsAt(const WorldProjectile& proj, float tAbsMs,
+                       float plx, float ply)
 {
-    if (g_lastGameHp == 0 && g_predClientHp == 0 && g_predRealHp == 0) {
-        ResetPredictedHpTo(gameHp, maxHp);
-        return;
+    float bx = proj.x, by = proj.y;
+    ProjectileTracking::ComputePosAtSafe(proj, tAbsMs, bx, by);
+    if (!std::isfinite(bx) || !std::isfinite(by)) return false;
+    return DodgeHit::Hits(proj, bx, by, plx, ply, 1.f, kNexusHitPadTiles);
+}
+
+// ── Already-consumed bullets ─────────────────────────────────────────────
+// Simmilar thing, this isn't great but it's the best I have for now.
+// The goal is to just remove projectiles that have hit
+// So the autonexus doesn't freak out and think it's going to hit us again.
+static bool CrossedPlayerInPast(const WorldProjectile& proj, float elapsedNow,
+                                float windowMs, float px0, float py0,
+                                float px1, float py1)
+{
+    if (!(windowMs > 0.f) || !std::isfinite(elapsedNow) || elapsedNow <= 0.f) return false;
+    if (windowMs > elapsedNow) windowMs = elapsedNow;
+    const float t0 = elapsedNow - windowMs;
+
+    for (float t = t0; t < elapsedNow; t += kFineStepMs) {
+        const float u   = (elapsedNow - t) / windowMs;
+        const float plx = px1 + (px0 - px1) * u;
+        const float ply = py1 + (py0 - py1) * u;
+        if (OverlapsAt(proj, t, plx, ply)) return true;
     }
-    if (gameHp > g_lastGameHp) {
-        // Health rose — heal or server caught up. Snap both trackers up.
-        g_predClientHp = gameHp;
-        g_predRealHp   = gameHp;
-    } else if (gameHp < g_predRealHp) {
-        // Server reports lower than our realHp estimate (we under-
-        // predicted real damage). Re-baseline realHp.
-        g_predRealHp = gameHp;
+    return false;
+}
+
+static float FindHitMsUntil(const WorldProjectile& proj, float elapsedNow,
+                            const PlayerMotion& pm, float horizonMs)
+{
+    if (!std::isfinite(elapsedNow) || elapsedNow < 0.f) return -1.f;
+
+    float span = horizonMs;
+    if (proj.lifetime > 0.f) {
+        const float remain = proj.lifetime - elapsedNow;
+        if (!(remain > 0.f)) return -1.f;
+        if (remain < span) span = remain;
     }
-    if (g_predClientHp > maxHp) g_predClientHp = maxHp;
-    if (g_predRealHp   > maxHp) g_predRealHp   = maxHp;
-    if (g_predClientHp < 0)     g_predClientHp = 0;
-    if (g_predRealHp   < 0)     g_predRealHp   = 0;
-    g_lastGameHp = gameHp;
-}
+    if (!(span > 0.f)) return -1.f;
 
-static int32_t CalcDamage(int32_t baseDmg, int32_t defense, bool armorBroken, bool armored)
-{
-    int32_t def = defense;
-    if (armorBroken) def = 0;
-    else if (armored) def *= 2;
-    const int32_t reduced = baseDmg - def;
-    const int32_t floor15 = static_cast<int32_t>(0.15f * static_cast<float>(baseDmg));
-    return (reduced > floor15) ? reduced : floor15;
-}
+    if (OverlapsAt(proj, elapsedNow, pm.x, pm.y)) return 0.f;
 
-static bool NexusProjOverlapsPlayerAt(
-    const WorldProjectile& proj, float tMs, float playerX, float playerY)
-{
-    float x = 0.f, y = 0.f;
-    ProjectileTracking::ComputePosAt(proj, tMs, x, y);
-    const float halfP = (proj.runtimeChebyshevHalf > 1e-4f) ? proj.runtimeChebyshevHalf : proj.projHalfSize;
-    const float T     = 0.1f + halfP;
-    return fabsf(x - playerX) < T && fabsf(y - playerY) < T;
-}
+    // First a board pass, we calculate larger intervals and do a sweep against the player's position.
+    // I'm increasing the player hitbox size by 2x to determine if the sweep would hit because I'd rather
+    // be safe than sorry, but it does lead to more false positives and this function being less 
+    // efficient. This can be reduced to flavor. 
+    const float broadR = DodgeHit::ProjChebyshevHalf(proj)
+                       + 2.f * DodgeHit::kPlayerHalf
+                       + kNexusHitPadTiles;
 
-static float FindFirstProjHitTimeMs(
-    const WorldProjectile& proj, float tStart, float playerX, float playerY)
-{
-    const float tMax = tStart + proj.lifetime;
-    if (!(tMax > tStart) || !std::isfinite(tStart) || !std::isfinite(tMax))
-        return -1.f;
+    float prevRx = 0.f, prevRy = 0.f;
+    bool  havePrev = false;
+    for (float t = 0.f; t < span + 0.5f * kBroadStepMs; t += kBroadStepMs) {
+        const float tc = (t > span) ? span : t;
+        float bx = proj.x, by = proj.y;
+        ProjectileTracking::ComputePosAtSafe(proj, elapsedNow + tc, bx, by);
+        if (!std::isfinite(bx) || !std::isfinite(by)) { havePrev = false; continue; }
+        const float rx = bx - (pm.x + pm.vx * tc);
+        const float ry = by - (pm.y + pm.vy * tc);
 
-    if (NexusProjOverlapsPlayerAt(proj, tStart, playerX, playerY))
-        return tStart;
-
-    const float step = kNexusProjHitScanStepMs;
-    float       lo   = tStart;
-    for (float t = tStart + step; t <= tMax + 0.5f * step; t += step) {
-        if (NexusProjOverlapsPlayerAt(proj, t, playerX, playerY)) {
-            float hi = t;
-            for (int i = 0; i < 12; ++i) {
-                const float mid = 0.5f * (lo + hi);
-                if (NexusProjOverlapsPlayerAt(proj, mid, playerX, playerY))
-                    hi = mid;
-                else
-                    lo = mid;
+        if (havePrev &&
+            DodgeGeometry::MinDistPointToSegment(0.f, 0.f, prevRx, prevRy, rx, ry) < broadR) {
+            // If the sweep would hit the player, we do a fine tune over that 
+            // interval to see when / if it would actually collde with the player.
+            const float lo = (tc > kBroadStepMs) ? tc - kBroadStepMs : 0.f;
+            for (float f = lo; f <= tc + 0.5f * kFineStepMs; f += kFineStepMs) {
+                const float fc = (f > tc) ? tc : f;
+                const float plx = pm.x + pm.vx * fc;
+                const float ply = pm.y + pm.vy * fc;
+                if (OverlapsAt(proj, elapsedNow + fc, plx, ply)) return fc;
             }
-            return hi;
         }
-        lo = t;
+        prevRx = rx; prevRy = ry; havePrev = true;
+        if (tc >= span) break;
     }
     return -1.f;
 }
 
-static void DbgNexus(const char* msg, const char* hyp, const char* data) {
-    // Debug trace -> %TEMP%\autonexus-debug-489c1d.log (runtime path, no personal dirs).
-    char dir[MAX_PATH] = {};
-    const DWORD n = GetTempPathA(MAX_PATH, dir);
-    if (n == 0 || n >= MAX_PATH) return;
-    char path[MAX_PATH] = {};
-    snprintf(path, sizeof(path), "%sautonexus-debug-489c1d.log", dir);
-    FILE* f = nullptr;
-    if (fopen_s(&f, path, "a") != 0 || !f) return;
-    fprintf(f,
-        "{\"sessionId\":\"489c1d\",\"location\":\"AutoNexus/AutoNexus.cpp\",\"message\":\"%s\","
-        "\"data\":{%s},\"timestamp\":%llu,\"hypothesisId\":\"%s\"}\n",
-        msg, data, (unsigned long long)GetTickCount64(), hyp);
-    fclose(f);
+// ── Predicted ground damage ──────────────────────────────────────────────
+static constexpr float kGroundStepMs = 25.f;
+
+struct GroundThreat {
+    int32_t rawDamage = 0;
+    float   tHitMs    = -1.f;
+
+    int32_t        count = 0;
+    IpcGroundEvent events[kIpcMaxGroundEvents] = {};
+
+    void Add(int32_t dmg, float t)
+    {
+        if (count >= kIpcMaxGroundEvents) return;
+        events[count].rawDamage = dmg;
+        events[count].tHitMs    = t;
+        ++count;
+        if (count == 1) { rawDamage = dmg; tHitMs = t; }
+    }
+};
+
+// ── Ground tick model ────────────────────────────────────────────────────
+static constexpr float kGroundTickMs = 500.f;
+
+struct GroundTickState {
+    bool     onDamaging  = false;
+    int      tx = INT32_MIN, ty = INT32_MIN;
+    ULONGLONG lastTickMs = 0;
+};
+static GroundTickState s_groundTick;
+
+
+static GroundThreat PredictGroundDamage(void* lp, const PlayerMotion& pm, float horizonMs)
+{
+    GroundThreat out{};
+    g_gvTileCount = 0;
+    g_gvTiles     = false;
+    g_gvEvents    = 0;
+    if (!g_nexusTileDmg || horizonMs <= 0.f) return out;
+
+    const ULONGLONG nowMs  = GetTickCount64();
+    const int       curTx  = static_cast<int>(std::floor(pm.x));
+    const int       curTy  = static_cast<int>(std::floor(pm.y));
+    const int       curDmg = WorldTAB::GetTileDamageLive(curTx, curTy);
+    const bool      movedTile = (curTx != s_groundTick.tx || curTy != s_groundTick.ty);
+
+    if (curDmg <= 0) {
+        s_groundTick.onDamaging = false;
+    } else {
+        if (!s_groundTick.onDamaging || movedTile) {
+            s_groundTick.lastTickMs = nowMs;
+        } else if (nowMs - s_groundTick.lastTickMs >= static_cast<ULONGLONG>(kGroundTickMs)) {
+            s_groundTick.lastTickMs = nowMs;
+        }
+        s_groundTick.onDamaging = true;
+    }
+    s_groundTick.tx = curTx;
+    s_groundTick.ty = curTy;
+
+    float timerAt = kGroundTickMs - static_cast<float>(nowMs - s_groundTick.lastTickMs);
+    if (timerAt < 0.f) timerAt = 0.f;
+
+    int simTx = curTx, simTy = curTy;
+    int simDmg = curDmg;
+
+    g_gvTiles = true;
+    CaptureGroundTile(curTx, curTy, curDmg);
+
+    for (float t = 0.f; t <= horizonMs + 0.5f * kGroundStepMs; t += kGroundStepMs) {
+        const float tc = (t > horizonMs) ? horizonMs : t;
+        const float px = pm.x + pm.vx * tc;
+        const float py = pm.y + pm.vy * tc;
+        if (!std::isfinite(px) || !std::isfinite(py)) break;
+
+        const int tx = static_cast<int>(std::floor(px));
+        const int ty = static_cast<int>(std::floor(py));
+
+        if (tx != simTx || ty != simTy) {
+            simTx = tx; simTy = ty;
+            simDmg = WorldTAB::GetTileDamageLive(tx, ty);
+            CaptureGroundTile(tx, ty, simDmg);
+            // Entry into a damaging tile will immediatly hurt you. 
+            // We need to calculate where we'll be after the horizon
+            // and how many spaces we'll touch and take damage from.
+            if (simDmg > 0) {
+                out.Add(simDmg, tc);
+                timerAt = tc + kGroundTickMs;
+            }
+        } else if (simDmg > 0 && tc >= timerAt) {
+            // Standing on it long enough for the damage to tick again
+            out.Add(simDmg, tc);
+            timerAt = tc + kGroundTickMs;
+        }
+
+        if (out.count >= kIpcMaxGroundEvents) break;
+        if (tc >= horizonMs) break;
+    }
+
+    g_gvEvents = out.count;
+    return out;
 }
 
-static void DoNexus()
+static void PublishThreats(const std::vector<Threat>& threats, const GroundThreat& ground)
 {
-    const ULONGLONG now = GetTickCount64();
-    if (now - s_lastNexusTick < 200ULL) return;
-    s_lastNexusTick = now;
-
-    SharedMemory::SetNeedsNexus(true);
-    DbgNexus("nexus_flag_set", "H", "\"flagSet\":true");
+    IpcThreat out[kIpcMaxThreats];
+    int n = 0;
+    for (const auto& t : threats) {
+        if (n >= kIpcMaxThreats) break;
+        out[n].attackerObjId        = t.attackerObjId;
+        out[n].bulletId             = t.bulletId;
+        out[n].tHitMs               = t.tHitMs;
+        out[n].fallbackDamage       = t.rawDamage;
+        out[n].fallbackArmorPiercing = t.armorPiercing ? 1u : 0u;
+        ++n;
+    }
+    IpcGround g{};
+    g.rawDamage = ground.rawDamage;
+    g.tHitMs    = ground.tHitMs;
+    g.count     = ground.count;
+    for (int i = 0; i < ground.count && i < kIpcMaxGroundEvents; ++i)
+        g.events[i] = ground.events[i];
+    IpcBridge_PublishThreats(out, n, g);
 }
 
 static void RunAutoNexus()
@@ -228,127 +485,89 @@ static void RunAutoNexus()
     if (maxHp <= 0 || hp > maxHp * 4) return;
     if (defense < 0) defense = 0;
 
-    if (hp <= 0) { DoNexus(); return; }
-
     uint32_t cW0 = 0, cW1 = 0;
     RuntimeOffsets::TryReadMapObjectConditions(lp, &cW0, &cW1);
-    const uint64_t cFull   = RuntimeOffsets::GetFullConditions(cW0, cW1);
-    const bool armorBroken = RuntimeOffsets::HasCondition(cFull, RuntimeOffsets::ConditionEffects::ArmorBroken);
-    const bool armored     = RuntimeOffsets::HasCondition(cFull, RuntimeOffsets::ConditionEffects::Armored);
+    const uint64_t cFull = RuntimeOffsets::GetFullConditions(cW0, cW1);
 
-    const float nexusPct = g_nexusHpPct;
+    std::vector<Threat> threats;
 
-    // xrDriver-style: sync our two predicted trackers against live game HP
-    // before we evaluate any new damage events this tick.
-    SyncPredictedHpTo(hp, maxHp);
+    PlayerMotion pm = ReadPlayerMotion(lp, cFull);
+    const float horizon = std::max(0.f, std::min(kMaxHorizonMs, g_predTimeMs));
 
-    // Multi-source baseline check: nexus if ANY of the three sources is at
-    // or below threshold right now (before predicting new damage).
-    auto hpPctOf = [&](int32_t v) { return (float)v / (float)maxHp * 100.f; };
-    {
-        const float gameHpPct   = hpPctOf(hp);
-        const float clientHpPct = hpPctOf(g_predClientHp);
-        const float realHpPct   = hpPctOf(g_predRealHp);
-        if (gameHpPct   <= nexusPct) { DoNexus(); return; }
-        if (clientHpPct <= nexusPct) { DoNexus(); return; }
-        if (realHpPct   <= nexusPct) { DoNexus(); return; }
-    }
+    const float fieldVx = pm.vx, fieldVy = pm.vy;
+    ObserveVelocity(pm.x, pm.y, pm.vx, pm.vy);
+
+    g_gvNowX = pm.x;  g_gvNowY = pm.y;
+    g_gvVx   = pm.vx; g_gvVy   = pm.vy;
+    g_gvEndX = pm.x + pm.vx * horizon;
+    g_gvEndY = pm.y + pm.vy * horizon;
+    g_gvFieldVx   = fieldVx;
+    g_gvFieldVy   = fieldVy;
+    g_gvFieldEndX = pm.x + fieldVx * horizon;
+    g_gvFieldEndY = pm.y + fieldVy * horizon;
+    g_gvHorizonMs = horizon;
+    g_gvMotion = true;
+
+    g_vizCount = 0;
 
     if (g_nexusProjDmg) {
-        const float playerX = LocalPlayer::GetX();
-        const float playerY = LocalPlayer::GetY();
-
         std::vector<WorldProjectile> projs;
         ProjectileTracking::CopyActiveForDraw(projs);
 
         const ULONGLONG nowMs   = GetTickCount64();
         const int32_t   localId = ProjectileTracking::GetLocalPlayerObjectId();
 
-        int32_t totalImminentDmg = 0;
+        float retroMs = 0.f;
+        if (s_havePrevScan && nowMs > s_lastScanMs) {
+            const float gap = static_cast<float>(nowMs - s_lastScanMs);
+            if (gap <= kMaxRetroWindowMs) retroMs = gap;
+        }
+        const float prevPx = s_prevPlayerX;
+        const float prevPy = s_prevPlayerY;
+        s_lastScanMs   = nowMs;
+        s_prevPlayerX  = pm.x;
+        s_prevPlayerY  = pm.y;
+        s_havePrevScan = true;
 
         for (const auto& proj : projs) {
             if (!proj.valid) continue;
             if (localId != 0 && proj.attackerObjId == localId) continue;
             if (localId != 0 && static_cast<int32_t>(proj.ownerObjId) == localId) continue;
 
-            const int32_t hitDmg = CalcDamage(proj.damage, defense, armorBroken, armored);
-            if (hitDmg <= 0) continue;
-
             const float alreadyElapsed =
                 (float)((int64_t)nowMs - (int64_t)proj.spawnTick);
             if (alreadyElapsed < 0.f || alreadyElapsed > proj.lifetime + 50.f)
                 continue;
 
-            const float tHit = FindFirstProjHitTimeMs(proj, alreadyElapsed, playerX, playerY);
+            if (retroMs > 0.f &&
+                CrossedPlayerInPast(proj, alreadyElapsed, retroMs, prevPx, prevPy, pm.x, pm.y)) {
+                ProjectileTracking::RetireProjectile(proj);
+                continue;
+            }
+
+            const float tHit = FindHitMsUntil(proj, alreadyElapsed, pm, horizon);
+            if (g_debugDraw) CaptureVizPath(proj, alreadyElapsed, tHit >= 0.f);
             if (tHit < 0.f) continue;
 
-            const float msUntilHit = tHit - alreadyElapsed;
-            if (msUntilHit < 0.f || msUntilHit > kNexusProjImminentMs) continue;
-
-            totalImminentDmg += hitDmg;
+            Threat th{};
+            th.attackerObjId = proj.attackerObjId;
+            th.bulletId      = proj.bulletId;
+            th.tHitMs        = tHit;
+            th.rawDamage     = proj.damage;
+            th.armorPiercing = proj.armorPiercing;
+            threats.push_back(th);
         }
 
-        if (totalImminentDmg > 0) {
-            // Apply the predicted damage to clientHp (silent=true: not yet
-            // confirmed). xrDriver: clientHp shrinks; realHp untouched.
-            // Then check all three sources.
-            if (SubtractDamage(totalImminentDmg, hp, maxHp, nexusPct,
-                               "imminent-proj", /*silent=*/true)) return;
-        }
+        std::sort(threats.begin(), threats.end(),
+                  [](const Threat& a, const Threat& b) { return a.tHitMs < b.tHitMs; });
     }
 
-    if (g_nexusTileDmg) {
-        const float playerX = LocalPlayer::GetX();
-        const float playerY = LocalPlayer::GetY();
-        const int tileX = (int)floorf(playerX);
-        const int tileY = (int)floorf(playerY);
+    const GroundThreat ground = PredictGroundDamage(lp, pm, horizon);
 
-        for (const auto& tile : WorldTAB::GetTiles()) {
-            if (tile.tileX != tileX || tile.tileY != tileY) continue;
-            if (tile.maxDmg > 0) {
-                const int32_t tileDmg = CalcDamage(tile.maxDmg, defense, armorBroken, armored);
-                if (tileDmg > 0) {
-                    // Tile damage on the player's tile is essentially
-                    // guaranteed every game tick — silent=false: also
-                    // subtract from realHp.
-                    if (SubtractDamage(tileDmg, hp, maxHp, nexusPct,
-                                       "tile", /*silent=*/false)) return;
-                }
-            }
-            break;
-        }
-    }
+    PublishThreats(threats, ground);
 }
 
-// Definition of SubtractDamage (declared near the top of the file).
-// Mirrors xrDriver::AutoNexus::SubtractDamage(dmg, source, silent):
-//   - decrements g_predClientHp always
-//   - decrements g_predRealHp only when silent=false
-//   - runs the multi-source nexus check; returns true if Nexus fired
-static bool SubtractDamage(int32_t dmg, int32_t gameHp, int32_t maxHp, float thresholdPct,
-                           const char* /*source*/, bool silent)
-{
-    if (dmg <= 0) return false;
-    g_predClientHp -= dmg;
-    if (!silent) g_predRealHp -= dmg;
-    if (g_predClientHp < 0) g_predClientHp = 0;
-    if (g_predRealHp   < 0) g_predRealHp   = 0;
-
-    auto hpPctOf = [&](int32_t v) { return (float)v / (float)maxHp * 100.f; };
-    const float gameHpPct   = hpPctOf(gameHp);
-    const float clientHpPct = hpPctOf(g_predClientHp);
-    const float realHpPct   = hpPctOf(g_predRealHp);
-
-    if (gameHpPct   <= thresholdPct ||
-        clientHpPct <= thresholdPct ||
-        realHpPct   <= thresholdPct) {
-        DoNexus();
-        return true;
-    }
-    return false;
-}
-
-// ── Autopot impl ─────────────────────────────────────────────────────────
+// ── Item-use primitives ──────────────────────────────────────────────────
 // Resolve EquipmentManager.UseInventoryItemByHotkey + the EquipmentManager
 // pointer field on the player class. Idempotent — subsequent calls return
 // immediately when s_autoPotResolved is set.
@@ -379,10 +598,12 @@ static void* ReadEquipmentManagerPtr(void* localPlayer)
     return Mem::ReadPtr(localPlayer, s_eqMgrFieldOff);
 }
 
-static void TryDrinkHotkey(int hotkey, ULONGLONG& lastTickMs)
+static void TryDrinkHotkey(int hotkey, ULONGLONG& lastTickMs, ULONGLONG cooldownMs)
 {
+    ResolveAutoPotOnce();
+    if (!s_fnUseInvByHotkey || !s_eqMgrFieldOff) return;
     const ULONGLONG now = GetTickCount64();
-    if (now - lastTickMs < kPotCooldownMs) return;
+    if (now - lastTickMs < cooldownMs) return;
     void* lp = LocalPlayer::GetPtr();
     if (!lp) return;
     void* eqMgr = ReadEquipmentManagerPtr(lp);
@@ -391,32 +612,6 @@ static void TryDrinkHotkey(int hotkey, ULONGLONG& lastTickMs)
         s_fnUseInvByHotkey(eqMgr, hotkey, nullptr);
     });
     lastTickMs = now;
-}
-
-static void RunAutoPot()
-{
-    ResolveAutoPotOnce();
-    if (!s_fnUseInvByHotkey || !s_eqMgrFieldOff) return;
-
-    if (g_autoPotHp) {
-        const int32_t hp    = LocalPlayer::GetHP();
-        const int32_t maxHp = LocalPlayer::GetMaxHP();
-        if (hp > 0 && maxHp > 0) {
-            const float pct = static_cast<float>(hp) / static_cast<float>(maxHp) * 100.f;
-            if (pct < g_autoPotHpPct)
-                TryDrinkHotkey(g_autoPotHpHotkey, s_lastHpPotMs);
-        }
-    }
-
-    if (g_autoPotMp) {
-        const float   mp    = LocalPlayer::GetCurMpF();
-        const int32_t maxMp = LocalPlayer::GetMaxMP();
-        if (mp > 0.f && maxMp > 0) {
-            const float pct = mp / static_cast<float>(maxMp) * 100.f;
-            if (pct < g_autoPotMpPct)
-                TryDrinkHotkey(g_autoPotMpHotkey, s_lastMpPotMs);
-        }
-    }
 }
 
 void Tick()
@@ -429,95 +624,221 @@ void Tick()
             RunAutoNexus();
         }
     }
+}
 
-    // Autopot runs on every poll (cheap when disabled — early-out at the
-    // top of RunAutoPot). Independent of AutoNexus toggle so users can
-    // drink without auto-nexus or vice versa.
-    if (g_autoPotHp || g_autoPotMp) {
-        RunAutoPot();
+static void DrawWorldCircle(ImDrawList* dl, float wx, float wy, float radiusTiles,
+                            ImU32 col, float thickness, ImU32 fill,
+                            float camX, float camY, float angleRad, float zoom,
+                            float cx, float cy)
+{
+    float sx, sy, ex, ey;
+    if (!W2S(wx, wy, sx, sy, camX, camY, angleRad, zoom, cx, cy)) return;
+    if (!W2S(wx + radiusTiles, wy, ex, ey, camX, camY, angleRad, zoom, cx, cy)) return;
+    const float rx = ex - sx, ry = ey - sy;
+    const float r  = std::sqrt(rx * rx + ry * ry);
+    if (!std::isfinite(r) || r < 1.f || r > 4000.f) return;
+    if ((fill >> IM_COL32_A_SHIFT) != 0u) dl->AddCircleFilled(ImVec2(sx, sy), r, fill, 32);
+    dl->AddCircle(ImVec2(sx, sy), r, col, 32, thickness);
+    dl->AddCircleFilled(ImVec2(sx, sy), 2.5f, col);
+}
+
+static void DrawWorldTile(ImDrawList* dl, int tx, int ty, ImU32 col, ImU32 fill,
+                          float camX, float camY, float angleRad, float zoom,
+                          float cx, float cy)
+{
+    const float x0 = static_cast<float>(tx), y0 = static_cast<float>(ty);
+    ImVec2 pts[4];
+    const float corners[4][2] = { {0.f,0.f}, {1.f,0.f}, {1.f,1.f}, {0.f,1.f} };
+    for (int i = 0; i < 4; ++i) {
+        float sx, sy;
+        if (!W2S(x0 + corners[i][0], y0 + corners[i][1], sx, sy,
+                 camX, camY, angleRad, zoom, cx, cy)) return;
+        pts[i] = ImVec2(sx, sy);
+    }
+    if ((fill >> IM_COL32_A_SHIFT) != 0u) dl->AddConvexPolyFilled(pts, 4, fill);
+    dl->AddPolyline(pts, 4, col, ImDrawFlags_Closed, 1.5f);
+}
+
+static int s_lastAoeDrawn = 0;
+static int s_aoeHooks = 0;
+
+void RenderDebugPath(float camX, float camY, float angleRad, float zoom, float cx, float cy)
+{
+    if (!g_debugDraw || !g_autoNexus) return;
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    if (!dl) return;
+
+    const ImU32 colSafe = IM_COL32(60, 220, 90, 190);
+    const ImU32 colHit  = IM_COL32(255, 60, 60, 235);
+
+    if (g_gvMotion) {
+        const float nowX = g_gvNowX, nowY = g_gvNowY;
+        const float endX = g_gvEndX, endY = g_gvEndY;
+        const float vx = g_gvVx, vy = g_gvVy;
+
+        if (g_gvTiles) {
+            const int nT = (g_gvTileCount < kMaxGroundVizTiles)
+                         ? g_gvTileCount : kMaxGroundVizTiles;
+            for (int i = 0; i < nT; ++i) {
+                const bool hot = g_gvTileDmg[i] > 0;
+                const ImU32 tc = hot ? IM_COL32(255, 90, 50, 225)
+                                     : IM_COL32(150, 150, 150, 120);
+                const ImU32 tf = hot ? IM_COL32(255, 90, 50, 45)
+                                     : IM_COL32(150, 150, 150, 16);
+                DrawWorldTile(dl, g_gvTileX[i], g_gvTileY[i], tc, tf,
+                              camX, camY, angleRad, zoom, cx, cy);
+                float lx, ly;
+                if (hot && W2S(static_cast<float>(g_gvTileX[i]) + 0.5f,
+                               static_cast<float>(g_gvTileY[i]) + 0.5f,
+                               lx, ly, camX, camY, angleRad, zoom, cx, cy)) {
+                    char dlbl[16];
+                    std::snprintf(dlbl, sizeof(dlbl), "%d", g_gvTileDmg[i]);
+                    dl->AddText(ImVec2(lx - 6.f, ly - 6.f), tc, dlbl);
+                }
+            }
+        }
+
+        float psx, psy, gsx, gsy;
+        const bool haveNow = W2S(nowX, nowY, psx, psy, camX, camY, angleRad, zoom, cx, cy);
+        const bool haveEnd = W2S(endX, endY, gsx, gsy, camX, camY, angleRad, zoom, cx, cy);
+        if (haveNow && haveEnd)
+            dl->AddLine(ImVec2(psx, psy), ImVec2(gsx, gsy), IM_COL32(255, 255, 255, 160), 1.5f);
+
+        DrawWorldCircle(dl, nowX, nowY, 0.5f, IM_COL32(255, 255, 255, 220), 1.5f,
+                        IM_COL32(0, 0, 0, 0), camX, camY, angleRad, zoom, cx, cy);
+        DrawWorldCircle(dl, endX, endY, 0.5f, IM_COL32(120, 220, 255, 235), 2.f,
+                        IM_COL32(120, 220, 255, 30), camX, camY, angleRad, zoom, cx, cy);
+
+        DrawWorldCircle(dl, g_gvFieldEndX, g_gvFieldEndY, 0.35f,
+                        IM_COL32(220, 110, 220, 130), 1.f, IM_COL32(0, 0, 0, 0),
+                        camX, camY, angleRad, zoom, cx, cy);
+    }
+
+    // ── AOE landing zones ────────────────────────────────────────────────
+    // This does not work. I wish it did. If anyone knows why, please help, I think
+    // the function name / offsets are wrong. 
+    {
+        static ULONGLONG s_lastEnsureMs = 0;
+        const ULONGLONG ensureNow = GetTickCount64();
+        if (ensureNow - s_lastEnsureMs >= 500ULL) {
+            s_lastEnsureMs = ensureNow;
+            AoeTracking::EnsureInstalled();
+        }
+        s_lastAoeDrawn = 0;
+        s_aoeHooks = AoeTracking::CountHooks();
+
+        static std::vector<WorldAoe> s_aoes;
+        s_aoes.clear();
+        if (s_aoeHooks > 0) AoeTracking::CopyActiveForDraw(s_aoes);
+
+        const ULONGLONG now = GetTickCount64();
+        for (const WorldAoe& a : s_aoes) {
+            if (!a.valid || !a.isDamaging) continue;
+            if (a.isEnemyChecked && !a.isEnemy) continue;
+            if (!std::isfinite(a.destX) || !std::isfinite(a.destY)) continue;
+
+            const float radius = (std::isfinite(a.radius) && a.radius > 0.f)
+                               ? std::min(a.radius, 12.f) : 1.5f;
+            const float elapsed = static_cast<float>(now > a.spawnTick ? now - a.spawnTick : 0ULL);
+            
+            const float landAtMs  = (std::isfinite(a.arcMs) && a.arcMs > 0.f)
+                                  ? a.arcMs
+                                  : ((std::isfinite(a.lifetime) && a.lifetime > 0.f) ? a.lifetime : 2000.f);
+            const float landingMs = landAtMs - elapsed;
+
+            ImU32 col, fill;
+            if (landingMs > 0.f) {
+                const float urgency = 1.f - std::min(1.f, landingMs / std::max(1.f, landAtMs));
+                const int   alpha   = 90 + static_cast<int>(140.f * urgency);
+                col  = IM_COL32(255, 165, 30, alpha);
+                fill = IM_COL32(255, 165, 30, 28);
+            } else {
+                col  = IM_COL32(255, 70, 40, 235);
+                fill = IM_COL32(255, 70, 40, 45);
+            }
+            DrawWorldCircle(dl, a.destX, a.destY, radius, col, 2.f, fill,
+                            camX, camY, angleRad, zoom, cx, cy);
+            ++s_lastAoeDrawn;
+
+            float lx, ly;
+            if (landingMs > 0.f && W2S(a.destX, a.destY, lx, ly, camX, camY, angleRad, zoom, cx, cy)) {
+                char lbl[24];
+                std::snprintf(lbl, sizeof(lbl), "%.0fms", landingMs);
+                dl->AddText(ImVec2(lx + 6.f, ly + 4.f), col, lbl);
+            }
+        }
+    }
+
+    const int count = (g_vizCount < kMaxVizProjs) ? g_vizCount : kMaxVizProjs;
+    for (int p = 0; p < count; ++p) {
+        const int n = g_vizLen[p];
+        if (n < 2) continue;
+        const ImU32 col = g_vizHit[p] ? colHit : colSafe;
+        const int base = p * kVizSamples;
+        float lastSx = 0.f, lastSy = 0.f;
+        bool  haveLast = false;
+        for (int i = 0; i < n; ++i) {
+            float sx, sy;
+            if (!W2S(g_vizX[base + i], g_vizY[base + i], sx, sy,
+                     camX, camY, angleRad, zoom, cx, cy)) { haveLast = false; continue; }
+            if (haveLast) dl->AddLine(ImVec2(lastSx, lastSy), ImVec2(sx, sy), col, 1.5f);
+            if (i == 0) dl->AddCircleFilled(ImVec2(sx, sy), 3.f, col);
+            lastSx = sx; lastSy = sy; haveLast = true;
+        }
     }
 }
 
 void Render()
 {
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.f, 1.f), "AUTO NEXUS");
-    ImGui::Checkbox("Auto nexus", &g_autoNexus);
+    ImGui::TextDisabled("Configured entirely from the client plugin.\n"
+                        "This panel is a read-out of the live scan state.");
+    ImGui::Separator();
 
+    ImGui::Text("Scan:      %s", g_autoNexus ? "armed" : "idle");
     if (g_autoNexus) {
         ImGui::Indent();
-
-        ImGui::SliderFloat("Nexus HP %", &g_nexusHpPct, 1.f, 95.f, "%.0f%%");
-        ImGui::Checkbox("Predict projectile damage", &g_nexusProjDmg);
-        if (g_nexusProjDmg)
-            ImGui::TextDisabled(
-                "Nexus when imminent projectiles (within %.0f ms) would drop HP below threshold. "
-                "Accumulates ALL close bullets. Uses RotMG damage formula (15%% floor, "
-                "ArmorBroken/Armored aware). Hitbox: 0.1 tile (pixel-perfect).",
-                kNexusProjImminentMs);
-        ImGui::Checkbox("Tile damage check", &g_nexusTileDmg);
+        ImGui::TextDisabled("Horizon:   %.0f ms", g_predTimeMs);
+        ImGui::TextDisabled("Bullets:   %s", g_nexusProjDmg ? "on" : "off");
+        ImGui::TextDisabled("Ground:    %s", g_nexusTileDmg ? "on" : "off");
+        ImGui::TextDisabled("Overlay:   %s", g_debugDraw ? "on" : "off");
+        if (g_debugDraw) {
+            // The counters the corner HUD used to carry. An empty overlay and a
+            // broken one look identical on screen; these tell them apart.
+            ImGui::TextDisabled("  paths %d   aoe %d   aoeHooks %d",
+                                g_vizCount, s_lastAoeDrawn, s_aoeHooks);
+        }
+        ImGui::TextDisabled("Hitbox:    DodgeHit %.4f player half", DodgeHit::kPlayerHalf);
 
         if (LocalPlayer::GetPtr()) {
             const int32_t hp    = LocalPlayer::GetHP();
             const int32_t maxHp = LocalPlayer::GetMaxHP();
             if (maxHp > 0 && hp > 0)
-                ImGui::TextDisabled("HP: %d / %d  (%.0f%%)", hp, maxHp,
+                ImGui::TextDisabled("HP:        %d / %d  (%.0f%%)", hp, maxHp,
                     static_cast<float>(hp) / static_cast<float>(maxHp) * 100.f);
         } else {
-            ImGui::TextDisabled("No local player");
+            ImGui::TextDisabled("HP:        no local player");
         }
-
         ImGui::Unindent();
     }
 }
 
 bool ConsumesLocalPlayer()
 {
-    return g_autoNexus || g_autoPotHp || g_autoPotMp;
+    return g_autoNexus;
 }
 
-// ── Public setters (called from IpcBridge) ──────────────────────────────
+bool OverlayEnabled()
+{
+    return g_autoNexus && g_debugDraw;
+}
+
+// ── Public setters (called from FeatureCommandRegistry) ─────────────────
 void SetAutoNexusEnabled(bool on)            { g_autoNexus = on; }
-void SetAutoNexusHpPct(float pct)            { g_nexusHpPct = std::max(1.f, std::min(95.f, pct)); }
 void SetAutoNexusProjPredictEnabled(bool on) { g_nexusProjDmg = on; }
 void SetAutoNexusTilePredictEnabled(bool on) { g_nexusTileDmg = on; }
-
-void SetAutoPotHpEnabled(bool on)            { g_autoPotHp = on; }
-void SetAutoPotHpThresholdPct(float pct)     { g_autoPotHpPct = std::max(1.f, std::min(99.f, pct)); }
-void SetAutoPotHpHotkey(int hotkey)          { g_autoPotHpHotkey = std::max(0, std::min(15, hotkey)); }
-void SetAutoPotMpEnabled(bool on)            { g_autoPotMp = on; }
-void SetAutoPotMpThresholdPct(float pct)     { g_autoPotMpPct = std::max(1.f, std::min(99.f, pct)); }
-void SetAutoPotMpHotkey(int hotkey)          { g_autoPotMpHotkey = std::max(0, std::min(15, hotkey)); }
-
-// ── External (proxy-driven) damage / HP-sync — Phase 2 ──────────────────
-// Wired in IpcBridge.cpp via the "autonexusOnDamage" / "autonexusSyncHp"
-// feature keys. The bot-client proxy parses outgoing PLAYERHIT / AOEACK
-// + incoming NEWTICK statuses and forwards the damage / authoritative HP
-// here so the predicted trackers stay aligned without our own polling
-// having to guess.
-void OnExternalDamage(int32_t dmg, bool silent)
-{
-    if (!g_autoNexus) return;             // disabled → nothing to do
-    if (dmg <= 0) return;
-    const int32_t hp    = LocalPlayer::GetHP();
-    const int32_t maxHp = LocalPlayer::GetMaxHP();
-    if (maxHp <= 0) return;
-    // SyncPredictedHpTo runs at the top of every poll tick; do a fast
-    // version here so we don't wait for the next poll before reacting.
-    SyncPredictedHpTo(hp, maxHp);
-    (void)SubtractDamage(dmg, hp, maxHp, g_nexusHpPct,
-                         silent ? "proxy-imminent" : "proxy-confirmed",
-                         silent);
-}
-
-void OnExternalHpSync(int32_t hp, int32_t maxHp)
-{
-    if (maxHp <= 0) return;
-    if (hp < 0)    hp = 0;
-    // Server packet is authoritative — snap both trackers, then update
-    // g_lastGameHp so the next polling-side SyncPredictedHpTo doesn't
-    // mistake the server's update for a heal-induced rise.
-    ResetPredictedHpTo(hp, maxHp);
-}
+void SetAutoNexusPredictedTimeMs(float ms)   { g_predTimeMs = std::max(0.f, std::min(kMaxHorizonMs, ms)); }
+void SetAutoNexusDebugDraw(bool on)          { g_debugDraw = on; }
 
 } // namespace FeatAutoNexus
 } // namespace CombatTAB

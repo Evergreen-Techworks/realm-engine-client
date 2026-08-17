@@ -9,6 +9,7 @@
 #include "ZDodgeTarget.h"
 #include "RePP.h"
 #include "PJDodge.h"
+#include "AutoNexus.h"
 #include "DbgFileLog.h"
 #include "BootGate.h"
 #include <windows.h>
@@ -36,6 +37,7 @@ using TestTAB::DodgeMode;
 #include "FeatureState.h"
 #include "SpeedHack.h"
 #include "Noclip.h"
+#include "NoclipHook.h"
 #include "settings.h"
 #include "PlayerCollider.h"
 #include <imgui/imgui.h>
@@ -538,7 +540,8 @@ void TestTAB::Tick(bool menuVisible)
     ProjectileTracking::SetFlashSpeedMultiplier(g_flashSpeedMulUi);
 
     // ── Auto-refresh World + Camera (keep local ptr + camera live for movement)
-    if (g_followMouse || g_walkActive || IsAnyAutoDodgeEnabled()) {
+    if (g_followMouse || g_walkActive || IsAnyAutoDodgeEnabled() ||
+        CombatTAB::FeatAutoNexus::OverlayEnabled()) {
         g_refreshTimer += dt;
         if (g_refreshTimer >= g_refreshInterval) {
             g_refreshTimer = 0.f;
@@ -630,6 +633,7 @@ void TestTAB::Tick(bool menuVisible)
             if (PJDodge::IsEnabled()) {
                 PJDodge::RenderDebugOverlay(camX, camY, angleRad, zoom, cx, cy);
             }
+            CombatTAB::FeatAutoNexus::RenderDebugPath(camX, camY, angleRad, zoom, cx, cy);
         }
 
         // Locked enemy visualization — red reticle + two rings:
@@ -1061,6 +1065,23 @@ void TestTAB::RenderMovementSection()
     }
 
     ImGui::TextDisabled("Lets movement, follow, and walk targets ignore wall walkability checks.");
+
+    // Hook probe — "forced" rows override the game's answer, the rest only count
+    // calls so we can tell which Map predicate actually gates player movement.
+    if (NoclipHook::IsInstalled())
+        ImGui::TextColored(ImVec4(0.5f, 1.f, 0.5f, 1.f), "Map hooks: INSTALLED");
+    else if (NoclipHook::IsResolved())
+        ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "Map hooks: resolved, not installed (enable noclip)");
+    else
+        ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f), "Map hooks: HJMBOMEHGDJ unresolved");
+
+    for (int i = 0; i < NoclipHook::Count(); ++i) {
+        ImGui::Text("  %-12s %-9s %s  calls=%u",
+            NoclipHook::TargetName(i),
+            NoclipHook::TargetForced(i) ? "[forced]" : "[observe]",
+            NoclipHook::TargetHooked(i) ? "hooked" : "  --  ",
+            NoclipHook::TargetHits(i));
+    }
     ImGui::Unindent(8.f);
 
     ImGui::Spacing();

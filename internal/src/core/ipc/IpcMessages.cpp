@@ -61,6 +61,11 @@ int BuildHotkeyEvent(char* buf, int bufSize, const char* pluginId, const char* a
     return snprintf(buf, bufSize, "{\"type\":\"hotkeyEvent\",\"pluginId\":\"%s\",\"action\":\"%s\",\"value\":%s,\"seq\":\"%llu\",\"mac\":\"%s\"}", pluginId, action, value ? "true" : "false", static_cast<unsigned long long>(seq), mac);
 }
 
+int BuildThreats(char* buf, int bufSize, const char* threats, uint64_t seq, const char* mac)
+{
+    return BuildSignedStringJson(buf, bufSize, "threats", "threats", threats, seq, mac);
+}
+
 void BuildPlayerSigPayload(char* outBuf, int outBufSize)
 {
     if (!outBuf || outBufSize <= 0) return;

@@ -14113,6 +14113,17 @@ body {
   overflow-y: auto;
 }
 
+/* Right column: fixed-height updater card on top, accounts card eats the rest. */
+.hs-right-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.hs-right-col .hs-updater-card { flex: 0 0 auto; }
+.hs-right-col .hs-accounts-col { flex: 1; }
+
 .hs-accounts-col {
   display: flex;
   flex-direction: column;
@@ -14234,6 +14245,16 @@ body {
   text-overflow: ellipsis;
   min-height: 20px;
 }
+
+/* Game Updater status reuses .hs-script-name, but its text is a sentence
+   (progress counts, error messages) rather than a filename — let it wrap
+   instead of getting ellipsised away. */
+#home-updater-status {
+  white-space: normal;
+  overflow: visible;
+  font-weight: 500;
+}
+#home-updater-status.hs-updater-error { color: var(--red); }
 
 .hs-script-btns {
   display: flex;

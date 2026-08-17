@@ -29,6 +29,8 @@ namespace ProjectileTracking {
     // Local player projectile paths only.
     void CopyActiveLocalForDraw(std::vector<WorldProjectile>& out);
 
+    bool RetireProjectile(const WorldProjectile& proj);
+
     // Game-authored world position at tMs after spawn. Compatibility wrapper around HBEAKBIHANL.GIBLKPDHLBG.
     void ComputePosAt(const WorldProjectile& proj, float tMs, float& outX, float& outY);
 

@@ -20,6 +20,7 @@ export const WS_MSG = Object.freeze({
   CLIENT_LIST: 'clientList',
   CONFIG: 'config',
   GAME_CLIENT: 'gameClient',
+  GAME_UPDATE_STATUS: 'gameUpdateStatus',
   GAME_WIKI_CATALOG: 'gameWikiCatalog',
   GEM_STATUS: 'gemStatus',
   HISTORY: 'history',

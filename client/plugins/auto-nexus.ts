@@ -1,6 +1,5 @@
-import type { PluginContext } from './api.js';
-import type { ClientConnection } from './api.js';
-import type { Packet } from './api.js';
+import type { PluginContext, ClientConnection, Packet, DllThreat } from './api.js';
+import { sendDllFeature, getDllThreats, getDllGround, getDllThreatsAgeMs } from './api.js';
 
 /**
  * Auto Nexus — near 1:1 port of MultiTool `Class89` (minus autopot, plus close-spawn ENEMYSHOOT).
@@ -40,13 +39,6 @@ const SAFE_ZONE_MAPS = new Set([
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
-interface TrackedBullet {
-  ownerId:    number;
-  bulletType: number;
-  damage:     number;
-  ts:         number;
-}
-
 interface TrackedAoe {
   damage:      number;
   armorPierce: boolean;
@@ -54,8 +46,27 @@ interface TrackedAoe {
   radius:      number;
 }
 
+/**
+ * One locally predicted hit, pending confirmation from the server.
+ *
+ * An entry lives until either the server confirms it (a server HP drop or a
+ * DAMAGE packet consumes it) or its TTL expires — expiry refunds the HP, because
+ * `clientHp` is recomputed from the surviving entries rather than accumulated.
+ */
+interface PredictedHit {
+  amount:    number;
+  at:        number;
+  expiresAt: number;
+  source:    string;
+  serverWillApply: boolean;
+  bulletKey?: string;
+}
+
 interface NexusState {
-  clientHp:     number;
+  /**
+   * Authoritative HP — ProdMafia's `syncedChp`. Written only from `pd.health` on
+   * NEWTICK and from server DAMAGE confirmations. Local damage never mutates it.
+   */
   serverHp:     number;
   maxHp:        number;
   defense:      number;
@@ -66,8 +77,20 @@ interface NexusState {
   inSafeZone:   boolean;
   lastTickTime: number;
   lastSyncTick: number;
-  bullets:      Map<string, TrackedBullet>;
   pendingAoes:  TrackedAoe[];
+  /** Locally predicted damage awaiting confirmation — see `clientHp`. */
+  predicted:    PredictedHit[];
+  /** Positive recovery applied to the prediction but not yet in `serverHp`. */
+  predictedRecovery: number;
+  /** Pending release timers for held lethal PLAYERHITs. */
+  heldTimers:   ReturnType<typeof setTimeout>[];
+  /** Trailing window of server HP loss no prediction accounted for. */
+  unattributed: UnattributedSample[];
+}
+
+interface UnattributedSample {
+  amount: number;
+  at:     number;
 }
 
 /** Class27 Int32_47: stored ×1000, default 1000. */
@@ -127,48 +150,111 @@ export function register(ctx: PluginContext) {
   ctx.name     = 'Auto Nexus';
   ctx.category = 'combat';
 
-  let enableAutoNexus      = true;  // EnableAutoNexus
-  let enableAutoNexusOnly  = true;  // EnableAutoNexusOnly (Settings default true)
-  let nexusThresholdPct    = 25;   // AutoNexusPercentageThreshold
-  let useClientHp          = true; // AutoNexusUseClientHp
-  let syncServerHp         = true; // AutoNexusSyncHp
-  let showNotification     = true; // AutoNexusShowInformation
-  /** When false: incoming `AOE` packets are ignored for simulated HP / nexus threshold (MOVE sweep skipped). */
-  let trackAoeDamage       = true;
+  let enableAutoNexus = true;  // EnableAutoNexus
 
-  ctx.registerSetting('threshold', {
-    label: 'Nexus HP %', type: 'range', value: nexusThresholdPct, min: 1, max: 95, step: 1,
+  const enableAutoNexusOnly = true; 
+  const useClientHp         = true; 
+  const syncServerHp        = true; 
+  const trackAoeDamage      = false;
+
+  // ── Thresholds ─────────────────────────────────────────────────────────
+  let nexusThresholdPct    = 25;   // ForceAutoNexusHealth
+  let predictedNexusPct    = 10;   // PredictedAutoNexusHealth
+  let predictedNexusTimeMs = 200;  // PredictedAutoNexusTime
+  let includeGroundTicks   = true; // IncludeGroundTicks
+  let showNotification     = true; // ShowChatMessageOnNexus
+  let drawOverlay          = false; // DrawOverlay
+
+  // ── Lethal PLAYERHIT hold ──────────────────────────────────────────────
+  let holdLethalHits  = true; // HoldLethalPlayerHit
+  let lethalHoldMs    = 100;  // LethalHoldTime
+  let lethalCushionHp = 10;    // LethalCushionHealth
+
+  // ── Predicted-damage ledger TTLs ───────────────────────────────────────
+  const PREDICTED_TTL_PROJECTILE_MS  = 600;
+  const PREDICTED_TTL_ENVIRONMENT_MS = 1200;
+  const MAX_PENDING_PREDICTIONS      = 64;
+
+  // ── Unattributed-damage margin (ProdMafia `effectiveAutoNexusThreshold`) ──
+  let useUnattributedMargin = true;
+
+  const UNATTRIBUTED_WINDOW_MS    = 2000;
+  const UNATTRIBUTED_REACTION_MS  = 350;
+  const UNATTRIBUTED_MAX_FRACTION = 0.12;
+
+  ctx.registerSetting('ForceAutoNexusHealth', {
+    label: 'Force Nexus Health',
+    type: 'range', value: nexusThresholdPct, min: 0, max: 100, step: 1,
   }, (v: number) => { nexusThresholdPct = v; });
 
-  ctx.registerSetting('autoNexusOnly', {
-    label: 'EnableAutoNexusOnly (MultiTool gate)', advanced: true, type: 'boolean', value: enableAutoNexusOnly,
-  }, (v: boolean) => { enableAutoNexusOnly = v; });
+  ctx.registerSetting('PredictedAutoNexusHealth', {
+    label: 'Predicted Nexus Health',
+    type: 'range', value: predictedNexusPct, min: 0, max: 100, step: 1,
+  }, (v: number) => { predictedNexusPct = v; });
 
-  ctx.registerSetting('useClientHp', {
-    label: 'Use client HP (simulated)', advanced: true, type: 'boolean', value: useClientHp,
-  }, (v: boolean) => { useClientHp = v; });
+  ctx.registerSetting('PredictedAutoNexusTime', {
+    label: 'Predicted Nexus Time',
+    type: 'range', value: predictedNexusTimeMs, min: 0, max: 1000, step: 10,
+  }, (v: number) => { predictedNexusTimeMs = v; pushDllSettings(); });
 
-  ctx.registerSetting('syncHp', {
-    label: 'Sync HP to server (>30 drift)', advanced: true, type: 'boolean', value: syncServerHp,
-  }, (v: boolean) => { syncServerHp = v; });
+  ctx.registerSetting('IncludeGroundTicks', {
+    label: 'Include Ground Ticks', type: 'boolean', value: includeGroundTicks,
+  }, (v: boolean) => {
+    includeGroundTicks = v === true;
+    sendDllFeature('autoNexusTilePredict', includeGroundTicks);
+  });
 
-  ctx.registerSetting('showNotif', {
-    label: 'Show chat message on nexus', advanced: true, type: 'boolean', value: showNotification,
-  }, (v: boolean) => { showNotification = v; });
+  ctx.registerSetting('HoldLethalPlayerHit', {
+    label: 'Hold Lethal Player Hits', type: 'boolean', value: holdLethalHits,
+  }, (v: boolean) => { holdLethalHits = v === true; });
 
-  ctx.registerSetting('trackAoeDamage', {
-    label: 'Include AoE in nexus HP sim', advanced: true,
-    type: 'boolean',
-    value: trackAoeDamage,
-  }, (v: boolean) => { trackAoeDamage = v === true; });
+  ctx.registerSetting('LethalHoldTime', {
+    label: 'Lethal Hold Time', advanced: true,
+    type: 'range', value: lethalHoldMs, min: 0, max: 2000, step: 25,
+  }, (v: number) => { lethalHoldMs = v; });
 
-  let closeSpawnTiles = 0.15;
-  ctx.registerSetting('closeSpawn', {
-    label: 'Close-spawn radius (tiles)', advanced: true, type: 'range', value: closeSpawnTiles, min: 0, max: 0.3, step: 0.05,
-  }, (v: number) => { closeSpawnTiles = v; });
+  ctx.registerSetting('LethalCushionHealth', {
+    label: 'Lethal Cushion HP', advanced: true,
+    type: 'range', value: lethalCushionHp, min: 0, max: 500, step: 5,
+  }, (v: number) => { lethalCushionHp = v; });
+
+  ctx.registerSetting('UnattributedMargin', {
+    label: 'Nexus Early on Unseen Damage',
+    type: 'boolean', value: useUnattributedMargin,
+  }, (v: boolean) => { useUnattributedMargin = v === true; });
+
+  ctx.registerSetting('ShowChatMessageOnNexus', {
+    label: 'Show Chat Message on Nexus', advanced: true,
+    type: 'boolean', value: showNotification,
+  }, (v: boolean) => { showNotification = v === true; });
+
+  ctx.registerSetting('DrawOverlay', {
+    label: 'Draw Overlay', advanced: true,
+    type: 'boolean', value: drawOverlay,
+  }, (v: boolean) => {
+    drawOverlay = v === true;
+    sendDllFeature('autoNexusDebugDraw', drawOverlay ? 1 : 0);
+  });
 
   // Autopot (HP + MP) lives in the auto-drink plugin. The dashboard warns there
   // if this nexus threshold is set at/above auto-drink's HP threshold.
+
+  function pushDllSettings(): void {
+    sendDllFeature('autoNexusPredictedTimeMs', predictedNexusTimeMs);
+  }
+
+  function armDll(on: boolean): void {
+    sendDllFeature('autoNexusEnabled', on);
+    if (on) {
+      sendDllFeature('autoNexusProjPredict', true);
+      sendDllFeature('autoNexusTilePredict', includeGroundTicks);
+      sendDllFeature('autoNexusDebugDraw', drawOverlay ? 1 : 0);
+      pushDllSettings();
+    }
+  }
+  ctx.onEnabledChange(armDll);
+  armDll(ctx.enabled);
+  ctx.registerCleanup(() => sendDllFeature('autoNexusEnabled', false));
 
   const states = new WeakMap<ClientConnection, NexusState>();
 
@@ -176,54 +262,271 @@ export function register(ctx: PluginContext) {
     let s = states.get(client);
     if (!s) {
       s = {
-        clientHp: 0, serverHp: 0, maxHp: 0,
+        serverHp: 0, maxHp: 0,
         defense: 0, vitality: 0,
         regenAccum: 0,
         pendingHeal: 0,
         nexusSent: false, inSafeZone: false,
         lastTickTime: Date.now(), lastSyncTick: 0,
-        bullets: new Map(), pendingAoes: [],
+        pendingAoes: [],
+        predicted: [], predictedRecovery: 0, heldTimers: [],
+        unattributed: [],
       };
       states.set(client, s);
     }
     return s;
   }
 
+  // ── Predicted-damage ledger ───────────────────────────────────────────
+  function pruneExpired(state: NexusState): void {
+    if (state.predicted.length === 0) return;
+    const now = Date.now();
+    state.predicted = state.predicted.filter((p) => p.expiresAt > now);
+  }
+
+  function chargePredicted(
+    state:  NexusState,
+    amount: number,
+    source: string,
+    ttlMs:  number,
+    serverWillApply: boolean,
+    bulletKey?: string,
+  ): void {
+    if (amount <= 0) return;
+    pruneExpired(state);
+
+    const now = Date.now();
+    state.predicted.push({
+      amount, at: now, expiresAt: now + ttlMs, source, serverWillApply, bulletKey,
+    });
+
+    while (state.predicted.length > MAX_PENDING_PREDICTIONS) {
+      const dropped = state.predicted.shift();
+      if (dropped) {
+        ctx.log(`Prediction ledger full — refunded ${Math.round(dropped.amount)} HP (${dropped.source})`);
+      }
+    }
+  }
+
+  function pendingDamage(state: NexusState): number {
+    pruneExpired(state);
+    let total = 0;
+    for (const p of state.predicted) total += p.amount;
+    return total;
+  }
+
+  function consumePredicted(state: NexusState, amount: number): number {
+    pruneExpired(state);
+    let remaining = amount;
+
+    while (remaining > 0 && state.predicted.length > 0) {
+      const oldest = state.predicted[0];
+      if (oldest.amount <= remaining) {
+        remaining -= oldest.amount;
+        state.predicted.shift();
+      } else {
+        oldest.amount -= remaining;
+        remaining = 0;
+      }
+    }
+
+    return amount - remaining;
+  }
+
+  function clientHp(state: NexusState): number {
+    const hp = state.serverHp + state.predictedRecovery - pendingDamage(state);
+    return Math.min(hp, state.maxHp > 0 ? state.maxHp : hp);
+  }
+  
+  function pendingBulletKeys(state: NexusState): Set<string> {
+    pruneExpired(state);
+    const keys = new Set<string>();
+    for (const p of state.predicted) {
+      if (p.bulletKey) keys.add(p.bulletKey);
+    }
+    return keys;
+  }
+
+  function serverBelievedHp(state: NexusState): number {
+    pruneExpired(state);
+    let hp = state.serverHp;
+    for (const p of state.predicted) {
+      if (p.serverWillApply) hp -= p.amount;
+    }
+    return hp;
+  }
+
+  /** Add recovery to the prediction, bounded so `clientHp` cannot exceed max HP. */
+  function addPredictedRecovery(state: NexusState, amount: number): void {
+    if (amount === 0) return;
+    state.predictedRecovery += amount;
+    if (state.predictedRecovery < 0) state.predictedRecovery = 0;
+
+    const overshoot = clientHp(state) - state.maxHp;
+    if (state.maxHp > 0 && overshoot > 0) {
+      state.predictedRecovery = Math.max(0, state.predictedRecovery - overshoot);
+    }
+  }
+
+  function resyncPrediction(state: NexusState): void {
+    state.predicted.length  = 0;
+    state.predictedRecovery = 0;
+    state.regenAccum        = 0;
+  }
+
+  function unattributedDps(state: NexusState): number {
+    if (state.unattributed.length === 0) return 0;
+    const cutoff = Date.now() - UNATTRIBUTED_WINDOW_MS;
+    state.unattributed = state.unattributed.filter((s) => s.at > cutoff);
+    if (state.unattributed.length === 0) return 0;
+
+    let total = 0;
+    for (const sample of state.unattributed) total += sample.amount;
+    return total / (UNATTRIBUTED_WINDOW_MS / 1000);
+  }
+
+  function unattributedMarginHp(state: NexusState): number {
+    if (!useUnattributedMargin || state.maxHp <= 0) return 0;
+    const dps = unattributedDps(state);
+    if (dps <= 0) return 0;
+    const margin = dps * (UNATTRIBUTED_REACTION_MS / 1000);
+    return Math.min(margin, state.maxHp * UNATTRIBUTED_MAX_FRACTION);
+  }
+
+  function baseThresholdHp(state: NexusState): number {
+    return nexusThresholdPct * 0.01 * state.maxHp;
+  }
+
+  function effectiveThresholdHp(state: NexusState): number {
+    return baseThresholdHp(state) + unattributedMarginHp(state);
+  }
+
+  const liveHeldTimers = new Set<ReturnType<typeof setTimeout>>();
+  ctx.registerCleanup(() => {
+    for (const timer of liveHeldTimers) clearTimeout(timer);
+    liveHeldTimers.clear();
+  });
+
+  function clearHeldTimers(state: NexusState): void {
+    for (const timer of state.heldTimers) {
+      clearTimeout(timer);
+      liveHeldTimers.delete(timer);
+    }
+    state.heldTimers.length = 0;
+  }
+
+  let activeClient: ClientConnection | null = null;
+
   /** Run at the start of every hot path: track active client; if nexus already sent, short-circuit. */
-  function nexusPrologue(_client: ClientConnection, state: NexusState): boolean {
+  function nexusPrologue(client: ClientConnection, state: NexusState): boolean {
+    activeClient = client;
     if (state.nexusSent) return true;
     return false;
   }
+
+  ctx.on('clientDisconnected', (client) => {
+    clearHeldTimers(getState(client));
+    if (activeClient === client) activeClient = null;
+  });
 
   // method_31
   function shouldNexus(state: NexusState): boolean {
     if (!enableAutoNexus || !enableAutoNexusOnly) return false;
     if (state.inSafeZone)     return false;
     if (state.maxHp <= 0)     return false;
-    const threshold = nexusThresholdPct * 0.01 * state.maxHp;
+    const threshold = effectiveThresholdHp(state);
 
     if (useClientHp) {
-      return state.clientHp <= threshold;
+      return clientHp(state) <= threshold;
     }
-    return state.serverHp <= threshold;
+    return serverBelievedHp(state) <= threshold;
   }
 
   // method_0
-  function doNexus(client: ClientConnection, state: NexusState, reason: string): void {
+  function doNexus(
+    client: ClientConnection,
+    state:  NexusState,
+    reason: string,
+    detail?: string,
+  ): void {
     if (state.nexusSent) return;
     state.nexusSent = true;
 
-    const hpPct = state.maxHp > 0 ? Math.round((state.clientHp / state.maxHp) * 100) : 0;
-    ctx.log(`AUTO NEXUS — HP: ${Math.round(state.clientHp)}/${state.maxHp} (${hpPct}%) — ${reason}`);
+    const hp    = clientHp(state);
+    const hpPct = state.maxHp > 0 ? Math.round((hp / state.maxHp) * 100) : 0;
+    const conds = describeConditions(client.playerData);
+    const thresholds = describeThresholds(state);
+
+    const forecast = describeForecast(client, state);
+    const body     = [detail, describePending(state), forecast].filter(Boolean).join('\n');
+
+    ctx.log(`AUTO NEXUS — HP: ${Math.round(hp)}/${state.maxHp} (${hpPct}%) — ${reason}`
+      + ` — ${thresholds} — ${describeLedger(state)}`
+      + (conds ? ` — conditions: ${conds}` : '')
+      + (body ? ` — ${body.replace(/\n/g, ' | ')}` : ''));
 
     if (showNotification) {
         ctx.sendNotification(client, 'AutoNexus',
-        `AutoNexused at ${hpPct}% HP\nHP: ${Math.round(state.clientHp)}/${state.maxHp} | DEF: ${state.defense} | ServerHP: ${state.serverHp}\nSource: ${reason}`);
+        `AutoNexused at ${hpPct}% HP\nHP: ${Math.round(hp)}/${state.maxHp} | DEF: ${state.defense} | ServerHP: ${state.serverHp}`
+        + `\n${thresholds}`
+        + `\n${describeLedger(state)}`
+        + (conds ? `\nConditions: ${conds}` : '')
+        + `\nSource: ${reason}`
+        + (body ? `\n${body}` : ''));
     }
 
     const escape = ctx.createPacket('ESCAPE');
     escape.modified = true;
     client.sendToServer(escape);
+  }
+
+  function describeLedger(state: NexusState): string {
+    const pending = pendingDamage(state);
+    return `HP model: synced ${Math.round(state.serverHp)}`
+      + ` + recovery ${Math.round(state.predictedRecovery)}`
+      + ` - pending ${Math.round(pending)} (${state.predicted.length} entries)`
+      + ` = ${Math.round(clientHp(state))}`;
+  }
+
+  const MAX_LEDGER_LINES = 8;
+  function describePending(state: NexusState): string {
+    pruneExpired(state);
+    if (state.predicted.length === 0) return '';
+
+    const now   = Date.now();
+    const shown = state.predicted.slice(0, MAX_LEDGER_LINES);
+
+    const lines = shown.map((p) => {
+      const age = Math.round(now - p.at);
+      const ttl = Math.max(0, Math.round(p.expiresAt - now));
+      return `  -${age}ms  ${p.source} — ${Math.round(p.amount)} HP`
+        + (p.serverWillApply ? '' : ' [blocked, server unaware]')
+        + ` (expires in ${ttl}ms)`;
+    });
+
+    if (state.predicted.length > shown.length) {
+      const rest   = state.predicted.slice(shown.length);
+      const restHp = rest.reduce((sum, p) => sum + p.amount, 0);
+      lines.push(`  ...+${rest.length} more — ${Math.round(restHp)} HP`);
+    }
+
+    return `Pending (${state.predicted.length} unconfirmed):\n${lines.join('\n')}`;
+  }
+
+  function describeThresholds(state: NexusState): string {
+    const base   = Math.round(baseThresholdHp(state));
+    const margin = unattributedMarginHp(state);
+    if (margin <= 0) return `threshold ${base} HP (${nexusThresholdPct}%)`;
+    return `threshold ${base} HP (${nexusThresholdPct}%) `
+      + `→ ${Math.round(base + margin)} HP `
+      + `(+${Math.round(margin)} unseen-dmg margin, ${Math.round(unattributedDps(state))} HP/s)`;
+  }
+
+  function attackerName(client: ClientConnection, attackerObjId: number): string {
+    const type = ctx.getWorldState(client)?.getEntityType(attackerObjId);
+    if (type === undefined) return `#${attackerObjId}`;
+    const def = ctx.gameData?.getObject(type);
+    return def?.displayId || def?.id || `0x${type.toString(16)}`;
   }
 
   function getDmgFromState(
@@ -257,19 +560,20 @@ export function register(ctx: PluginContext) {
     dmg:    number,
     reason: string,
     packet?: Packet,
+    ttlMs:  number = PREDICTED_TTL_PROJECTILE_MS,
+    bulletKey?: string,
   ): void {
-    state.clientHp -= dmg;
-    state.serverHp -= dmg;
+    chargePredicted(state, dmg, reason, ttlMs, true, bulletKey);
+    const entry = state.predicted[state.predicted.length - 1];
 
     if (shouldNexus(state)) {
       if (packet) packet.send = false;
       doNexus(client, state, reason);
     }
+
+    if (entry && packet && !packet.send) entry.serverWillApply = false;
   }
 
-  function getThresholdHp(state: NexusState): number {
-    return nexusThresholdPct * 0.01 * state.maxHp;
-  }
 
   // method_29: num = int_13*0.001 = elapsed seconds; float_1/int_10/float_3 = 0 without method_8/12
   function regenMethod29(state: NexusState, pd: ClientConnection['playerData'], deltaSec: number): void {
@@ -292,12 +596,13 @@ export function register(ctx: PluginContext) {
       else         state.regenAccum += num2 * num;
     }
     if (bleeding) state.regenAccum -= 20 * num;
-    if (inCombat) state.regenAccum /= 2 * num;
+    if (inCombat) state.regenAccum /= 2;
 
     const num4 = Math.trunc(state.regenAccum);
     state.regenAccum -= num4;
-    state.clientHp += num4;
-    if (state.clientHp > state.maxHp) state.clientHp = state.maxHp;
+    // Regen is a prediction like any other: it lands in `predictedRecovery` and is
+    // retired when the server's own HP catches up to it.
+    addPredictedRecovery(state, num4);
   }
 
   ctx.hookPacket('MAPINFO', (client, packet) => {
@@ -305,16 +610,22 @@ export function register(ctx: PluginContext) {
     const state   = getState(client);
     state.inSafeZone = SAFE_ZONE_MAPS.has(mapName);
     state.nexusSent  = false;
-    state.clientHp   = 0;
     state.serverHp   = 0;
     state.pendingHeal = 0;
-    state.regenAccum  = 0;
-    state.bullets.clear();
     state.pendingAoes   = [];
+    state.unattributed  = [];
+    resyncPrediction(state);
+
+    if (state.heldTimers.length > 0) {
+      ctx.log(`Dropping ${state.heldTimers.length} held PLAYERHIT(s) — map changed before release`);
+      clearHeldTimers(state);
+    }
     ctx.log(`Map: "${mapName}" — safe zone: ${state.inSafeZone}`);
   }, { prepend: true });
 
   ctx.hookPacket('CREATESUCCESS', (client) => {
+    const existing = states.get(client);
+    if (existing) clearHeldTimers(existing);
     states.delete(client);
   }, { prepend: true });
 
@@ -329,25 +640,38 @@ export function register(ctx: PluginContext) {
     state.defense  = pd.defense; //Actual Def
     state.vitality = pd.vitality; //Actual Vit
 
-    const serverHp = pd.health > 0 ? pd.health : state.maxHp;
+    const serverHp     = pd.health > 0 ? pd.health : state.maxHp;
+    const prevServerHp = state.serverHp;
 
-    if (state.clientHp <= 0) {
-      state.clientHp   = serverHp;
-      state.serverHp   = serverHp;
+    if (prevServerHp <= 0) {
+      state.serverHp = serverHp;
+      resyncPrediction(state);
       state.pendingHeal = 0;
     } else {
-      const drift = Math.abs(state.clientHp - serverHp);
-      if (syncServerHp && drift > 30 && state.lastSyncTick > 5) {
-        // ctx.log(`HP sync: client ${Math.round(state.clientHp)} → server ${serverHp} (drift ${drift})`);
-        state.clientHp = serverHp;
+      const delta = prevServerHp - serverHp;
+
+      if (delta > 0) {
+        const consumed    = consumePredicted(state, delta);
+        const unexplained = delta - consumed;
+        if (unexplained > 0) {
+          state.unattributed.push({ amount: unexplained, at: Date.now() });
+        }
+      } else if (delta < 0) {
+        // The server healed us; retire the recovery we had already predicted.
+        addPredictedRecovery(state, delta);
       }
+
       state.serverHp = serverHp;
+
+      if (syncServerHp && clientHp(state) > serverHp) {
+        const excess = clientHp(state) - serverHp;
+        state.predictedRecovery = Math.max(0, state.predictedRecovery - excess);
+      }
     }
 
     // Class89.method_7: `int_9` heal queue (method_33) after stats, before method_30
     if (state.pendingHeal !== 0) {
-      state.clientHp += state.pendingHeal;
-      if (state.clientHp > state.maxHp) state.clientHp = state.maxHp;
+      addPredictedRecovery(state, state.pendingHeal);
       state.pendingHeal = 0;
     }
 
@@ -385,7 +709,8 @@ export function register(ctx: PluginContext) {
         if (distSq <= radiusSq) {
           const dmg = getDmgFromState(client, state, aoe.damage, aoe.armorPierce);
           aoes.splice(i, 1);
-          applyDamage(client, state, dmg, `AoE dmg=${dmg} (on MOVE, pre-AOEACK)`, packet);
+          applyDamage(client, state, dmg, `AoE dmg=${dmg} (on MOVE, pre-AOEACK)`, packet,
+            PREDICTED_TTL_ENVIRONMENT_MS);
           if (state.nexusSent) return;
         }
       }
@@ -399,62 +724,6 @@ export function register(ctx: PluginContext) {
     }
   }, { prepend: true });
 
-  ctx.hookPacket('ENEMYSHOOT', (client, packet) => {
-    if (!packet.isDefined) return;
-    const state = getState(client);
-    if (nexusPrologue(client, state)) return;
-    if (state.nexusSent) return;
-
-    const ownerId    = packet.data.ownerId     as number;
-    const bulletType = (packet.data.bulletType as number) ?? 0;
-    const damage     = packet.data.damage      as number;
-    const numShots   = (packet.data.numShots   as number) ?? 1;
-    const actual     = (numShots === 255 || numShots === 0) ? 1 : numShots;
-    const ts         = Date.now();
-
-    // Extension: point-blank spawn nexus before bullet dict (minimum latency)
-    if (
-      closeSpawnTiles > 0 && state.maxHp > 0 && !state.inSafeZone &&
-      enableAutoNexus && enableAutoNexusOnly
-    ) {
-      const spawnPos  = (packet.data.startingPos ?? packet.data.position) as { x: number; y: number } | undefined;
-      const playerPos = client.playerData?.pos;
-      if (spawnPos && playerPos) {
-        const dx   = spawnPos.x - playerPos.x;
-        const dy   = spawnPos.y - playerPos.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist <= closeSpawnTiles) {
-          let piercing = false;
-          if (ctx.gameData && ctx.worldState) {
-            const entityType = ctx.worldState.getEntityType(ownerId);
-            if (entityType !== undefined) {
-              const proj = ctx.gameData.getProjectile(entityType, bulletType);
-              if (proj) piercing = proj.armorPiercing;
-            }
-          }
-          const perBullet = getDmgFromState(client, state, damage, piercing);
-          const totalDmg  = perBullet * actual;
-          if ((state.clientHp - totalDmg) / state.maxHp * 100 <= nexusThresholdPct) {
-            const enemyName = ctx.worldState
-              ? (ctx.gameData?.getObject(ctx.worldState.getEntityType(ownerId) ?? 0)?.id ?? `#${ownerId}`)
-              : `#${ownerId}`;
-            doNexus(client, state,
-              `close-spawn: ${actual} shot(s) from ${enemyName} (${dist.toFixed(2)} tiles, ~${Math.round(totalDmg)} dmg)`);
-            return;
-          }
-        }
-      }
-    }
-
-    const bulletId = packet.data.bulletId as number;
-    for (let i = 0; i < actual; i++) {
-      state.bullets.set(`${ownerId}:${bulletId + i}`, { ownerId, bulletType, damage, ts });
-    }
-    for (const [k, b] of state.bullets) {
-      if (ts - b.ts > 12000) state.bullets.delete(k);
-    }
-  }, { prepend: true });
-
   ctx.hookPacket('PLAYERHIT', (client, packet) => {
     if (!packet.isDefined) return;
     const state = getState(client);
@@ -462,26 +731,64 @@ export function register(ctx: PluginContext) {
     if (state.nexusSent) { packet.send = false; return; }
     if (state.maxHp <= 0) return;
 
-    const bulletId = packet.data.bulletId as number;
+    const bulletId = (packet.data.bulletId as number) & 0xffff;
     const objectId = packet.data.objectId as number;
-    const key      = `${objectId}:${bulletId}`;
-    const bullet   = state.bullets.get(key);
+    const bulletKey = `${objectId}:${bulletId}`;
+    const bullet   = ctx.getProjectileTracker(client)?.getBullet(bulletKey);
 
-    let baseDmg  = bullet ? bullet.damage : 200;
-    let piercing = !bullet;
-
-    if (bullet && ctx.gameData && ctx.worldState) {
-      const entityType = ctx.worldState.getEntityType(objectId);
-      if (entityType !== undefined) {
-        const proj = ctx.gameData.getProjectile(entityType, bullet.bulletType);
-        if (proj) piercing = proj.armorPiercing;
-      }
-      state.bullets.delete(key);
-    }
+    // Unknown bullet: assume the worst (MultiTool warns and guesses here too).
+    const baseDmg  = bullet ? bullet.damage : 200;
+    const piercing = bullet ? (bullet.projDef?.armorPiercing ?? false) : true;
 
     const dmg = getDmgFromState(client, state, baseDmg, piercing);
-    applyDamage(client, state, dmg, `projectile hit (${dmg} dmg)`, packet);
+
+    const srvHp = serverBelievedHp(state);
+    const lethal = holdLethalHits
+      && !state.inSafeZone
+      && enableAutoNexus && enableAutoNexusOnly
+      && srvHp > 0
+      && srvHp - dmg <= lethalCushionHp;
+
+    if (lethal) {
+      packet.send = false;
+      chargePredicted(state, dmg, 'held lethal PLAYERHIT',
+        PREDICTED_TTL_PROJECTILE_MS + lethalHoldMs, true, bulletKey);
+
+      const inFlight = state.serverHp - srvHp;
+      doNexus(client, state,
+        `LETHAL projectile hit (${dmg} dmg vs ${Math.round(srvHp)} server HP)`,
+        `Server HP ${Math.round(state.serverHp)} - ${Math.round(inFlight)} in flight `
+        + `= ${Math.round(srvHp)}; incoming ${dmg}${bullet ? '' : ' (estimated — unknown bullet)'}`);
+
+      releaseHeldHit(client, state, packet, dmg);
+      return;
+    }
+
+    applyDamage(client, state, dmg, `projectile hit (${dmg} dmg)`, packet,
+      PREDICTED_TTL_PROJECTILE_MS, bulletKey);
   }, { prepend: true });
+
+  function releaseHeldHit(
+    client: ClientConnection,
+    state:  NexusState,
+    packet: Packet,
+    dmg:    number,
+  ): void {
+    const bytes = Buffer.from(packet.rawBytes);
+    const timer = setTimeout(() => {
+      const idx = state.heldTimers.indexOf(timer);
+      if (idx >= 0) state.heldTimers.splice(idx, 1);
+      liveHeldTimers.delete(timer);
+      if (!client.connected) {
+        ctx.log(`Held PLAYERHIT dropped — client disconnected before release`);
+        return;
+      }
+      client.sendRawToServer(bytes);
+      ctx.log(`Released held PLAYERHIT (${dmg} dmg) ${lethalHoldMs}ms after ESCAPE`);
+    }, lethalHoldMs);
+    state.heldTimers.push(timer);
+    liveHeldTimers.add(timer);
+  }
 
   ctx.hookPacket('AOE', (client, packet) => {
     if (!packet.isDefined) return;
@@ -515,7 +822,8 @@ export function register(ctx: PluginContext) {
         if (distSq <= radiusSq) {
           const dmg = getDmgFromState(client, state, aoe.damage, aoe.armorPierce);
           aoes.splice(i, 1);
-          applyDamage(client, state, dmg, `AoE dmg=${dmg} (on MOVE, pre-AOEACK)`, packet);
+          applyDamage(client, state, dmg, `AoE dmg=${dmg} (on MOVE, pre-AOEACK)`, packet,
+            PREDICTED_TTL_ENVIRONMENT_MS);
           if (state.nexusSent) return;
         }
       }
@@ -544,8 +852,10 @@ export function register(ctx: PluginContext) {
 
     const int47 = damageRedIntThousand(client.playerData);
     const dmg   = Math.floor(raw * (int47 / 1000));
+
     applyDamage(
       client, state, dmg, `ground damage (${label}, raw=${raw} → ${dmg})`, packet,
+      PREDICTED_TTL_ENVIRONMENT_MS,
     );
   }, { prepend: true });
 
@@ -565,7 +875,19 @@ export function register(ctx: PluginContext) {
       return;
     }
     if (serverDmg > 0 && !state.nexusSent) {
-      ctx.log(`Server confirmed ${serverDmg} dmg (client HP ~${Math.round(state.clientHp)}/${state.maxHp})`);
+      const consumed    = consumePredicted(state, serverDmg);
+      const unexplained = serverDmg - consumed;
+      state.serverHp -= serverDmg;
+      if (unexplained > 0) {
+        state.unattributed.push({ amount: unexplained, at: Date.now() });
+      }
+      ctx.log(`Server confirmed ${serverDmg} dmg `
+        + `(${Math.round(consumed)} matched a prediction, ${Math.round(unexplained)} unattributed) — `
+        + describeLedger(state));
+
+      if (shouldNexus(state)) {
+        doNexus(client, state, `server DAMAGE ${serverDmg}`);
+      }
     }
   }, { prepend: true });
 
@@ -578,33 +900,306 @@ export function register(ctx: PluginContext) {
     }
   }, { prepend: true });
 
+  // ── Predictive path: DLL threat list ──────────────────────────────────
+  function normalizeEffect(name: string): string {
+    return name.replace(/\s+/g, '').toLowerCase();
+  }
+
+  interface PredictedConditions {
+    armorBroken: boolean;
+    armored:     boolean;
+    exposed:     boolean;
+    petrified:   boolean;
+    cursed:      boolean;
+  }
+
+  interface IncomingHit {
+    from:     string;
+    dmg:      number;
+    tHitMs:   number;
+    piercing: boolean;
+    known:    boolean;
+    applies:  string[];
+  }
+
+  const MAX_INCOMING_LINES = 10;
+
+  function describeIncoming(
+    incoming: IncomingHit[],
+    state: NexusState,
+    hpAfter: number,
+    suppressed = 0,
+  ): string {
+    if (incoming.length === 0) return '';
+
+    const total = incoming.reduce((sum, b) => sum + b.dmg, 0);
+    const shown = incoming.slice(0, MAX_INCOMING_LINES);
+
+    const lines = shown.map((b) => {
+      const flags = (b.piercing ? ' [pierces DEF]' : '')
+        + (b.known ? '' : ' [est dmg]')
+        + (b.applies.length > 0 ? ` [applies ${b.applies.join('+')}]` : '');
+      return `  +${b.tHitMs}ms  ${b.from} — ${b.dmg} dmg${flags}`;
+    });
+    if (incoming.length > shown.length) {
+      const rest = incoming.slice(shown.length);
+      const restDmg = rest.reduce((sum, b) => sum + b.dmg, 0);
+      lines.push(`  ...+${rest.length} more — ${restDmg} dmg`);
+    }
+
+    const hpNow    = Math.round(clientHp(state));
+    const after    = Math.round(hpAfter);
+    const wouldDie = hpAfter <= 0;
+
+    return `Incoming (${incoming.length} source${incoming.length === 1 ? '' : 's'}):\n`
+      + `${lines.join('\n')}\n`
+      + (suppressed > 0
+        ? `  (${suppressed} already-landed bullet${suppressed === 1 ? '' : 's'} excluded)\n`
+        : '')
+      + `Total ${total} dmg vs ${hpNow} HP → `
+      + (wouldDie ? `DEATH (${after})` : `~${after}/${state.maxHp} HP`);
+  }
+
+  function describeConditions(pd: ClientConnection['playerData']): string {
+    const names: string[] = [];
+    if (pd.hasConditionEffect('ArmorBroken')) names.push('Armor Broken');
+    if (pd.hasConditionEffect('Armored'))     names.push('Armored');
+    if (pd.hasConditionEffect('Exposed'))     names.push('Exposed');
+    if (pd.hasConditionEffect('Curse'))       names.push('Curse');
+    if (pd.hasConditionEffect('Petrified'))   names.push('Petrified');
+    if (pd.hasConditionEffect('Sick'))        names.push('Sick');
+    if (pd.hasConditionEffect('Bleeding'))    names.push('Bleeding');
+    if (pd.hasConditionEffect('Invulnerable') || pd.hasConditionEffect('Invincible')) {
+      names.push('Invulnerable(ignored)');
+    }
+    return names.join(', ');
+  }
+
+  interface Forecast {
+    incoming:    IncomingHit[];
+    
+    hp:          number;
+    resolved:    number;
+    bulletCount: number;
+    
+    suppressed:  number;
+    
+    tripIndex:   number;
+    hpAtTrip:    number;
+    tripReason:  string;
+  }
+
+  function buildForecast(client: ClientConnection, state: NexusState): Forecast | null {
+    if (state.maxHp <= 0) return null;
+
+    const threats = getDllThreats();
+    const ground = getDllGround();
+
+    const groundDmgRaw =
+      includeGroundTicks && ground && ground.rawDamage > 0 ? ground.rawDamage : 0;
+    if (threats.length === 0 && groundDmgRaw === 0) return null;
+
+    const pd = client.playerData;
+    const int47 = damageRedIntThousand(pd);
+    const cond: PredictedConditions = {
+      armorBroken: pd.hasConditionEffect('ArmorBroken'),
+      armored:     pd.hasConditionEffect('Armored'),
+      exposed:     pd.hasConditionEffect('Exposed'),
+      petrified:   pd.hasConditionEffect('Petrified'),
+      cursed:      pd.hasConditionEffect('Curse'),
+    };
+
+    const tracker = ctx.getProjectileTracker(client);
+    
+    const listAgeMs = Math.max(0, getDllThreatsAgeMs() ?? 0);
+    const sinceScan = (tHitMs: number): number => Math.max(0, tHitMs - listAgeMs);
+    
+    type Event =
+      | { kind: 'bullet'; tHitMs: number; threat: DllThreat }
+      | { kind: 'ground'; tHitMs: number; rawDamage: number };
+    const ordered: Event[] = threats.map(
+      (threat): Event => ({ kind: 'bullet', tHitMs: sinceScan(threat.tHitMs), threat }),
+    );
+    if (groundDmgRaw > 0 && ground) {
+      
+      const ticks = ground.events.length > 0
+        ? ground.events
+        : [{ rawDamage: groundDmgRaw, tHitMs: ground.tHitMs }];
+      for (const tick of ticks) {
+        if (tick.rawDamage <= 0) 
+          continue;
+        
+        ordered.push({
+          kind: 'ground',
+          tHitMs: sinceScan(tick.tHitMs),
+          rawDamage: tick.rawDamage,
+        });
+      }
+    }
+    ordered.sort((a, b) => a.tHitMs - b.tHitMs);
+
+    const spentBullets = pendingBulletKeys(state);
+
+    let hp = clientHp(state);
+    let resolved = 0;
+    let bulletCount = 0;
+    let suppressed  = 0;
+    let tripIndex   = -1;
+    let hpAtTrip    = hp;
+    let tripReason  = '';
+
+    const incoming: IncomingHit[] = [];
+    for (let i = 0; i < ordered.length; i++) {
+      const ev = ordered[i];
+      if (ev.tHitMs > predictedNexusTimeMs) break;
+
+      if (ev.kind === 'ground') {
+        const applied = Math.floor(ev.rawDamage * (int47 / 1000));
+        hp -= applied;
+        incoming.push({
+          from: 'damaging ground', dmg: Math.round(applied), tHitMs: Math.round(ev.tHitMs),
+          piercing: true,
+          known: true,
+          applies: [],
+        });
+        if (tripIndex < 0 && hp / state.maxHp * 100 <= predictedNexusPct) {
+          tripIndex  = incoming.length - 1;
+          hpAtTrip   = hp;
+          tripReason = `predicted: standing on damaging ground in ${Math.round(ev.tHitMs)}ms `
+            + `→ ~${Math.round(hp)}/${state.maxHp} HP`;
+        }
+        continue;
+      }
+
+      const threat = ev.threat;
+      const threatKey = `${threat.attackerObjId}:${threat.bulletId & 0xffff}`;
+
+      // Already hit us — the game client sent PLAYERHIT for it and it is charged
+      // to the ledger. The DLL usually retires these itself, but not when its
+      // 200 ms retro window was skipped after a stall, or when its geometry
+      // disagreed with the game's own collision.
+      if (spentBullets.has(threatKey)) {
+        suppressed++;
+        continue;
+      }
+
+      bulletCount++;
+
+      const bullet = tracker?.getBullet(threatKey);
+      const projDef = bullet?.projDef ?? null;
+      if (bullet) resolved++;
+
+      const baseDmg  = bullet ? bullet.damage : threat.fallbackDamage;
+      const piercing = projDef ? projDef.armorPiercing : threat.fallbackArmorPiercing;
+
+      const applied = calcDamage(
+        baseDmg, state.defense, piercing,
+        cond.armorBroken, cond.armored, cond.exposed,
+        false,
+        cond.petrified, cond.cursed, int47,
+      );
+      hp -= applied;
+
+      const mitigationEffects: string[] = [];
+      for (const ce of projDef?.conditionEffects ?? []) {
+        switch (normalizeEffect(ce.effect)) {
+          case 'armorbroken': mitigationEffects.push('Armor Broken'); break;
+          case 'armored':     mitigationEffects.push('Armored');      break;
+          case 'exposed':     mitigationEffects.push('Exposed');      break;
+          case 'petrified':   mitigationEffects.push('Petrified');    break;
+          case 'curse':       mitigationEffects.push('Curse');        break;
+          default: break;
+        }
+      }
+
+      incoming.push({
+        from: attackerName(client, threat.attackerObjId),
+        dmg: Math.round(applied),
+        tHitMs: Math.round(ev.tHitMs),
+        piercing: !!piercing,
+        known: !!bullet,
+        applies: mitigationEffects,
+      });
+
+      if (tripIndex < 0 && hp / state.maxHp * 100 <= predictedNexusPct) {
+        tripIndex  = incoming.length - 1;
+        hpAtTrip   = hp;
+        tripReason = `predicted: ${bulletCount} bullet(s) in ${Math.round(ev.tHitMs)}ms `
+          + `→ ~${Math.round(hp)}/${state.maxHp} HP (${resolved}/${bulletCount} resolved)`;
+      }
+
+      for (const effect of mitigationEffects) {
+        switch (effect) {
+          case 'Armor Broken': cond.armorBroken = true; break;
+          case 'Armored':      cond.armored     = true; break;
+          case 'Exposed':      cond.exposed     = true; break;
+          case 'Petrified':    cond.petrified   = true; break;
+          case 'Curse':        cond.cursed      = true; break;
+          default: break;
+        }
+      }
+    }
+
+    return { incoming, hp, resolved, bulletCount, suppressed, tripIndex, hpAtTrip, tripReason };
+  }
+
+  function evaluateThreats(): void {
+    if (!ctx.enabled) return;
+    const client = activeClient;
+    if (!client) return;
+    if (!enableAutoNexus || !enableAutoNexusOnly) return;
+
+    const state = getState(client);
+    if (state.nexusSent || state.inSafeZone || state.maxHp <= 0) return;
+
+    const forecast = buildForecast(client, state);
+    if (!forecast || forecast.tripIndex < 0) return;
+
+    doNexus(client, state, forecast.tripReason);
+  }
+
+  function describeForecast(client: ClientConnection, state: NexusState): string {
+    try {
+      const forecast = buildForecast(client, state);
+      if (!forecast || forecast.incoming.length === 0) return '';
+      return describeIncoming(forecast.incoming, state, forecast.hp, forecast.suppressed);
+    } catch (err) {
+      ctx.log(`forecast for notification failed: ${(err as Error).message}`);
+      return '';
+    }
+  }
+
+  const threatTimer = setInterval(() => {
+    try { evaluateThreats(); } catch (err) { ctx.log(`threat eval failed: ${(err as Error).message}`); }
+  }, 20);
+  ctx.registerCleanup(() => clearInterval(threatTimer));
+
   ctx.hookCommand('an', (client, _cmd, args) => {
     const state = getState(client);
     if (args.length === 0) {
-      const threshHp = Math.round(getThresholdHp(state));
-      ctx.sendNotification(client, 'AutoNexus', `Nexus threshold: ${nexusThresholdPct}% (${threshHp} HP)`);
+      ctx.sendNotification(client, 'AutoNexus', `Nexus ${describeThresholds(state)}`);
       return;
     }
     const val = parseInt(args[0], 10);
-    if (isNaN(val) || val < 1 || val > 100) {
-      ctx.sendNotification(client, 'AutoNexus', 'Usage: /an [1-100]');
+    if (isNaN(val) || val < 0 || val > 100) {
+      ctx.sendNotification(client, 'AutoNexus', 'Usage: /an [0-100]');
       return;
     }
-    nexusThresholdPct = Math.max(1, Math.min(100, val));
-    ctx.updateSetting('threshold', nexusThresholdPct);
-    const threshHp = Math.round(getThresholdHp(state));
+    nexusThresholdPct = val;
+    ctx.updateSetting('ForceAutoNexusHealth', nexusThresholdPct);
     ctx.sendNotification(client, 'AutoNexus',
-      `Nexus threshold set to ${nexusThresholdPct}% (${threshHp} HP)`);
+      `Nexus ${describeThresholds(state)}`);
     ctx.log(`/an: threshold → ${nexusThresholdPct}%`);
   });
 
   ctx.hookCommand('reset', (client, _cmd, _args) => {
     const state = getState(client);
     if (!client.playerData || state.maxHp <= 0) return;
-    const oldHp = Math.round(state.clientHp);
-    state.clientHp = state.serverHp;
-    ctx.sendNotification(client, 'AutoNexus', `Reset client HP ${oldHp} → ${state.serverHp}`);
-    ctx.log(`/reset: clientHp ${oldHp} → ${state.serverHp}`);
+    const oldHp = Math.round(clientHp(state));
+    resyncPrediction(state);
+    ctx.sendNotification(client, 'AutoNexus',
+      `Reset client HP ${oldHp} → ${state.serverHp}\n${describeLedger(state)}`);
+    ctx.log(`/reset: clientHp ${oldHp} → ${state.serverHp} (ledger cleared)`);
   });
 
   ctx.hookCommand('nexus', (client, _cmd, _args) => {
@@ -613,6 +1208,7 @@ export function register(ctx: PluginContext) {
   });
 
   ctx.log(
-    `Loaded — threshold: ${nexusThresholdPct}%, MultiTool gate: ${enableAutoNexusOnly}`,
+    `Loaded — force: ${nexusThresholdPct}%, predicted: ${predictedNexusPct}% within `
+    + `${predictedNexusTimeMs}ms, ground ticks: ${includeGroundTicks}`,
   );
 }

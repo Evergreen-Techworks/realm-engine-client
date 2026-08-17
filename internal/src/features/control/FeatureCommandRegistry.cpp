@@ -18,6 +18,7 @@
 #include "PlayerCollider.h"
 #include "FpsSetter.h"
 #include "GhostHit.h"
+#include "AutoNexus.h"
 #include "gui/tabs/TestTAB.h"
 #include "DangerPlanner.h"
 #include "XDodge.h"
@@ -257,6 +258,19 @@ namespace {
         return ApplyFeatureTable(f, h, sizeof(h) / sizeof(h[0]));
     }
 
+    bool ApplyAutoNexusFeature(const FeatureCommand& f)
+    {
+        using namespace CombatTAB;
+        static const FeatureHandler h[] = {
+            FH_BOOL("autoNexusEnabled",         FeatAutoNexus::SetAutoNexusEnabled),
+            FH_BOOL("autoNexusProjPredict",     FeatAutoNexus::SetAutoNexusProjPredictEnabled),
+            FH_BOOL("autoNexusTilePredict",     FeatAutoNexus::SetAutoNexusTilePredictEnabled),
+            FH_FLOAT("autoNexusPredictedTimeMs", FeatAutoNexus::SetAutoNexusPredictedTimeMs),
+            FH_INT_BOOL("autoNexusDebugDraw",   FeatAutoNexus::SetAutoNexusDebugDraw)
+        };
+        return ApplyFeatureTable(f, h, sizeof(h) / sizeof(h[0]));
+    }
+
     bool ApplyDangerPlannerFeature(const FeatureCommand& f)
     {
         static const FeatureHandler h[] = {
@@ -295,6 +309,7 @@ namespace FeatureCommandRegistry {
         if (ApplyPJDodgeFeature(feature)) return true;
         if (ApplyRolloutFeature(feature)) return true;
         if (ApplyInputCameraSkinFeature(feature)) return true;
+        if (ApplyAutoNexusFeature(feature)) return true;
         ApplyDangerPlannerFeature(feature);
         return true;
     }

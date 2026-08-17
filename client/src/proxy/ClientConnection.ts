@@ -200,6 +200,11 @@ export class ClientConnection {
     this.send(packet, false);
   }
 
+  sendRawToServer(rawBytes: Buffer): void {
+    if (this.closed) return;
+    this.forwardRaw(rawBytes, false);
+  }
+
 
   // ─── Lag-switch API ─────────────────────────────────────────────
   //

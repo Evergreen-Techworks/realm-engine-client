@@ -237,7 +237,7 @@
         <button class="content-tab admin-only" data-tab="logs" data-icon="L" data-label="Logs" data-i18n="tab.logs">Logs</button>
         <button class="content-tab" data-tab="damage" data-icon="D" data-label="Damage Sniffer" data-i18n="tab.damage">Damage Sniffer</button>
         <button class="content-tab admin-only" data-tab="internal" data-icon="DLL" data-label="Internal">Internal</button>
-        <div class="content-tabs-section-label dev-only" id="content-tabs-dev-label" data-i18n="tab.developer">Developer</div>
+        <div class="content-tabs-section-label dev-only" id="content-tabs-dev-label" data-i18n="tab.developer">DEV</div>
         <button class="content-tab dev-only" data-tab="api" data-icon="{}" data-label="API" data-i18n="tab.api">API</button>
         <button class="content-tab dev-only" data-tab="objects" data-icon="O" data-label="Objects" data-i18n="tab.objects">Objects</button>
         <button class="content-tab dev-only" data-tab="tilemap" data-icon="T" data-label="Tilemap" data-i18n="tab.tilemap">Tilemap</button>
@@ -343,18 +343,39 @@
               </div>
             </div>
 
-            <div class="hs-card hs-accounts-col">
-              <div class="hs-card-hdr">
-                <span class="hs-card-label">Your Accounts</span>
-                <select id="home-accounts-sort" class="hs-sort-sel">
-                  <option value="newest">Newest</option>
-                  <option value="oldest">Oldest</option>
-                  <option value="alphabetical">A–Z</option>
-                  <option value="fame">Fame</option>
-                </select>
+            <div class="hs-right-col">
+              <div class="hs-card hs-updater-card">
+                <div class="hs-card-label">Game Updater</div>
+                <div id="home-updater-status" class="hs-script-name">Checking for updates…</div>
+                <div class="hs-stats-grid">
+                  <div class="hs-stat">
+                    <span class="hs-stat-label">Game Build</span>
+                    <span id="home-updater-build" class="hs-stat-value">--</span>
+                  </div>
+                  <div class="hs-stat">
+                    <span class="hs-stat-label">Last Checked</span>
+                    <span id="home-updater-last-check" class="hs-stat-value">never</span>
+                  </div>
+                </div>
+                <div class="hs-script-btns">
+                  <button type="button" id="home-updater-update-btn" class="hs-run-btn" hidden>Update game</button>
+                  <button type="button" id="home-updater-check-btn" class="hs-browse-btn">Check for updates</button>
+                </div>
               </div>
-              <input type="search" id="hs-accounts-search" class="hs-accounts-search" placeholder="Search accounts…" autocomplete="off" spellcheck="false">
-              <div id="home-accounts-roster" class="hs-roster"></div>
+
+              <div class="hs-card hs-accounts-col">
+                <div class="hs-card-hdr">
+                  <span class="hs-card-label">Your Accounts</span>
+                  <select id="home-accounts-sort" class="hs-sort-sel">
+                    <option value="newest">Newest</option>
+                    <option value="oldest">Oldest</option>
+                    <option value="alphabetical">A–Z</option>
+                    <option value="fame">Fame</option>
+                  </select>
+                </div>
+                <input type="search" id="hs-accounts-search" class="hs-accounts-search" placeholder="Search accounts…" autocomplete="off" spellcheck="false">
+                <div id="home-accounts-roster" class="hs-roster"></div>
+              </div>
             </div>
 
           </div>
