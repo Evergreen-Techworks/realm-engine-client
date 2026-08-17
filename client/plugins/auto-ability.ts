@@ -1,5 +1,5 @@
 import type { PluginContext, ClientConnection } from './api.js';
-import { sendDllFeature } from './api.js';
+import { sendDllFeature, ClassId } from './api.js';
 
 // Class-autodetected auto ability. Fires a USEITEM for the ability slot (the
 // same proven mechanism auto-drink uses for potions). Point-aimed classes fire
@@ -17,11 +17,15 @@ const TARGET_MAX_STALE_MS = 500;
 
 // Aimed abilities → fire at nearest enemy.
 const TARGET_CLASSES = new Set<number>([
-  775, 782, 785, 798, 800, 801, 802, 803, 805, 806, 817,
+  ClassId.Archer, ClassId.Wizard, ClassId.Samurai, ClassId.Knight, ClassId.Assassin,
+  ClassId.Necromancer, ClassId.Huntress, ClassId.Mystic, ClassId.Sorcerer, ClassId.Ninja,
+  ClassId.Summoner,
 ]);
 // Self/area buffs → fire nonstop at own position. Rogue (768) is excluded:
 // its cloak is a utility stealth, not something to auto-cast.
-const SELF_CLASSES = new Set<number>([784, 796, 797, 799]);
+const SELF_CLASSES = new Set<number>([
+  ClassId.Priest, ClassId.Bard, ClassId.Warrior, ClassId.Paladin,
+]);
 // Trickster/Kensei omitted entirely: their abilities move the player.
 
 const SAFE_ZONE_SUBSTRINGS = ['nexus', 'vault', 'guild hall', 'cloth bazaar', 'daily quest', 'daily login', 'pet yard', 'grand bazaar'];

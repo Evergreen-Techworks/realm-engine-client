@@ -30,5 +30,6 @@ export type { DllThreat, DllGround } from '../src/bridge/DllThreatBus.js';
 export { sendDllFeature } from '../src/bridge/DllFeatureBus.js'; // typed via plan 12
 export { StatType } from '../src/constants/StatType.js';
 export { ConditionEffect } from '../src/constants/ConditionEffect.js';
+export { ClassId } from '../src/constants/ClassId.js';
 export { RuntimeScheduler } from '../src/util/RuntimeScheduler.js';
 export { getDllThreats, getDllGround, getDllThreatsAgeMs } from '../src/bridge/DllThreatBus.js';

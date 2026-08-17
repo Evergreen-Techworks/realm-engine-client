@@ -24,7 +24,8 @@ export const BRIDGE = {
 
 /**
  * Message `type` strings exchanged with the DLL. Incoming (DLL→client): Hello,
- * AuthResult, Heartbeat, HeartbeatResp, Player, HotkeyEvent, UnresolvedClasses.
+ * AuthResult, Heartbeat, HeartbeatResp, Player, HotkeyEvent, UnresolvedClasses,
+ * Threats.
  * Outgoing/signed (client→DLL): SetFeature, ClearTiles, NoWalkInit, TileUpdate
  * (plus Heartbeat/HeartbeatResp). Each must match a builder in IpcMessages.cpp.
  */
@@ -36,6 +37,7 @@ export const DllMessageType = {
   Player: 'player',
   HotkeyEvent: 'hotkeyEvent',
   UnresolvedClasses: 'unresolvedClasses',
+  Threats: 'threats',
   SetFeature: 'setFeature',
   ClearTiles: 'clearTiles',
   NoWalkInit: 'noWalkInit',

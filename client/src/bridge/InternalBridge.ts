@@ -492,7 +492,7 @@ export class InternalBridge extends EventEmitter {
       case DllMessageType.UnresolvedClasses:
         this.handleUnresolvedClasses(msg);
         break;
-      case 'threats':
+      case DllMessageType.Threats:
         this.handleThreats(msg);
         break;
       default:
