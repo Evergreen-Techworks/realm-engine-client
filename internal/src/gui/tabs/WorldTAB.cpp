@@ -2426,8 +2426,8 @@ namespace WorldTAB {
 
         int best = 0;
         for (const uint32_t off : { OFF_TP_MINDMG, OFF_TP_MAXDMG }) {
-            void* s = nullptr;
-            if (!SafeRead(props, off, s) || !AddrValid(s)) continue;
+            void* s = Mem::ReadPtr(props, off);
+            if (!s) continue;
             char buf[32] = {};
             if (!ReadIl2CppString(s, buf, sizeof(buf))) continue;
             const int v = static_cast<int>(std::strtol(buf, nullptr, 10));
