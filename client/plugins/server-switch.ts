@@ -91,8 +91,8 @@ export function register(ctx: PluginContext) {
     currentClient = null;
   });
 
-  // In-game command: /con {abbreviation}
-  ctx.hookCommand('con', (client, _cmd, args) => {
+  // In-game command: /con or /ss {abbreviation}
+  const handleConCommand = (client: ClientConnection, _cmd: string, args: string[]) => {
     const serverNames = Object.keys(servers);
 
     if (args.length === 0) {
@@ -119,7 +119,10 @@ export function register(ctx: PluginContext) {
     }
 
     switchServer(client, matches[0], servers[matches[0]]);
-  });
+  };
+
+  ctx.hookCommand('con', handleConCommand);
+  ctx.hookCommand('ss', handleConCommand);
 
   // ─── Core reconnect logic ──────────────────────────────
 

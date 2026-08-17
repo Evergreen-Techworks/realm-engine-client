@@ -72,9 +72,20 @@ export function register(ctx: PluginContext) {
     sendDllFeature('colliderEnabled', false);
   });
 
-  ctx.registerCleanup(() => {
-    sendDllFeature('colliderEnabled', false);
+  ctx.hookCommand('cm', (client, _cmd, args) => {
+    if (args.length > 0) {
+      const val = parseFloat(args[0]);
+      if (!isNaN(val) && val >= 0 && val <= 1) {
+        ctx.updateSetting('multiplier', val);
+        if (ctx.enabled) sendDllFeature('colliderMultiplier', clamp01(val));
+        ctx.sendNotification(client, ctx.name, `Collider multiplier set to ${val.toFixed(2)}`);
+        return;
+      }
+    }
+    ctx.enabled = !ctx.enabled;
+    applyEnabled(ctx.enabled);
+    ctx.sendNotification(client, ctx.name, `Collider Manipulation ${ctx.enabled ? 'ON' : 'OFF'} (${ctx.getSetting<number>('multiplier')})`);
   });
 
-  ctx.log('Loaded — adjust the collision radius multiplier (lower = smaller collider).');
+  ctx.log('Loaded — adjust the collision radius multiplier (/cm [0.0-1.0] to configure).');
 }

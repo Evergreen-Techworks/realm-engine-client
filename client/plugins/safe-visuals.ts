@@ -41,6 +41,26 @@ export function register(ctx: PluginContext) {
     flush(true);
   });
 
+  ctx.hookCommand('sv', (client, _cmd, args) => {
+    if (args.length > 0) {
+      const val = parseInt(args[0], 10);
+      if (!isNaN(val) && val >= 0) {
+        skinOverrideId = val;
+        ctx.updateSetting('skinOverrideId', val);
+        skinOverrideEnabled = true;
+        ctx.updateSetting('skinOverrideEnabled', true);
+        ctx.enabled = true;
+        flush();
+        ctx.sendNotification(client, ctx.name, `Skin override set to ID: ${val}`);
+        return;
+      }
+    }
+    skinOverrideEnabled = !skinOverrideEnabled;
+    ctx.updateSetting('skinOverrideEnabled', skinOverrideEnabled);
+    flush();
+    ctx.sendNotification(client, ctx.name, `Safe Visuals skin override ${skinOverrideEnabled ? 'ON' : 'OFF'}`);
+  });
+
   ctx.registerCleanup(() => {
     flush(true);
   });

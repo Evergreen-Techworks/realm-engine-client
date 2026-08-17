@@ -120,11 +120,22 @@ export function register(ctx: PluginContext) {
     tryDrink(client, state, enableMp, pd.mana, pd.maxMana + pd.manaBonus, mpThresholdPct, mpPots, 'lastMpDrinkAt', 'MP');
   });
 
-  ctx.hookPacket('MAPINFO', (client) => {
-    const s = getState(client);
-    s.lastHpDrinkAt = 0;
-    s.lastMpDrinkAt = 0;
-  });
+  const handleDrinkCommand = (client: ClientConnection, _cmd: string, args: string[]) => {
+    if (args.length > 0) {
+      const val = parseInt(args[0], 10);
+      if (!isNaN(val) && val >= 10 && val <= 95) {
+        hpThresholdPct = val;
+        ctx.updateSetting('hpThresholdPct', val);
+        ctx.sendNotification(client, ctx.name, `HP pot threshold set to ${val}%`);
+        return;
+      }
+    }
+    ctx.enabled = !ctx.enabled;
+    ctx.sendNotification(client, ctx.name, `Auto Drink ${ctx.enabled ? 'ON' : 'OFF'} (HP: ${hpThresholdPct}%, MP: ${mpThresholdPct}%)`);
+  };
+
+  ctx.hookCommand('ak', handleDrinkCommand);
+  ctx.hookCommand('ap', handleDrinkCommand);
 
   ctx.log(`Loaded ${hpPots.size} HP pot ids, ${mpPots.size} MP pot ids.`);
 }

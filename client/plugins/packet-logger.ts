@@ -35,7 +35,11 @@ export function register(ctx: PluginContext) {
     ctx.dashboardLog(`DEATH: killed by ${packet.data.killedBy}`);
   });
 
-  ctx.hookCommand('logger', (client, cmd, args) => {
-    ctx.sendNotification(client, 'Packet Logger', `Logger is ${ctx.enabled ? 'ON' : 'OFF'}`);
-  });
+  const handleToggle = (client: any) => {
+    ctx.enabled = !ctx.enabled;
+    ctx.sendNotification(client, 'Packet Logger', `Packet Logger ${ctx.enabled ? 'ON' : 'OFF'}`);
+  };
+
+  ctx.hookCommand('pl', handleToggle);
+  ctx.hookCommand('logger', handleToggle);
 }

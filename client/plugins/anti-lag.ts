@@ -317,7 +317,12 @@ export function register(ctx: PluginContext) {
     }
   });
 
+  ctx.hookCommand('ag', (client) => {
+    ctx.enabled = !ctx.enabled;
+    ctx.sendNotification(client, ctx.name, `Anti-Lag ${ctx.enabled ? 'ON' : 'OFF'}`);
+  });
+
   ctx.log(
-    `Anti-lag: ${gamePetTypes.size} pet type(s), SHOWEFFECT: blocklist uses ${EFFECT_TYPE_NAMES.length} effect ids.`,
+    `Anti-lag: ${gamePetTypes.size} pet type(s), SHOWEFFECT: blocklist uses ${EFFECT_TYPE_NAMES.length} effect ids. (/ag to toggle)`,
   );
 }

@@ -88,9 +88,12 @@ export function register(ctx: PluginContext) {
     }
   });
 
-  ctx.hookCommand('spoofpush', (client) => {
+  const handleSpoofToggle = (client: any) => {
     ctx.enabled = !ctx.enabled;
     const status = ctx.enabled ? 'ON' : 'OFF';
     ctx.sendNotification(client, ctx.name, `Push tile spoof ${status}`);
-  });
+  };
+
+  ctx.hookCommand('spoofpush', handleSpoofToggle);
+  ctx.hookCommand('sp', handleSpoofToggle);
 }

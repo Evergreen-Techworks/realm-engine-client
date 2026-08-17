@@ -45,9 +45,19 @@ export function register(ctx: PluginContext) {
     sendDllFeature('followEntityActive', false);
   });
 
-  ctx.registerCleanup(() => {
-    sendDllFeature('followEntityActive', false);
+  ctx.hookCommand('af', (client, _cmd, args) => {
+    if (args.length > 0) {
+      followName = args.join(' ').trim();
+      ctx.updateSetting('followName', followName);
+      ctx.enabled = true;
+      pushState();
+      ctx.sendNotification(client, ctx.name, `Following player: ${followName}`);
+      return;
+    }
+    ctx.enabled = !ctx.enabled;
+    pushState();
+    ctx.sendNotification(client, ctx.name, `Auto Follow ${ctx.enabled ? 'ON' : 'OFF'}${followName ? ` (${followName})` : ''}`);
   });
 
-  ctx.log('Loaded - set "Follow Player" to enable internal (DLL) follow.');
+  ctx.log('Loaded - /af [player] or set "Follow Player" in dashboard.');
 }

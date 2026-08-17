@@ -106,4 +106,9 @@ export function register(ctx: PluginContext) {
     };
     client.sendToServer(otherHit);
   });
+
+  ctx.hookCommand('da', (client) => {
+    ctx.enabled = !ctx.enabled;
+    ctx.sendNotification(client, ctx.name, `Admin plugin ${ctx.enabled ? 'ON' : 'OFF'}`);
+  });
 }

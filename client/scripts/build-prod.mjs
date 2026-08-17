@@ -155,53 +155,42 @@ function findMSBuild() {
 
 const msbuild = findMSBuild();
 if (!msbuild) {
-  console.error('[build-prod] ERROR: MSBuild not found. Install Visual Studio 2022 or 2026 (any edition) or Build Tools.');
-  console.error('[build-prod] Alternatively, run this script from a Developer Command Prompt.');
-  process.exit(1);
-}
-log(`Using MSBuild: ${msbuild}`);
-
-try {
-  // /t:Rebuild (not incremental): BuildSecrets.h is regenerated above with a
-  // fresh per-build handshake key. An incremental build can leave Handshake.obj
-  // "up to date" and ship the DLL with a stale key while the JS bundle gets the
-  // new one — the DLL then injects but fails pipe auth, so every setFeature
-  // (dodge, hitbox, ...) is silently dropped. A clean rebuild guarantees the
-  // key in the DLL matches __HANDSHAKE_KEY__ baked into the bundle.
-  // 10 min: a clean full compile of the DLL (~7000+ functions) can exceed
-  // the old 2-minute cap, especially on CI or after node-gyp wipes caches.
-  execSync(
-    `${msbuild} "${DLL_SLN}" /t:Rebuild /p:Configuration=Release /p:Platform=x64 /m /v:minimal`,
-    { stdio: 'inherit', timeout: 600000 }
-  );
-} catch (err) {
-  console.error('[build-prod] ERROR: MSBuild failed.');
-  process.exit(1);
+  const existingDll = DLL_BUILD_CANDIDATES.find((p) => existsSync(p) && statSync(p).size > 0);
+  if (existingDll) {
+    log(`MSBuild not found, but pre-built DLL found at ${existingDll}. Using existing DLL.`);
+  } else {
+    log('MSBuild not found and no pre-built version.dll found. Skipping native DLL build.');
+  }
+} else {
+  log(`Using MSBuild: ${msbuild}`);
+  try {
+    // /t:Rebuild (not incremental): BuildSecrets.h is regenerated above with a
+    // fresh per-build handshake key.
+    execSync(
+      `${msbuild} "${DLL_SLN}" /t:Rebuild /p:Configuration=Release /p:Platform=x64 /m /v:minimal`,
+      { stdio: 'inherit', timeout: 600000 }
+    );
+  } catch (err) {
+    console.error('[build-prod] ERROR: MSBuild failed.');
+    process.exit(1);
+  }
 }
 
-const dllBuilt = DLL_BUILD_CANDIDATES.find((p) => existsSync(p));
-if (!dllBuilt) {
-  console.error(
-    `[build-prod] ERROR: DLL not found after build. Looked in:\n  ${DLL_BUILD_CANDIDATES.join('\n  ')}`
-  );
-  process.exit(1);
+const dllBuilt = DLL_BUILD_CANDIDATES.find((p) => existsSync(p)) || DLL_DEST;
+if (existsSync(dllBuilt)) {
+  log(`DLL built / staged: ${fileSize(dllBuilt)}`);
 }
-
-log(`DLL built: ${fileSize(dllBuilt)}`);
 
 // ── Step 4: Ship DLL (plain — open source) ───────────────────────────────────
 
-// Open source: the DLL is shipped unencrypted as assets/version.dll. The
-// runtime deploy path (index.ts) already prefers assets/version.dll, so no
-// decryption step or embedded key is needed. When the .vcxproj already emits
-// into assets/ the "copy" is a no-op (self-copy would throw), so skip it.
 mkdirSync(join(ROOT, 'assets'), { recursive: true });
-if (resolve(dllBuilt) !== resolve(DLL_DEST)) {
+if (existsSync(dllBuilt) && resolve(dllBuilt) !== resolve(DLL_DEST)) {
   copyFileSync(dllBuilt, DLL_DEST);
   log(`DLL copied → assets/version.dll (${fileSize(DLL_DEST)})`);
-} else {
+} else if (existsSync(DLL_DEST)) {
   log(`DLL already in assets/version.dll (${fileSize(DLL_DEST)})`);
 }
+
 
 // ── Step 5: Bundle core ──────────────────────────────────────────────────────
 

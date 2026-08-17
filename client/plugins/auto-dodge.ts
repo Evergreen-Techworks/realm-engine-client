@@ -478,6 +478,41 @@ export function register(ctx: PluginContext) {
     }
   });
 
+  ctx.hookCommand('ad', (client, _cmd, args) => {
+    if (args.length > 0) {
+      const mode = args[0].toLowerCase();
+      if (mode === 'off' || mode === '0') {
+        ctx.updateSetting('dodgeMode', 'off');
+        flush();
+        ctx.sendNotification(client, ctx.name, 'Auto Dodge: Off');
+        return;
+      } else if (mode === 'replus' || mode === 'xdodge' || mode === '1') {
+        ctx.updateSetting('dodgeMode', 'xdodge');
+        flush();
+        ctx.sendNotification(client, ctx.name, 'Auto Dodge mode: RE-Plus');
+        return;
+      } else if (mode === 'repp' || mode === 'plusplus' || mode === '5') {
+        ctx.updateSetting('dodgeMode', 're-plus-plus');
+        flush();
+        ctx.sendNotification(client, ctx.name, 'Auto Dodge mode: RE++');
+        return;
+      } else if (mode === 'pj' || mode === 'pjdodge' || mode === '6') {
+        ctx.updateSetting('dodgeMode', 'pj-dodge');
+        flush();
+        ctx.sendNotification(client, ctx.name, 'Auto Dodge mode: PJDodge');
+        return;
+      } else if (mode === 'zdodge' || mode === 'z' || mode === '4') {
+        ctx.updateSetting('dodgeMode', 'zdodge');
+        flush();
+        ctx.sendNotification(client, ctx.name, 'Auto Dodge mode: zDodge');
+        return;
+      }
+    }
+    ctx.enabled = !ctx.enabled;
+    flush(!ctx.enabled);
+    ctx.sendNotification(client, ctx.name, `Auto Dodge ${ctx.enabled ? 'ON' : 'OFF'}`);
+  });
+
   ctx.registerCleanup(() => {
     flush(true);
     applyDodgeFps(false);           // restore uncapped on unload

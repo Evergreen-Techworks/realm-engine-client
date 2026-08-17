@@ -353,10 +353,27 @@ export function register(ctx: PluginContext) {
 
   // ── Chat command: /o3 ────────────────────────────────────────────────────
 
-  ctx.hookCommand('o3', (client, _cmd, _args) => {
+  ctx.hookCommand('o3', (client, _cmd, args) => {
+    if (args.length > 0) {
+      const arg = args[0].toLowerCase();
+      if (arg === 'on' || arg === 'enable') {
+        ctx.enabled = true;
+        ctx.sendNotification(client, 'O3 Helper', 'O3 Helper ON');
+        return;
+      } else if (arg === 'off' || arg === 'disable') {
+        ctx.enabled = false;
+        ctx.sendNotification(client, 'O3 Helper', 'O3 Helper OFF');
+        return;
+      } else if (arg === 'toggle' || arg === 't') {
+        ctx.enabled = !ctx.enabled;
+        ctx.sendNotification(client, 'O3 Helper', `O3 Helper ${ctx.enabled ? 'ON' : 'OFF'}`);
+        return;
+      }
+    }
     const state = getState(client);
     if (!state.inSanctuary) {
-      ctx.sendNotification(client, 'O3 Helper', 'Not in Oryx\'s Sanctuary');
+      ctx.enabled = !ctx.enabled;
+      ctx.sendNotification(client, 'O3 Helper', `O3 Helper ${ctx.enabled ? 'ON' : 'OFF'} (Not in Oryx's Sanctuary)`);
       return;
     }
     const lines = [
@@ -370,5 +387,5 @@ export function register(ctx: PluginContext) {
     ctx.log(`O3 state: ${JSON.stringify(state)}`);
   });
 
-  ctx.log('Loaded — blocks ENEMYHIT during O3 shield / coins / Dammah phases. /o3 to inspect state');
+  ctx.log('Loaded — blocks ENEMYHIT during O3 shield / coins / Dammah phases. /o3 to toggle/inspect state');
 }

@@ -93,14 +93,17 @@ export function register(ctx: PluginContext) {
     ctx.log(`Cached HELLO — gameId=${cached.gameId} buildVersion="${cached.buildVersion}" keyLen=${cached.key.length}`);
   });
 
-  // ─── Step 2: /rollback — send the cached HELLO to the server ──────
-  ctx.hookCommand('rollback', (client, _cmd, args) => {
+  // ─── Step 2: /rollback or /rb — send the cached HELLO to the server ──────
+  const handleRollback = (client: ClientConnection, _cmd: string, args: string[]) => {
     if (args.length !== 0) {
-      ctx.sendNotification(client, 'Rollback', 'Usage: /rollback');
+      ctx.sendNotification(client, 'Rollback', 'Usage: /rb or /rollback');
       return;
     }
     doRollback(client);
-  });
+  };
+
+  ctx.hookCommand('rollback', handleRollback);
+  ctx.hookCommand('rb', handleRollback);
 
   // ─── Core logic ───────────────────────────────────────────────────
 

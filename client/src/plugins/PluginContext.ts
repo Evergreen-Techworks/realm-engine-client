@@ -304,7 +304,6 @@ export class PluginContext {
   /** Hook a chat command (e.g., "/autonexus"). */
   hookCommand(command: string, handler: (client: ClientConnection, command: string, args: string[]) => void): void {
     this.proxy.hookCommand(command, (client, cmd, args) => {
-      if (!this._enabled) return false;
       handler(client, cmd, args);
       return true;
     }, this.pluginId);

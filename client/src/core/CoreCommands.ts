@@ -140,4 +140,44 @@ export function attachCoreCommands(proxy: Proxy, dataDir: string, bakedServers?:
     }
     switchServer(client, byPrefix[0], servers[byPrefix[0]]);
   });
+
+  const COMMAND_HELP = [
+    '=== RealmEngine Shortcuts ===',
+    '• /aa [player|hp|mouse] - Auto Aim',
+    '• /ad [replus|repp|pj|zdodge|off] - Auto Dodge',
+    '• /an [0-100|on|off] - Auto Nexus',
+    '• /ab - Auto Ability',
+    '• /af [player] - Auto Follow',
+    '• /al - Auto Loot',
+    '• /ak or /ap [10-95] - Auto Drink / Pot',
+    '• /db - Anti-Debuffs',
+    '• /ag - Anti-Lag',
+    '• /cf - Chat Filter',
+    '• /cm [0.0-1.0] - Collider Manipulation',
+    '• /ds - Damage Sniffer',
+    '• /fs [fps|-1] - FPS Setter',
+    '• /gw or /gl [red|purple] - Player Glow',
+    '• /ic or /goto [ip:port] - IP Connect',
+    '• /o3 [on|off] - O3 Helper',
+    '• /pl - Packet Logger',
+    '• /nc - Player Noclip',
+    '• /rb - Rollback / Reconnect',
+    '• /sv [skinId] - Safe Visuals',
+    '• /sw - Safe Walk',
+    '• /ss or /con [server] - Server Switch',
+    '• /sk or /lg or /lag [drop] - Lag Switch',
+    '• /sh [mult] - Speed Hack',
+    '• /sp - Spoof Push Tiles',
+    '• /da - Admin Plugin',
+  ];
+
+  const handleHelp = (client: ClientConnection) => {
+    for (const line of COMMAND_HELP) {
+      sendNotification(client, 'RealmEngine', line);
+    }
+  };
+
+  proxy.hookCommand('ehelp', handleHelp);
+  proxy.hookCommand('eh', handleHelp);
+  proxy.hookCommand('commands', handleHelp);
 }

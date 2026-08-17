@@ -107,6 +107,25 @@ export function register(ctx: PluginContext) {
     connectToIp(client, ip, port, -2);
   });
 
+  ctx.hookCommand('ic', (client, cmd, args) => {
+    if (args.length === 0) {
+      ctx.sendNotification(client, 'IP Connect', 'Usage: /ic {ip} or /ic {ip}:{port}');
+      return;
+    }
+    let ip = args[0];
+    let port = 2050;
+    if (args[0].includes(':')) {
+      const parts = args[0].split(':');
+      ip = parts[0];
+      port = parseInt(parts[1], 10) || 2050;
+    }
+    if (!IPV4_REGEX.test(ip)) {
+      ctx.sendNotification(client, 'IP Connect', `Invalid IP: ${ip}`);
+      return;
+    }
+    connectToIp(client, ip, port, -2);
+  });
+
   // ─── Core reconnect logic ──────────────────────────────
 
   function connectToIp(client: ClientConnection, ip: string, port: number, gameId: number): void {

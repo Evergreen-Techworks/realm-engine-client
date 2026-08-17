@@ -141,4 +141,28 @@ export function register(ctx: PluginContext) {
       packet.modified = true;
     }
   });
+
+  const handleGlowCommand = (client: any, _cmd: string, args: string[]) => {
+    if (args.length > 0) {
+      const mode = args[0].toLowerCase();
+      if (mode === 'red' || mode === 'r') {
+        ctx.updateSetting('enableGlow', true);
+        ctx.updateSetting('purpleGlow', false);
+        ctx.enabled = true;
+        ctx.sendNotification(client, ctx.name, 'Glow: Red');
+        return;
+      } else if (mode === 'purple' || mode === 'p') {
+        ctx.updateSetting('enableGlow', false);
+        ctx.updateSetting('purpleGlow', true);
+        ctx.enabled = true;
+        ctx.sendNotification(client, ctx.name, 'Glow: Purple');
+        return;
+      }
+    }
+    ctx.enabled = !ctx.enabled;
+    ctx.sendNotification(client, ctx.name, `Player Glow ${ctx.enabled ? 'ON' : 'OFF'}`);
+  };
+
+  ctx.hookCommand('gw', handleGlowCommand);
+  ctx.hookCommand('gl', handleGlowCommand);
 }

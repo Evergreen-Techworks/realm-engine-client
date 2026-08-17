@@ -28,6 +28,22 @@ export function register(ctx: PluginContext) {
     sendDllFeature('speedHackMult', 1.0);
   });
 
+  ctx.hookCommand('sh', (client, _cmd, args) => {
+    if (args.length > 0) {
+      const val = parseFloat(args[0]);
+      if (!isNaN(val) && val >= 1.0) {
+        ctx.updateSetting('speedMult', val);
+        if (ctx.enabled) sendDllFeature('speedHackMult', val);
+        ctx.sendNotification(client, ctx.name, `Speed multiplier set to ${val.toFixed(1)}x`);
+        return;
+      }
+    }
+    ctx.enabled = !ctx.enabled;
+    const cur = ctx.enabled ? ctx.getSetting<number>('speedMult') : 1.0;
+    sendDllFeature('speedHackMult', cur);
+    ctx.sendNotification(client, ctx.name, `Speed Hack ${ctx.enabled ? 'ON' : 'OFF'} (${cur}x)`);
+  });
+
   ctx.registerCleanup(() => {
     sendDllFeature('speedHackMult', 1.0);
   });

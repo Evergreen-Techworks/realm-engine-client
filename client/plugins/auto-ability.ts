@@ -130,6 +130,11 @@ export function register(ctx: PluginContext) {
     }
   });
 
+  ctx.hookCommand('ab', (client) => {
+    ctx.enabled = !ctx.enabled;
+    ctx.sendNotification(client, ctx.name, `Auto Ability ${ctx.enabled ? 'ON' : 'OFF'}`);
+  });
+
   // The DLL-side auto-ability path is superseded by this packet approach.
   ctx.on('clientDisconnected', (client) => {
     safeZone.delete(client);

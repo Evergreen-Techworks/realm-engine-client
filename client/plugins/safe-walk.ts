@@ -116,4 +116,9 @@ export function register(ctx: PluginContext) {
 
     if (changed) packet.modified = true;
   });
+
+  ctx.hookCommand('sw', (client) => {
+    ctx.enabled = !ctx.enabled;
+    ctx.sendNotification(client, ctx.name, `Safe Walk ${ctx.enabled ? 'ON' : 'OFF'}`);
+  });
 }

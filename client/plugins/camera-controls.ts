@@ -88,6 +88,26 @@ export function register(ctx: PluginContext) {
     flush(true);
   });
 
+  ctx.hookCommand('cc', (client, _cmd, args) => {
+    if (args.length > 0) {
+      const val = parseFloat(args[0]);
+      if (!isNaN(val) && val >= 0.5 && val <= 20) {
+        zoomValue = val;
+        ctx.updateSetting('zoomValue', val);
+        lockZoom = true;
+        ctx.updateSetting('lockZoom', true);
+        ctx.enabled = true;
+        flush();
+        ctx.sendNotification(client, ctx.name, `Camera zoom set to ${val.toFixed(1)}`);
+        return;
+      }
+    }
+    lockZoom = !lockZoom;
+    ctx.updateSetting('lockZoom', lockZoom);
+    flush();
+    ctx.sendNotification(client, ctx.name, `Camera Zoom Lock ${lockZoom ? 'ON' : 'OFF'}`);
+  });
+
   ctx.registerCleanup(() => {
     flush(true);
   });

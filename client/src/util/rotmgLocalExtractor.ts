@@ -21,11 +21,16 @@ import { Logger } from './Logger.js';
 // keeps the plugin bundle clean.
 type SharpFactory = typeof import('sharp');
 let _sharp: SharpFactory | null = null;
-async function loadSharp(): Promise<SharpFactory> {
+async function loadSharp(): Promise<SharpFactory | null> {
   if (_sharp) return _sharp;
-  const mod = await import('sharp') as unknown as { default: SharpFactory };
-  _sharp = mod.default;
-  return _sharp;
+  try {
+    const mod = await import('sharp') as unknown as { default: SharpFactory };
+    _sharp = mod.default;
+    return _sharp;
+  } catch (err) {
+    Logger.warn('LocalExtractor', `Sharp image processor not available (${(err as Error).message}) — skipping atlas extraction`);
+    return null;
+  }
 }
 
 // Bump this when the parser logic changes so old on-disk spritesheet.xml gets regenerated.
@@ -448,13 +453,19 @@ export async function extractLocalGameAssets(
   // Write atlas PNGs (Unity stores pixels bottom-up → flip vertically)
   if (atlasesToWrite.length > 0) {
     const sharp = await loadSharp();
-    for (const { name, width, height, pixels } of atlasesToWrite) {
-      const dest = join(imagesDir, `${name}.png`);
-      await sharp(pixels, { raw: { width, height, channels: 4 } })
-        .flip()
-        .png({ compressionLevel: 6 })
-        .toFile(dest);
-      Logger.log('LocalExtractor', `Wrote ${name}.png (${width}×${height})`);
+    if (sharp) {
+      for (const { name, width, height, pixels } of atlasesToWrite) {
+        const dest = join(imagesDir, `${name}.png`);
+        try {
+          await sharp(pixels, { raw: { width, height, channels: 4 } })
+            .flip()
+            .png({ compressionLevel: 6 })
+            .toFile(dest);
+          Logger.log('LocalExtractor', `Wrote ${name}.png (${width}×${height})`);
+        } catch (err) {
+          Logger.warn('LocalExtractor', `Failed writing ${name}.png: ${(err as Error).message}`);
+        }
+      }
     }
   }
 

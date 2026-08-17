@@ -1181,12 +1181,27 @@ export function register(ctx: PluginContext) {
   ctx.hookCommand('an', (client, _cmd, args) => {
     const state = getState(client);
     if (args.length === 0) {
-      ctx.sendNotification(client, 'AutoNexus', `Nexus ${describeThresholds(state)}`);
+      ctx.enabled = !ctx.enabled;
+      ctx.sendNotification(client, 'AutoNexus', `Auto Nexus ${ctx.enabled ? 'ON' : 'OFF'} — Nexus ${describeThresholds(state)}`);
+      return;
+    }
+    const arg = args[0].toLowerCase();
+    if (arg === 'on' || arg === 'enable') {
+      ctx.enabled = true;
+      ctx.sendNotification(client, 'AutoNexus', `Auto Nexus ON — Nexus ${describeThresholds(state)}`);
+      return;
+    } else if (arg === 'off' || arg === 'disable') {
+      ctx.enabled = false;
+      ctx.sendNotification(client, 'AutoNexus', 'Auto Nexus OFF');
+      return;
+    } else if (arg === 'toggle' || arg === 't') {
+      ctx.enabled = !ctx.enabled;
+      ctx.sendNotification(client, 'AutoNexus', `Auto Nexus ${ctx.enabled ? 'ON' : 'OFF'}`);
       return;
     }
     const val = parseInt(args[0], 10);
     if (isNaN(val) || val < 0 || val > 100) {
-      ctx.sendNotification(client, 'AutoNexus', 'Usage: /an [0-100]');
+      ctx.sendNotification(client, 'AutoNexus', 'Usage: /an [0-100] or /an on/off');
       return;
     }
     nexusThresholdPct = val;

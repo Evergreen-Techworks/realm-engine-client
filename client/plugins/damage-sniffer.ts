@@ -1012,5 +1012,10 @@ export function register(ctx: PluginContext) {
   ctx.setData('damageHistory', runHistory);
   ctx.setData('damageLive', serializeRunLive());
 
-  ctx.log(`Loaded — bossHP>=${minBossHp.toLocaleString()}, minibossHP>=${minMiniBossHp.toLocaleString()}, notifications: ${showNotifications}`);
+  ctx.hookCommand('ds', (client) => {
+    ctx.enabled = !ctx.enabled;
+    ctx.sendNotification(client, ctx.name, `Damage Sniffer ${ctx.enabled ? 'ON' : 'OFF'}`);
+  });
+
+  ctx.log(`Loaded — bossHP>=${minBossHp.toLocaleString()}, minibossHP>=${minMiniBossHp.toLocaleString()}, notifications: ${showNotifications} (/ds to toggle)`);
 }

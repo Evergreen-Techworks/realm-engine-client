@@ -6255,6 +6255,79 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     updateTeleportBeaconDropdown(true);
   }
 
+  function createCustomSelect(options, currentValue, onChange) {
+    var wrapper = document.createElement('div');
+    wrapper.className = 'custom-select-wrapper';
+
+    var trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'custom-select-trigger';
+
+    var selectedOpt = options.find(function (o) { return o.value === currentValue; }) || options[0];
+    var labelSpan = document.createElement('span');
+    labelSpan.className = 'custom-select-label';
+    labelSpan.textContent = selectedOpt ? selectedOpt.label : '';
+
+    var arrowSpan = document.createElement('span');
+    arrowSpan.className = 'custom-select-arrow';
+    arrowSpan.innerHTML = '&#9660;';
+
+    trigger.appendChild(labelSpan);
+    trigger.appendChild(arrowSpan);
+
+    var menu = document.createElement('div');
+    menu.className = 'custom-select-menu';
+
+    function buildOptions() {
+      menu.innerHTML = '';
+      options.forEach(function (opt) {
+        var item = document.createElement('div');
+        item.className = 'custom-select-option' + (opt.value === currentValue ? ' selected' : '');
+        item.textContent = opt.label;
+        item.addEventListener('click', function (e) {
+          e.stopPropagation();
+          currentValue = opt.value;
+          labelSpan.textContent = opt.label;
+          wrapper.classList.remove('is-open');
+          buildOptions();
+          if (onChange) onChange(opt.value);
+        });
+        menu.appendChild(item);
+      });
+    }
+    buildOptions();
+
+    trigger.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var wasOpen = wrapper.classList.contains('is-open');
+      document.querySelectorAll('.custom-select-wrapper.is-open').forEach(function (w) {
+        if (w !== wrapper) w.classList.remove('is-open');
+      });
+      wrapper.classList.toggle('is-open', !wasOpen);
+    });
+
+    wrapper.appendChild(trigger);
+    wrapper.appendChild(menu);
+
+    return {
+      element: wrapper,
+      setValue: function (val) {
+        currentValue = val;
+        var found = options.find(function (o) { return o.value === val; });
+        if (found) labelSpan.textContent = found.label;
+        buildOptions();
+      }
+    };
+  }
+
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('.custom-select-wrapper')) {
+      document.querySelectorAll('.custom-select-wrapper.is-open').forEach(function (w) {
+        w.classList.remove('is-open');
+      });
+    }
+  });
+
   function appendPluginSettingsGrid(parent, p) {
     if (!p.settings || p.settings.length === 0) return;
     var settingsDiv = document.createElement('div');
@@ -6384,27 +6457,19 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
         });
         control.appendChild(toggle);
       } else if (s.type === 'select' && s.options) {
-        var select = document.createElement('select');
-        s.options.forEach(function (opt) {
-          var option = document.createElement('option');
-          option.value = opt.value;
-          option.textContent = opt.label;
-          if (opt.value === s.value) option.selected = true;
-          select.appendChild(option);
-        });
-        select.addEventListener('change', function () {
-          s.value = select.value;
-          settingValueByKey[s.key] = select.value;
+        var customSel = createCustomSelect(s.options, s.value, function (val) {
+          s.value = val;
+          settingValueByKey[s.key] = val;
           refreshConditionalSettingVisibility();
           if (!ws || ws.readyState !== 1) return;
           ws.send(JSON.stringify({
             type: 'updateSetting',
             pluginId: p.id,
             key: s.key,
-            value: select.value,
+            value: val,
           }));
         });
-        control.appendChild(select);
+        control.appendChild(customSel.element);
       } else if (s.type === 'text') {
         var tinput = document.createElement('input');
         tinput.type = 'text';

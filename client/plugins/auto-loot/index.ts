@@ -50,8 +50,9 @@ export function register(ctx: PluginContext) {
     store.reset(client);
   });
 
-  ctx.on('clientConnected', (client) => {
-    store.reset(client);
+  ctx.hookCommand('al', (client) => {
+    ctx.enabled = !ctx.enabled;
+    ctx.sendNotification(client, ctx.name, `Auto Loot ${ctx.enabled ? 'ON' : 'OFF'}`);
   });
 
   ctx.log(`Loaded ${catalog.size} lootable item defs across ${BAG_TYPES.size} bag types.`);

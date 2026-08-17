@@ -138,6 +138,11 @@ export function register(ctx: PluginContext) {
     flush(true);
   });
 
+  ctx.hookCommand('nc', (client) => {
+    setNoclipEnabled(!noclipEnabled);
+    ctx.sendNotification(client, ctx.name, `Player Noclip ${noclipEnabled ? 'ON' : 'OFF'}`);
+  });
+
   ctx.registerCleanup(() => {
     flush(true);
     scheduler.stop();

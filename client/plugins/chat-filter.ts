@@ -379,4 +379,9 @@ export function register(ctx: PluginContext): void {
     },
     { prepend: true },
   );
+
+  ctx.hookCommand('cf', (client) => {
+    ctx.enabled = !ctx.enabled;
+    ctx.sendNotification(client, ctx.name, `Chat Filter ${ctx.enabled ? 'ON' : 'OFF'}`);
+  });
 }

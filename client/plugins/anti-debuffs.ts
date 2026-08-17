@@ -356,5 +356,10 @@ export function register(ctx: PluginContext) {
     }
   });
 
-  ctx.log('Loaded — blocks debuff projectile hits and clears visual condition bits');
+  ctx.hookCommand('db', (client) => {
+    ctx.enabled = !ctx.enabled;
+    ctx.sendNotification(client, ctx.name, `Anti-Debuffs ${ctx.enabled ? 'ON' : 'OFF'}`);
+  });
+
+  ctx.log('Loaded — blocks debuff projectile hits and clears visual condition bits (/db to toggle)');
 }

@@ -129,7 +129,7 @@ export function register(ctx: PluginContext) {
     flushHotkeyToInternal();
   });
 
-  ctx.hookCommand('lag', (client, _cmd, args) => {
+  const handleLagToggle = (client: any, _cmd: string, args: string[]) => {
     if (args[0] === 'drop') {
       dropAll();
       ctx.sendNotification(client, 'Socket', 'Full queue dropped');
@@ -137,12 +137,16 @@ export function register(ctx: PluginContext) {
     }
     toggleLag();
     ctx.sendNotification(client, 'Socket', lagging ? 'Full lag ON' : 'Full lag OFF - flushed');
-  });
+  };
+
+  ctx.hookCommand('lag', handleLagToggle);
+  ctx.hookCommand('lg', handleLagToggle);
+  ctx.hookCommand('sk', handleLagToggle);
 
   ctx.hookCommand('lagdrop', (client) => {
     dropAll();
     ctx.sendNotification(client, 'Socket', 'Full queue dropped');
   });
 
-  ctx.log('Loaded - /lag, /lagdrop');
+  ctx.log('Loaded - /sk, /lg, /lag, /lagdrop');
 }

@@ -143,6 +143,27 @@ export function register(ctx: PluginContext) {
     syncProjectileNoclipState(true);
   });
 
+  ctx.hookCommand('aa', (client, _cmd, args) => {
+    if (args.length > 0) {
+      const mode = args[0].toLowerCase();
+      if (mode === 'player' || mode === 'p' || mode === 'close') {
+        ctx.updateSetting('aimMode', 'player');
+        ctx.sendNotification(client, ctx.name, 'Aim mode: Closest to player');
+        return;
+      } else if (mode === 'hp' || mode === 'health' || mode === 'h') {
+        ctx.updateSetting('aimMode', 'hp');
+        ctx.sendNotification(client, ctx.name, 'Aim mode: Highest HP');
+        return;
+      } else if (mode === 'mouse' || mode === 'cursor' || mode === 'm') {
+        ctx.updateSetting('aimMode', 'mouse');
+        ctx.sendNotification(client, ctx.name, 'Aim mode: Closest to mouse');
+        return;
+      }
+    }
+    ctx.enabled = !ctx.enabled;
+    ctx.sendNotification(client, ctx.name, `Auto Aim ${ctx.enabled ? 'ON' : 'OFF'}`);
+  });
+
   ctx.registerCleanup(() => {
     if (posTimer) {
       clearInterval(posTimer);
