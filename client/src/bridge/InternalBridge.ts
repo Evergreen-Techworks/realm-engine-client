@@ -19,7 +19,7 @@ import { Logger } from '../util/Logger.js';
 import { EventEmitter } from 'events';
 import { signalHelloEvent } from '../native/hello-event.js';
 import { BRIDGE, DllMessageType } from './contract.js';
-import { parseThreatPayload, publishDllThreats } from './DllThreatBus.js';
+import { decodeThreatPayload, publishDllThreats } from './DllThreatBus.js';
 
 const PIPE_PATH = BRIDGE.DEV_PIPE_NAME;
 
@@ -329,8 +329,8 @@ export class InternalBridge extends EventEmitter {
 
   private handleThreats(msg: DllMessage): void {
     const payload = typeof msg.threats === 'string' ? msg.threats : '';
-    const parsed = parseThreatPayload(payload);
-    publishDllThreats(parsed.threats, parsed.ground);
+    const parsed = decodeThreatPayload(payload);
+    publishDllThreats(parsed.threats, parsed.ground, parsed.truncated);
   }
 
   private handleUnresolvedClasses(msg: DllMessage): void {

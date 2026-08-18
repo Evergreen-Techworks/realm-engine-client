@@ -49,7 +49,10 @@ struct IpcGround {
 
 constexpr int kIpcMaxThreats = 32;
 
-void IpcBridge_PublishThreats(const IpcThreat* threats, int count, const IpcGround& ground);
+// `truncated` — the publisher had to shed threats/ground events this tick, so
+// the client's picture is known-partial (see plan 19). Threaded into the wire
+// payload's trailing flag by EncodeThreats.
+void IpcBridge_PublishThreats(const IpcThreat* threats, int count, const IpcGround& ground, bool truncated);
 
 // Tile walkability from tileUpdate / noWalkInit packets. Unknown means walkable.
 bool IpcBridge_IsTileWalkable(float worldX, float worldY);

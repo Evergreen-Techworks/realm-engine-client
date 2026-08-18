@@ -32,4 +32,4 @@ export { StatType } from '../src/constants/StatType.js';
 export { ConditionEffect } from '../src/constants/ConditionEffect.js';
 export { ClassId } from '../src/constants/ClassId.js';
 export { RuntimeScheduler } from '../src/util/RuntimeScheduler.js';
-export { getDllThreats, getDllGround, getDllThreatsAgeMs } from '../src/bridge/DllThreatBus.js';
+export { getDllThreats, getDllGround, getDllThreatsAgeMs, getDllThreatsTruncated } from '../src/bridge/DllThreatBus.js';

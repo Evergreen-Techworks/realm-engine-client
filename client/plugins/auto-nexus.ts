@@ -1,5 +1,5 @@
 import type { PluginContext, ClientConnection, Packet, DllThreat } from './api.js';
-import { sendDllFeature, getDllThreats, getDllGround, getDllThreatsAgeMs } from './api.js';
+import { sendDllFeature, getDllThreats, getDllGround, getDllThreatsAgeMs, getDllThreatsTruncated } from './api.js';
 
 /**
  * Auto Nexus — near 1:1 port of MultiTool `Class89` (minus autopot, plus close-spawn ENEMYSHOOT).
@@ -995,6 +995,17 @@ export function register(ctx: PluginContext) {
     const threats = getDllThreats();
     const ground = getDllGround();
 
+    // ── DELIBERATE BEHAVIOR CHANGE (plan 19): conservative on a partial picture ──
+    // When the DLL shed threats/ground under heavy bullet load it flags the payload
+    // truncated. On such a tick we are seeing a known-incomplete list, so we must
+    // never *raise* the nexus bar (never let it trip at a lower HP than usual). We
+    // assume worst by pulling the predicted-danger threshold up to the hard force
+    // threshold, so a truncated tick trips at least as readily as a full one — never
+    // less. This is the ONE spot that reacts to truncation.
+    const effectivePredictedPct = getDllThreatsTruncated()
+      ? Math.max(predictedNexusPct, nexusThresholdPct)
+      : predictedNexusPct;
+
     const groundDmgRaw =
       includeGroundTicks && ground && ground.rawDamage > 0 ? ground.rawDamage : 0;
     if (threats.length === 0 && groundDmgRaw === 0) return null;
@@ -1062,7 +1073,7 @@ export function register(ctx: PluginContext) {
           known: true,
           applies: [],
         });
-        if (tripIndex < 0 && hp / state.maxHp * 100 <= predictedNexusPct) {
+        if (tripIndex < 0 && hp / state.maxHp * 100 <= effectivePredictedPct) {
           tripIndex  = incoming.length - 1;
           hpAtTrip   = hp;
           tripReason = `predicted: standing on damaging ground in ${Math.round(ev.tHitMs)}ms `
@@ -1121,7 +1132,7 @@ export function register(ctx: PluginContext) {
         applies: mitigationEffects,
       });
 
-      if (tripIndex < 0 && hp / state.maxHp * 100 <= predictedNexusPct) {
+      if (tripIndex < 0 && hp / state.maxHp * 100 <= effectivePredictedPct) {
         tripIndex  = incoming.length - 1;
         hpAtTrip   = hp;
         tripReason = `predicted: ${bulletCount} bullet(s) in ${Math.round(ev.tHitMs)}ms `

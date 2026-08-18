@@ -471,7 +471,11 @@ static void PublishThreats(const std::vector<Threat>& threats, const GroundThrea
     g.count     = ground.count;
     for (int i = 0; i < ground.count && i < kIpcMaxGroundEvents; ++i)
         g.events[i] = ground.events[i];
-    IpcBridge_PublishThreats(out, n, g);
+    // Load-shedding this tick: we hit the threat cap or the ground-event cap, so
+    // the client is seeing a partial picture. Signal it so auto-nexus can respond
+    // conservatively instead of trusting an incomplete list.
+    const bool truncated = (n >= kIpcMaxThreats) || (ground.count >= kIpcMaxGroundEvents);
+    IpcBridge_PublishThreats(out, n, g, truncated);
 }
 
 static void RunAutoNexus()

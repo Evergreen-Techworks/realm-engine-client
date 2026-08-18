@@ -165,84 +165,49 @@ void IpcBridge_EmitPredictedHit(int ownerObjId, int bulletId)
 
 static std::mutex s_threatsMutex;
 static IpcThreat  s_threats[kIpcMaxThreats];
-static int        s_threatCount   = 0;
-static bool       s_threatsPending = false;
+static int        s_threatCount     = 0;
+static bool       s_threatsPending  = false;
+static bool       s_threatsTruncated = false;
 static IpcGround  s_ground;
 
-void IpcBridge_PublishThreats(const IpcThreat* threats, int count, const IpcGround& ground)
+void IpcBridge_PublishThreats(const IpcThreat* threats, int count, const IpcGround& ground, bool truncated)
 {
     if (count < 0) count = 0;
     if (count > kIpcMaxThreats) count = kIpcMaxThreats;
     std::lock_guard<std::mutex> lk(s_threatsMutex);
     for (int i = 0; i < count; ++i) s_threats[i] = threats[i];
-    s_threatCount = count;
-    s_ground = ground;
-    s_threatsPending = true;
+    s_threatCount     = count;
+    s_ground          = ground;
+    s_threatsTruncated = truncated;
+    s_threatsPending  = true;
 }
 
-// "<groundDmg>:<groundTHitMs>;<entries>" where entries are
-// "attacker:bullet:tHitMs:dmg:pierce", comma separated. 
-static int BuildThreatPayload(char* out, int outSize)
+// Room for the compact versioned payload (see IpcMessages::EncodeThreats):
+// "<version>;<ground>;<threats>;<T>" — +4 over the raw segments for the leading
+// "1;" and trailing ";<T>" tokens.
+constexpr int kThreatEntryMax = 11 + 11 + 14 + 11 + 1 + 5;
+constexpr int kGroundSegMax   = (11 + 1 + 14) + kIpcMaxGroundEvents * (1 + 11 + 1 + 14) + 2;
+constexpr int kThreatPayloadMax = kIpcMaxThreats * kThreatEntryMax + kGroundSegMax + 1 + 4;
+
+static bool WriteThreats(HANDLE hPipe, char* msgBuf, int msgBufSize)
 {
     IpcThreat local[kIpcMaxThreats];
     IpcGround localGround{};
-    int n = 0;
+    int  n         = 0;
+    bool truncated = false;
     {
         std::lock_guard<std::mutex> lk(s_threatsMutex);
-        if (!s_threatsPending) return -1;
+        if (!s_threatsPending) return true;   // nothing new
         s_threatsPending = false;
         n = s_threatCount;
         for (int i = 0; i < n; ++i) local[i] = s_threats[i];
         localGround = s_ground;
+        truncated   = s_threatsTruncated;
     }
-    int used = 0;
-    out[0] = '\0';
-    {
-        // "<d>:<t>" for the summary, then "|<d>:<t>" per additional ground tick.
-        const int wrote = snprintf(out, static_cast<size_t>(outSize), "%d:%.1f",
-                                   localGround.rawDamage,
-                                   static_cast<double>(localGround.tHitMs));
-        if (wrote <= 0 || wrote >= outSize) return -1;
-        used += wrote;
 
-        int nG = localGround.count;
-        if (nG > kIpcMaxGroundEvents) nG = kIpcMaxGroundEvents;
-        for (int i = 0; i < nG; ++i) {
-            const int w2 = snprintf(out + used, static_cast<size_t>(outSize - used),
-                                    "|%d:%.1f",
-                                    localGround.events[i].rawDamage,
-                                    static_cast<double>(localGround.events[i].tHitMs));
-            if (w2 <= 0 || w2 >= outSize - used) break;   // truncate cleanly
-            used += w2;
-        }
-
-        if (used >= outSize - 1) return -1;
-        out[used++] = ';';
-        out[used]   = '\0';
-    }
-    for (int i = 0; i < n; ++i) {
-        const int wrote = snprintf(out + used, static_cast<size_t>(outSize - used),
-                                   "%s%d:%d:%.1f:%d:%d",
-                                   (i == 0) ? "" : ",",
-                                   local[i].attackerObjId, local[i].bulletId,
-                                   static_cast<double>(local[i].tHitMs),
-                                   local[i].fallbackDamage,
-                                   local[i].fallbackArmorPiercing ? 1 : 0);
-        if (wrote <= 0 || wrote >= outSize - used) break;   // truncate cleanly
-        used += wrote;
-    }
-    return used;
-}
-
-constexpr int kThreatEntryMax = 11 + 11 + 14 + 11 + 1 + 5;
-constexpr int kGroundSegMax   = (11 + 1 + 14) + kIpcMaxGroundEvents * (1 + 11 + 1 + 14) + 2;
-constexpr int kThreatPayloadMax = kIpcMaxThreats * kThreatEntryMax + kGroundSegMax + 1;
-
-static bool WriteThreats(HANDLE hPipe, char* msgBuf, int msgBufSize)
-{
     char payload[kThreatPayloadMax] = {};
-    if (BuildThreatPayload(payload, sizeof(payload)) < 0) return true;   // nothing new
-    // NOTE: payload string UNCHANGED — plan 19 owns its format.
+    if (IpcMessages::EncodeThreats(payload, sizeof(payload), local, n, localGround, truncated) < 0)
+        return true;   // encode failure — skip this tick
     const int len = IpcMessages::BuildThreats(msgBuf, msgBufSize, payload);
     return IpcFraming::WriteMessage(hPipe, msgBuf, len);
 }
