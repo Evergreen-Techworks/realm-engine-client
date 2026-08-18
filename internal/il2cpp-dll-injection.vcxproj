@@ -49,9 +49,7 @@
     <ClCompile Include="src\core\ipc\IpcFraming.cpp" />
     <ClCompile Include="src\core\ipc\IpcJson.cpp" />
     <ClCompile Include="src\core\ipc\IpcMessages.cpp" />
-    <ClCompile Include="src\core\ipc\IpcSession.cpp" />
     <ClCompile Include="src\core\ipc\IpcTileState.cpp" />
-    <ClCompile Include="src\core\ipc\Handshake.cpp" />
     <ClCompile Include="src\gui\CamState.cpp" />
     <ClCompile Include="src\gui\tabs\CameraTAB.cpp" />
     <ClCompile Include="src\gui\tabs\WorldTAB.cpp" />
@@ -200,9 +198,7 @@
     <ClInclude Include="src\core\ipc\IpcFraming.h" />
     <ClInclude Include="src\core\ipc\IpcJson.h" />
     <ClInclude Include="src\core\ipc\IpcMessages.h" />
-    <ClInclude Include="src\core\ipc\IpcSession.h" />
     <ClInclude Include="src\core\ipc\IpcTileState.h" />
-    <ClInclude Include="src\core\ipc\Handshake.h" />
     <ClInclude Include="src\gui\CamState.h" />
     <ClInclude Include="src\gui\tabs\CameraTAB.h" />
     <ClInclude Include="src\gui\tabs\WorldTAB.h" />
