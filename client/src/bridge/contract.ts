@@ -2,9 +2,12 @@
  * contract.ts — the single TypeScript source of truth for the DLL↔client
  * bridge wire contract.
  *
+ * Messages are plaintext length-prefixed JSON dispatched purely by `type` —
+ * there is no per-message `seq`/`mac` signing and no mutual-auth handshake.
+ *
  * Every value here is emitted on (or matched against) the named pipe the
  * injected DLL speaks, so it MUST byte-match the C++ side:
- *   - pipe name / protocol version : DebugInternal/src/ui/BuildSecrets.h
+ *   - pipe name / protocol version : internal/src/core/ipc/ (fixed constants)
  *   - message `type` strings       : internal/src/core/ipc/IpcMessages.cpp
  *   - feature keys                 : internal/src/features/control/FeatureCommandRegistry.cpp
  *
@@ -15,7 +18,7 @@
  * matches these strings verbatim.
  */
 
-/** Pipe name / protocol identifiers used during the DLL handshake. */
+/** Pipe name / protocol identifiers. `hello` carries `version`/`protocol`. */
 export const BRIDGE = {
   DEV_PIPE_NAME: '\\\\.\\pipe\\lfg-dev-bridge',
   PROTOCOL_VERSION: 3,
@@ -23,15 +26,14 @@ export const BRIDGE = {
 } as const;
 
 /**
- * Message `type` strings exchanged with the DLL. Incoming (DLL→client): Hello,
- * AuthResult, Heartbeat, HeartbeatResp, Player, HotkeyEvent, UnresolvedClasses,
- * Threats.
- * Outgoing/signed (client→DLL): SetFeature, ClearTiles, NoWalkInit, TileUpdate
+ * Message `type` strings exchanged with the DLL — all plaintext, no `seq`/`mac`.
+ * Incoming (DLL→client): Hello, Heartbeat, HeartbeatResp, Player, HotkeyEvent,
+ * UnresolvedClasses, Threats.
+ * Outgoing (client→DLL): SetFeature, ClearTiles, NoWalkInit, TileUpdate
  * (plus Heartbeat/HeartbeatResp). Each must match a builder in IpcMessages.cpp.
  */
 export const DllMessageType = {
   Hello: 'hello',
-  AuthResult: 'authResult',
   Heartbeat: 'heartbeat',
   HeartbeatResp: 'heartbeatResp',
   Player: 'player',

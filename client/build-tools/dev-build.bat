@@ -70,27 +70,14 @@ if "!WSL_BASE!"=="" (
     echo [dev] WSL mount not found; skipping sync. Building from existing !WIN_BASE!\!INTERNAL_DIR!.
 ) else (
     echo [dev] Syncing !INTERNAL_DIR! from WSL...
-    REM /XF BuildSecrets.h: preserve Windows-side prod secrets written by build-prod.
     robocopy "!WSL_BASE!\!INTERNAL_DIR!" "!WIN_BASE!\!INTERNAL_DIR!" ^
         /MIR /R:3 /W:2 /NFL /NDL /NP /NJH /NJS ^
-        /XD x64 .vs .git ^
-        /XF BuildSecrets.h
+        /XD x64 .vs .git
     if !ERRORLEVEL! GEQ 8 (
         echo [dev] ERROR: !INTERNAL_DIR! sync failed ^(code !ERRORLEVEL!^).
         pause
         exit /b 1
     )
-)
-
-REM ── Write dev BuildSecrets.h if missing ─────────────────────────────────────
-REM   Must match client/src/bridge/InternalBridge.ts dev fallbacks.
-set "SECRETS=!WIN_BASE!\!INTERNAL_DIR!\src\core\ipc\BuildSecrets.h"
-if not exist "!SECRETS!" (
-    echo [dev] BuildSecrets.h missing; writing dev defaults...
-    ^> "!SECRETS!" echo #pragma once
-    ^>^> "!SECRETS!" echo // DEV-ONLY secrets — MUST match bot-client InternalBridge.ts fallbacks.
-    ^>^> "!SECRETS!" echo #define BUILD_HANDSHAKE_KEY "47eb249907eb980c851fe3a7bdb56a244244bb7d465572b556e810df6827ecfb"
-    ^>^> "!SECRETS!" echo #define BUILD_PIPE_NAME "\\\\.\\pipe\\lfg-dev-bridge"
 )
 
 REM ── Ensure game is closed so we can overwrite version.dll ───────────────────
