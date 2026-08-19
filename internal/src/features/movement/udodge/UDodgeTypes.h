@@ -129,6 +129,9 @@ struct Settings {
     bool  lockFollow  = false;   // consume DangerPlanner external goal as intent
     bool  followLantern = false; // Autopilot: stand-on object scan (perf cost)
     int   standOnType   = 0;     // objType to stand on (0 = off)
+    float laneTiles = 12.f;  // danger-lane paint length (tiles)      [2, 16]
+    float stepTiles = 0.f;   // candidate step distance; 0 = auto
+                             // (tilesPerSec × kServerTickSec)        [0 | 0.4, 3]
 };
 
 // Host environment probe (kept as function pointers so the core stays free of
@@ -139,6 +142,67 @@ struct Env {
     bool (*canOccupy)(float x, float y, bool safeWalk) = nullptr;
     // "Is (x, y) damaging ground?" — used by the hazard-escape mode.
     bool (*isHazard)(float x, float y) = nullptr;
+};
+
+// ── Instantaneous danger map (plan 45) ──────────────────────────────────────
+// Present-tense spatial danger only. No time values are stored: lane points
+// are the projectile's LIVE position followed by its remaining travel path as
+// pure geometry; zones are discs classified active (hard) / pending (soft).
+
+constexpr int   kMaxLanePoints    = 24;     // per-lane polyline cap
+constexpr float kHugeClearance    = 1.0e9f; // "no danger anywhere" sentinel
+constexpr float kServerTickSec    = 0.2f;   // planning quantum: one server tick of motion
+constexpr int   kCandProbes       = 16;     // candidate-segment probe intervals
+constexpr float kCorridorCap      = 0.75f;  // per-neighbor clearance cap in corridor sum
+constexpr float kClearBucket      = 0.1f;   // clearance bucketing for lexicographic compare
+constexpr float kTraceStepMs      = 30.f;   // sensor-internal geometry tracing step —
+                                            // time never leaves the sensor
+
+struct LaneThreat {
+    int32_t  bulletId      = 0;   // identity for mid-tick re-anchoring...
+    int32_t  attackerObjId = 0;   // ...(bulletId alone is not globally unique)
+    uint32_t ownerObjId    = 0;
+    float    hitHalf       = 0.5f; // game IsHit Chebyshev half (same rule as before)
+    int      pointCount    = 0;
+    Vec2     points[kMaxLanePoints]{};   // points[0] = live position (anchor)
+};
+
+struct ZoneThreat {
+    Vec2  pos{};
+    float radius = 1.f;
+    bool  active = false;  // true = detonated & persisting (HARD danger);
+                           // false = telegraphed, not yet landed (SOFT cost)
+};
+
+struct DangerMap {
+    uint32_t tickId    = 0;      // WM_TickId this layout was built from
+    bool     tickValid = false;  // false => tick source unreadable (fail-safe mode)
+    LaneThreat lanes[kMaxProjectiles]{};
+    int  laneCount = 0;
+    ZoneThreat zones[kMaxAoes]{};
+    int  zoneCount = 0;
+    EnemyBlocker enemies[kMaxEnemies]{};
+    int  enemyCount = 0;
+    bool projectileSourceUnavailable = false;
+    bool limited = false;
+    bool    hasLock = false;   // autopilot boss lock (same semantics as Snapshot)
+    int32_t lockId  = 0;
+    Vec2    lockPos{};
+};
+
+// Input for the instantaneous core (plan 46). Mirrors CoreInput minus every
+// time field: no nowMs, no horizon/lead — stepTiles is a DISTANCE.
+struct MapInput {
+    Vec2  player{};
+    Vec2  intentDir{};          // unit WASD/goal direction; zero when idle
+    float stepTiles = 1.f;      // candidate commitment distance (tiles)
+    float speed = 0.f;          // tiles per ms — for velocity output only
+    uint32_t tickId = 0;        // map's tick stamp (tick-locked hysteresis)
+    bool  movementLocked = false;
+    bool  playerOnHazard = false;
+    Settings settings{};
+    Env env{};
+    const DangerMap* map = nullptr;
 };
 
 enum class Decision : uint8_t {
@@ -161,6 +225,9 @@ struct CandidateDebug {
     float impactMs = kMaxTimeMs; // first time clearance hits zero
     float blockMs = kMaxTimeMs;  // first time the path hits a wall/hazard
     bool  valid = true;
+    float clearance = kMaxTimeMs;  // min hard clearance along the step segment (tiles)
+    float softCost  = 0.f;         // pending-zone penetration sum (tiles)
+    float blockDist = kMaxTimeMs;  // distance at which walls truncate the segment
 };
 
 struct CoreInput {
@@ -192,7 +259,17 @@ struct CoreOutput {
 struct CoreState {
     int    selectedCandidate = kStandCandidate;
     double selectedUntilMs = 0.0;
-    void Reset() { selectedCandidate = kStandCandidate; selectedUntilMs = 0.0; }
+    // Tick-locked hysteresis (instantaneous core). Heading held while the
+    // server tick is unchanged; re-decided at each NewTick sync.
+    uint32_t selectedTick = 0;
+    bool     haveTick = false;
+    void Reset()
+    {
+        selectedCandidate = kStandCandidate;
+        selectedUntilMs = 0.0;
+        selectedTick = 0;
+        haveTick = false;
+    }
 };
 
 // Published to the overlay each frame (read on the render thread).

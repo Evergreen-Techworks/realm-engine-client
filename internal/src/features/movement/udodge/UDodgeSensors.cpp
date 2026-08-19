@@ -2,7 +2,10 @@
 #include "UDodgeSensors.h"
 
 #include "AoeTracking.h"
+#include "GameState.h"
+#include "MemRead.h"
 #include "ProjectileTracking.h"
+#include "RuntimeOffsets.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
 #include "gui/tabs/WorldTAB.h"
 #include "gui/tabs/TestTAB.h"
@@ -196,6 +199,117 @@ bool AddFreshPath(ProjectileThreat& t, const WorldProjectile& p, float windowMs,
     return t.sampleCount >= 2;
 }
 
+// Shared scratch buffers for the copy APIs (they need vectors, but the
+// allocation amortizes to zero across frames). Build/BuildMap/ReanchorMap
+// never run in the same frame and all run on the game-update thread only,
+// so sharing is safe.
+std::vector<WorldProjectile> s_projs;
+std::vector<WorldAoe>        s_aoes;
+
+// ── Instantaneous danger map (plan 45) ──────────────────────────────────────
+// Lane tracing helpers. Times here are LOCAL variables only — they trace the
+// curve shape and are discarded; nothing time-valued is stored in the lane.
+
+// Lane from the projectile's cached path, rebased onto its live position
+// (adapted from AddCachedPath). Returns false (caller falls back to a fresh
+// ComputePosAt trace).
+bool LaneFromCachedPath(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, float laneCap)
+{
+    if (!p.hasCachedPath || p.pathSampleCount < 2) return false;
+    if (IsFinite(p.lifetime) && p.lifetime > 0.f && elapsedMs >= p.lifetime) return false;
+
+    const int count = std::min(p.pathSampleCount, kWorldProjectilePathSampleCap);
+    const int anchor = CachedAnchorIndex(p, elapsedMs);
+    if (anchor < 0 || anchor >= count) return false;
+    const float ax = p.pathX[anchor], ay = p.pathY[anchor];
+    if (!IsFinitePoint(ax, ay)) return false;
+
+    lane.pointCount = 0;
+    lane.points[lane.pointCount++] = { p.x, p.y };   // live position = anchor
+    float pathLen = 0.f;
+    for (int i = anchor + 1; i < count && lane.pointCount < kMaxLanePoints; ++i) {
+        if (!IsFinitePoint(p.pathX[i], p.pathY[i])) continue;
+        const float sMs = p.pathSampleTimesMs[i];
+        if (!IsFinite(sMs)) break;
+        if (IsFinite(p.lifetime) && p.lifetime > 0.f && sMs > p.lifetime) break;
+        const Vec2 pt = { p.x + (p.pathX[i] - ax), p.y + (p.pathY[i] - ay) };
+        pathLen += Len(Sub(pt, lane.points[lane.pointCount - 1]));
+        lane.points[lane.pointCount++] = pt;
+        if (pathLen >= laneCap) break;
+    }
+    return lane.pointCount >= 2;
+}
+
+// Lane from a fresh positionAt trace anchored on the live position (adapted
+// from AddFreshPath / the dense fallback). Coarse elapsed only — the live
+// position is the anchor; clock calibration is deliberately unused here.
+bool LaneFromFreshTrace(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, float laneCap)
+{
+    float ax = 0.f, ay = 0.f;
+    if (!TryPredict(p, elapsedMs, ax, ay)) return false;
+    const float offX = p.x - ax;
+    const float offY = p.y - ay;
+
+    lane.pointCount = 0;
+    lane.points[lane.pointCount++] = { p.x, p.y };   // live position = anchor
+    float pathLen = 0.f;
+    for (int k = 1; lane.pointCount < kMaxLanePoints; ++k) {
+        const float tMs = elapsedMs + static_cast<float>(k) * kTraceStepMs;
+        if (p.lifetime > 0.f && tMs > p.lifetime) break;
+        float x = 0.f, y = 0.f;
+        if (!TryPredict(p, tMs, x, y)) break;
+        const Vec2 pt = { x + offX, y + offY };
+        pathLen += Len(Sub(pt, lane.points[lane.pointCount - 1]));
+        lane.points[lane.pointCount++] = pt;
+        if (pathLen >= laneCap) break;
+    }
+    return lane.pointCount >= 2;
+}
+
+// Trace one lane: cached path preferred, fresh trace fallback. When neither
+// yields a path, the lane stays a single-point threat (the live disc still
+// blocks).
+void TraceLane(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, float laneCap)
+{
+    if (LaneFromCachedPath(lane, p, elapsedMs, laneCap)) return;
+    if (LaneFromFreshTrace(lane, p, elapsedMs, laneCap)) return;
+    lane.pointCount = 1;
+    lane.points[0] = { p.x, p.y };
+}
+
+// Zone pass — present-tense classification only: every not-yet-expired zone
+// within the distance cull becomes a ZoneThreat, active iff it has landed.
+// Shared by BuildMap (full rebuild) and ReanchorMap (mid-tick refresh).
+void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& /*settings*/, uint64_t nowMs)
+{
+    out.zoneCount = 0;
+    AoeTracking::EnsureInstalled();
+    s_aoes.clear();
+    AoeTracking::CopyActiveForDraw(s_aoes);
+    for (const WorldAoe& a : s_aoes) {
+        if (!a.valid || !a.isDamaging) continue;
+        if (a.isEnemyChecked && !a.isEnemy) continue;
+        if (!IsFinitePoint(a.destX, a.destY)) continue;
+
+        const float elapsedMs = static_cast<float>(nowMs > a.spawnTick ? nowMs - a.spawnTick : 0u);
+        const float lifeMs = IsFinite(a.lifetime) && a.lifetime > 0.f ? a.lifetime : 2000.f;
+        const float landAtMs = (IsFinite(a.arcMs) && a.arcMs > 0.f) ? a.arcMs : lifeMs;
+        const bool hasLanded = elapsedMs >= landAtMs;
+        if (elapsedMs >= lifeMs + 25.f) continue;                  // fully expired
+        if (hasLanded && lifeMs - elapsedMs <= 25.f) continue;     // effectively expired
+
+        const float radius = (IsFinite(a.radius) && a.radius > 0.f) ? std::clamp(a.radius, 0.2f, 12.f) : 1.5f;
+        const float cull = kAoeCullPad + radius;
+        if (DistSq(a.destX, a.destY, playerX, playerY) > cull * cull) continue;
+        if (out.zoneCount >= kMaxAoes) { out.limited = true; break; }
+
+        ZoneThreat& z = out.zones[out.zoneCount++];
+        z.pos = { a.destX, a.destY };
+        z.radius = radius;
+        z.active = hasLanded;
+    }
+}
+
 } // namespace
 
 void Build(Snapshot& out, float playerX, float playerY, const Settings& settings)
@@ -247,7 +361,6 @@ void Build(Snapshot& out, float playerX, float playerY, const Settings& settings
 
     // Projectiles → time-parametrized threat paths. Static buffer: the copy
     // API needs a vector, but the allocation amortizes to zero across frames.
-    static std::vector<WorldProjectile> s_projs;
     s_projs.clear();
     ProjectileTracking::CopyActiveForDraw(s_projs);
     for (const WorldProjectile& p : s_projs) {
@@ -300,7 +413,6 @@ void Build(Snapshot& out, float playerX, float playerY, const Settings& settings
     // Already-detonated zones with lifetime remaining persist as always-active
     // discs (activeNow) so lingering burn zones are not lost.
     AoeTracking::EnsureInstalled();
-    static std::vector<WorldAoe> s_aoes;
     s_aoes.clear();
     AoeTracking::CopyActiveForDraw(s_aoes);
     for (const WorldAoe& a : s_aoes) {
@@ -329,6 +441,163 @@ void Build(Snapshot& out, float playerX, float playerY, const Settings& settings
         t.landingMs = activeNow ? 0.f : landingMs;
         t.remainMs  = activeNow ? remainMs : 0.f;
     }
+}
+
+void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& settings)
+{
+    out.laneCount = 0;
+    out.zoneCount = 0;
+    out.enemyCount = 0;
+    out.projectileSourceUnavailable = false;
+    out.limited = false;
+    out.hasLock = false;
+    out.lockId = 0;
+    out.lockPos = {};
+    MemoClear();
+    // tickId/tickValid deliberately untouched — the caller owns the stamp.
+
+    if (!ProjectileTracking::IsInstalled()) {
+        out.projectileSourceUnavailable = true;
+        return;
+    }
+
+    const float cullSq = kThreatCullTiles * kThreatCullTiles;
+    const float laneCap = std::clamp(settings.laneTiles, 2.f, 16.f);
+    const uint64_t nowMs = GetTickCount64();
+    const int32_t localId = ProjectileTracking::GetLocalPlayerObjectId();
+
+    // Enemies → proximity blockers (scored by the core, never a hard veto),
+    // plus the Autopilot boss lock in the same pass. No break on `limited` —
+    // the lock scan must see all enemies.
+    EnemyTracker::Tick();
+    int32_t lockId = 0, lockMaxHp = -1;
+    float   lockX = 0.f, lockY = 0.f;
+    for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot()) {
+        if (!IsFinitePoint(e.x, e.y)) continue;
+        if (DistSq(e.x, e.y, playerX, playerY) <= cullSq) {
+            if (out.enemyCount >= kMaxEnemies) { out.limited = true; }
+            else {
+                EnemyBlocker& b = out.enemies[out.enemyCount++];
+                b.pos = { e.x, e.y };
+                b.radius = kEnemyRadius;
+            }
+        }
+        // Boss lock: biggest real-HP enemy (sticky via constant maxHp), NOT
+        // range-culled so autopilot keeps range to a far boss.
+        if (e.hasHealthBar && e.hp > 0 && e.maxHp > 0 &&
+            (e.maxHp > lockMaxHp || (e.maxHp == lockMaxHp && e.id < lockId))) {
+            lockMaxHp = e.maxHp; lockId = e.id; lockX = e.x; lockY = e.y;
+        }
+    }
+    if (lockMaxHp >= 0) { out.hasLock = true; out.lockId = lockId; out.lockPos = { lockX, lockY }; }
+
+    // Projectiles → danger lanes: live position (anchor) + remaining travel
+    // path as pure geometry. Same filter chain as Build.
+    s_projs.clear();
+    ProjectileTracking::CopyActiveForDraw(s_projs);
+    for (const WorldProjectile& p : s_projs) {
+        if (!p.valid) continue;
+        if (localId != 0 && p.attackerObjId == localId) continue;
+        if (localId != 0 && static_cast<int32_t>(p.ownerObjId) == localId) continue;
+        if (!p.canHitPlayer && p.attackerObjId == 0 && static_cast<int32_t>(p.ownerObjId) == 0) continue;
+        if (!IsFinitePoint(p.x, p.y)) continue;
+        if (DistSq(p.x, p.y, playerX, playerY) > cullSq) continue;
+        if (out.laneCount >= kMaxProjectiles) { out.limited = true; break; }
+
+        LaneThreat& lane = out.lanes[out.laneCount];
+        lane = LaneThreat{};
+        lane.bulletId = static_cast<int32_t>(p.bulletId);
+        lane.attackerObjId = p.attackerObjId;
+        lane.ownerObjId = p.ownerObjId;
+        lane.hitHalf = (IsFinite(p.runtimeChebyshevHalf) && p.runtimeChebyshevHalf > 1e-4f)
+                           ? p.runtimeChebyshevHalf
+                           : ((IsFinite(p.projHalfSize) && p.projHalfSize > 1e-4f) ? p.projHalfSize : 0.5f);
+
+        // Coarse elapsed only — the calibrated clock is deliberately unused
+        // here: the live position is the anchor.
+        const float elapsedMs = static_cast<float>(nowMs > p.spawnTick ? nowMs - p.spawnTick : 0u);
+        TraceLane(lane, p, elapsedMs, laneCap);
+        if (lane.pointCount >= 1) ++out.laneCount;
+    }
+
+    // AoE zones → present-tense discs (active = landed & persisting; pending
+    // = telegraphed soft cost).
+    RebuildZones(out, playerX, playerY, settings, nowMs);
+}
+
+bool ReadWorldTick(uint32_t& outTickId)
+{
+    void* wm = GameState::GetWorldMgr();
+    if (!wm) return false;
+    uint32_t tick = 0;
+    if (!Mem::TryRead(wm, RuntimeOffsets::WM_TickId, tick)) return false;
+    outTickId = tick;
+    return true;
+}
+
+bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& settings)
+{
+    if (!ProjectileTracking::IsInstalled()) return false;
+    MemoClear();   // per-frame hazard memo reset (same contract as Build)
+
+    const float cullSq = kThreatCullTiles * kThreatCullTiles;
+    const uint64_t nowMs = GetTickCount64();
+    const int32_t localId = ProjectileTracking::GetLocalPlayerObjectId();
+
+    // Live projectile set, same filter chain as BuildMap. Any mismatch with
+    // the map's lane set (spawn/retire) is a structural change — return false
+    // and the caller runs a full BuildMap instead (a partially re-anchored map
+    // is fine: it is rebuilt wholesale on that path).
+    s_projs.clear();
+    ProjectileTracking::CopyActiveForDraw(s_projs);
+    bool laneMatched[kMaxProjectiles]{};
+    int  liveCount = 0;
+    for (const WorldProjectile& p : s_projs) {
+        if (!p.valid) continue;
+        if (localId != 0 && p.attackerObjId == localId) continue;
+        if (localId != 0 && static_cast<int32_t>(p.ownerObjId) == localId) continue;
+        if (!p.canHitPlayer && p.attackerObjId == 0 && static_cast<int32_t>(p.ownerObjId) == 0) continue;
+        if (!IsFinitePoint(p.x, p.y)) continue;
+        if (DistSq(p.x, p.y, playerX, playerY) > cullSq) continue;
+        if (++liveCount > map.laneCount) return false;   // spawned mid-tick
+
+        // Match on (bulletId, attackerObjId, ownerObjId) — bulletId alone is
+        // not globally unique.
+        int laneIdx = -1;
+        for (int i = 0; i < map.laneCount; ++i) {
+            const LaneThreat& lane = map.lanes[i];
+            if (lane.bulletId == static_cast<int32_t>(p.bulletId) &&
+                lane.attackerObjId == p.attackerObjId &&
+                lane.ownerObjId == p.ownerObjId) { laneIdx = i; break; }
+        }
+        if (laneIdx < 0 || laneMatched[laneIdx]) return false;
+        laneMatched[laneIdx] = true;
+
+        // Re-anchor: rebase the polyline so the nearest lane point becomes the
+        // projectile's LIVE position (mid-tick frames ride the game's own
+        // interpolation — nothing is extrapolated by our clock).
+        LaneThreat& lane = map.lanes[laneIdx];
+        int   nearest = 0;
+        float bestDistSq = 3.402823466e+38f;
+        for (int i = 0; i < lane.pointCount; ++i) {
+            const float d = DistSq(lane.points[i].x, lane.points[i].y, p.x, p.y);
+            if (d < bestDistSq) { bestDistSq = d; nearest = i; }
+        }
+        const Vec2 live  = { p.x, p.y };
+        const Vec2 shift = Sub(live, lane.points[nearest]);
+        lane.points[0] = live;
+        int outCount = 1;
+        for (int i = nearest + 1; i < lane.pointCount; ++i)
+            lane.points[outCount++] = Add(lane.points[i], shift);
+        lane.pointCount = outCount;   // nearest == last ⇒ single live point
+    }
+    if (liveCount != map.laneCount) return false;        // a lane's shot retired
+
+    // Zones: rebuilt wholesale (cheap; classification is present-tense).
+    // Enemies / lock / limited / projectileSourceUnavailable stay untouched —
+    // the layout is per-tick.
+    RebuildZones(map, playerX, playerY, settings, nowMs);
+    return true;
 }
 
 bool IsHazardAt(float worldX, float worldY)
