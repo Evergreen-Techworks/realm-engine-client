@@ -11,6 +11,7 @@
 #include "RuntimeOffsets.h"
 #include "Il2CppResolver.h"
 #include "core/runtime/MemRead.h"
+#include "game/objects/GameObjects.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdint>
@@ -489,9 +490,9 @@ static void RunAutoNexus()
     if (maxHp <= 0 || hp > maxHp * 4) return;
     if (defense < 0) defense = 0;
 
-    uint32_t cW0 = 0, cW1 = 0;
-    RuntimeOffsets::TryReadMapObjectConditions(lp, &cW0, &cW1);
-    const uint64_t cFull = RuntimeOffsets::GetFullConditions(cW0, cW1);
+    Game::Character ch(lp);
+    uint64_t cFull = 0;
+    ch.Conditions(cFull);
 
     std::vector<Threat> threats;
 

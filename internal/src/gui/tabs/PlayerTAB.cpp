@@ -12,6 +12,7 @@
 #include "Il2CppResolver.h"
 #include "RuntimeOffsets.h"
 #include "core/runtime/MemRead.h"
+#include "game/objects/GameObjects.h"
 #include "game/math/MoveSpeed.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -243,20 +244,21 @@ static void DoRefresh()
 
     PlayerSnap s = {};
 
-    Mem::TryRead(lp, RuntimeOffsets::PosX,              s.x);
-    Mem::TryRead(lp, RuntimeOffsets::PosY,              s.y);
-    Mem::TryRead(lp, RuntimeOffsets::HP,                s.hp);
-    Mem::TryRead(lp, RuntimeOffsets::MaxHP,             s.maxHp);
+    Game::Character ch(lp);
+    s.x     = ch.AsEntity().X();
+    s.y     = ch.AsEntity().Y();
+    s.hp    = ch.Hp();
+    s.maxHp = ch.MaxHp();
     Mem::TryRead(lp, RuntimeOffsets::PlayerClassNum,    s.classNum);
     Mem::TryRead(lp, RuntimeOffsets::PlayerGuildRank,   s.guildRank);
-    Mem::TryRead(lp, RuntimeOffsets::CurMP,             s.curMp);
-    Mem::TryRead(lp, RuntimeOffsets::MaxMP,             s.maxMp);
+    s.curMp = ch.CurMpF();
+    s.maxMp = ch.MaxMp();
     Mem::TryRead(lp, RuntimeOffsets::PlayerAtk,         s.atk);
     Mem::TryRead(lp, RuntimeOffsets::Player_Spd,        s.spd);
     Mem::TryRead(lp, RuntimeOffsets::PlayerDex,         s.dex);
     Mem::TryRead(lp, RuntimeOffsets::PlayerVit,         s.vit);
     Mem::TryRead(lp, RuntimeOffsets::PlayerWis,         s.wis);
-    Mem::TryRead(lp, RuntimeOffsets::Defense,           s.def);
+    s.def   = ch.Defense();
 
     // Player name (Il2CppString*)
     void* namePtr = nullptr;
@@ -268,7 +270,13 @@ static void DoRefresh()
     ReadEquipmentSlots(lp, s, s_emEquipSlots, s_itemObjProps, s_itemObjType);
 
     // [A] COHCKAPOLCA UInt32[] pointer path (same as WorldTAB / CombatTAB)
-    RuntimeOffsets::TryReadMapObjectConditions(lp, &s.condLo, &s.condHi);
+    {
+        uint64_t condFull = 0;
+        if (ch.Conditions(condFull)) {
+            s.condLo = static_cast<uint32_t>(condFull);
+            s.condHi = static_cast<uint32_t>(condFull >> 32);
+        }
+    }
     // [B] MPJGAPJBBBF single-int condition field (BeeByte-resolved at runtime)
     Mem::TryRead(lp, RuntimeOffsets::PlayerCondInt, s.condInt);
     // [C] raw [this+0x440] — the exact offset HasConditionEffect reads in the .lst

@@ -64,6 +64,8 @@ public:
         vx = v.x; vy = v.y;
         return true;
     }
+    float   CurMpF()  const { return Mem::ReadOr<float>(e_.Ptr(), RuntimeOffsets::CurMP, 0.f); }
+    int32_t MaxMp()   const { return Mem::ReadOr<int32_t>(e_.Ptr(), RuntimeOffsets::MaxMP, 0); }
     // Combined 64-bit status mask via the SEH-safe RuntimeOffsets reader.
     bool Conditions(uint64_t& out) const {
         uint32_t w0 = 0, w1 = 0;
@@ -93,6 +95,7 @@ class ProjProps {
 public:
     explicit ProjProps(void* p) : p_(p) {}
     bool    Ok()        const { return Mem::AddrOk(p_); }
+    bool    IsParametric() const { return Mem::ReadOr<bool>(p_, RuntimeOffsets::PP_IsParametric, false); }
     float   Lifetime()  const { return Mem::ReadOr<float>(p_, RuntimeOffsets::PP_Lifetime, 0.f); }
     int32_t Speed()     const { return Mem::ReadOr<int32_t>(p_, RuntimeOffsets::PP_Speed, 0); }
     bool    IsWavy()    const { return Mem::ReadOr<bool>(p_, RuntimeOffsets::PP_IsWavy, false); }

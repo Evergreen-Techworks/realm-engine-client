@@ -8,6 +8,7 @@
 #include "GameState.h"
 #include "RuntimeOffsets.h"
 #include "core/runtime/MemRead.h"
+#include "game/objects/GameObjects.h"
 #include "ProjectileTracking.h"
 #include "AoeTracking.h"
 
@@ -46,10 +47,9 @@ static ULONGLONG s_lastThrottleMs = 0;
 static bool LocalStealthBlocksAim(void* player)
 {
     if (s_shootWhileStealthed.load(std::memory_order_relaxed)) return false;
-    if (!Mem::AddrOk(player)) return false;
-    uint32_t w0 = 0, w1 = 0;
-    if (!RuntimeOffsets::TryReadMapObjectConditions(player, &w0, &w1)) return false;
-    const uint64_t full = RuntimeOffsets::GetFullConditions(w0, w1);
+    Game::Character ch(player);
+    uint64_t full = 0;
+    if (!ch.Conditions(full)) return false;
     return RuntimeOffsets::HasCondition(full, RuntimeOffsets::ConditionEffects::Invisible);
 }
 

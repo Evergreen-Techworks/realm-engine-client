@@ -4,6 +4,7 @@
 #include "AimMath.h"
 #include "RuntimeOffsets.h"
 #include "core/runtime/MemRead.h"
+#include "game/objects/GameObjects.h"
 #include "ProjectileTracking.h"
 
 #include <atomic>
@@ -53,12 +54,12 @@ static void Recalculate(void* local)
         return;
 
     __try {
-        uint8_t* p = reinterpret_cast<uint8_t*>(pp);
+        Game::ProjProps props(pp);
 
-        const bool isParam      = Mem::ReadOr<bool>(p, RuntimeOffsets::PP_IsParametric, false);
-        const int32_t rawSpeedI = Mem::ReadOr<int32_t>(p, RuntimeOffsets::PP_Speed, 0);
-        const float rawLife     = Mem::ReadOr<float>(p, RuntimeOffsets::PP_Lifetime, 0.f);
-        const float mag         = Mem::ReadOr<float>(p, RuntimeOffsets::PP_Magnitude, 0.f);
+        const bool isParam      = props.IsParametric();
+        const int32_t rawSpeedI = props.Speed();
+        const float rawLife     = props.Lifetime();
+        const float mag         = props.Magnitude();
 
         // Check parametric FIRST — swords/daggers/other fixed-arc weapons store
         // PP_Speed = 0 (unused), which would fail the speed validation below.
@@ -84,7 +85,8 @@ static void Recalculate(void* local)
         const float lifetimeMs = ProjectileTracking::NormalizeProjectileLifetimeMs(rawLife) * lifetimeMul;
         if (!(lifetimeMs > 1.f) || !std::isfinite(lifetimeMs)) return;
 
-        float rangeTiles = AimMath::IntegratedProjectileDistance(p, lifetimeMs, speedMul, rawSpeed);
+        float rangeTiles = AimMath::IntegratedProjectileDistance(
+            reinterpret_cast<uint8_t*>(pp), lifetimeMs, speedMul, rawSpeed);
         if (!(rangeTiles > 0.f) || !std::isfinite(rangeTiles)) return;
         if (rangeMul >= 0.5f && rangeMul <= 10.f)
             rangeTiles *= rangeMul;
