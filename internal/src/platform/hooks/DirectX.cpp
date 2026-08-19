@@ -20,7 +20,6 @@
 #include "DiagBridge.h"
 #include "GameState.h"
 #include "LocalPlayer.h"
-#include "SharedMemory.h"
 #include "SkinChanger.h"
 #include "BagLooter.h"
 #include "SpeedHack.h"
@@ -186,7 +185,6 @@ HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags
 	// NoclipHook installs from FeatureRuntime::ApplyOverrides (below), and only
 	// while player noclip is enabled — the unconditional per-frame call that used
 	// to live here re-ran a full IL2CPP metadata walk every frame and froze the game.
-	SharedMemory::Tick();    // shared mapping telemetry (pos + legacy bridges still using shared memory)
 	FeatureRuntime::ApplyOverrides(); // unified pipe-driven feature sync
 	SkinChanger::Tick();     // writes skin when ptr changes — uses GameState
 	// #region agent log

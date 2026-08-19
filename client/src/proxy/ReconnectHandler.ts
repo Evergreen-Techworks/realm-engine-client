@@ -4,7 +4,6 @@ import type { Packet } from '../packets/Packet.js';
 import { Logger } from '../util/Logger.js';
 import { DebugManager } from '../util/DebugManager.js';
 import { GAME_PORT } from '../constants/GameId.js';
-import { signalHelloEvent } from '../native/hello-event.js';
 import { sendDllFeature } from '../bridge/DllFeatureBus.js';
 
 /**
@@ -73,7 +72,6 @@ export class ReconnectHandler {
     // Unblock the injected DLL's Load() — the DLL waits on this event before
     // calling Run() so the overlay/menu/hooks only come online after the
     // client has actually reached the in-game HELLO handshake.
-    signalHelloEvent();
     sendDllFeature('playerColliderSceneReset', 1);
 
     // Look up or create state for this connection

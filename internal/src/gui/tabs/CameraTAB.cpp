@@ -40,10 +40,6 @@
 // NHPPJHAMCBL getter RVA: 0x01999970  (same as DIA4A "nhppZoomGetter" probe).
 // ─────────────────────────────────────────────────────────────────────────────
 
-static constexpr uint32_t OFF_CM_TRANSFORM  = 0x28;  // mainCameraContainer Transform*
-static constexpr uint32_t OFF_CM_UNITY_CAM  = 0x50;  // UnityEngine.Camera*
-
-
 // ─────────────────────────────────────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────────────────────────────────────
@@ -84,21 +80,6 @@ static float        g_autoInterval  = 1.0f;
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-static Il2CppClass* FindClassByName(const char* name)
-{
-    struct Ctx { const char* name; Il2CppClass* result; };
-    Ctx ctx{ name, nullptr };
-    il2cpp_class_for_each([](Il2CppClass* klass, void* ud) {
-        auto* c = static_cast<Ctx*>(ud);
-        if (c->result) return;
-        if (strcmp(il2cpp_class_get_name(klass), c->name) == 0)
-            c->result = klass;
-    }, &ctx);
-    return ctx.result;
-}
-
-// Raw-memory reads and pointer validation now go through Mem::
-// (core/runtime/MemRead.h).
 
 static bool IsPlausibleOrtho(float f) { return (f == f) && f > 0.05f && f < 500.f; }
 
@@ -106,8 +87,73 @@ struct Vec3 { float x, y, z; };
 
 static const MethodInfo* s_worldToScreenPointMethod = nullptr;
 
-static const MethodInfo* s_screenWidthMethod = nullptr;
-static const MethodInfo* s_screenHeightMethod = nullptr;
+static const MethodInfo* s_screenWidthMethod  = nullptr;
+static const MethodInfo* s_screenHeightMethod  = nullptr;
+
+// ── Cached method lookups (resolved once by EnsureCameraMethods) ─────────
+static const MethodInfo* s_getEulerAngles   = nullptr;
+static const MethodInfo* s_getPixelRect     = nullptr;
+static const MethodInfo* s_getPosition      = nullptr;
+static const MethodInfo* s_setCameraAngle   = nullptr;
+static const MethodInfo* s_getOffsetMode    = nullptr;  // ANBDPNHJBHG / get_IOABMGFJLLP
+static const MethodInfo* s_changeOffsetMode = nullptr;
+static bool              s_methodsSearched  = false;
+
+// Resolve all CameraManager / Transform / Camera methods once.
+// Called from DoRefresh() after the CameraManager instance is validated.
+// Retries on subsequent frames if any method is still null (e.g. the Camera
+// pointer was null because we weren't in-game yet on the first attempt).
+static void EnsureCameraMethods(Il2CppObject* camMgrObj)
+{
+    if (s_methodsSearched) return;
+    if (!camMgrObj) return;
+
+    Il2CppClass* cmKlass = il2cpp_object_get_class(camMgrObj);
+
+    // CameraManager methods
+    if (cmKlass && !s_setCameraAngle)
+        s_setCameraAngle = il2cpp_class_get_method_from_name(cmKlass, "SetCameraAngle", 1);
+    if (cmKlass && !s_changeOffsetMode)
+        s_changeOffsetMode = il2cpp_class_get_method_from_name(cmKlass, "ChangeOffsetMode", 0);
+    if (cmKlass && !s_getOffsetMode) {
+        s_getOffsetMode = il2cpp_class_get_method_from_name(cmKlass, "ANBDPNHJBHG",    0);
+        if (!s_getOffsetMode)
+            s_getOffsetMode = il2cpp_class_get_method_from_name(cmKlass, "get_IOABMGFJLLP", 0);
+        if (!s_getOffsetMode)
+            s_getOffsetMode = il2cpp_class_get_method_from_name(cmKlass, "IOABMGFJLLP",    0);
+    }
+
+    // Transform methods (from mainCameraContainer)
+    if (!s_getEulerAngles || !s_getPosition) {
+        void* xfrm = nullptr;
+        Mem::TryRead(camMgrObj, RuntimeOffsets::CM_Transform, xfrm);
+        if (Mem::AddrOk(xfrm)) {
+            Il2CppClass* xk = il2cpp_object_get_class(reinterpret_cast<Il2CppObject*>(xfrm));
+            if (xk) {
+                if (!s_getEulerAngles)
+                    s_getEulerAngles = il2cpp_class_get_method_from_name(xk, "get_eulerAngles", 0);
+                if (!s_getPosition)
+                    s_getPosition = il2cpp_class_get_method_from_name(xk, "get_position", 0);
+            }
+        }
+    }
+
+    // Camera methods (from the Unity Camera object)
+    if (!s_getPixelRect) {
+        void* unityCam = nullptr;
+        Mem::TryRead(camMgrObj, RuntimeOffsets::CM_UnityCam, unityCam);
+        if (Mem::AddrOk(unityCam)) {
+            Il2CppClass* ck = il2cpp_object_get_class(reinterpret_cast<Il2CppObject*>(unityCam));
+            if (ck)
+                s_getPixelRect = il2cpp_class_get_method_from_name(ck, "get_pixelRect", 0);
+        }
+    }
+
+    // Fast-path: once all methods are resolved, skip future attempts.
+    s_methodsSearched = s_setCameraAngle && s_changeOffsetMode
+                     && s_getOffsetMode && s_getEulerAngles
+                     && s_getPosition   && s_getPixelRect;
+}
 
 static bool InvokeStaticIntGetter(const MethodInfo* method, float& out)
 {
@@ -177,7 +223,7 @@ static void DoRefresh()
 
     if (!ValidateCamMgr()) {
         if (!s_camMgrClass)
-            s_camMgrClass = FindClassByName("CameraManager");
+            s_camMgrClass = Resolver::FindClassLoose("CameraManager");
         if (!s_camMgrClass) {
             g_status  = "ERROR: CameraManager class not found.";
             g_statusOk = false;
@@ -201,27 +247,23 @@ static void DoRefresh()
     }
     g_camMgrPtr = reinterpret_cast<uintptr_t>(camMgrObj);
 
+    EnsureCameraMethods(camMgrObj);
+
     // ── Camera angle via mainCameraContainer Transform.eulerAngles.z ─────────
     // SetCameraAngle(int) rotates the mainCameraContainer Transform around Z.
     // Reading eulerAngles.z gives the actual current rotation in degrees.
     // (NHPPJHAMCBL getter returns 0 even after angle change — not the angle field)
     {
         void* xfrmForAngle = nullptr;
-        Mem::TryRead(camMgrObj, OFF_CM_TRANSFORM, xfrmForAngle);
-        if (Mem::AddrOk(xfrmForAngle)) {
-            Il2CppClass* xk = il2cpp_object_get_class(reinterpret_cast<Il2CppObject*>(xfrmForAngle));
-            if (xk) {
-                const MethodInfo* getEuler = il2cpp_class_get_method_from_name(xk, "get_eulerAngles", 0);
-                if (getEuler) {
-                    Il2CppObject* eulerObj = Resolver::Protection::SafeRuntimeInvoke(
-                        getEuler, reinterpret_cast<Il2CppObject*>(xfrmForAngle), nullptr);
-                    if (eulerObj) {
-                        void* unboxed = il2cpp_object_unbox(eulerObj);
-                        if (unboxed) {
-                            const float* v = reinterpret_cast<const float*>(unboxed);
-                            g_angle = v[2];  // z = rotation around world Z axis (yaw)
-                        }
-                    }
+        Mem::TryRead(camMgrObj, RuntimeOffsets::CM_Transform, xfrmForAngle);
+        if (Mem::AddrOk(xfrmForAngle) && s_getEulerAngles) {
+            Il2CppObject* eulerObj = Resolver::Protection::SafeRuntimeInvoke(
+                s_getEulerAngles, reinterpret_cast<Il2CppObject*>(xfrmForAngle), nullptr);
+            if (eulerObj) {
+                void* unboxed = il2cpp_object_unbox(eulerObj);
+                if (unboxed) {
+                    const float* v = reinterpret_cast<const float*>(unboxed);
+                    g_angle = v[2];  // z = rotation around world Z axis (yaw)
                 }
             }
         }
@@ -237,7 +279,7 @@ static void DoRefresh()
     // The obfuscator reused the name "inputModule" for both the Camera field (0x50
     // in the Apr 6 dump) and a separate CustomInputModule field (0x58), so we can't
     // trust get_field_from_name alone — we iterate and disambiguate by type.
-    uint32_t camFieldOff = OFF_CM_UNITY_CAM; // hardcoded fallback
+    uint32_t camFieldOff = RuntimeOffsets::CM_UnityCam; // hardcoded fallback
     bool     camFieldResolved = false;
     {
         Il2CppClass* cmKlass = il2cpp_object_get_class(camMgrObj);
@@ -263,7 +305,7 @@ static void DoRefresh()
         }
         if (!camFieldResolved) {
             DBG_FILE_LOG("[CameraTAB] UnityCam field NOT found dynamically — using fallback 0x"
-                << std::hex << OFF_CM_UNITY_CAM << std::dec);
+                << std::hex << RuntimeOffsets::CM_UnityCam << std::dec);
         }
     }
     void* unityCam = nullptr;
@@ -278,20 +320,16 @@ static void DoRefresh()
         // Unity returns a Rect value type boxed as Il2CppObject*.
         // Unboxing yields [x, y, width, height] as 4 contiguous floats.
         // x/y = bottom-left corner (Unity Y-up), w/h = extent.
-        Il2CppObject* camObj = reinterpret_cast<Il2CppObject*>(unityCam);
-        Il2CppClass* camKlass = il2cpp_object_get_class(camObj);
-        if (camKlass) {
-            const MethodInfo* getPixelRect = il2cpp_class_get_method_from_name(camKlass, "get_pixelRect", 0);
-            if (getPixelRect) {
-                Il2CppObject* res = Resolver::Protection::SafeRuntimeInvoke(getPixelRect, camObj, nullptr);
-                if (res) {
-                    float* pr = reinterpret_cast<float*>(il2cpp_object_unbox(res));
-                    if (pr) {
-                        g_pixelRectX = pr[0];
-                        g_pixelRectY = pr[1];
-                        g_pixelRectW = pr[2];
-                        g_pixelRectH = pr[3];
-                    }
+        if (s_getPixelRect) {
+            Il2CppObject* camObj = reinterpret_cast<Il2CppObject*>(unityCam);
+            Il2CppObject* res = Resolver::Protection::SafeRuntimeInvoke(s_getPixelRect, camObj, nullptr);
+            if (res) {
+                float* pr = reinterpret_cast<float*>(il2cpp_object_unbox(res));
+                if (pr) {
+                    g_pixelRectX = pr[0];
+                    g_pixelRectY = pr[1];
+                    g_pixelRectW = pr[2];
+                    g_pixelRectH = pr[3];
                 }
             }
         }
@@ -302,22 +340,16 @@ static void DoRefresh()
     // return localPosition in local space (always 0,0 for anchored containers).
     // Call get_position() to get world-space coordinates.
     void* xfrm = nullptr;
-    Mem::TryRead(camMgrObj, OFF_CM_TRANSFORM, xfrm);
-    if (Mem::AddrOk(xfrm)) {
-        Il2CppClass* xfrmKlass = il2cpp_object_get_class(reinterpret_cast<Il2CppObject*>(xfrm));
-        if (xfrmKlass) {
-            const MethodInfo* getPos = il2cpp_class_get_method_from_name(xfrmKlass, "get_position", 0);
-            if (getPos) {
-                Il2CppObject* posObj = Resolver::Protection::SafeRuntimeInvoke(
-                    getPos, reinterpret_cast<Il2CppObject*>(xfrm), nullptr);
-                if (posObj) {
-                    void* unboxed = il2cpp_object_unbox(posObj);
-                    if (unboxed) {
-                        const float* v = reinterpret_cast<const float*>(unboxed);
-                        g_posX = v[0];  // Vector3.x
-                        g_posY = v[1];  // Vector3.y
-                    }
-                }
+    Mem::TryRead(camMgrObj, RuntimeOffsets::CM_Transform, xfrm);
+    if (Mem::AddrOk(xfrm) && s_getPosition) {
+        Il2CppObject* posObj = Resolver::Protection::SafeRuntimeInvoke(
+            s_getPosition, reinterpret_cast<Il2CppObject*>(xfrm), nullptr);
+        if (posObj) {
+            void* unboxed = il2cpp_object_unbox(posObj);
+            if (unboxed) {
+                const float* v = reinterpret_cast<const float*>(unboxed);
+                g_posX = v[0];  // Vector3.x
+                g_posY = v[1];  // Vector3.y
             }
         }
     }
@@ -326,20 +358,11 @@ static void DoRefresh()
     // IOABMGFJLLP is a bool property on CameraManager; getter = "get_IOABMGFJLLP".
     // true  → camera is NOT centred on the player (player can wander off-screen).
     // false → camera follows the player (default).
-    {
-        Il2CppClass* camKlass = il2cpp_object_get_class(camMgrObj);
-        if (camKlass) {
-            // Try all known name variants (BeeByte may store getter as ANBDPNHJBHG)
-            const MethodInfo* getter = il2cpp_class_get_method_from_name(camKlass, "ANBDPNHJBHG",    0);
-            if (!getter) getter = il2cpp_class_get_method_from_name(camKlass, "get_IOABMGFJLLP", 0);
-            if (!getter) getter = il2cpp_class_get_method_from_name(camKlass, "IOABMGFJLLP",    0);
-            if (getter) {
-                Il2CppObject* res = Resolver::Protection::SafeRuntimeInvoke(getter, camMgrObj, nullptr);
-                if (res) {
-                    void* ub = il2cpp_object_unbox(res);
-                    if (ub) g_offsetMode = *reinterpret_cast<bool*>(ub);
-                }
-            }
+    if (s_getOffsetMode) {
+        Il2CppObject* res = Resolver::Protection::SafeRuntimeInvoke(s_getOffsetMode, camMgrObj, nullptr);
+        if (res) {
+            void* ub = il2cpp_object_unbox(res);
+            if (ub) g_offsetMode = *reinterpret_cast<bool*>(ub);
         }
     }
 
@@ -382,17 +405,13 @@ static void ApplyAngle(int newAngle)
         g_statusOk = false;
         return;
     }
-    Il2CppClass* klass = il2cpp_object_get_class(camMgrObj);
-    if (!klass) { g_status = "ERROR: il2cpp_object_get_class returned null."; g_statusOk = false; return; }
-
-    const MethodInfo* setAngle = il2cpp_class_get_method_from_name(klass, "SetCameraAngle", 1);
-    if (!setAngle) {
-        g_status  = "ERROR: SetCameraAngle(int) method not found.";
+    if (!s_setCameraAngle) {
+        g_status  = "ERROR: SetCameraAngle(int) method not resolved.";
         g_statusOk = false;
         return;
     }
     void* params[] = { &newAngle };
-    Resolver::Protection::SafeRuntimeInvoke(setAngle, camMgrObj, params);
+    Resolver::Protection::SafeRuntimeInvoke(s_setCameraAngle, camMgrObj, params);
 
     char buf[64]; snprintf(buf, sizeof(buf), "Angle set to %d", newAngle);
     g_status = buf; g_statusOk = true;
@@ -445,28 +464,12 @@ void CameraTAB::Render()
 
     // ── Live IOABMGFJLLP read — re-read every frame so in-game hotkey changes are tracked ──
     // BeeByte names the getter ANBDPNHJBHG (same VA as the property accessor get_IOABMGFJLLP).
-    if (Mem::AddrOk(s_cachedCamMgr)) {
-        static const MethodInfo* s_getterIOAB = nullptr;
-        static bool s_getterSearched = false;
-        if (!s_getterIOAB && !s_getterSearched) {
-            s_getterSearched = true;
-            Il2CppClass* k = il2cpp_object_get_class(s_cachedCamMgr);
-            if (k) {
-                // Try all known names for this getter (BeeByte can store it under any)
-                s_getterIOAB = il2cpp_class_get_method_from_name(k, "ANBDPNHJBHG",    0);
-                if (!s_getterIOAB)
-                    s_getterIOAB = il2cpp_class_get_method_from_name(k, "get_IOABMGFJLLP", 0);
-                if (!s_getterIOAB)
-                    s_getterIOAB = il2cpp_class_get_method_from_name(k, "IOABMGFJLLP",    0);
-            }
-        }
-        if (s_getterIOAB) {
-            Il2CppObject* res = Resolver::Protection::SafeRuntimeInvoke(
-                s_getterIOAB, s_cachedCamMgr, nullptr);
-            if (res) {
-                void* ub = il2cpp_object_unbox(res);
-                if (ub) g_offsetMode = *reinterpret_cast<bool*>(ub);
-            }
+    if (Mem::AddrOk(s_cachedCamMgr) && s_getOffsetMode) {
+        Il2CppObject* res = Resolver::Protection::SafeRuntimeInvoke(
+            s_getOffsetMode, s_cachedCamMgr, nullptr);
+        if (res) {
+            void* ub = il2cpp_object_unbox(res);
+            if (ub) g_offsetMode = *reinterpret_cast<bool*>(ub);
         }
     }
 
@@ -798,32 +801,21 @@ namespace CameraTAB {
         // Read live state instead of relying on cached g_offsetMode which may be stale.
         // The Render() function reads the live getter every frame, so piggyback on s_cachedCamMgr.
         bool liveOffsetMode = g_offsetMode;
-        if (Mem::AddrOk(s_cachedCamMgr)) {
-            Il2CppClass* k = il2cpp_object_get_class(s_cachedCamMgr);
-            if (k) {
-                const MethodInfo* getter = il2cpp_class_get_method_from_name(k, "ANBDPNHJBHG", 0);
-                if (!getter) getter = il2cpp_class_get_method_from_name(k, "get_IOABMGFJLLP", 0);
-                if (!getter) getter = il2cpp_class_get_method_from_name(k, "IOABMGFJLLP", 0);
-                if (getter) {
-                    Il2CppObject* res = Resolver::Protection::SafeRuntimeInvoke(getter, s_cachedCamMgr, nullptr);
-                    if (res) {
-                        void* ub = il2cpp_object_unbox(res);
-                        if (ub) liveOffsetMode = *reinterpret_cast<bool*>(ub);
-                    }
-                }
+        if (Mem::AddrOk(s_cachedCamMgr) && s_getOffsetMode) {
+            Il2CppObject* res = Resolver::Protection::SafeRuntimeInvoke(
+                s_getOffsetMode, s_cachedCamMgr, nullptr);
+            if (res) {
+                void* ub = il2cpp_object_unbox(res);
+                if (ub) liveOffsetMode = *reinterpret_cast<bool*>(ub);
             }
         }
         const bool currentlyCentered = !liveOffsetMode;
         if (currentlyCentered == centered)
             return;
+        if (!s_changeOffsetMode)
+            return;
         Il2CppObject* camMgrObj = reinterpret_cast<Il2CppObject*>(g_camMgrPtr);
-        Il2CppClass* k = il2cpp_object_get_class(camMgrObj);
-        if (!k)
-            return;
-        const MethodInfo* fn = il2cpp_class_get_method_from_name(k, "ChangeOffsetMode", 0);
-        if (!fn)
-            return;
-        Resolver::Protection::SafeRuntimeInvoke(fn, camMgrObj, nullptr);
+        Resolver::Protection::SafeRuntimeInvoke(s_changeOffsetMode, camMgrObj, nullptr);
         g_offsetMode = !centered;
     }
 }

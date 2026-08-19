@@ -7,7 +7,7 @@ set "MODE=%~1"
 REM sync-and-build.bat — mirror WSL source → Windows, then build the installer.
 REM
 REM Env-var overrides:
-REM   WSL_DISTRO    WSL distro name            (default: Debian)
+REM   WSL_DISTRO    WSL distro name            (default: Debian-OLD)
 REM   WSL_USER      WSL login user             (default: auto via wsl whoami)
 REM   WSL_PARENT    project root in WSL        (default: auto-detect ~/realm-engine-client, ~/realmengine or ~/realm-engine)
 REM   WIN_BASE      Windows destination dir    (default: %USERPROFILE%\Desktop\test)

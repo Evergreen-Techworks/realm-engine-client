@@ -11,7 +11,6 @@
 #include "AutoAim.h"
 #include "AoeTracking.h"
 #include "SpeedHack.h"
-#include "SharedMemory.h"
 #include "ProjNoclip.h"
 #include "NoclipHook.h"
 #include "IpcBridge.h"
@@ -72,7 +71,6 @@ void DetourInitilization() {
     // ProjectileTracking and AutoAim use IL2CPP runtime resolution.
     // They self-install lazily from dPresent (Tick) once the game is initialized.
 
-    SharedMemory::Init();
 }
 
 void DetourUninitialization()
@@ -81,8 +79,6 @@ void DetourUninitialization()
     std::call_once(s_uninitOnce, []() {
         // 0) Stop the IPC bridge thread first so the pipe disconnects cleanly.
         IpcBridge_RequestShutdown();
-
-        SharedMemory::Shutdown();
 
         // 1) Restore clean game state before tearing down DirectX.
         SpeedHack::SetMultiplier(1.0f);

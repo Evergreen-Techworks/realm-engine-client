@@ -97,8 +97,8 @@ namespace {
                     if (hUnloadEvent) SetEvent(hUnloadEvent);
                 }
             }),
-            FH_BOOL("autoAimEnabled", IpcBridge_SetAutoAimEnabled),
-            FH_INT("autoAimMode", IpcBridge_SetAutoAimMode),
+            FH_BOOL("autoAimEnabled", FeatureState::SetAutoAimEnabled),
+            FH_INT("autoAimMode", FeatureState::SetAutoAimMode),
             FH_BOOL("autoAimPrioritizeBosses", AutoAim::SetPrioritizeBosses),
             FH_BOOL("autoAimIgnoreWalls", AutoAim::SetIgnoreWalls),
             FH("projectileNoclipEnabled", {
@@ -112,14 +112,14 @@ namespace {
             FH("clientDefense", FeatureState::SetClientDefense(static_cast<int32_t>(f.Int()))),
             FH("clientClassType", FeatureState::SetClientClassType(static_cast<int32_t>(f.Int()))),
             FH("clientSpeed", FeatureState::SetClientSpeed(static_cast<int32_t>(f.Int()))),
-            FH_INT("autoDodgeMode", IpcBridge_SetAutoDodgeMode),
-            FH_FLOAT("autoDodgeHorizonMs", IpcBridge_SetAutoDodgeHorizonMs),
-            FH_FLOAT("autoDodgeHitboxPadding", IpcBridge_SetAutoDodgeHitboxPadding),
-            FH_BOOL("autoDodgeWallAvoid", IpcBridge_SetAutoDodgeWallAvoid),
+            FH_INT("autoDodgeMode", FeatureState::SetAutoDodgeMode),
+            FH_FLOAT("autoDodgeHorizonMs", FeatureState::SetAutoDodgeHorizonMs),
+            FH_FLOAT("autoDodgeHitboxPadding", FeatureState::SetAutoDodgeHitboxPadding),
+            FH_BOOL("autoDodgeWallAvoid", FeatureState::SetAutoDodgeWallAvoid),
             FH_FLOAT("speedHackMult", SpeedHack::SetMultiplier),
-            FH_BOOL("autoAbilityEnabled", IpcBridge_SetAutoAbilityEnabled),
-            FH_FLOAT("autoAbilityMpPct", IpcBridge_SetAutoAbilityMpPct),
-            FH_INT("autoAbilityWizardMode", IpcBridge_SetAutoAbilityWizardMode),
+            FH_BOOL("autoAbilityEnabled", FeatureState::SetAutoAbilityEnabled),
+            FH_FLOAT("autoAbilityMpPct", FeatureState::SetAutoAbilityMpPct),
+            FH_INT("autoAbilityWizardMode", FeatureState::SetAutoAbilityWizardMode),
             FH_INT("targetFrameRate", FpsSetter::SetTargetFps),
             FH_TEXT("showPluginFloatingText", FloatingTextService::QueuePluginText)
         };

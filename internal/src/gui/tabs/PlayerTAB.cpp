@@ -15,51 +15,25 @@
 #include "game/math/MoveSpeed.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fallback offsets when IL2CPP metadata lookup fails (DIA4A / WorldTAB lineage).
-// Live game uses il2cpp_field_get_offset + field names from global-metadata.
+// Equipment sub-class offsets — remain locally resolved because they belong to
+// EquipmentManager / ItemSlot classes, not FKALGHJIADI.  See plan 25 "Out of
+// scope" for why these stay here.
 // ─────────────────────────────────────────────────────────────────────────────
-static constexpr uint32_t FB_POS_X         = 0x3C;
-static constexpr uint32_t FB_POS_Y         = 0x40;
-static constexpr uint32_t FB_HP            = 0x20C;
-static constexpr uint32_t FB_MAX_HP        = 0x208;
-static constexpr uint32_t FB_NAME          = 0x4B8;
-static constexpr uint32_t FB_CLASSNUM      = 0x4B0;
-static constexpr uint32_t FB_GRANK         = 0x4AC;
-static constexpr uint32_t FB_CUR_MP        = 0x54C;
-static constexpr uint32_t FB_MAX_MP        = 0x548;
-static constexpr uint32_t FB_ATK           = 0x474;
-static constexpr uint32_t FB_SPD           = 0x478;
-static constexpr uint32_t FB_DEX           = 0x47C;
-static constexpr uint32_t FB_VIT           = 0x480;
-static constexpr uint32_t FB_WIS           = 0x484;
-static constexpr uint32_t FB_DEF           = 0x508;  // NNECFGPDBEE defense @ dump 0x4B8 + 0x50 ACTK
-// MPJGAPJBBBF condition single-int @ dump 0x4C4 + 0x50 ACTK
-static constexpr uint32_t FB_COND_INT      = 0x514;
-// HasConditionEffect in lst reads [this+0x440] — track this raw offset too
-static constexpr uint32_t FB_COND_RAW      = 0x440;
-static constexpr uint32_t FB_EQUIPMENT_MGR = 0x668;
-static constexpr uint32_t FB_EM_SLOTS      = 0x48;
-static constexpr uint32_t FB_ITEM_OP       = 0x58;
-static constexpr uint32_t FB_ITEM_TYPE     = 0x60;
+static constexpr uint32_t kFB_EM_SLOTS  = 0x48;
+static constexpr uint32_t kFB_ITEM_OP   = 0x58;
+static constexpr uint32_t kFB_ITEM_TYPE = 0x60;
+
+// Hardcoded condition offset from .lst analysis — HasConditionEffect reads
+// [this+0x440].  No BeeByte alias exists for this internal field.
+static constexpr uint32_t kCondRawOffset = 0x440;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cached offsets from IL2CPP (or fallbacks)
+// Locally cached equipment sub-class offsets
 // ─────────────────────────────────────────────────────────────────────────────
-struct PlayerFieldCache {
-    uint32_t posX = 0, posY = 0, hp = 0, maxHp = 0;
-    uint32_t nameStr = 0, classNum = 0, guildRank = 0;
-    uint32_t curMp = 0, maxMp = 0;
-    uint32_t atk = 0, spd = 0, dex = 0, vit = 0, wis = 0, def = 0;
-    uint32_t condInt = 0;   // MPJGAPJBBBF — single-int condition field
-    uint32_t condRaw = 0;   // raw offset used by HasConditionEffect in lst ([this+0x440])
-    uint32_t equipmentMgr = 0;
-    uint32_t emEquipmentSlots = 0;
-    uint32_t itemObjProps = 0, itemObjType = 0;
-    bool     ready = false;
-    bool     fromIl2Cpp = false;
-};
-
-static PlayerFieldCache g_fields;
+static uint32_t s_emEquipSlots   = kFB_EM_SLOTS;
+static uint32_t s_itemObjProps   = kFB_ITEM_OP;
+static uint32_t s_itemObjType    = kFB_ITEM_TYPE;
+static bool     s_equipResolved  = false;
 
 static FieldInfo* FindFieldOnHierarchy(Il2CppClass* klass, const char* fieldName)
 {
@@ -69,43 +43,6 @@ static FieldInfo* FindFieldOnHierarchy(Il2CppClass* klass, const char* fieldName
             return f;
     }
     return nullptr;
-}
-
-static uint32_t FieldOffsetOr(Il2CppClass* startKlass, const char* fieldName, uint32_t fallback)
-{
-    FieldInfo* f = FindFieldOnHierarchy(startKlass, fieldName);
-    if (!f)
-        return fallback;
-    return static_cast<uint32_t>(il2cpp_field_get_offset(f));
-}
-
-static void ApplyFallbackFieldOffsets()
-{
-    // Use RuntimeOffsets for the shared fields — EnsureAll() may have already
-    // resolved them; these are at least the hardcoded fallback values otherwise.
-    g_fields.posX           = RuntimeOffsets::PosX;
-    g_fields.posY           = RuntimeOffsets::PosY;
-    g_fields.hp             = RuntimeOffsets::HP;
-    g_fields.maxHp          = RuntimeOffsets::MaxHP;
-    g_fields.nameStr        = FB_NAME;
-    g_fields.classNum       = FB_CLASSNUM;
-    g_fields.guildRank      = FB_GRANK;
-    g_fields.curMp          = FB_CUR_MP;
-    g_fields.maxMp          = FB_MAX_MP;
-    g_fields.atk            = FB_ATK;
-    g_fields.spd            = FB_SPD;
-    g_fields.dex            = FB_DEX;
-    g_fields.vit            = FB_VIT;
-    g_fields.wis            = FB_WIS;
-    g_fields.def            = FB_DEF;
-    g_fields.condInt        = FB_COND_INT;
-    g_fields.condRaw        = FB_COND_RAW;
-    g_fields.equipmentMgr   = FB_EQUIPMENT_MGR;
-    g_fields.emEquipmentSlots = FB_EM_SLOTS;
-    g_fields.itemObjProps   = FB_ITEM_OP;
-    g_fields.itemObjType    = FB_ITEM_TYPE;
-    g_fields.fromIl2Cpp     = false;
-    g_fields.ready          = true;
 }
 
 static Il2CppClass* ResolveEquipmentManagerClass()
@@ -124,61 +61,34 @@ static Il2CppClass* ResolveItemSlotClass()
     return Resolver::FindClassLoose("CMHHJNPDMHJ");
 }
 
-// il2cpp_field_get_offset reflects runtime layout (incl. ACTK). Retries after menu-time fallback.
-static void EnsurePlayerFieldOffsets()
+// Resolve equipment sub-class offsets (EquipmentManager.equipmentSlots, ItemSlot fields).
+// Only called once — these belong to different IL2CPP classes from the player stats.
+static void EnsureEquipmentOffsets()
 {
-    if (g_fields.fromIl2Cpp)
+    if (s_equipResolved)
         return;
-
-    Il2CppClass* fk = Resolver::FindClassLoose("FKALGHJIADI");
-    if (!fk) {
-        if (!g_fields.ready)
-            ApplyFallbackFieldOffsets();
-        return;
-    }
-
-    g_fields.posX      = FieldOffsetOr(fk, "CLFEOFKBNEJ", FB_POS_X);
-    g_fields.posY      = FieldOffsetOr(fk, "PKEECFNFEIO", FB_POS_Y);
-    g_fields.hp        = FieldOffsetOr(fk, "NCBIICBDGAG", FB_HP);
-    g_fields.maxHp     = FieldOffsetOr(fk, "KJNHLADHEMH", FB_MAX_HP);
-    g_fields.nameStr   = FieldOffsetOr(fk, "NFJGJKLPLBA", FB_NAME);
-    g_fields.guildRank = FieldOffsetOr(fk, "GBANOMPLGBH", FB_GRANK);
-    g_fields.classNum  = FieldOffsetOr(fk, "KABPJBJPGCM", FB_CLASSNUM);
-    g_fields.curMp     = FieldOffsetOr(fk, "FMHMGKEPIDN", FB_CUR_MP);
-    g_fields.maxMp     = FieldOffsetOr(fk, "NEDCKPIIIPN", FB_MAX_MP);
-    g_fields.atk       = FieldOffsetOr(fk, "HCMECDPHEMC", FB_ATK);
-    g_fields.spd       = FieldOffsetOr(fk, "BHJFNEAHAOE", FB_SPD);
-    g_fields.dex       = FieldOffsetOr(fk, "GDNEBFDDDKM", FB_DEX);
-    g_fields.vit       = FieldOffsetOr(fk, "CGFPEPCKKOK", FB_VIT);
-    g_fields.wis       = FieldOffsetOr(fk, "HDCDGHKGLDI", FB_WIS);
-    g_fields.def       = FieldOffsetOr(fk, "NNECFGPDBEE", FB_DEF);
-    // MPJGAPJBBBF is the single-int condition field on FKALGHJIADI (not defense).
-    // HasConditionEffect in the .lst reads [this+0x440]; track both for diagnostics.
-    g_fields.condInt   = FieldOffsetOr(fk, "MPJGAPJBBBF", FB_COND_INT);
-    g_fields.condRaw   = FB_COND_RAW; // static — lst-confirmed; no BeeByte alias for this internal field
-    g_fields.equipmentMgr = FieldOffsetOr(fk, "AJJJBDBNBLM", FB_EQUIPMENT_MGR);
 
     Il2CppClass* em = ResolveEquipmentManagerClass();
     if (em) {
         FieldInfo* es = FindFieldOnHierarchy(em, "equipmentSlots");
-        g_fields.emEquipmentSlots = es
-            ? static_cast<uint32_t>(il2cpp_field_get_offset(es))
-            : FB_EM_SLOTS;
-    } else {
-        g_fields.emEquipmentSlots = FB_EM_SLOTS;
+        if (es)
+            s_emEquipSlots = static_cast<uint32_t>(il2cpp_field_get_offset(es));
     }
 
     Il2CppClass* item = ResolveItemSlotClass();
     if (item) {
-        g_fields.itemObjProps = FieldOffsetOr(item, "HLJFBHLMANJ", FB_ITEM_OP);
-        g_fields.itemObjType  = FieldOffsetOr(item, "INAAIAHOEFE", FB_ITEM_TYPE);
-    } else {
-        g_fields.itemObjProps = FB_ITEM_OP;
-        g_fields.itemObjType  = FB_ITEM_TYPE;
+        FieldInfo* fOp = FindFieldOnHierarchy(item, "HLJFBHLMANJ");
+        if (fOp)
+            s_itemObjProps = static_cast<uint32_t>(il2cpp_field_get_offset(fOp));
+        FieldInfo* fTid = FindFieldOnHierarchy(item, "INAAIAHOEFE");
+        if (fTid)
+            s_itemObjType = static_cast<uint32_t>(il2cpp_field_get_offset(fTid));
     }
 
-    g_fields.fromIl2Cpp = true;
-    g_fields.ready      = true;
+    // Mark resolved once both classes have been attempted (success or not).
+    // Fallback constants stay in place for any unresolved field.
+    if (em || item)
+        s_equipResolved = true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -263,7 +173,8 @@ static bool ReadManagedString(const void* strPtr, char* buf, int bufSize)
 }
 
 // EquipmentManager.equipmentSlots[i] → ItemSlot HLJFBHLMANJ (ObjectProperties*), INAAIAHOEFE (type id).
-static void ReadEquipmentSlots(void* localFk, PlayerSnap& s)
+static void ReadEquipmentSlots(void* localFk, PlayerSnap& s,
+                                uint32_t offSlots, uint32_t offOp, uint32_t offTid)
 {
     for (int i = 0; i < kEquipSlotCount; ++i)
         s.equipment[i] = {};
@@ -271,10 +182,7 @@ static void ReadEquipmentSlots(void* localFk, PlayerSnap& s)
     if (!localFk || !Mem::AddrOk(localFk))
         return;
 
-    const uint32_t offEm    = g_fields.equipmentMgr;
-    const uint32_t offSlots = g_fields.emEquipmentSlots;
-    const uint32_t offOp    = g_fields.itemObjProps;
-    const uint32_t offTid   = g_fields.itemObjType;
+    const uint32_t offEm = RuntimeOffsets::PlayerEquipMgr;
 
     const bool ok = Resolver::Protection::safe_call([&]() {
         void* em = *reinterpret_cast<void**>(
@@ -331,40 +239,40 @@ static void DoRefresh()
     g_valid = false;
     if (!lp || !Mem::AddrOk(lp)) return;
 
-    EnsurePlayerFieldOffsets();
+    EnsureEquipmentOffsets();
 
     PlayerSnap s = {};
 
-    Mem::TryRead(lp, g_fields.posX,    s.x);
-    Mem::TryRead(lp, g_fields.posY,    s.y);
-    Mem::TryRead(lp, g_fields.hp,      s.hp);
-    Mem::TryRead(lp, g_fields.maxHp,   s.maxHp);
-    Mem::TryRead(lp, g_fields.classNum, s.classNum);
-    Mem::TryRead(lp, g_fields.guildRank, s.guildRank);
-    Mem::TryRead(lp, g_fields.curMp,   s.curMp);
-    Mem::TryRead(lp, g_fields.maxMp,   s.maxMp);
-    Mem::TryRead(lp, g_fields.atk,     s.atk);
-    Mem::TryRead(lp, g_fields.spd,     s.spd);
-    Mem::TryRead(lp, g_fields.dex,     s.dex);
-    Mem::TryRead(lp, g_fields.vit,     s.vit);
-    Mem::TryRead(lp, g_fields.wis,     s.wis);
-    Mem::TryRead(lp, g_fields.def,     s.def);
+    Mem::TryRead(lp, RuntimeOffsets::PosX,              s.x);
+    Mem::TryRead(lp, RuntimeOffsets::PosY,              s.y);
+    Mem::TryRead(lp, RuntimeOffsets::HP,                s.hp);
+    Mem::TryRead(lp, RuntimeOffsets::MaxHP,             s.maxHp);
+    Mem::TryRead(lp, RuntimeOffsets::PlayerClassNum,    s.classNum);
+    Mem::TryRead(lp, RuntimeOffsets::PlayerGuildRank,   s.guildRank);
+    Mem::TryRead(lp, RuntimeOffsets::CurMP,             s.curMp);
+    Mem::TryRead(lp, RuntimeOffsets::MaxMP,             s.maxMp);
+    Mem::TryRead(lp, RuntimeOffsets::PlayerAtk,         s.atk);
+    Mem::TryRead(lp, RuntimeOffsets::Player_Spd,        s.spd);
+    Mem::TryRead(lp, RuntimeOffsets::PlayerDex,         s.dex);
+    Mem::TryRead(lp, RuntimeOffsets::PlayerVit,         s.vit);
+    Mem::TryRead(lp, RuntimeOffsets::PlayerWis,         s.wis);
+    Mem::TryRead(lp, RuntimeOffsets::Defense,           s.def);
 
     // Player name (Il2CppString*)
     void* namePtr = nullptr;
-    if (Mem::TryRead(lp, g_fields.nameStr, namePtr))
+    if (Mem::TryRead(lp, RuntimeOffsets::PlayerName, namePtr))
         ReadManagedString(namePtr, s.name, sizeof(s.name));
     if (s.name[0] == '\0')
         strcpy_s(s.name, "<?>");
 
-    ReadEquipmentSlots(lp, s);
+    ReadEquipmentSlots(lp, s, s_emEquipSlots, s_itemObjProps, s_itemObjType);
 
     // [A] COHCKAPOLCA UInt32[] pointer path (same as WorldTAB / CombatTAB)
     RuntimeOffsets::TryReadMapObjectConditions(lp, &s.condLo, &s.condHi);
     // [B] MPJGAPJBBBF single-int condition field (BeeByte-resolved at runtime)
-    Mem::TryRead(lp, g_fields.condInt, s.condInt);
+    Mem::TryRead(lp, RuntimeOffsets::PlayerCondInt, s.condInt);
     // [C] raw [this+0x440] — the exact offset HasConditionEffect reads in the .lst
-    Mem::TryRead(lp, g_fields.condRaw, s.condRaw);
+    Mem::TryRead(lp, kCondRawOffset, s.condRaw);
 
     if (!s_miCalcMoveSpeed) {
         Il2CppClass* fk = Resolver::FindClassLoose("FKALGHJIADI");
@@ -533,7 +441,7 @@ void PlayerTAB::Render()
     ImGui::Spacing();
 
     // [B] MPJGAPJBBBF single-int field on FKALGHJIADI (BeeByte-resolved)
-    ImGui::TextDisabled("[B] MPJGAPJBBBF int (FKALGHJIADI @ +0x%03X)", g_fields.condInt);
+    ImGui::TextDisabled("[B] MPJGAPJBBBF int (FKALGHJIADI @ +0x%03X)", RuntimeOffsets::PlayerCondInt);
     if (g_snap.condInt != 0) {
         char cdescB[320] = {};
         uint32_t w0B = static_cast<uint32_t>(g_snap.condInt);
@@ -565,9 +473,9 @@ void PlayerTAB::Render()
     // ── Stats ───────────────────────────────────────────────────────────────
     ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.f), "STATS");
     ImGui::TextDisabled("%s",
-        g_fields.fromIl2Cpp
-            ? "Field offsets from IL2CPP metadata (il2cpp_field_get_offset)."
-            : "Field offsets: static fallbacks (class FKALGHJIADI not loaded yet).");
+        RuntimeOffsets::AllResolved()
+            ? "Field offsets from RuntimeOffsets (self-healing table)."
+            : "Field offsets: RuntimeOffsets pending (resolution in progress).");
     ImGui::Spacing();
 
     float col2 = 110.f;

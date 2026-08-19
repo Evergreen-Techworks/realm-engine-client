@@ -4,7 +4,6 @@
 
 extern HMODULE hModule;
 extern HANDLE hUnloadEvent;
-extern HMODULE hGameAssembly;  // Pre-resolved by Load(), used by init_il2cpp()
 
 struct ScopedHandle {
     HANDLE handle;

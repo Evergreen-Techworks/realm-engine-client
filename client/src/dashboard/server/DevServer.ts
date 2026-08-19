@@ -23,6 +23,7 @@ import type { GameDataLoader } from '../../game-data/GameDataLoader.js';
 import { Logger } from '../../util/Logger.js';
 import { DebugManager } from '../../util/DebugManager.js';
 import { RuntimeScheduler } from '../../util/RuntimeScheduler.js';
+import { injectDll } from '../../native/injector.js';
 import { getRealmengineDataDir, getRealmengineDocumentsDir } from '../../util/rotmgAssetExtractor.js';
 
 // ── Debug logging ─────────────────────────────────────────────────────────────
@@ -190,6 +191,32 @@ function countRunningProcessesByImageName(imageName: string): number {
   } catch (err) {
     Logger.warn('DevServer', `Failed to inspect ${imageName} processes: ${(err as Error).message}`);
     return 0;
+  }
+}
+
+function findPidsByImageName(imageName: string): number[] {
+  try {
+    const output = execFileSync('tasklist', ['/FI', `IMAGENAME eq ${imageName}`, '/FO', 'CSV', '/NH'], {
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    const normalize = (s: string): string => s.replace(/ /g, ' ').trim().toLowerCase();
+    const target = normalize(imageName);
+    return String(output || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => {
+        const m = line.match(/^"([^"]*)"/);
+        return m !== null && normalize(m[1]) === target;
+      })
+      .map((line) => {
+        const cols = line.match(/^"[^"]*","(\d+)"/);
+        return cols ? Number(cols[1]) : 0;
+      })
+      .filter((pid) => pid > 0);
+  } catch {
+    return [];
   }
 }
 
@@ -426,6 +453,10 @@ export class DevServer {
   private gameWikiCatalogJson: string | null = null;
   /** Spawned muling-headless process (one at a time). */
   private mulingProcess: ReturnType<typeof spawn> | null = null;
+
+  private injectorDllPath: string | null = null;
+  private injectorExePath: string | null = null;
+  private dllInjected = false;
 
   private getConfigsDir(): string {
     return join(getRealmengineDocumentsDir(), 'configs');
@@ -1172,6 +1203,31 @@ export class DevServer {
     });
   }
 
+  setInjectorPaths(dllPath: string, injectorPath: string): void {
+    this.injectorDllPath = dllPath;
+    this.injectorExePath = injectorPath;
+  }
+
+  private async tryInjectDll(): Promise<void> {
+    if (this.dllInjected) return;
+    if (!this.injectorDllPath || !this.injectorExePath) return;
+    if (this.internalBridge?.isConnected) return;
+
+    const pids = findPidsByImageName('RotMG Exalt.exe');
+    if (pids.length === 0) {
+      Logger.warn('DevServer', 'NewTick received but no RotMG Exalt.exe process found for injection.');
+      return;
+    }
+
+    this.dllInjected = true;
+    for (const pid of pids) {
+      const result = await injectDll(pid, this.injectorDllPath, this.injectorExePath);
+      if (!result.ok) {
+        Logger.error('DevServer', `Injection into PID ${pid} failed: ${result.error}`);
+      }
+    }
+  }
+
   /**
    * Current player position for display.
    */
@@ -1184,6 +1240,13 @@ export class DevServer {
    */
   attachProxy(proxy: Proxy): void {
     this.proxy = proxy;
+
+    proxy.hookPacket('NEWTICK', () => {
+      if (!this.dllInjected) {
+        void this.tryInjectDll();
+      }
+    });
+
     proxy.on('clientConnected', (client: any) => {
       const previousClientId = this.currentClient?.clientId ? String(this.currentClient.clientId) : null;
       const wasConnected = this.gameClientConnected;
@@ -1234,6 +1297,7 @@ export class DevServer {
         this.disconnectTimer = null;
         if (this.connectedClients.size === 0) {
           this.gameClientConnected = false;
+          this.dllInjected = false;
           // Commit the current fame segment into fameAccumulated
           if (this.fameSectionStart != null) {
             const segGain = Math.max(0, this.lastKnownFame - this.fameSectionStart);

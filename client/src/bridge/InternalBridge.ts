@@ -17,7 +17,6 @@
 import { createServer, Server, Socket } from 'net';
 import { Logger } from '../util/Logger.js';
 import { EventEmitter } from 'events';
-import { signalHelloEvent } from '../native/hello-event.js';
 import { BRIDGE, DllMessageType } from './contract.js';
 import { decodeThreatPayload, publishDllThreats } from './DllThreatBus.js';
 
@@ -116,10 +115,6 @@ export class InternalBridge extends EventEmitter {
 
     server.listen(PIPE_PATH, () => {
       Logger.log('InternalBridge', `Pipe server listening on ${PIPE_PATH} — waiting for DLL to connect.`);
-      // Unblock the DLL's load gate so it can call Run() immediately.
-      // The HELLO packet hook also signals this, but calling here covers the
-      // case where the DLL is injected after the game has already entered a realm.
-      signalHelloEvent();
     });
 
     this.server = server;

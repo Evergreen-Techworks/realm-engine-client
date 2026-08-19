@@ -1,6 +1,5 @@
-// Purpose: owns the DLL-side named-pipe bridge loop and keeps the public
-// IpcBridge_* API stable while delegating extracted responsibilities to focused
-// IPC, feature-state, runtime, and tile-state modules.
+// Purpose: owns the DLL-side named-pipe bridge loop and the public IpcBridge_*
+// API for overlay, shutdown, tile, threat, and auth state.
 
 // Helpful notes:
 // - This DLL is the pipe client; the Node/Electron side is the pipe server.
@@ -8,7 +7,7 @@
 //   liveness is tracked by bidirectional heartbeats in s_conn (no MAC/auth).
 // - Per-frame feature application lives in FeatureRuntime; this file only
 //   accepts pipe commands, publishes player/diagnostic events, and reconnects.
-// - Legacy IpcBridge_* accessors intentionally remain as compatibility shims.
+// - Feature state is owned by FeatureState; no forwarding shims remain here.
 
 #include "pch-il2cpp.h"
 #include "IpcBridge.h"
@@ -95,50 +94,6 @@ void IpcBridge_SetOverlayEnabled(bool on)
     if (!on) settings.bShowMenu = false;
     DbgLog("overlayEnabled = %s", on ? "true" : "false");
 }
-
-// Public feature accessors — shim to FeatureState
-
-bool    IpcBridge_GetAutoAimEnabled()                         { return FeatureState::GetAutoAimEnabled(); }
-int     IpcBridge_GetAutoAimMode()                            { return FeatureState::GetAutoAimMode(); }
-void    IpcBridge_SetAutoAimEnabled(bool enabled)             { FeatureState::SetAutoAimEnabled(enabled); }
-void    IpcBridge_SetAutoAimMode(int mode)                    { FeatureState::SetAutoAimMode(mode); }
-
-int     IpcBridge_GetAutoDodgeMode()                          { return FeatureState::GetAutoDodgeMode(); }
-void    IpcBridge_SetAutoDodgeMode(int mode)                  { FeatureState::SetAutoDodgeMode(mode); }
-float   IpcBridge_GetAutoDodgeHorizonMs()                     { return FeatureState::GetAutoDodgeHorizonMs(); }
-void    IpcBridge_SetAutoDodgeHorizonMs(float ms)             { FeatureState::SetAutoDodgeHorizonMs(ms); }
-float   IpcBridge_GetAutoDodgeHitboxPadding()                 { return FeatureState::GetAutoDodgeHitboxPadding(); }
-void    IpcBridge_SetAutoDodgeHitboxPadding(float p)          { FeatureState::SetAutoDodgeHitboxPadding(p); }
-bool    IpcBridge_GetAutoDodgeWallAvoid()                     { return FeatureState::GetAutoDodgeWallAvoid(); }
-void    IpcBridge_SetAutoDodgeWallAvoid(bool enabled)         { FeatureState::SetAutoDodgeWallAvoid(enabled); }
-
-bool    IpcBridge_GetAutoAbilityEnabled()                     { return FeatureState::GetAutoAbilityEnabled(); }
-void    IpcBridge_SetAutoAbilityEnabled(bool enabled)         { FeatureState::SetAutoAbilityEnabled(enabled); }
-float   IpcBridge_GetAutoAbilityMpPct()                       { return FeatureState::GetAutoAbilityMpPct(); }
-void    IpcBridge_SetAutoAbilityMpPct(float pct)              { FeatureState::SetAutoAbilityMpPct(pct); }
-int     IpcBridge_GetAutoAbilityWizardMode()                  { return FeatureState::GetAutoAbilityWizardMode(); }
-void    IpcBridge_SetAutoAbilityWizardMode(int mode)          { FeatureState::SetAutoAbilityWizardMode(mode); }
-
-float   IpcBridge_GetWalkTargetX()                            { return FeatureState::GetWalkTargetX(); }
-float   IpcBridge_GetWalkTargetY()                            { return FeatureState::GetWalkTargetY(); }
-bool    IpcBridge_GetWalkTargetActive()                       { return FeatureState::GetWalkTargetActive(); }
-void    IpcBridge_SetWalkTarget(float wx, float wy, bool a)   { FeatureState::SetWalkTarget(wx, wy, a); }
-
-bool    IpcBridge_GetCameraZoomActive()                       { return FeatureState::GetCameraZoomActive(); }
-float   IpcBridge_GetCameraZoomValue()                        { return FeatureState::GetCameraZoomValue(); }
-void    IpcBridge_SetCameraZoom(bool active, float zoom)      { FeatureState::SetCameraZoom(active, zoom); }
-bool    IpcBridge_GetCameraAngleActive()                      { return FeatureState::GetCameraAngleActive(); }
-int     IpcBridge_GetCameraAngleValue()                       { return FeatureState::GetCameraAngleValue(); }
-void    IpcBridge_SetCameraAngle(bool active, int angle)      { FeatureState::SetCameraAngle(active, angle); }
-bool    IpcBridge_GetCameraCenteringActive()                  { return FeatureState::GetCameraCenteringActive(); }
-bool    IpcBridge_GetCameraCentered()                         { return FeatureState::GetCameraCentered(); }
-void    IpcBridge_SetCameraCentering(bool active, bool c)     { FeatureState::SetCameraCentering(active, c); }
-
-bool    IpcBridge_GetSkinOverrideEnabled()                    { return FeatureState::GetSkinOverrideEnabled(); }
-int     IpcBridge_GetSkinOverrideId()                         { return FeatureState::GetSkinOverrideId(); }
-void    IpcBridge_SetSkinOverride(bool enabled, int skinId)   { FeatureState::SetSkinOverride(enabled, skinId); }
-int32_t IpcBridge_GetClientDefense()                          { return FeatureState::GetClientDefense(); }
-int32_t IpcBridge_GetClientClassType()                        { return FeatureState::GetClientClassType(); }
 
 void IpcBridge_ApplyFeatureOverrides()
 {

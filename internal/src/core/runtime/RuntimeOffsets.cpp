@@ -65,9 +65,24 @@ uint32_t Player_MoveDirY   = 0x4CC;
 // PlayerTAB and TestTAB read this without shift for the move-speed formula.
 uint32_t Player_Spd        = 0x478;
 
+// ── Player diagnostic stats (no ACTK shift for stat reads) ─────────────
+uint32_t PlayerName        = 0x4B8;  // NFJGJKLPLBA — Il2CppString* name
+uint32_t PlayerClassNum    = 0x4B0;  // KABPJBJPGCM — class number int32
+uint32_t PlayerGuildRank   = 0x4AC;  // GBANOMPLGBH — guild rank int32
+uint32_t PlayerAtk         = 0x474;  // HCMECDPHEMC — ATK stat int32
+uint32_t PlayerDex         = 0x47C;  // GDNEBFDDDKM — DEX stat int32
+uint32_t PlayerVit         = 0x480;  // CGFPEPCKKOK — VIT stat int32
+uint32_t PlayerWis         = 0x484;  // HDCDGHKGLDI — WIS stat int32
+uint32_t PlayerCondInt     = 0x514;  // MPJGAPJBBBF — single-int condition field
+uint32_t PlayerEquipMgr    = 0x668;  // AJJJBDBNBLM — EquipmentManager pointer
+
 // ApplicationManager → WorldManager field offset.
 // Set by GameState.cpp type-scan (immune to backing-field name obfuscation).
 uint32_t AppMgr_WorldMgr   = 0xC0;
+
+// CameraManager component fields (no ACTK shift).
+uint32_t CM_Transform      = 0x28;   // mainCameraContainer — Transform* (world-space camera container)
+uint32_t CM_UnityCam        = 0x50;   // KNAIAEFDCLM — UnityEngine.Camera* (main gameplay camera)
 
 uint32_t WM_Local    = 0x48;
 uint32_t WM_AllDict  = 0xB0;
@@ -295,6 +310,25 @@ static Entry s_entries[] = {
     { "FKALGHJIADI", { "BHJFNEAHAOE" },                              1, kActk, &Player_MoveDirX,    false },
     // GDNEBFDDDKM = float moveDirY (dump 0x47C / runtime 0x4CC)
     { "FKALGHJIADI", { "GDNEBFDDDKM" },                              1, kActk, &Player_MoveDirY,    false },
+
+    // ── FKALGHJIADI player diagnostic stats (no ACTK shift) ──────────────
+    // These resolve the same fields as above but WITHOUT the kActk shift,
+    // producing the dump offset used by PlayerTAB for stat display. Some
+    // share BeeByte names with movement entries (e.g. HCMECDPHEMC = Tex1/ATK,
+    // BHJFNEAHAOE = MoveDirX/SPD, GDNEBFDDDKM = MoveDirY/DEX).
+    { "FKALGHJIADI", { "NFJGJKLPLBA" },                              1, 0,     &PlayerName,         false },
+    { "FKALGHJIADI", { "KABPJBJPGCM" },                              1, 0,     &PlayerClassNum,     false },
+    { "FKALGHJIADI", { "GBANOMPLGBH" },                              1, 0,     &PlayerGuildRank,    false },
+    { "FKALGHJIADI", { "HCMECDPHEMC" },                              1, 0,     &PlayerAtk,          false },
+    { "FKALGHJIADI", { "GDNEBFDDDKM" },                              1, 0,     &PlayerDex,          false },
+    { "FKALGHJIADI", { "CGFPEPCKKOK" },                              1, 0,     &PlayerVit,          false },
+    { "FKALGHJIADI", { "HDCDGHKGLDI" },                              1, 0,     &PlayerWis,          false },
+    { "FKALGHJIADI", { "MPJGAPJBBBF" },                              1, 0,     &PlayerCondInt,      false },
+    { "FKALGHJIADI", { "AJJJBDBNBLM" },                              1, 0,     &PlayerEquipMgr,     false },
+
+    // ── CameraManager (no shift — component fields) ────────────────────────
+    { "CameraManager", { "mainCameraContainer" },                        1, 0,     &CM_Transform,  false },
+    { "CameraManager", { "KNAIAEFDCLM" },                                1, 0,     &CM_UnityCam,   false },
 
     // ── HJMBOMEHGDJ WorldManager (no shift) ──────────────────────────────
     { "HJMBOMEHGDJ", { "OCLNLBHDEFK" },                              1, 0,     &WM_Local,      false },

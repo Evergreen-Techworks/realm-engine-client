@@ -16,7 +16,6 @@
 
 HMODULE hModule;
 HANDLE hUnloadEvent;
-HMODULE hGameAssembly = nullptr;
 static HANDLE hSecurityThread = nullptr;
 
 static bool IsDebuggerDetected()
@@ -78,13 +77,20 @@ void Run(LPVOID lpParam)
 #endif
  DBG_FILE_LOG("[Run] Entered. Log path: " << DbgFileLogPath());
 
- // Install crash logging as early as possible so any fatal fault (feature hook
- // misfire, stale offset misread) records module+offset+backtrace to the trace log.
  crashprobe::InstallCrashProbe();
 
 #if !defined(_DEBUG)
  if (IsDebuggerDetected() || HasAnalysisModulesLoaded()) return;
 #endif
+
+ // The external injector triggers injection after the client confirms the
+ // game is fully loaded (first NewTick packet). GameAssembly.dll is
+ // guaranteed present — resolve the handle directly.
+ HMODULE hGameAssembly = GetModuleHandleW(L"GameAssembly.dll");
+ if (!hGameAssembly) {
+  DBG_FILE_LOG("[Run] GameAssembly.dll not found — injected too early or wrong process.");
+  return;
+ }
 
  DBG_FILE_LOG("[Run] About to call init_il2cpp(hGameAssembly=" << (void*)hGameAssembly << ")...");
  init_il2cpp(hGameAssembly);
@@ -122,7 +128,6 @@ void Run(LPVOID lpParam)
  if (hSecurityThread) CloseHandle(hSecurityThread);
 #endif
 
- // Start the IPC bridge thread so the bot-client can connect via named pipe.
  HANDLE hBridgeThread = CreateThread(nullptr, 0, IpcBridgeThread, nullptr, 0, nullptr);
  if (hBridgeThread) {
   CloseHandle(hBridgeThread);
@@ -136,9 +141,6 @@ void Run(LPVOID lpParam)
 
 bool AttachIl2Cpp()
 {
- // il2cpp_domain_get / il2cpp_thread_attach are function pointers resolved by
- // init_il2cpp() via GetProcAddress. If init_il2cpp aborted early (GameAssembly.dll
- // not loaded), those pointers are NULL and calling them crashes the process.
  if (!il2cpp_domain_get || !il2cpp_thread_attach) {
   DBG_FILE_LOG("[AttachIl2Cpp] IL2CPP function pointers are NULL — init_il2cpp failed. Aborting.");
   return false;

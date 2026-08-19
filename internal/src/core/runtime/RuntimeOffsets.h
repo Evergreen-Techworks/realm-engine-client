@@ -233,10 +233,30 @@ namespace RuntimeOffsets {
     // PlayerTAB and TestTAB both use runtime 0x478 for the speed formula (4 + 5.6 * spd/75).
     extern uint32_t Player_Spd;
 
+    // ── Player diagnostic stats (FKALGHJIADI, no ACTK shift for stat reads) ──
+    // These offsets are used by PlayerTAB for display; they resolve against
+    // FKALGHJIADI via il2cpp_field_get_offset WITHOUT adding the ACTK shift.
+    // Some share BeeByte field names with movement-system entries above (which
+    // DO apply kActk); the two sets coexist because they serve different
+    // purposes (stat display vs movement direction).
+    extern uint32_t PlayerName;       // NFJGJKLPLBA   fallback 0x4B8  (Il2CppString*)
+    extern uint32_t PlayerClassNum;   // KABPJBJPGCM   fallback 0x4B0  (int32)
+    extern uint32_t PlayerGuildRank;  // GBANOMPLGBH   fallback 0x4AC  (int32)
+    extern uint32_t PlayerAtk;        // HCMECDPHEMC   fallback 0x474  (int32)
+    extern uint32_t PlayerDex;        // GDNEBFDDDKM   fallback 0x47C  (int32)
+    extern uint32_t PlayerVit;        // CGFPEPCKKOK   fallback 0x480  (int32)
+    extern uint32_t PlayerWis;        // HDCDGHKGLDI   fallback 0x484  (int32)
+    extern uint32_t PlayerCondInt;    // MPJGAPJBBBF   fallback 0x514  (int32, single-int condition)
+    extern uint32_t PlayerEquipMgr;   // AJJJBDBNBLM   fallback 0x668  (EquipmentManager pointer)
+
     // ── ApplicationManager (no ACTK shift) ───────────────────────────────────
     // Resolved in GameState.cpp via type-scan (field name uses <>k__BackingField
     // syntax that changes with each BeeByte pass — type-scan is rename-proof).
     extern uint32_t AppMgr_WorldMgr;   // <CHDFAEBMILI>k__BackingField  fallback 0xC0
+
+    // ── CameraManager (no ACTK shift) ────────────────────────────────────────
+    extern uint32_t CM_Transform;      // mainCameraContainer  Transform*   fallback 0x28
+    extern uint32_t CM_UnityCam;       // KNAIAEFDCLM          Camera*      fallback 0x50
 
     // ── HJMBOMEHGDJ WorldManager (no shift) ─────────────────────────────────
     extern uint32_t WM_Local;       // OCLNLBHDEFK   fallback 0x48

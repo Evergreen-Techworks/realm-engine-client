@@ -80,10 +80,10 @@ if "!WSL_BASE!"=="" (
     )
 )
 
-REM ── Ensure game is closed so we can overwrite version.dll ───────────────────
+REM ── Ensure game is closed so we can overwrite realm-engine.dll ──────────────
 tasklist /FI "IMAGENAME eq RotMG Exalt.exe" | find /I "RotMG Exalt.exe" >nul
 if !ERRORLEVEL! EQU 0 (
-    echo [dev] RotMG Exalt is running. Closing it so we can overwrite version.dll...
+    echo [dev] RotMG Exalt is running. Closing it so we can overwrite realm-engine.dll...
     taskkill /F /IM "RotMG Exalt.exe" >nul 2>&1
     timeout /t 1 /nobreak >nul
 )
@@ -130,43 +130,25 @@ if !ERRORLEVEL! NEQ 0 (
     exit /b !ERRORLEVEL!
 )
 
-set "BUILT_DLL=!WIN_BASE!\!INTERNAL_DIR!\x64\!BUILD_CONFIG!\version.dll"
-set "BUILT_PDB=!WIN_BASE!\!INTERNAL_DIR!\x64\!BUILD_CONFIG!\version.pdb"
+REM The vcxproj's OutDir is $(SolutionDir)..\client\assets\ — the DLL and injector
+REM build there (that's also where the client resolves them from for injection).
+set "BUILT_DLL=!WIN_BASE!\client\assets\realm-engine.dll"
+set "BUILT_PDB=!WIN_BASE!\client\assets\realm-engine.pdb"
 if not exist "!BUILT_DLL!" (
     echo [dev] ERROR: Built DLL not found at !BUILT_DLL!
+    echo [dev]        That is the vcxproj OutDir client\assets\ -- did the build actually succeed?
     pause
     exit /b 1
-)
-
-REM ── Deploy straight to the game folder ──────────────────────────────────────
-set "GAME_DIR=%LOCALAPPDATA%\RealmOfTheMadGod\Production"
-if not exist "!GAME_DIR!" (
-    echo [dev] ERROR: Game folder not found: !GAME_DIR!
-    pause
-    exit /b 1
-)
-
-echo [dev] Deploying version.dll to !GAME_DIR!...
-copy /Y "!BUILT_DLL!" "!GAME_DIR!\version.dll" >nul
-if !ERRORLEVEL! NEQ 0 (
-    echo [dev] ERROR: Copy failed. Is the game still holding the DLL open?
-    pause
-    exit /b 1
-)
-
-if exist "!BUILT_PDB!" (
-    copy /Y "!BUILT_PDB!" "!GAME_DIR!\version.pdb" >nul
-    echo [dev] PDB deployed — you can now open crash dumps in Visual Studio and see symbols.
 )
 
 echo.
-echo [dev] Done.
+echo [dev] Done. realm-engine.dll built to client\assets\.
 if /I "!BUILD_CONFIG!"=="Debug" (
-    echo [dev] Debug build — when the game starts, a console window will open for DLL logs.
+    echo [dev] Debug build — when injected, a console window will open for DLL logs.
 ) else (
     echo [dev] Release build — no console; crash logs only via WER + dmp.
 )
-echo [dev] Launch RotMG to test. Skip running the bot-client if you want to test the DLL in isolation.
+echo [dev] The client injects the DLL automatically on first NewTick packet.
 echo.
 pause
 endlocal
