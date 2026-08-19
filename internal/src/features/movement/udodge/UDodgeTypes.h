@@ -24,9 +24,13 @@ constexpr int kMaxAoes        = 32;
 constexpr int kMaxEnemies     = 64;
 
 // ── Controller constants (reference-tuned; tiles) ───────────────────────────
-constexpr float kRelevanceClearance       = 1.0f;   // "could this shot matter" pad
-constexpr float kIntentSafeClearance      = 0.08f;  // safety floor for keeping/blending intent
-constexpr float kEmergencyIntentBand      = 0.14f;  // clearance we may trade for intent in emergencies
+// Wide reaction space substitutes for the deleted time/lead dimension: the
+// dodge starts moving while a bullet is still ~0.6 tiles off its hitbox (not
+// 0.08 = essentially touching), and keeps that buffer. Relevance is raised so
+// threats are considered far enough out to position for the wider buffer.
+constexpr float kRelevanceClearance       = 2.0f;   // "could this shot matter" pad
+constexpr float kIntentSafeClearance      = 0.60f;  // safety floor for keeping/blending intent
+constexpr float kEmergencyIntentBand      = 0.30f;  // clearance we may trade for intent in emergencies
 constexpr float kUnavoidableClearanceBand = 0.05f;
 constexpr float kHysteresisScoreGain      = 0.25f;  // hold the chosen heading unless beaten by this much
 constexpr int   kCorridorNeighbors        = 3;      // half-width of the corridor-safety window
@@ -84,6 +88,7 @@ struct Settings {
     float laneTiles = 12.f;  // danger-lane paint length (tiles)      [2, 16]
     float stepTiles = 0.f;   // candidate step distance; 0 = auto
                              // (tilesPerSec × kServerTickSec)        [0 | 0.4, 3]
+    float reactMargin = 0.60f;  // reaction clearance floor (tiles) [0.05, 2.0]
 };
 
 // Host environment probe (kept as function pointers so the core stays free of
@@ -221,6 +226,7 @@ struct DebugSnapshot {
     float standClearance = kHugeClearance;  // ≤ 0 = danger covers current position
     float speed = 0.f;        // tiles/ms — for drawing candidate rays
     float stepTiles = 1.f;
+    float reactMargin = 0.60f;
     uint32_t tickId = 0;      // map's NewTick stamp
     bool  tickValid = false;
     bool  rebuiltThisFrame = false;  // true = full layout rebuild; false = re-anchored

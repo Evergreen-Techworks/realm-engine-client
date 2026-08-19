@@ -41,6 +41,7 @@ DiagView GetDiagView();
 void  SetLaneTiles(float t);          float GetLaneTiles();
 void  SetStepTiles(float t);          float GetStepTiles();
 void  SetHitScale(float s);           float GetHitScale();
+    void  SetReactMargin(float m);        float GetReactMargin();
 void  SetSafeWalk(bool en);           bool  GetSafeWalk();
 void  SetSpeedScale(bool en);         bool  GetSpeedScale();
 void  SetFieldEscape(bool en);        bool  GetFieldEscape();

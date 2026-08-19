@@ -27,6 +27,7 @@ std::atomic<bool>  g_enabled{ false };
 std::atomic<float> g_laneTiles{ 12.f };
 std::atomic<float> g_stepTiles{ 0.f };
 std::atomic<float> g_hitScale{ 1.0f };
+std::atomic<float> g_reactMargin{ 0.60f };
 std::atomic<bool>  g_safeWalk{ true };
 std::atomic<bool>  g_speedScale{ true };
 std::atomic<bool>  g_fieldEscape{ true };
@@ -69,6 +70,7 @@ Settings ReadSettings()
     const float stepT = g_stepTiles.load(std::memory_order_relaxed);
     s.stepTiles    = stepT <= 0.f ? 0.f : Clamp(stepT, 0.4f, 3.f);
     s.hitScale     = Clamp(g_hitScale.load(std::memory_order_relaxed), 0.25f, 2.5f);
+    s.reactMargin  = Clamp(g_reactMargin.load(std::memory_order_relaxed), 0.05f, 2.0f);
     s.safeWalk     = g_safeWalk.load(std::memory_order_relaxed);
     s.speedScale   = g_speedScale.load(std::memory_order_relaxed);
     s.fieldEscape  = g_fieldEscape.load(std::memory_order_relaxed);
@@ -285,6 +287,7 @@ void Tick(void* player, float px, float py, float dt)
         d.standClearance = g_out.standClearance;
         d.speed = in.speed;
         d.stepTiles = in.stepTiles;
+        d.reactMargin = settings.reactMargin;
         d.tickId = g_map.tickId;
         d.tickValid = g_map.tickValid;
         d.rebuiltThisFrame = rebuilt;
@@ -319,6 +322,13 @@ void RenderSettings()
                           "motion (tilesPerSec x 0.2s) — the natural quantum of a\n"
                           "per-tick replanner.");
     if (ImGui::SliderFloat("Hit scale##udodge", &hit, 0.5f, 1.5f)) SetHitScale(hit);
+    float react = GetReactMargin();
+    if (ImGui::SliderFloat("Reaction margin (tiles)##udodge", &react, 0.05f, 2.0f)) SetReactMargin(react);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Spatial clearance the dodge keeps from bullets. This is\n"
+                          "the wide reaction space that replaces the deleted time\n"
+                          "dimension: higher = start dodging sooner and keep more\n"
+                          "buffer (smoother); lower = brush closer.");
     if (ImGui::Checkbox("Safe walk (avoid damaging ground)##udodge", &safe)) SetSafeWalk(safe);
     if (ImGui::Checkbox("Match intent speed##udodge", &spd)) SetSpeedScale(spd);
 
@@ -386,6 +396,8 @@ void  SetStepTiles(float t) { g_stepTiles.store(t <= 0.f ? 0.f : Clamp(t, 0.4f, 
 float GetStepTiles()        { return g_stepTiles.load(std::memory_order_relaxed); }
 void  SetHitScale(float s) { g_hitScale.store(Clamp(s, 0.25f, 2.5f), std::memory_order_relaxed); }
 float GetHitScale() { return g_hitScale.load(std::memory_order_relaxed); }
+void  SetReactMargin(float m) { g_reactMargin.store(Clamp(m, 0.05f, 2.0f), std::memory_order_relaxed); }
+float GetReactMargin() { return g_reactMargin.load(std::memory_order_relaxed); }
 void  SetSafeWalk(bool en) { g_safeWalk.store(en, std::memory_order_relaxed); }
 bool  GetSafeWalk() { return g_safeWalk.load(std::memory_order_relaxed); }
 void  SetSpeedScale(bool en) { g_speedScale.store(en, std::memory_order_relaxed); }

@@ -74,7 +74,7 @@ export const DLL_FEATURE_KEYS = [
   'skinOverrideEnabled', 'skinOverrideId', 'socketHotkey', 'socketHotkeyActive',
   'speedHackMult', 'targetFrameRate', 'udodgeDebugOverlay', 'udodgeFieldEscape',
   'udodgeFollowLantern', 'udodgeHitScale', 'udodgeLaneTiles', 'udodgeLockFollow',
-  'udodgeMode', 'udodgeSafeWalk', 'udodgeSpeedScale', 'udodgeStandOnType',
+  'udodgeMode', 'udodgeReactMargin', 'udodgeSafeWalk', 'udodgeSpeedScale', 'udodgeStandOnType',
   'udodgeStepTiles', 'xdodgeArbiter', 'xdodgeAstar',
   'xdodgeAutoLock', 'xdodgeAvoidEnemies', 'xdodgeBfsBias', 'xdodgeCatalog',
   'xdodgeCcd', 'xdodgeCcdPad', 'xdodgeDangerPenalty', 'xdodgeDebugPredLongMs',

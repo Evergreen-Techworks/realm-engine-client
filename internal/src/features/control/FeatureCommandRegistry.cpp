@@ -241,6 +241,7 @@ namespace {
             FH_FLOAT("udodgeLaneTiles", UDodge::SetLaneTiles),
             FH_FLOAT("udodgeStepTiles", UDodge::SetStepTiles),
             FH_FLOAT("udodgeHitScale", UDodge::SetHitScale),
+            FH_FLOAT("udodgeReactMargin", UDodge::SetReactMargin),
             FH_INT_BOOL("udodgeSafeWalk", UDodge::SetSafeWalk),
             FH_INT_BOOL("udodgeSpeedScale", UDodge::SetSpeedScale),
             FH_INT_BOOL("udodgeFieldEscape", UDodge::SetFieldEscape),

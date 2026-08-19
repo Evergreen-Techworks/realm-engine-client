@@ -34,6 +34,7 @@ struct MapCtx {
     const DangerMap* m  = nullptr;
     float step = 1.f;       // stepTiles (candidate commitment distance)
     float hitScale = 1.f;
+    float reactMargin = 0.60f;
     bool  hazardEscape = false;
     Vec2  dirs[kCandidateCount]{};
     float clearance[kCandidateCount]{};   // min hard clearance along segment (tiles)
@@ -277,7 +278,7 @@ int SelectHazardEscapeMap(const MapCtx& c, Vec2 intentDir)
 
 // ── Speed matching (keep gentle overrides close to the player's own speed) ──
 // The scaled step segment (length = step × scale) must be wall-walkable and
-// keep hard clearance ≥ kIntentSafeClearance (lanes and active zones alike —
+// keep hard clearance ≥ c.reactMargin (lanes and active zones alike —
 // zero active-zone penetration follows).
 bool IsVelocitySafeMap(const MapCtx& c, int cand, float scale)
 {
@@ -296,12 +297,12 @@ bool IsVelocitySafeMap(const MapCtx& c, int cand, float scale)
         const LaneThreat& L = c.m->lanes[c.relevant[r]];
         const float half = HalfOf(c, L);
         for (int i = 0; i < n; ++i)
-            if (LaneDistCheb(L, probes[i]) - half < kIntentSafeClearance) return false;
+            if (LaneDistCheb(L, probes[i]) - half < c.reactMargin) return false;
     }
     for (int i = 0; i < c.m->zoneCount; ++i) {
         const ZoneThreat& z = c.m->zones[i];
         if (z.active &&
-            DistPointSeg(z.pos, probes[0], probes[n - 1]) - z.radius < kIntentSafeClearance)
+            DistPointSeg(z.pos, probes[0], probes[n - 1]) - z.radius < c.reactMargin)
             return false;
     }
     return true;
@@ -380,6 +381,7 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
     c.m = in.map;
     c.step = std::clamp(in.stepTiles, 0.4f, 3.0f);
     c.hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
+    c.reactMargin = std::clamp(in.settings.reactMargin, 0.05f, 2.0f);
 
     for (int i = 0; i < kDirectionCount; ++i) {
         const float ang = kTwoPi * static_cast<float>(i) / static_cast<float>(kDirectionCount);
@@ -508,7 +510,7 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
     if (in.settings.fieldEscape && speed > 0.f) {
         bool boxedIn = true;   // no compass candidate has safe clearance
         for (int cand = 1; cand <= kDirectionCount; ++cand)
-            if (c.valid[cand] && c.clearance[cand] >= kIntentSafeClearance) {
+            if (c.valid[cand] && c.clearance[cand] >= c.reactMargin) {
                 boxedIn = false;
                 break;
             }
@@ -550,7 +552,7 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
     // Wall-blocked intent can't be preserved — fall through to the override
     // path so the core picks a heading that's both danger- and wall-safe.
     if (c.valid[kIntentCandidate] &&
-        c.clearance[kIntentCandidate] >= kIntentSafeClearance &&
+        c.clearance[kIntentCandidate] >= c.reactMargin &&
         c.softCost[kIntentCandidate] == 0.f) {
         FinishMap(c, out, intentVel, false, state.selectedCandidate, 1.f, threatCount,
                   Decision::PreserveSafeIntent);
@@ -568,16 +570,16 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
         // field candidate, once real, competes here too.)
         float bestDot = -kHugeClearance;
         for (int cand = 0; cand < kCandidateCount; ++cand) {
-            if (!c.valid[cand] || c.clearance[cand] < kIntentSafeClearance) continue;
+            if (!c.valid[cand] || c.clearance[cand] < c.reactMargin) continue;
             const float dot = Dot(c.dirs[cand], intentDir);
             if (dot > bestDot) { bestDot = dot; choice = cand; }
         }
         if (choice != proposed) decision = Decision::GentleManualBlend;
-    } else if (hasIntent && c.clearance[proposed] >= kIntentSafeClearance) {
+    } else if (hasIntent && c.clearance[proposed] >= c.reactMargin) {
         // Survival is achievable: allow a slightly-worse-but-still-safe
         // candidate that better matches the player's intent.
         const float acceptable =
-            std::max(kIntentSafeClearance, c.clearance[proposed] - kEmergencyIntentBand);
+            std::max(c.reactMargin, c.clearance[proposed] - kEmergencyIntentBand);
         float bestDot = -kHugeClearance;
         for (int cand = 0; cand < kCandidateCount; ++cand) {
             if (!c.valid[cand] || c.clearance[cand] < acceptable) continue;
@@ -602,7 +604,7 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
     // unless it went unsafe or the new pick is clearly better. ───────────────
     const int held = state.selectedCandidate;
     if (state.haveTick && state.selectedTick == in.tickId &&
-        c.valid[held] && c.clearance[held] >= kIntentSafeClearance &&
+        c.valid[held] && c.clearance[held] >= c.reactMargin &&
         (!hasIntent || Dot(c.dirs[held], intentDir) >= Dot(c.dirs[choice], intentDir) - 0.05f) &&
         c.clearance[choice] < c.clearance[held] + kHysteresisScoreGain) {
         choice = held;
@@ -614,7 +616,7 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
 
     float speedScale = 1.f;
     if (in.settings.speedScale && choice != kStandCandidate &&
-        c.clearance[choice] >= kIntentSafeClearance)
+        c.clearance[choice] >= c.reactMargin)
         speedScale = SelectAlignedSpeedMap(c, choice, intentVel, speed);
 
     // A pure survival win by the field candidate is a field escape; a blend

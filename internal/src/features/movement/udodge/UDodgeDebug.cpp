@@ -127,7 +127,7 @@ void Render(const DebugSnapshot& snap,
         const Vec2 end = Add(snap.player, Mul(c.dir, std::min(snap.stepTiles, c.blockDist)));
         ImU32 col;
         if (!c.valid) col = IM_COL32(120, 120, 120, 90);
-        else if (c.clearance >= kIntentSafeClearance)
+        else if (c.clearance >= snap.reactMargin)
             col = IM_COL32(60, 230, 90, 140);
         else {
             const float f = std::clamp(c.clearance / 0.5f, 0.f, 1.f);

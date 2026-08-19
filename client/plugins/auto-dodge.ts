@@ -289,6 +289,10 @@ export function register(ctx: PluginContext) {
     label: '[UDodge] Hit scale (1 = exact game hitbox)', advanced: true,
     type: 'range', value: 1, min: 0.5, max: 1.5, step: 0.05,
   }, (v: number) => sendDllFeature('udodgeHitScale', v));
+  registerModeSetting('unified', 'udodgeReactMargin', {
+    label: '[UDodge] Reaction margin (tiles — wider = dodge sooner/smoother)',
+    type: 'range', value: 0.6, min: 0.05, max: 2.0, step: 0.05,
+  }, (v: number) => sendDllFeature('udodgeReactMargin', v));
   registerModeSetting('unified', 'udodgeSafeWalk', onOff('[UDodge] Safe walk (avoid damaging ground)', 'on'),
     (v: string) => sendDllFeature('udodgeSafeWalk', v === 'on' ? 1 : 0));
   registerModeSetting('unified', 'udodgeSpeedScale', onOff('[UDodge] Match intent speed on gentle overrides', 'on'),
@@ -481,6 +485,7 @@ export function register(ctx: PluginContext) {
     sendDllFeature('udodgeLaneTiles', ctx.getSetting<number>('udodgeLaneTiles'));
     sendDllFeature('udodgeStepTiles', ctx.getSetting<number>('udodgeStepTiles'));
     sendDllFeature('udodgeHitScale', ctx.getSetting<number>('udodgeHitScale'));
+    sendDllFeature('udodgeReactMargin', ctx.getSetting<number>('udodgeReactMargin'));
     sendDllFeature('udodgeStandOnType', ctx.getSetting<number>('udodgeStandOnType'));
     sendDllFeature('udodgeMode', ctx.getSetting<string>('udodgeMode') === 'autopilot' ? 1 : 0);
     for (const k of ['udodgeSafeWalk', 'udodgeSpeedScale',
