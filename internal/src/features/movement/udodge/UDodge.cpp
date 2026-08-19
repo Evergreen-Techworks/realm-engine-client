@@ -5,6 +5,7 @@
 #include "UDodgeSensors.h"
 #include "UDodgeDebug.h"
 #include "UDodgePlanner.h"
+#include "UDodgeWorker.h"
 
 #include "MovementRuntime.h"
 #include "DbgFileLog.h"
@@ -43,6 +44,10 @@ std::atomic<int>   g_standOnType{ 0 };
 CoreState  g_state;
 DangerMap  g_map;
 CoreOutput g_out;
+// Last plan the worker handed back — game-thread-owned cache, kept across frames
+// when TryGetLatestPlan finds the worker busy (staleness is acceptable; the
+// dodge safety layer runs every frame regardless — plan 59).
+Planner::PlanResult g_lastPlan;
 
 std::mutex    g_debugMutex;
 
@@ -137,10 +142,15 @@ bool LanternIntent(Vec2 player, const Settings& settings, Vec2& outTargetPos, Ve
 
 void SetEnabled(bool enabled)
 {
-    if (enabled) ProjectileTracking::Install();
+    if (enabled) {
+        ProjectileTracking::Install();
+        Worker::Start();
+    }
     g_enabled.store(enabled, std::memory_order_relaxed);
     if (!enabled) {
+        Worker::Stop();   // JOIN the worker before releasing state it never touches
         g_state.Reset();
+        g_lastPlan = Planner::PlanResult{};
         PublishDebug(DebugSnapshot{});
     }
 }
@@ -150,7 +160,9 @@ bool IsEnabled() { return g_enabled.load(std::memory_order_relaxed); }
 void OnEnter()
 {
     ProjectileTracking::Install();
+    Worker::Start();
     g_state.Reset();
+    g_lastPlan = Planner::PlanResult{};
     PublishDebug(DebugSnapshot{});
 }
 
@@ -207,9 +219,13 @@ void Tick(void* player, float px, float py, float dt)
         if (LanternIntent(in.player, settings, apTarget, in.intentDir)) {
             apHasTarget = true;
         } else {
-            // Priority 2 — boss-lock orbit through the plain-data planner seam.
-            // The weapon range is resolved HERE (game thread) into a plain float,
-            // so Planner::Compute stays pure — no IL2CPP crosses the snapshot.
+            // Priority 2 — boss-lock orbit through the background planner worker
+            // (plan 59). The weapon range is resolved HERE (game thread) into a
+            // plain float, so the snapshot stays pure — no IL2CPP crosses the
+            // thread boundary. We PUBLISH the snapshot (non-blocking) and CONSUME
+            // the worker's latest plan (non-blocking); the game thread never
+            // blocks on the worker. Core::Evaluate below still runs every frame,
+            // so bullet-reaction latency is unaffected by plan staleness.
             Planner::PlannerSnapshot snap{};
             snap.tickId           = g_map.tickId;
             snap.player           = in.player;
@@ -219,12 +235,22 @@ void Tick(void* player, float px, float py, float dt)
             snap.rangeResolved    = AutoAim::IsProjRangeResolved();
             snap.weaponRangeTiles = snap.rangeResolved ? AutoAim::GetProjRangeTiles() : 6.f;
 
-            Planner::PlanResult plan{};
-            Planner::Compute(snap, plan);
+            Worker::PublishSnapshot(snap);
 
-            in.intentDir = plan.firstDir;
-            apHasTarget  = plan.hasGoal;
-            apTarget     = plan.goalPos;
+            Planner::PlanResult fresh{};
+            if (Worker::TryGetLatestPlan(fresh)) {
+                g_lastPlan = fresh;   // refresh the cache when the worker isn't busy
+                static int s_wpN = 0;
+                if ((s_wpN++ % 120) == 0)
+                    DBG_FILE_LOG("[UDodge] Worker plan seq=" << g_lastPlan.forSeq
+                        << " hasGoal=" << g_lastPlan.hasGoal);
+            }
+
+            // Cold start (no plan yet) leaves g_lastPlan default → firstDir {} →
+            // pure dodge until the first plan lands (safe, transient).
+            in.intentDir = g_lastPlan.firstDir;
+            apHasTarget  = g_lastPlan.hasGoal;
+            apTarget     = g_lastPlan.goalPos;
         }
     } else if (settings.lockFollow) {
         float gx = 0.f, gy = 0.f;

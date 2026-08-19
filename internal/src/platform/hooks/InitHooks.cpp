@@ -16,6 +16,7 @@
 #include "IpcBridge.h"
 #include "DbgFileLog.h"
 #include "DangerPlanner.h"
+#include "features/movement/udodge/UDodge.h"
 
 bool HookFunction(PVOID* ppPointer, PVOID pDetour, const char* functionName) {
     if (const auto error = DetourAttach(ppPointer, pDetour); error != NO_ERROR) {
@@ -94,6 +95,14 @@ void DetourUninitialization()
         AoeTracking::Uninstall();
         AutoAim::Uninstall();
         ProjectileTracking::Uninstall();
+
+        // Join the UDodge planner worker (plan 59) before DLL unload — a
+        // background thread whose code pages get unmapped would crash. Safe even
+        // if UDodge was never enabled (Worker::Stop is idempotent); the worker
+        // holds no IL2CPP state, so this late join cannot touch freed game data.
+        // DangerPlanner::Uninstall() above has already stopped the game-thread
+        // Tick that feeds it.
+        UDodge::SetEnabled(false);
 
         // 4) Disable any remaining MinHook hooks, then release the library (safe if never initialized).
         MH_DisableHook(MH_ALL_HOOKS);
