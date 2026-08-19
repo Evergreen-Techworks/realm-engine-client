@@ -26,6 +26,7 @@
 #include "ZDodge.h"
 #include "RePP.h"
 #include "PJDodge.h"
+#include "features/movement/udodge/UDodge.h"
 #include "SpeedHack.h"
 #include <string>
 #include <cctype>
@@ -234,6 +235,25 @@ namespace {
         return ApplyFeatureTable(f, h, sizeof(h) / sizeof(h[0]));
     }
 
+    bool ApplyUDodgeFeature(const FeatureCommand& f)
+    {
+        static const FeatureHandler h[] = {
+            FH_FLOAT("udodgeHorizonMs", UDodge::SetHorizonMs),
+            FH_FLOAT("udodgeLeadMs", UDodge::SetLeadMs),
+            FH_FLOAT("udodgeHitScale", UDodge::SetHitScale),
+            FH_INT_BOOL("udodgeSafeWalk", UDodge::SetSafeWalk),
+            FH_INT_BOOL("udodgeSpeedScale", UDodge::SetSpeedScale),
+            FH_INT_BOOL("udodgePredictionAccuracy", UDodge::SetPredictionAccuracy),
+            FH_INT_BOOL("udodgeFieldEscape", UDodge::SetFieldEscape),
+            FH_INT_BOOL("udodgeDebugOverlay", UDodge::SetDebugOverlay),
+            FH_INT("udodgeMode", UDodge::SetMode),
+            FH_INT_BOOL("udodgeLockFollow", UDodge::SetLockFollow),
+            FH_INT_BOOL("udodgeFollowLantern", UDodge::SetFollowLantern),
+            FH_INT("udodgeStandOnType", UDodge::SetStandOnType)
+        };
+        return ApplyFeatureTable(f, h, sizeof(h) / sizeof(h[0]));
+    }
+
     bool ApplyInputCameraSkinFeature(const FeatureCommand& f)
     {
         static const FeatureHandler h[] = {
@@ -307,6 +327,7 @@ namespace FeatureCommandRegistry {
         if (ApplyZDodgeFeature(feature)) return true;
         if (ApplyReppFeature(feature)) return true;
         if (ApplyPJDodgeFeature(feature)) return true;
+        if (ApplyUDodgeFeature(feature)) return true;
         if (ApplyRolloutFeature(feature)) return true;
         if (ApplyInputCameraSkinFeature(feature)) return true;
         if (ApplyAutoNexusFeature(feature)) return true;

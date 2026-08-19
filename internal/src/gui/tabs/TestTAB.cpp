@@ -9,6 +9,7 @@
 #include "ZDodgeTarget.h"
 #include "RePP.h"
 #include "PJDodge.h"
+#include "features/movement/udodge/UDodge.h"
 #include "AutoNexus.h"
 #include "DbgFileLog.h"
 #include "BootGate.h"
@@ -167,15 +168,17 @@ void ApplyDodgeModeWithEnter(DodgeMode nextMode)
     ZDodge::SetEnabled(nextMode == DodgeMode::ZDodge);
     RePP::SetEnabled(nextMode == DodgeMode::RePP);
     PJDodge::SetEnabled(nextMode == DodgeMode::PJDodge);
+    UDodge::SetEnabled(nextMode == DodgeMode::UDodge);
 
 
     DBG_FILE_LOG("[DodgeSwap] ApplyDodgeModeWithEnter nextMode=" << static_cast<int>(nextMode)
-        << " (0=Off 1=XDodge 2=RollGrid 3=RollQuad 4=ZDodge 5=RePP 6=PJDodge)"
+        << " (0=Off 1=XDodge 2=RollGrid 3=RollQuad 4=ZDodge 5=RePP 6=PJDodge 7=UDodge)"
         << " -> enabled{ XDodge=" << XDodge::IsEnabled()
         << " Rollout=" << RolloutDodge::IsEnabled()
         << " ZDodge=" << ZDodge::IsEnabled()
         << " RePP=" << RePP::IsEnabled()
-        << " PJDodge=" << PJDodge::IsEnabled() << " }");
+        << " PJDodge=" << PJDodge::IsEnabled()
+        << " UDodge=" << UDodge::IsEnabled() << " }");
     if (nextMode == DodgeMode::XDodge) {
         XDodge::OnEnter();
         // Install the AppEngineManager::Update detour that drives the dodge Tick.
@@ -200,6 +203,9 @@ void ApplyDodgeModeWithEnter(DodgeMode nextMode)
         DangerPlanner::TryInstall();
     } else if (nextMode == DodgeMode::PJDodge) {
         PJDodge::OnEnter();
+        DangerPlanner::TryInstall();
+    } else if (nextMode == DodgeMode::UDodge) {
+        UDodge::OnEnter();
         DangerPlanner::TryInstall();
     }
 
@@ -625,6 +631,9 @@ void TestTAB::Tick(bool menuVisible)
             if (PJDodge::IsEnabled()) {
                 PJDodge::RenderDebugOverlay(camX, camY, angleRad, zoom, cx, cy);
             }
+            if (UDodge::IsEnabled()) {
+                UDodge::RenderDebugOverlay(camX, camY, angleRad, zoom, cx, cy);
+            }
             CombatTAB::FeatAutoNexus::RenderDebugPath(camX, camY, angleRad, zoom, cx, cy);
         }
 
@@ -925,7 +934,7 @@ void TestTAB::RenderMovementSection()
     ImGui::Indent(8.f);
 
     int modeIdx = static_cast<int>(g_dodgeMode);
-    const char* modeLabels[] = { "Off", "RE-Plus", "RE-Sim (Grid)", "RE-Sim (Quadtree)", "zDodge", "RE++", "PJDodge" };
+    const char* modeLabels[] = { "Off", "RE-Plus", "RE-Sim (Grid)", "RE-Sim (Quadtree)", "zDodge", "RE++", "PJDodge", "Unified" };
     ImGui::SetNextItemWidth(240.f);
     if (ImGui::Combo("Mode##dodgeModeCombo", &modeIdx, modeLabels, IM_ARRAYSIZE(modeLabels))) {
         ApplyDodgeModeWithEnter(static_cast<DodgeMode>(modeIdx));
@@ -949,6 +958,9 @@ void TestTAB::RenderMovementSection()
     } else if (g_dodgeMode == DodgeMode::PJDodge) {
         ImGui::Spacing();
         PJDodge::RenderSettings();
+    } else if (g_dodgeMode == DodgeMode::UDodge) {
+        ImGui::Spacing();
+        UDodge::RenderSettings();
     }
 
     ImGui::Unindent(8.f);
@@ -1411,7 +1423,7 @@ namespace TestTAB {
     void      SetDodgeMode(DodgeMode m)
     {
         const int v = static_cast<int>(m);
-        ApplyDodgeModeWithEnter((v >= 0 && v <= static_cast<int>(DodgeMode::PJDodge))
+        ApplyDodgeModeWithEnter((v >= 0 && v <= static_cast<int>(DodgeMode::UDodge))
             ? m : DodgeMode::Off);
     }
     // SetDodgeModeWithEnter — IpcBridge calls this to route a dashboard dodge-mode

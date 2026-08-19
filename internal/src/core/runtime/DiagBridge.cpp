@@ -8,6 +8,7 @@
 #include "DbgFileLog.h"
 #include "RePP.h"
 #include "PJDodge.h"
+#include "features/movement/udodge/UDodge.h"
 #include "settings.h"
 
 #include <Windows.h>
@@ -327,6 +328,28 @@ void WriteSnapshot(const char* dir) {
             pv.projectiles, pv.aoes, pv.enemies,
             pv.predEnabled ? "true" : "false", pv.predCalibrated, pv.predClockErrMs,
             pv.predModelErrTiles, pv.predModelMaxTiles);
+
+    // ── UDodge internals ─────────────────────────────────────────────────────
+    const UDodge::DiagView uv = UDodge::GetDiagView();
+    if (len > 0 && len < static_cast<int>(sizeof(buf)) - 700)
+        len += snprintf(buf + len, sizeof(buf) - len,
+            "  ,\"udodge\": { \"enabled\": %s, \"decision\": %d, \"override\": %s,\n"
+            "    \"player\": { \"x\": %.2f, \"y\": %.2f }, \"velPerSec\": { \"x\": %.2f, \"y\": %.2f },\n"
+            "    \"candidate\": %d, \"speedScale\": %.2f, \"threats\": %d, \"impactMs\": %.0f,\n"
+            "    \"projectiles\": %d, \"aoes\": %d, \"enemies\": %d,\n"
+            "    \"fieldActive\": %s,\n"
+            "    \"lock\": { \"active\": %s, \"x\": %.2f, \"y\": %.2f },\n"
+            "    \"prediction\": { \"enabled\": %s, \"calibrated\": %d, \"clockErrMs\": %.2f,\n"
+            "      \"modelErrTiles\": %.4f, \"modelMaxTiles\": %.4f } }\n",
+            uv.enabled ? "true" : "false", uv.decision,
+            uv.overrideActive ? "true" : "false",
+            uv.playerX, uv.playerY, uv.velXPerSec, uv.velYPerSec,
+            uv.candidate, uv.speedScale, uv.threatCount, uv.earliestImpactMs,
+            uv.projectiles, uv.aoes, uv.enemies,
+            uv.fieldActive ? "true" : "false",
+            uv.hasLockTarget ? "true" : "false", uv.lockX, uv.lockY,
+            uv.predEnabled ? "true" : "false", uv.predCalibrated, uv.predClockErrMs,
+            uv.predModelErrTiles, uv.predModelMaxTiles);
 
     if (len > 0 && len < static_cast<int>(sizeof(buf)) - 8)
         len += snprintf(buf + len, sizeof(buf) - len, "}\n");
