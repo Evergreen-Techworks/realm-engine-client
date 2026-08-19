@@ -19,14 +19,13 @@ struct DiagView {
     int   candidate = 0;
     float speedScale = 1.f;
     int   threatCount = 0;
-    float earliestImpactMs = 0.f;
-    int   projectiles = 0, aoes = 0, enemies = 0;
+    float standClearanceTiles = 0.f;   // ≤ 0 = danger covers current position; -1 sentinel unused
+    int   lanes = 0, zones = 0, enemies = 0;
+    uint32_t tickId = 0;               // NewTick stamp of the current map
+    bool  tickValid = false;           // false = tick source unreadable (rebuild-every-frame mode)
     bool  fieldActive = false;
     bool  hasLockTarget = false;
     float lockX = 0.f, lockY = 0.f;
-    bool  predEnabled = false;
-    int   predCalibrated = 0;
-    float predClockErrMs = 0.f, predModelErrTiles = 0.f, predModelMaxTiles = 0.f;
 };
 
 void SetEnabled(bool enabled);
@@ -39,11 +38,6 @@ DiagView GetDiagView();
 
 // Knobs (atomics; IPC + GUI). Clamps: laneTiles [2,16], stepTiles
 // {0 | [0.4,3]}, hitScale [0.25,2.5], standOnType any int, mode {0,1}.
-// Deprecated no-ops — the time dimension was removed (plans 44-48). These
-// survive only until plan 48 deletes their IPC keys from the registry.
-void  SetHorizonMs(float);
-void  SetLeadMs(float);
-void  SetPredictionAccuracy(bool);
 void  SetLaneTiles(float t);          float GetLaneTiles();
 void  SetStepTiles(float t);          float GetStepTiles();
 void  SetHitScale(float s);           float GetHitScale();

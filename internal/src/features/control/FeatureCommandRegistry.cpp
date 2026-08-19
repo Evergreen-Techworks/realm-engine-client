@@ -238,12 +238,11 @@ namespace {
     bool ApplyUDodgeFeature(const FeatureCommand& f)
     {
         static const FeatureHandler h[] = {
-            FH_FLOAT("udodgeHorizonMs", UDodge::SetHorizonMs),
-            FH_FLOAT("udodgeLeadMs", UDodge::SetLeadMs),
+            FH_FLOAT("udodgeLaneTiles", UDodge::SetLaneTiles),
+            FH_FLOAT("udodgeStepTiles", UDodge::SetStepTiles),
             FH_FLOAT("udodgeHitScale", UDodge::SetHitScale),
             FH_INT_BOOL("udodgeSafeWalk", UDodge::SetSafeWalk),
             FH_INT_BOOL("udodgeSpeedScale", UDodge::SetSpeedScale),
-            FH_INT_BOOL("udodgePredictionAccuracy", UDodge::SetPredictionAccuracy),
             FH_INT_BOOL("udodgeFieldEscape", UDodge::SetFieldEscape),
             FH_INT_BOOL("udodgeDebugOverlay", UDodge::SetDebugOverlay),
             FH_INT("udodgeMode", UDodge::SetMode),

@@ -367,27 +367,18 @@ DiagView GetDiagView()
     v.candidate = d.candidate;
     v.speedScale = d.speedScale;
     v.threatCount = d.threatCount;
-    // Compatibility fill — the time dimension is gone; plan 48 reshapes
-    // DiagView + DiagBridge together.
-    v.earliestImpactMs = -1.f;
-    v.projectiles = d.map.laneCount;
-    v.aoes = d.map.zoneCount;
+    v.standClearanceTiles = d.standClearance;
+    v.lanes = d.map.laneCount;
+    v.zones = d.map.zoneCount;
     v.enemies = d.map.enemyCount;
+    v.tickId = d.tickId;
+    v.tickValid = d.tickValid;
     v.fieldActive = d.fieldActive;
     v.hasLockTarget = d.hasLockTarget;
     v.lockX = d.lockTarget.x;
     v.lockY = d.lockTarget.y;
-    v.predEnabled = false;
-    v.predCalibrated = 0;
-    v.predClockErrMs = v.predModelErrTiles = v.predModelMaxTiles = 0.f;
     return v;
 }
-
-// Deprecated no-ops — the time dimension was removed (plans 44-48). These
-// survive only until plan 48 deletes their IPC keys from the registry.
-void  SetHorizonMs(float) {}
-void  SetLeadMs(float) {}
-void  SetPredictionAccuracy(bool) {}
 
 void  SetLaneTiles(float t) { g_laneTiles.store(Clamp(t, 2.f, 16.f), std::memory_order_relaxed); }
 float GetLaneTiles()        { return g_laneTiles.load(std::memory_order_relaxed); }
