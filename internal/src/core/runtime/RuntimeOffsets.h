@@ -113,6 +113,8 @@ namespace RuntimeOffsets {
     extern uint32_t KJ_BaseRadius;  // IOKKOCEAJNA   fallback 0x44  (base bullet radius Single)
     extern uint32_t KJ_Scale;       // KEDBLBJIKCB   fallback 0x74  (scale float3 — first component)
     extern uint32_t KJ_Float3Pos;   // DGNPJNFGFPE   fallback 0x68  (Unity.Mathematics.float3 world position — written on teleport/move)
+    extern uint32_t KJ_TileRef;     // EOKJOGFPLOA   fallback 0x58  (BGAIOPJMHLO* current tile)
+    extern uint32_t KJ_DictObjectId;// FDNHINDAEHK   fallback 0xC0  (dict-key object id; NOT ObjId/HHPOJBFICAH)
 
     // ── LKHPPBEGNOM own fields (+0x50 ACTK) ─────────────────────────────────
     extern uint32_t HP;         // KJNHLADHEMH   current HP, fallback 0x20C
@@ -249,6 +251,11 @@ namespace RuntimeOffsets {
     extern uint32_t PlayerCondInt;    // MPJGAPJBBBF   fallback 0x514  (int32, single-int condition)
     extern uint32_t PlayerEquipMgr;   // AJJJBDBNBLM   fallback 0x668  (EquipmentManager pointer)
 
+    // ── EquipmentManager / ItemSlot (namespaced UI classes, no ACTK shift) ──
+    extern uint32_t EM_EquipSlots;    // "equipmentSlots"  fallback 0x48  (ItemSlot[] on EquipmentManager)
+    extern uint32_t Item_ObjProps;    // HLJFBHLMANJ       fallback 0x58  (ObjectProperties* on ItemSlot)
+    extern uint32_t Item_ObjType;     // INAAIAHOEFE       fallback 0x60  (int32 type id on ItemSlot)
+
     // ── ApplicationManager (no ACTK shift) ───────────────────────────────────
     // Resolved in GameState.cpp via type-scan (field name uses <>k__BackingField
     // syntax that changes with each BeeByte pass — type-scan is rename-proof).
@@ -274,6 +281,9 @@ namespace RuntimeOffsets {
     extern uint32_t TileY;          // PKEECFNFEIO   fallback 0x3C
     extern uint32_t TileType;       // JOFEAFJPJEM   fallback 0x40
     extern uint32_t TileProps;      // KEOKJCIJIAD   fallback 0x50
+    extern uint32_t Sq_Layer;       // EBCLNFDKKEH   fallback 0x44  (int32 layer enum; ProjNoclip writes 37)
+    extern uint32_t Sq_DamageCached;// EAPMKCKMNDI   fallback 0x10  (int32 current-damage cache)
+    extern uint32_t Sq_Cover;       // JGMBPFJEGAH   fallback 0x48  (ref; non-null = square has cover)
 
     // ── CMFPKCJHKKB XmlTileProperties (no shift) ────────────────────────────
     extern uint32_t TP_Speed;       // MFEJMAABLIL   fallback 0x50
@@ -311,6 +321,7 @@ namespace RuntimeOffsets {
     // to derive weapon range without waiting for the player's first
     // shot. Same no-shift path as the other OP fields.
     extern uint32_t OP_Projectiles; // "Projectiles"              fallback 0x1C0
+    extern uint32_t OP_CollRadiusMult; // "collisionRadiusMultiplier"  fallback 0x780
 
     // ── ProjectileProperties (real field names, no shift) ────────────────────
     extern uint32_t PP_Lifetime;        // "Lifetime"          fallback 0x158
@@ -354,6 +365,8 @@ namespace RuntimeOffsets {
     extern uint32_t Hbeak_Angle;           // FFFFKPDHEFP  fallback 0x148  (spawn angle Single)
     extern uint32_t Hbeak_InstanceDamage;  // DBNNDLKNECM  fallback 0x174  (per-instance damage Int32)
     extern uint32_t Hbeak_SpawnAgeMs;      // GLEGBLDBOJF  fallback 0x16C  (spawn-age ms; path anchoring / expiry)
+    extern uint32_t Hbeak_NoclipGuard;     // NPMECLDKGEF  fallback 0     (bool; 0 = unresolved — ProjNoclip
+                                           // MUST NOT install until this is non-zero, preserving today's gate)
 
     // ── ProjectileProperties continued ───────────────────────────────────────
     extern uint32_t PP_CustomHitbox;       // "CustomHitbox"  fallback 0x148  (ProjectileCustomHitbox* reference)
@@ -400,5 +413,25 @@ namespace RuntimeOffsets {
     // ── CustomExplosionEntrance (real XML field names, no shift) ─────────────
     extern uint32_t Cee_Distance;    // "distance" float         fallback 0x38
     extern uint32_t Cee_Speed;       // "speed" float            fallback 0x3C
+
+    // ── MANUAL OFFSETS — no known IL2CPP field name; NOT table-resolved.  ──────
+    // These were reverse-engineered numerically (disassembly / .lst / probing).
+    // They do NOT self-heal and do NOT appear in OFFSET HEALTH. After a game
+    // patch, re-derive each one (source cited per line) and update here.
+    // constexpr (not extern) — nothing ever overwrites them at runtime.
+    inline constexpr uint32_t Char_ProjSpeedMul    = 0x188; // player proj-speed mult (WeaponProfile RE)
+    inline constexpr uint32_t Char_ProjLifetimeMul = 0x18C; // player proj-lifetime mult (WeaponProfile RE)
+    inline constexpr uint32_t Char_RangeMul        = 0x6B8; // player range mult (WeaponProfile RE)
+    inline constexpr uint32_t PP_ProjId            = 0x15C; // ProjectileProperties projectile id (WeaponProfile RE)
+    inline constexpr uint32_t Shot_Angle           = 0x1C;  // SHOOT packet struct angle (AimHooks RE)
+    inline constexpr uint32_t Player_CondRaw       = 0x440; // raw [this+0x440] HasConditionEffect reads (.lst)
+    inline constexpr uint32_t Player_GuildName     = 0x468; // FKALGHJIADI guild string — see NFJGJKLPLBA
+                                                            // conflict note in docs/plans/36-adoption-overview.md
+    // WorldManager diagnostic words (WorldTAB World-tab display only):
+    inline constexpr uint32_t WM_DiagE0  = 0xE0;  // uint32
+    inline constexpr uint32_t WM_DiagF4  = 0xF4;  // float
+    inline constexpr uint32_t WM_DiagF8  = 0xF8;  // float
+    inline constexpr uint32_t WM_DiagFC  = 0xFC;  // int32
+    inline constexpr uint32_t WM_Diag100 = 0x100; // int32
 
 } // namespace RuntimeOffsets

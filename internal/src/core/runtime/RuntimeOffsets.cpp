@@ -26,6 +26,8 @@ uint32_t ObjId           = 0x34;   // HHPOJBFICAH — objectId Int32
 uint32_t KJ_BaseRadius   = 0x44;   // IOKKOCEAJNA — base bullet radius Single
 uint32_t KJ_Scale        = 0x74;   // KEDBLBJIKCB — scale float3 first component
 uint32_t KJ_Float3Pos    = 0x68;   // DGNPJNFGFPE — Unity.Mathematics.float3 world position (written on teleport/move)
+uint32_t KJ_TileRef      = 0x58;   // EOKJOGFPLOA — BGAIOPJMHLO* current tile
+uint32_t KJ_DictObjectId = 0xC0;   // FDNHINDAEHK — dict-key object id (NOT ObjId/HHPOJBFICAH)
 
 // KJNHLADHEMH = current HP, NCBIICBDGAG = max HP (order in struct; names were once swapped in tooling).
 uint32_t HP          = 0x20C;
@@ -76,6 +78,11 @@ uint32_t PlayerWis         = 0x484;  // HDCDGHKGLDI — WIS stat int32
 uint32_t PlayerCondInt     = 0x514;  // MPJGAPJBBBF — single-int condition field
 uint32_t PlayerEquipMgr    = 0x668;  // AJJJBDBNBLM — EquipmentManager pointer
 
+// ── EquipmentManager / ItemSlot (namespaced UI classes, no ACTK shift) ──
+uint32_t EM_EquipSlots     = 0x48;   // "equipmentSlots" — ItemSlot[] on EquipmentManager
+uint32_t Item_ObjProps     = 0x58;   // HLJFBHLMANJ — ObjectProperties* on ItemSlot
+uint32_t Item_ObjType      = 0x60;   // INAAIAHOEFE — int32 type id on ItemSlot
+
 // ApplicationManager → WorldManager field offset.
 // Set by GameState.cpp type-scan (immune to backing-field name obfuscation).
 uint32_t AppMgr_WorldMgr   = 0xC0;
@@ -98,6 +105,9 @@ uint32_t TileX       = 0x38;
 uint32_t TileY       = 0x3C;
 uint32_t TileType    = 0x40;
 uint32_t TileProps   = 0x50;
+uint32_t Sq_Layer        = 0x44;  // EBCLNFDKKEH — int32 layer enum (ProjNoclip writes 37)
+uint32_t Sq_DamageCached = 0x10;  // EAPMKCKMNDI — int32 current-damage cache
+uint32_t Sq_Cover        = 0x48;  // JGMBPFJEGAH — ref; non-null = square has cover
 
 uint32_t TP_Speed    = 0x50;
 uint32_t TP_Sink     = 0x58;
@@ -129,6 +139,7 @@ uint32_t OP_ProtSink      = 0x6DD;
 uint32_t OP_Flying        = 0x6E4;
 uint32_t OP_ConnectT      = 0x754;
 uint32_t OP_Projectiles   = 0x1C0;
+uint32_t OP_CollRadiusMult= 0x780;   // "collisionRadiusMultiplier"
 
 uint32_t PP_Lifetime        = 0x158;
 uint32_t PP_Speed           = 0x160;
@@ -167,6 +178,9 @@ uint32_t Hbeak_ProjPropsPtr       = 0x118;  // FOMOIBCKIFP — per-shot Projecti
 uint32_t Hbeak_Angle              = 0x148;  // FFFFKPDHEFP — spawn angle Single
 uint32_t Hbeak_InstanceDamage     = 0x174;  // DBNNDLKNECM — per-instance damage Int32
 uint32_t Hbeak_SpawnAgeMs         = 0x16C;  // GLEGBLDBOJF — spawn-age ms (path anchoring / expiry)
+// NPMECLDKGEF — bool noclip guard. Fallback 0 = unresolved: ProjNoclip must NOT
+// install its hook until this resolves non-zero (no reliable static fallback).
+uint32_t Hbeak_NoclipGuard        = 0;
 uint32_t PP_CustomHitbox          = 0x148;  // "CustomHitbox" — ProjectileCustomHitbox* reference
 uint32_t PP_IsArmorPiercing       = 0x138;  // "IsArmorPiercing"
 uint32_t CH_OffsetX               = 0x10;   // "offsetX" — custom hitbox X offset Single
@@ -281,6 +295,8 @@ static Entry s_entries[] = {
     { "KJMONHENJEN", { "IOKKOCEAJNA" },                              1, 0,     &KJ_BaseRadius,  false },
     { "KJMONHENJEN", { "KEDBLBJIKCB" },                              1, 0,     &KJ_Scale,       false },
     { "KJMONHENJEN", { "DGNPJNFGFPE" },                              1, 0,     &KJ_Float3Pos,   false },
+    { "KJMONHENJEN", { "EOKJOGFPLOA" },                              1, 0,     &KJ_TileRef,     false },
+    { "KJMONHENJEN", { "FDNHINDAEHK" },                              1, 0,     &KJ_DictObjectId,false },
 
     // ── LKHPPBEGNOM (+0x50 ACTK for own fields) ───────────────────────────
     { "LKHPPBEGNOM", { "KJNHLADHEMH", "KJNHLADEMH" },               2, kActk, &HP,            false },
@@ -330,6 +346,11 @@ static Entry s_entries[] = {
     { "CameraManager", { "mainCameraContainer" },                        1, 0,     &CM_Transform,  false },
     { "CameraManager", { "KNAIAEFDCLM" },                                1, 0,     &CM_UnityCam,   false },
 
+    // ── EquipmentManager / ItemSlot (namespaced UI classes, no shift) ─────
+    { "EquipmentManager", { "equipmentSlots" },                      1, 0,     &EM_EquipSlots, false },
+    { "ItemSlot",         { "HLJFBHLMANJ" },                         1, 0,     &Item_ObjProps, false },
+    { "ItemSlot",         { "INAAIAHOEFE" },                         1, 0,     &Item_ObjType,  false },
+
     // ── HJMBOMEHGDJ WorldManager (no shift) ──────────────────────────────
     { "HJMBOMEHGDJ", { "OCLNLBHDEFK" },                              1, 0,     &WM_Local,      false },
     { "HJMBOMEHGDJ", { "DFALIKKKGLI" },                              1, 0,     &WM_AllDict,    false },
@@ -346,6 +367,9 @@ static Entry s_entries[] = {
     { "BGAIOPJMHLO", { "PKEECFNFEIO" },                              1, 0,     &TileY,         false },
     { "BGAIOPJMHLO", { "JOFEAFJPJEM" },                              1, 0,     &TileType,      false },
     { "BGAIOPJMHLO", { "KEOKJCIJIAD" },                              1, 0,     &TileProps,     false },
+    { "BGAIOPJMHLO", { "EBCLNFDKKEH" },                              1, 0,     &Sq_Layer,      false },
+    { "BGAIOPJMHLO", { "EAPMKCKMNDI" },                              1, 0,     &Sq_DamageCached,false },
+    { "BGAIOPJMHLO", { "JGMBPFJEGAH" },                              1, 0,     &Sq_Cover,      false },
 
     // ── CMFPKCJHKKB XmlTileProperties (no shift) ─────────────────────────
     { "CMFPKCJHKKB", { "MFEJMAABLIL" },                              1, 0,     &TP_Speed,      false },
@@ -379,6 +403,7 @@ static Entry s_entries[] = {
     { "ObjectProperties", { "flying" },                              1, 0,     &OP_Flying,         false },
     { "ObjectProperties", { "connectType" },                         1, 0,     &OP_ConnectT,       false },
     { "ObjectProperties", { "Projectiles", "projectiles" },          2, 0,     &OP_Projectiles,    false },
+    { "ObjectProperties", { "collisionRadiusMultiplier" },           1, 0,     &OP_CollRadiusMult, false },
 
     // ── ProjectileProperties (real names, no shift) ───────────────────────
     { "ProjectileProperties", { "Lifetime",   "lifetime" },          2, 0,     &PP_Lifetime,        false },
@@ -425,6 +450,11 @@ static Entry s_entries[] = {
     { "HBEAKBIHANL", { "FFFFKPDHEFP" },                                           1, 0, &Hbeak_Angle,           false },
     { "HBEAKBIHANL", { "DBNNDLKNECM" },                                           1, 0, &Hbeak_InstanceDamage,  false },
     { "HBEAKBIHANL", { "GLEGBLDBOJF" },                                           1, 0, &Hbeak_SpawnAgeMs,      false },
+
+    // ── HBEAKBIHANL noclip guard (no shift) ──────────────────────────────────
+    // Fallback 0 = unresolved: ProjNoclip refuses to install its hook until this
+    // resolves non-zero from live metadata (no reliable static fallback exists).
+    { "HBEAKBIHANL", { "NPMECLDKGEF" },                                           1, 0, &Hbeak_NoclipGuard,     false },
 
     // ── ProjectileProperties continued ────────────────────────────────────────
     { "ProjectileProperties", { "CustomHitbox", "customHitbox" },                 2, 0, &PP_CustomHitbox,       false },
