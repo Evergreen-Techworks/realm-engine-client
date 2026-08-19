@@ -78,59 +78,59 @@ void Render(const DebugSnapshot& snap,
     if (!d) return;
     const Cam cam{ camX, camY, angle, zoom, cx, cy };
 
-    char buf[160];
-    std::snprintf(buf, sizeof(buf), "UDodge [%s]  threats:%d  proj:%d  aoe:%d  impact:%s%.0fms  x%.1f",
+    // Header: map contents + stand clearance + tick-sync state.
+    char clearBuf[24];
+    if (snap.standClearance >= kHugeClearance)
+        std::snprintf(clearBuf, sizeof(clearBuf), "safe");
+    else
+        std::snprintf(clearBuf, sizeof(clearBuf), "%.2f", snap.standClearance);
+    char tickBuf[24];
+    if (snap.tickValid)
+        std::snprintf(tickBuf, sizeof(tickBuf), "tick:%u", snap.tickId);
+    else
+        std::snprintf(tickBuf, sizeof(tickBuf), "tick:--(deg)");
+    char buf[192];
+    std::snprintf(buf, sizeof(buf), "UDodge [%s]  threats:%d  lanes:%d  zones:%d  clear:%s  step:%.1ft  %s %s",
                   DecisionText(snap.decision), snap.threatCount,
-                  snap.sensors.projectileCount, snap.sensors.aoeCount,
-                  snap.earliestImpactMs >= kMaxTimeMs ? ">" : "",
-                  snap.earliestImpactMs >= kMaxTimeMs ? snap.horizonMs : snap.earliestImpactMs,
-                  snap.speedScale);
+                  snap.map.laneCount, snap.map.zoneCount, clearBuf, snap.stepTiles,
+                  tickBuf, snap.rebuiltThisFrame ? "SYNC" : "hold");
     d->AddText(ImVec2(12.f, 12.f), IM_COL32(120, 220, 255, 255), buf);
 
-    // Prediction-accuracy line: clock error corrected + residual model error.
-    char pbuf[128];
-    if (snap.predEnabled)
-        std::snprintf(pbuf, sizeof(pbuf), "predict: ON  clock-err %.1fms  model-err %.03f tiles",
-                      snap.predClockErrMs, snap.predModelErrTiles);
-    else
-        std::snprintf(pbuf, sizeof(pbuf), "predict: OFF (legacy tick clock)");
-    d->AddText(ImVec2(12.f, 28.f),
-               snap.predEnabled ? IM_COL32(120, 235, 150, 255) : IM_COL32(200, 200, 120, 255), pbuf);
-
-    // Projectile predicted paths.
-    for (int i = 0; i < std::min(snap.sensors.projectileCount, kMaxProjectiles); ++i) {
-        const ProjectileThreat& t = snap.sensors.projectiles[i];
-        const int n = std::min(t.sampleCount, kMaxPathSamples);
+    // Danger lanes: live anchor + remaining-path polyline.
+    for (int i = 0; i < std::min(snap.map.laneCount, kMaxProjectiles); ++i) {
+        const LaneThreat& t = snap.map.lanes[i];
+        const int n = std::min(t.pointCount, kMaxLanePoints);
         for (int j = 0; j + 1 < n; ++j)
-            DrawLine(d, cam, t.samples[j], t.samples[j + 1], IM_COL32(235, 80, 80, 110), 1.5f);
-        if (n > 0) DrawDot(d, cam, t.samples[0], 3.f, IM_COL32(255, 90, 90, 220));
+            DrawLine(d, cam, t.points[j], t.points[j + 1], IM_COL32(235, 80, 80, 110), 1.5f);
+        if (n > 0) DrawDot(d, cam, t.points[0], 3.f, IM_COL32(255, 90, 90, 220));
     }
 
-    // AoE landing circles (orange, fading in as landing approaches).
-    for (int i = 0; i < std::min(snap.sensors.aoeCount, kMaxAoes); ++i) {
-        const AoeThreat& a = snap.sensors.aoes[i];
-        const float urgency = 1.f - std::clamp(a.landingMs / std::max(1.f, snap.horizonMs), 0.f, 1.f);
-        const int alpha = 90 + static_cast<int>(120.f * urgency);
-        DrawWorldCircle(d, cam, a.pos, a.radius, IM_COL32(240, 150, 30, alpha), 2.f);
+    // Zones: pending (telegraphed, soft cost) = faint orange; active
+    // (detonated & persisting, hard danger) = strong red-orange.
+    for (int i = 0; i < std::min(snap.map.zoneCount, kMaxAoes); ++i) {
+        const ZoneThreat& z = snap.map.zones[i];
+        if (z.active)
+            DrawWorldCircle(d, cam, z.pos, z.radius, IM_COL32(255, 90, 40, 190), 3.f);
+        else
+            DrawWorldCircle(d, cam, z.pos, z.radius, IM_COL32(240, 150, 30, 100), 2.f);
     }
 
     // Enemy bodies.
-    for (int i = 0; i < std::min(snap.sensors.enemyCount, kMaxEnemies); ++i)
-        DrawDot(d, cam, snap.sensors.enemies[i].pos, 4.f, IM_COL32(230, 60, 230, 150));
+    for (int i = 0; i < std::min(snap.map.enemyCount, kMaxEnemies); ++i)
+        DrawDot(d, cam, snap.map.enemies[i].pos, 4.f, IM_COL32(230, 60, 230, 150));
 
-    // Candidate fan: ray endpoint = where the path first gets hit (or the full
-    // horizon). Green = safe all the way, yellow→red = dies inside the window,
+    // Candidate fan: ray endpoint = the step segment, truncated where walls
+    // block it. Green = safe clearance, yellow→red = shrinking clearance,
     // grey = blocked at the start.
     for (int i = 1; i <= kDirectionCount; ++i) {
         const CandidateDebug& c = snap.candidates[i];
-        const float untilMs = std::min(c.impactMs, snap.horizonMs);
-        const Vec2 end = Add(snap.player, Mul(c.dir, snap.speed * (snap.leadMs + untilMs)));
+        const Vec2 end = Add(snap.player, Mul(c.dir, std::min(snap.stepTiles, c.blockDist)));
         ImU32 col;
         if (!c.valid) col = IM_COL32(120, 120, 120, 90);
-        else if (c.impactMs >= snap.horizonMs && c.score >= kIntentSafeClearance)
+        else if (c.clearance >= kIntentSafeClearance)
             col = IM_COL32(60, 230, 90, 140);
         else {
-            const float f = std::clamp(untilMs / std::max(1.f, snap.horizonMs), 0.f, 1.f);
+            const float f = std::clamp(c.clearance / 0.5f, 0.f, 1.f);
             col = IM_COL32(230, static_cast<int>(60 + 160 * f), 50, 130);
         }
         DrawLine(d, cam, snap.player, end, col, i == snap.candidate ? 3.f : 1.f);
@@ -139,8 +139,7 @@ void Render(const DebugSnapshot& snap,
     // Field candidate ray (orange) — the Dijkstra pocket's first step.
     if (snap.candidates[kFieldCandidate].valid) {
         const CandidateDebug& c = snap.candidates[kFieldCandidate];
-        const float untilMs = std::min(c.impactMs, snap.horizonMs);
-        const Vec2 end = Add(snap.player, Mul(c.dir, snap.speed * (snap.leadMs + untilMs)));
+        const Vec2 end = Add(snap.player, Mul(c.dir, std::min(snap.stepTiles, c.blockDist)));
         DrawLine(d, cam, snap.player, end, IM_COL32(255, 160, 40, 200),
                  kFieldCandidate == snap.candidate ? 3.f : 1.5f);
     }

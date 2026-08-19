@@ -248,7 +248,7 @@ struct CoreOutput {
     int   candidate = kStandCandidate;
     float speedScale = 1.f;
     int   threatCount = 0;
-    float earliestImpactMs = kMaxTimeMs;
+    float standClearance = kHugeClearance;  // ≤ 0 = danger covers current position
     Decision decision = Decision::None;
     bool  fieldActive = false;   // field candidate was generated this frame
     Vec2  fieldTarget{};         // pocket cell (world) the field routed to
@@ -284,22 +284,18 @@ struct DebugSnapshot {
     int   candidate = kStandCandidate;
     float speedScale = 1.f;
     int   threatCount = 0;
-    float earliestImpactMs = kMaxTimeMs;
+    float standClearance = kHugeClearance;  // ≤ 0 = danger covers current position
     float speed = 0.f;        // tiles/ms — for drawing candidate rays
-    float leadMs = 0.f;
-    float horizonMs = 600.f;
-    // Prediction-accuracy readout.
-    bool  predEnabled = false;
-    float predClockErrMs = 0.f;
-    float predModelErrTiles = 0.f;
-    // Field-escape readout.
+    float stepTiles = 1.f;
+    uint32_t tickId = 0;      // map's NewTick stamp
+    bool  tickValid = false;
+    bool  rebuiltThisFrame = false;  // true = full layout rebuild; false = re-anchored
     bool  fieldActive = false;
     Vec2  fieldTarget{};
-    // Autopilot reticle.
     bool  hasLockTarget = false;
     Vec2  lockTarget{};
     CandidateDebug candidates[kCandidateCount]{};
-    Snapshot sensors{};
+    DangerMap map{};
 };
 
 } // namespace UDodge

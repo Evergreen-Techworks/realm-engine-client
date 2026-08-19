@@ -621,7 +621,9 @@ void Finish(const Ctx& c, CoreOutput& out, Vec2 velocity, bool overrideActive,
     out.candidate = candidate;
     out.speedScale = speedScale;
     out.threatCount = threatCount;
-    out.earliestImpactMs = earliestImpactMs;
+    // Transitional (deleted with this whole path in plan 47 step 3): an
+    // impact found anywhere reads as "danger on the stand position".
+    out.standClearance = earliestImpactMs < kMaxTimeMs ? 0.f : kHugeClearance;
     out.decision = decision;
     for (int i = 0; i < kCandidateCount; ++i) {
         out.candidates[i].dir = c.dirs[i];
@@ -1236,9 +1238,7 @@ void FinishMap(const MapCtx& c, CoreOutput& out, Vec2 velocity, bool overrideAct
     out.candidate = candidate;
     out.speedScale = speedScale;
     out.threatCount = threatCount;
-    // Transitional: danger covering where we stand reads as "impact now";
-    // plans 47/48 replace this field with a spatial readout.
-    out.earliestImpactMs = c.clearance[kStandCandidate] <= 0.f ? 0.f : kMaxTimeMs;
+    out.standClearance = c.clearance[kStandCandidate];
     out.decision = decision;
     for (int i = 0; i < kCandidateCount; ++i) {
         out.candidates[i].dir = c.dirs[i];

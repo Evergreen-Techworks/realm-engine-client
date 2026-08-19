@@ -24,12 +24,11 @@ namespace UDodge {
 namespace {
 
 std::atomic<bool>  g_enabled{ false };
-std::atomic<float> g_horizonMs{ 600.f };
-std::atomic<float> g_leadMs{ 40.f };
+std::atomic<float> g_laneTiles{ 12.f };
+std::atomic<float> g_stepTiles{ 0.f };
 std::atomic<float> g_hitScale{ 1.0f };
 std::atomic<bool>  g_safeWalk{ true };
 std::atomic<bool>  g_speedScale{ true };
-std::atomic<bool>  g_predictionAccuracy{ true };
 std::atomic<bool>  g_fieldEscape{ true };
 std::atomic<bool>  g_debugOverlay{ true };
 std::atomic<int>   g_mode{ 0 };
@@ -39,7 +38,7 @@ std::atomic<int>   g_standOnType{ 0 };
 
 // Game-update thread only.
 CoreState  g_state;
-Snapshot   g_snapshot;
+DangerMap  g_map;
 CoreOutput g_out;
 
 std::mutex    g_debugMutex;
@@ -66,12 +65,12 @@ int ClampInt(int value, int lo, int hi) { return std::clamp(value, lo, hi); }
 Settings ReadSettings()
 {
     Settings s{};
-    s.horizonMs    = Clamp(g_horizonMs.load(std::memory_order_relaxed), 200.f, 2000.f);
-    s.leadMs       = Clamp(g_leadMs.load(std::memory_order_relaxed), 0.f, 250.f);
+    s.laneTiles    = Clamp(g_laneTiles.load(std::memory_order_relaxed), 2.f, 16.f);
+    const float stepT = g_stepTiles.load(std::memory_order_relaxed);
+    s.stepTiles    = stepT <= 0.f ? 0.f : Clamp(stepT, 0.4f, 3.f);
     s.hitScale     = Clamp(g_hitScale.load(std::memory_order_relaxed), 0.25f, 2.5f);
     s.safeWalk     = g_safeWalk.load(std::memory_order_relaxed);
     s.speedScale   = g_speedScale.load(std::memory_order_relaxed);
-    s.predictionAccuracy = g_predictionAccuracy.load(std::memory_order_relaxed);
     s.fieldEscape  = g_fieldEscape.load(std::memory_order_relaxed);
     s.debugOverlay = g_debugOverlay.load(std::memory_order_relaxed);
     s.mode         = ClampInt(g_mode.load(std::memory_order_relaxed), 0, 1);
@@ -124,7 +123,7 @@ Vec2 OrbitIntent(Vec2 player, float tx, float ty)
 //
 // Survival always dominates: this is only the goal the planner pursues; the
 // dodge layer overrides it the instant the goal move is unsafe (flee for free).
-Vec2 AutopilotIntent(const Snapshot& sn, Vec2 player, const Settings& settings,
+Vec2 AutopilotIntent(const DangerMap& sn, Vec2 player, const Settings& settings,
                      bool& outHasTarget, Vec2& outTargetPos)
 {
     outHasTarget = false;
@@ -185,21 +184,38 @@ void Tick(void* player, float px, float py, float dt)
     if (!DodgeRuntime::EnsureResolved()) return;
 
     const Settings settings = ReadSettings();
-    ProjectileTracking::SetPredictionAccuracy(settings.predictionAccuracy);
     const SteerInput::SteerState steer = SteerInput::Get();
 
     int32_t hp = 0, maxHp = 0;
     float spd = 0.f, tilesPerSec = 0.f;
     TestTAB::ReadDodgePlayerStats(hp, maxHp, spd, tilesPerSec);
 
-    Sensors::Build(g_snapshot, px, py, settings);
-    if (g_snapshot.projectileSourceUnavailable) {
+    // ── NewTick sync ─────────────────────────────────────────────────────
+    // The map LAYOUT is rebuilt from authoritative game state every server
+    // tick (WM_TickId change). Between ticks, lanes are re-anchored to the
+    // game's own live projectile positions (never extrapolated by our
+    // clock). A structural change (projectile spawned/retired mid-tick)
+    // forces an immediate rebuild so a new shot is visible the same frame.
+    // If the tick counter is unreadable (stale offsets), rebuild every
+    // frame — the fail-safe direction is fresher, never staler.
+    uint32_t tick = 0;
+    const bool tickOk = Sensors::ReadWorldTick(tick);
+    bool synced = false;
+    if (tickOk && g_map.tickValid && g_map.tickId == tick)
+        synced = Sensors::ReanchorMap(g_map, px, py, settings);
+    const bool rebuilt = !synced;
+    if (rebuilt) {
+        Sensors::BuildMap(g_map, px, py, settings);
+        g_map.tickId = tick;
+        g_map.tickValid = tickOk;
+    }
+    if (g_map.projectileSourceUnavailable) {
         g_state.Reset();
         PublishMinimal(Decision::None, { px, py });
         return;
     }
 
-    CoreInput in{};
+    MapInput in{};
     in.player = { px, py };
 
     // Intent priority: WASD (always wins) → Autopilot goal → lock-follow
@@ -209,7 +225,7 @@ void Tick(void* player, float px, float py, float dt)
     if (steer.active) {
         in.intentDir = { steer.dirX, steer.dirY };
     } else if (settings.mode == 1 /*Autopilot*/) {
-        in.intentDir = AutopilotIntent(g_snapshot, in.player, settings, apHasTarget, apTarget);
+        in.intentDir = AutopilotIntent(g_map, in.player, settings, apHasTarget, apTarget);
         intentIsAuto = true;
     } else if (settings.lockFollow) {
         float gx = 0.f, gy = 0.f;
@@ -219,14 +235,17 @@ void Tick(void* player, float px, float py, float dt)
         }
     }
 
-    in.moveSpeed = std::max(0.f, std::isfinite(tilesPerSec) ? tilesPerSec : 0.f) / 1000.f;
-    in.nowMs = static_cast<double>(GetTickCount64());
+    in.speed = std::max(0.f, std::isfinite(tilesPerSec) ? tilesPerSec : 0.f) / 1000.f;
+    in.stepTiles = settings.stepTiles > 0.f
+        ? settings.stepTiles
+        : std::clamp(std::max(0.f, tilesPerSec) * kServerTickSec, 0.4f, 3.0f);
+    in.tickId = g_map.tickId;
     in.movementLocked = false;
     in.playerOnHazard = settings.safeWalk && Sensors::IsHazardAt(px, py);
     in.settings = settings;
     in.env.canOccupy = &Sensors::CanOccupy;
     in.env.isHazard = &Sensors::IsHazardAt;
-    in.sensors = &g_snapshot;
+    in.map = &g_map;
 
     Core::Evaluate(in, g_state, g_out);
 
@@ -252,7 +271,7 @@ void Tick(void* player, float px, float py, float dt)
     }
 
     if (settings.debugOverlay) {
-        static DebugSnapshot d;   // large (holds the sensor snapshot) — keep off the stack
+        static DebugSnapshot d;   // large (holds the danger map) — keep off the stack
         d.active = true;
         d.decision = g_out.decision;
         d.player = in.player;
@@ -263,53 +282,45 @@ void Tick(void* player, float px, float py, float dt)
         d.candidate = g_out.candidate;
         d.speedScale = g_out.speedScale;
         d.threatCount = g_out.threatCount;
-        d.earliestImpactMs = g_out.earliestImpactMs;
-        d.speed = in.moveSpeed;
-        d.leadMs = settings.leadMs;
-        d.horizonMs = settings.horizonMs;
-        {
-            const ProjectileTracking::PredictionDiag pd = ProjectileTracking::GetPredictionDiag();
-            d.predEnabled = pd.enabled;
-            d.predClockErrMs = pd.emaAbsTauMs;
-            d.predModelErrTiles = pd.emaCrossTiles;
-        }
+        d.standClearance = g_out.standClearance;
+        d.speed = in.speed;
+        d.stepTiles = in.stepTiles;
+        d.tickId = g_map.tickId;
+        d.tickValid = g_map.tickValid;
+        d.rebuiltThisFrame = rebuilt;
         d.fieldActive = g_out.fieldActive;
         d.fieldTarget = g_out.fieldTarget;
         d.hasLockTarget = apHasTarget;
         d.lockTarget = apTarget;
         for (int i = 0; i < kCandidateCount; ++i) d.candidates[i] = g_out.candidates[i];
-        d.sensors = g_snapshot;
+        d.map = g_map;
         PublishDebug(d);
     }
 }
 
 void RenderSettings()
 {
-    float horizon = GetHorizonMs();
-    float lead    = GetLeadMs();
     float hit     = GetHitScale();
     bool  safe    = GetSafeWalk();
     bool  spd     = GetSpeedScale();
     bool  field   = GetFieldEscape();
     bool  dbg     = GetDebugOverlay();
 
-    if (ImGui::SliderFloat("Horizon ms##udodge", &horizon, 300.f, 1200.f)) SetHorizonMs(horizon);
-    if (ImGui::SliderFloat("Command lead ms##udodge", &lead, 0.f, 150.f)) SetLeadMs(lead);
+    float lane = GetLaneTiles();
+    if (ImGui::SliderFloat("Danger lane length (tiles)##udodge", &lane, 2.f, 16.f)) SetLaneTiles(lane);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("How far ahead of each bullet its danger lane is painted.\n"
+                          "Longer = react earlier to distant shots; shorter = only\n"
+                          "dodge nearby bullets.");
+    float stepT = GetStepTiles();
+    if (ImGui::SliderFloat("Step distance (tiles, 0 = auto)##udodge", &stepT, 0.f, 3.f)) SetStepTiles(stepT);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Candidate commitment distance. 0 = one server tick of\n"
+                          "motion (tilesPerSec x 0.2s) — the natural quantum of a\n"
+                          "per-tick replanner.");
     if (ImGui::SliderFloat("Hit scale##udodge", &hit, 0.5f, 1.5f)) SetHitScale(hit);
     if (ImGui::Checkbox("Safe walk (avoid damaging ground)##udodge", &safe)) SetSafeWalk(safe);
     if (ImGui::Checkbox("Match intent speed##udodge", &spd)) SetSpeedScale(spd);
-
-    bool pred = GetPredictionAccuracy();
-    if (ImGui::Checkbox("Prediction accuracy (clock calibration)##udodge", &pred)) SetPredictionAccuracy(pred);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Fits a per-projectile time correction from the live position so\n"
-                          "predictions sit on the true trajectory (removes clock jitter +\n"
-                          "spawn-hook latency). Overlay shows clock error / model error.");
-    {
-        const ProjectileTracking::PredictionDiag pd = ProjectileTracking::GetPredictionDiag();
-        ImGui::SameLine();
-        ImGui::TextDisabled("clk %.1fms  model %.03f/%.03f", pd.emaAbsTauMs, pd.emaCrossTiles, pd.maxCrossTiles);
-    }
 
     if (ImGui::Checkbox("Field escape (route around walls when boxed in)##udodge", &field)) SetFieldEscape(field);
     if (ImGui::Checkbox("Debug overlay##udodge", &dbg)) SetDebugOverlay(dbg);
@@ -356,38 +367,38 @@ DiagView GetDiagView()
     v.candidate = d.candidate;
     v.speedScale = d.speedScale;
     v.threatCount = d.threatCount;
-    v.earliestImpactMs = d.earliestImpactMs >= kMaxTimeMs ? -1.f : d.earliestImpactMs;
-    v.projectiles = d.sensors.projectileCount;
-    v.aoes = d.sensors.aoeCount;
-    v.enemies = d.sensors.enemyCount;
+    // Compatibility fill — the time dimension is gone; plan 48 reshapes
+    // DiagView + DiagBridge together.
+    v.earliestImpactMs = -1.f;
+    v.projectiles = d.map.laneCount;
+    v.aoes = d.map.zoneCount;
+    v.enemies = d.map.enemyCount;
     v.fieldActive = d.fieldActive;
     v.hasLockTarget = d.hasLockTarget;
     v.lockX = d.lockTarget.x;
     v.lockY = d.lockTarget.y;
-    const ProjectileTracking::PredictionDiag pd = ProjectileTracking::GetPredictionDiag();
-    v.predEnabled       = pd.enabled;
-    v.predCalibrated    = pd.calibrated;
-    v.predClockErrMs    = pd.emaAbsTauMs;
-    v.predModelErrTiles = pd.emaCrossTiles;
-    v.predModelMaxTiles = pd.maxCrossTiles;
+    v.predEnabled = false;
+    v.predCalibrated = 0;
+    v.predClockErrMs = v.predModelErrTiles = v.predModelMaxTiles = 0.f;
     return v;
 }
 
-void  SetHorizonMs(float ms) { g_horizonMs.store(Clamp(ms, 200.f, 2000.f), std::memory_order_relaxed); }
-float GetHorizonMs() { return g_horizonMs.load(std::memory_order_relaxed); }
-void  SetLeadMs(float ms) { g_leadMs.store(Clamp(ms, 0.f, 250.f), std::memory_order_relaxed); }
-float GetLeadMs() { return g_leadMs.load(std::memory_order_relaxed); }
+// Deprecated no-ops — the time dimension was removed (plans 44-48). These
+// survive only until plan 48 deletes their IPC keys from the registry.
+void  SetHorizonMs(float) {}
+void  SetLeadMs(float) {}
+void  SetPredictionAccuracy(bool) {}
+
+void  SetLaneTiles(float t) { g_laneTiles.store(Clamp(t, 2.f, 16.f), std::memory_order_relaxed); }
+float GetLaneTiles()        { return g_laneTiles.load(std::memory_order_relaxed); }
+void  SetStepTiles(float t) { g_stepTiles.store(t <= 0.f ? 0.f : Clamp(t, 0.4f, 3.f), std::memory_order_relaxed); }
+float GetStepTiles()        { return g_stepTiles.load(std::memory_order_relaxed); }
 void  SetHitScale(float s) { g_hitScale.store(Clamp(s, 0.25f, 2.5f), std::memory_order_relaxed); }
 float GetHitScale() { return g_hitScale.load(std::memory_order_relaxed); }
 void  SetSafeWalk(bool en) { g_safeWalk.store(en, std::memory_order_relaxed); }
 bool  GetSafeWalk() { return g_safeWalk.load(std::memory_order_relaxed); }
 void  SetSpeedScale(bool en) { g_speedScale.store(en, std::memory_order_relaxed); }
 bool  GetSpeedScale() { return g_speedScale.load(std::memory_order_relaxed); }
-void  SetPredictionAccuracy(bool en) {
-    g_predictionAccuracy.store(en, std::memory_order_relaxed);
-    ProjectileTracking::SetPredictionAccuracy(en);
-}
-bool  GetPredictionAccuracy() { return g_predictionAccuracy.load(std::memory_order_relaxed); }
 void  SetFieldEscape(bool en) { g_fieldEscape.store(en, std::memory_order_relaxed); }
 bool  GetFieldEscape() { return g_fieldEscape.load(std::memory_order_relaxed); }
 void  SetDebugOverlay(bool en) { g_debugOverlay.store(en, std::memory_order_relaxed); }

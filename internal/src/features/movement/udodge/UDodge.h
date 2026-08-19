@@ -37,14 +37,18 @@ void RenderSettings();                                    // render thread (Test
 void RenderDebugOverlay(float camX, float camY, float angle, float zoom, float cx, float cy);
 DiagView GetDiagView();
 
-// Knobs (atomics; IPC + GUI). Clamps: horizon [200,2000], lead [0,250],
-// hitScale [0.25,2.5], standOnType any int, mode {0,1}.
-void  SetHorizonMs(float ms);         float GetHorizonMs();
-void  SetLeadMs(float ms);            float GetLeadMs();
+// Knobs (atomics; IPC + GUI). Clamps: laneTiles [2,16], stepTiles
+// {0 | [0.4,3]}, hitScale [0.25,2.5], standOnType any int, mode {0,1}.
+// Deprecated no-ops — the time dimension was removed (plans 44-48). These
+// survive only until plan 48 deletes their IPC keys from the registry.
+void  SetHorizonMs(float);
+void  SetLeadMs(float);
+void  SetPredictionAccuracy(bool);
+void  SetLaneTiles(float t);          float GetLaneTiles();
+void  SetStepTiles(float t);          float GetStepTiles();
 void  SetHitScale(float s);           float GetHitScale();
 void  SetSafeWalk(bool en);           bool  GetSafeWalk();
 void  SetSpeedScale(bool en);         bool  GetSpeedScale();
-void  SetPredictionAccuracy(bool en); bool  GetPredictionAccuracy();
 void  SetFieldEscape(bool en);        bool  GetFieldEscape();
 void  SetDebugOverlay(bool en);       bool  GetDebugOverlay();
 void  SetMode(int mode);              int   GetMode();       // 0=Assist 1=Autopilot
