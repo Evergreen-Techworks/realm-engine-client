@@ -21,4 +21,11 @@ struct EscapeResult {
 // Game-update thread only (static scratch).
 EscapeResult FindEscape(const CoreInput& in, float speedTilesPerMs);
 
+// Instantaneous overload (plan 46): same 21×21 half-tile Dijkstra, goal =
+// first popped non-start cell where Core::PointClear holds. No arrival
+// times; hazard cells cost extra, pending zones and danger lanes cost more
+// but stay traversable (transit through danger may be the only way out of a
+// boxed-in room — the endpoint itself must be clear).
+EscapeResult FindEscape(const MapInput& in);
+
 } } // namespace UDodge::Field
