@@ -157,9 +157,10 @@ static void DoRefresh()
     Mem::TryRead(lp, RuntimeOffsets::PlayerWis,         s.wis);
     s.def   = ch.Defense();
 
-    // Player name (Il2CppString*)
+    // Player name (Il2CppString*) — base-class IGN field (DPGEBOCBKEF), same
+    // source WorldTAB uses. NFJGJKLPLBA turned out to be the guild string.
     void* namePtr = nullptr;
-    if (Mem::TryRead(lp, RuntimeOffsets::PlayerName, namePtr))
+    if (Mem::TryRead(lp, RuntimeOffsets::PlayerIGN, namePtr))
         Il2CppC::ReadStringUtf8(namePtr, s.name, sizeof(s.name));
     if (s.name[0] == '\0')
         strcpy_s(s.name, "<?>");

@@ -68,7 +68,7 @@ uint32_t Player_MoveDirY   = 0x4CC;
 uint32_t Player_Spd        = 0x478;
 
 // ── Player diagnostic stats (no ACTK shift for stat reads) ─────────────
-uint32_t PlayerName        = 0x4B8;  // NFJGJKLPLBA — Il2CppString* name
+uint32_t PlayerGuildName   = 0x470;  // NFJGJKLPLBA — Il2CppString* GUILD name (not IGN)
 uint32_t PlayerClassNum    = 0x4B0;  // KABPJBJPGCM — class number int32
 uint32_t PlayerGuildRank   = 0x4AC;  // GBANOMPLGBH — guild rank int32
 uint32_t PlayerAtk         = 0x474;  // HCMECDPHEMC — ATK stat int32
@@ -332,7 +332,7 @@ static Entry s_entries[] = {
     // producing the dump offset used by PlayerTAB for stat display. Some
     // share BeeByte names with movement entries (e.g. HCMECDPHEMC = Tex1/ATK,
     // BHJFNEAHAOE = MoveDirX/SPD, GDNEBFDDDKM = MoveDirY/DEX).
-    { "FKALGHJIADI", { "NFJGJKLPLBA" },                              1, 0,     &PlayerName,         false },
+    { "FKALGHJIADI", { "NFJGJKLPLBA" },                              1, 0,     &PlayerGuildName,    false },
     { "FKALGHJIADI", { "KABPJBJPGCM" },                              1, 0,     &PlayerClassNum,     false },
     { "FKALGHJIADI", { "GBANOMPLGBH" },                              1, 0,     &PlayerGuildRank,    false },
     { "FKALGHJIADI", { "HCMECDPHEMC" },                              1, 0,     &PlayerAtk,          false },

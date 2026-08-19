@@ -241,7 +241,9 @@ namespace RuntimeOffsets {
     // Some share BeeByte field names with movement-system entries above (which
     // DO apply kActk); the two sets coexist because they serve different
     // purposes (stat display vs movement direction).
-    extern uint32_t PlayerName;       // NFJGJKLPLBA   fallback 0x4B8  (Il2CppString*)
+    extern uint32_t PlayerGuildName;  // NFJGJKLPLBA   fallback 0x470  (Il2CppString* — GUILD name;
+                                      // verified 2026-08-19 via builds.him.is: InvitedToGuild {name, guildName}
+                                      // packet's 2nd string is NFJGJKLPLBA. Player IGN is PlayerIGN (0x178).
     extern uint32_t PlayerClassNum;   // KABPJBJPGCM   fallback 0x4B0  (int32)
     extern uint32_t PlayerGuildRank;  // GBANOMPLGBH   fallback 0x4AC  (int32)
     extern uint32_t PlayerAtk;        // HCMECDPHEMC   fallback 0x474  (int32)
@@ -425,8 +427,6 @@ namespace RuntimeOffsets {
     inline constexpr uint32_t PP_ProjId            = 0x15C; // ProjectileProperties projectile id (WeaponProfile RE)
     inline constexpr uint32_t Shot_Angle           = 0x1C;  // SHOOT packet struct angle (AimHooks RE)
     inline constexpr uint32_t Player_CondRaw       = 0x440; // raw [this+0x440] HasConditionEffect reads (.lst)
-    inline constexpr uint32_t Player_GuildName     = 0x468; // FKALGHJIADI guild string — see NFJGJKLPLBA
-                                                            // conflict note in docs/plans/36-adoption-overview.md
     // WorldManager diagnostic words (WorldTAB World-tab display only):
     inline constexpr uint32_t WM_DiagE0  = 0xE0;  // uint32
     inline constexpr uint32_t WM_DiagF4  = 0xF4;  // float
