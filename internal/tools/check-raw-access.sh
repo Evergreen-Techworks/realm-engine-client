@@ -82,4 +82,15 @@ if [ -n "$hits6" ]; then
   fail=1
 fi
 
+# 7. Hardcoded CameraManager offsets (use RuntimeOffsets::CM_Transform / CM_UnityCam).
+check "hardcoded camera offset" -E 'OFF_CM_TRANSFORM|OFF_CM_UNITY_CAM' "$root/gui"
+
+# 8. Direct il2cpp_class_get_method_from_name in features/ (use Il2CppHook::ResolveMethod*).
+hits8="$(grep -rnF 'il2cpp_class_get_method_from_name' "$root/features" 2>/dev/null | grep -v 'raw-access-ok')"
+if [ -n "$hits8" ]; then
+  echo "FORBIDDEN [direct method resolution in features/]:"
+  echo "$hits8"
+  fail=1
+fi
+
 exit $fail
