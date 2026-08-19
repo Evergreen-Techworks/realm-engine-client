@@ -392,8 +392,10 @@ void Install()
                 "(attempt=" << s_n << ")");
         return;
     }
-    const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, kSpawnMethodName, kSpawnParamCount);
-    if (!mi || !mi->methodPointer) {
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached(
+        klass->name, kSpawnMethodName, kSpawnParamCount,
+        false, klass->namespaze ? klass->namespaze : "");
+    if (!mi) {
         static int s_n = 0;
         if ((s_n++ % 240) == 0)
             DBG_FILE_LOG("[ProjectileTracking] Install: class OK but spawn method '"

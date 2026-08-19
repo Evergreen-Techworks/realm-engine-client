@@ -103,38 +103,27 @@ bool s_moveResolved = false, s_cmsResolved = false, s_dtResolved = false;
 void ResolveMoveTo()
 {
     if (s_moveResolved) return;
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* klass = Resolver::FindClassLoose("FKALGHJIADI");
-        if (!klass) return;
-        const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, "DGLCONCOIBO", 2);
-        if (!mi || !mi->methodPointer) return;
-        s_fnMoveTo = reinterpret_cast<MoveToFn>(mi->methodPointer);
-        s_moveResolved = true;
-    });
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached("FKALGHJIADI", "DGLCONCOIBO", 2);
+    if (!mi) return;
+    s_fnMoveTo = reinterpret_cast<MoveToFn>(mi->methodPointer);
+    s_moveResolved = true;
 }
 void ResolveCalcMoveSpeed()
 {
     if (s_cmsResolved) return;
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* klass = Resolver::FindClassLoose("FKALGHJIADI");
-        if (!klass) return;
-        const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, "GCFKGLKAPND", 0);
-        if (!mi || !mi->methodPointer) return;
-        s_fnCalcMoveSpeed = reinterpret_cast<CalcMoveSpeedFn>(mi->methodPointer);
-        s_cmsResolved = true;
-    });
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached("FKALGHJIADI", "GCFKGLKAPND", 0);
+    if (!mi) return;
+    s_fnCalcMoveSpeed = reinterpret_cast<CalcMoveSpeedFn>(mi->methodPointer);
+    s_cmsResolved = true;
 }
 void ResolveDeltaTime()
 {
     if (s_dtResolved) return;
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* klass = Resolver::FindClass("UnityEngine", "Time");
-        if (!klass) return;
-        const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, "get_deltaTime", 0);
-        if (!mi || !mi->methodPointer) return;
-        s_fnGetDeltaTime = reinterpret_cast<GetDeltaTimeFn>(mi->methodPointer);
-        s_dtResolved = true;
-    });
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached("Time", "get_deltaTime", 0,
+                                                            false, "UnityEngine");
+    if (!mi) return;
+    s_fnGetDeltaTime = reinterpret_cast<GetDeltaTimeFn>(mi->methodPointer);
+    s_dtResolved = true;
 }
 
 float s_lastDeltaTime = 0.016f;
@@ -824,15 +813,8 @@ void TryInstall()
 {
     if (s_hookInstalled) return;
 
-    void* target = nullptr;
-    int   failStage = 0;   // 1 = class unresolved, 2 = method unresolved
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* klass = Resolver::FindClassLoose("AppEngineManager");
-        if (!klass) { failStage = 1; return; }
-        const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, "Update", 0);
-        if (!mi || !mi->methodPointer) { failStage = 2; return; }
-        target = reinterpret_cast<void*>(mi->methodPointer);
-    });
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached("AppEngineManager", "Update", 0);
+    void* target = mi ? reinterpret_cast<void*>(mi->methodPointer) : nullptr;
     if (!target) {
         // Throttled so a stuck resolve doesn't flood the log. This is the
         // single most likely reason dodge "does nothing" on an updated game
@@ -840,8 +822,8 @@ void TryInstall()
         static int s_unresolvedN = 0;
         if ((s_unresolvedN++ % 240) == 0)
             DBG_FILE_LOG("[DangerPlanner] TryInstall: AppEngineManager::Update UNRESOLVED "
-                         "(failStage=" << failStage << " [1=class 2=method], attempt="
-                         << s_unresolvedN << ") — hook NOT installed, XDodge will not run");
+                         "(attempt=" << s_unresolvedN
+                         << ") — hook NOT installed, XDodge will not run");
         return;
     }
 

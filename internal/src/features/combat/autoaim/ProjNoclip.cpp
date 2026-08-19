@@ -142,12 +142,12 @@ void Install()
     if (!hbeakKlass) return;
 
     // Resolve GJFKGLJEGKO (2 int params).
-    const MethodInfo* miGjfk = il2cpp_class_get_method_from_name(hbeakKlass, "GJFKGLJEGKO", 2);
-    if (!miGjfk || !miGjfk->methodPointer) return;
+    const MethodInfo* miGjfk = Il2CppHook::ResolveMethodCached("HBEAKBIHANL", "GJFKGLJEGKO", 2, false, "");
+    if (!miGjfk) return;
 
     // Resolve IACODGNOFMH (2 int params).
-    const MethodInfo* miIacod = il2cpp_class_get_method_from_name(hbeakKlass, "IACODGNOFMH", 2);
-    if (!miIacod || !miIacod->methodPointer) return;
+    const MethodInfo* miIacod = Il2CppHook::ResolveMethodCached("HBEAKBIHANL", "IACODGNOFMH", 2, false, "");
+    if (!miIacod) return;
 
     // Resolve field offsets via IL2CPP (no ACTK shift for these classes).
     {

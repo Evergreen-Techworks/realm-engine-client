@@ -1,6 +1,7 @@
 #include "pch-il2cpp.h"
 #include "HwidCapture.h"
 #include "Il2CppResolver.h"
+#include "Il2CppHook.h"
 #include "DbgFileLog.h"
 #include "helpers.h"
 #include "ChatToast.h"
@@ -94,24 +95,15 @@ bool ResolveOnce()
     if (s_gaveUp) return false;
 
     GetDeviceIdFn fn = nullptr;
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* klass = Resolver::FindClassLoose("DeviceIdHolder");
-        if (klass) {
-            const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, "GetDeviceId", 0);
-            if (mi && mi->methodPointer) {
-                fn = reinterpret_cast<GetDeviceIdFn>(mi->methodPointer);
-                return;
-            }
-        }
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached("DeviceIdHolder", "GetDeviceId", 0);
+    if (mi) {
+        fn = reinterpret_cast<GetDeviceIdFn>(mi->methodPointer);
+    } else {
         // Fallback: deeper accessor — same value, more obfuscated path.
-        klass = Resolver::FindClassLoose("UnityApiResultsHolder");
-        if (klass) {
-            const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, "GetDeviceUniqueIdentifier", 0);
-            if (mi && mi->methodPointer) {
-                fn = reinterpret_cast<GetDeviceIdFn>(mi->methodPointer);
-            }
-        }
-    });
+        mi = Il2CppHook::ResolveMethodCached("UnityApiResultsHolder", "GetDeviceUniqueIdentifier", 0);
+        if (mi)
+            fn = reinterpret_cast<GetDeviceIdFn>(mi->methodPointer);
+    }
     if (!fn) return false;
     s_fnGetDeviceId = fn;
     s_resolved = true;

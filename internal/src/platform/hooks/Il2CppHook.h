@@ -21,4 +21,17 @@ namespace Il2CppHook {
     // (DirectX.cpp / first hook installs it — keep that behavior).
     bool InstallMinHook(void* target, void* detour, void** original,
                         const char* label);
+
+    // Cached variant of ResolveMethod.  Returns the MethodInfo* (not void*)
+    // on the first call with a given (className, methodName, argCount, loose,
+    // namespaze) tuple and caches it for subsequent calls.  Returns nullptr
+    // if the class or method cannot be found or lacks a methodPointer.
+    // Failed lookups are NOT cached so callers that retry (TryInstall loops,
+    // ResolveTargets, etc.) will re-attempt until the class/method appears.
+    // Thread-safe via an internal mutex (init-time lookups, not hot-path).
+    const MethodInfo* ResolveMethodCached(const char* className,
+                                          const char* methodName,
+                                          int argCount,
+                                          bool loose = true,
+                                          const char* namespaze = "");
 }

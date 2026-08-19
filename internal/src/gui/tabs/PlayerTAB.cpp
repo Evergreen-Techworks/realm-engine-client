@@ -10,6 +10,7 @@
 #include <cstring>
 #include <cmath>
 #include "Il2CppResolver.h"
+#include "Il2CppHook.h"
 #include "RuntimeOffsets.h"
 #include "core/runtime/MemRead.h"
 #include "game/objects/GameObjects.h"
@@ -283,9 +284,7 @@ static void DoRefresh()
     Mem::TryRead(lp, kCondRawOffset, s.condRaw);
 
     if (!s_miCalcMoveSpeed) {
-        Il2CppClass* fk = Resolver::FindClassLoose("FKALGHJIADI");
-        if (fk)
-            s_miCalcMoveSpeed = il2cpp_class_get_method_from_name(fk, "GCFKGLKAPND", 0);
+        s_miCalcMoveSpeed = Il2CppHook::ResolveMethodCached("FKALGHJIADI", "GCFKGLKAPND", 0);
     }
     if (s_miCalcMoveSpeed) {
         Il2CppObject* boxed = Resolver::Protection::SafeRuntimeInvoke(

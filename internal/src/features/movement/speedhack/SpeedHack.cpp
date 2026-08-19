@@ -2,6 +2,7 @@
 #include "SpeedHack.h"
 
 #include "Il2CppResolver.h"
+#include "Il2CppHook.h"
 #include "MemRead.h"
 #include "detours/detours.h"
 
@@ -208,11 +209,9 @@ static bool EnsureIl2CppThreadAttached()
 
 static const MethodInfo* FindMethod(Il2CppClass* klass, const char* name, int argc)
 {
-    const MethodInfo* method = nullptr;
-    Resolver::Protection::safe_call([&]() {
-        method = klass ? il2cpp_class_get_method_from_name(klass, name, argc) : nullptr;
-    });
-    return method && method->methodPointer ? method : nullptr;
+    if (!klass || !klass->name) return nullptr;
+    return Il2CppHook::ResolveMethodCached(klass->name, name, argc,
+                                            false, klass->namespaze ? klass->namespaze : "");
 }
 
 static Il2CppClass* FindClassAny(const char* namespaze, const char* name)

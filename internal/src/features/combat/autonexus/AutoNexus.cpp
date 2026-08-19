@@ -10,6 +10,7 @@
 #include "LocalPlayer.h"
 #include "RuntimeOffsets.h"
 #include "Il2CppResolver.h"
+#include "Il2CppHook.h"
 #include "core/runtime/MemRead.h"
 #include "game/objects/GameObjects.h"
 #include <algorithm>
@@ -579,15 +580,18 @@ static void RunAutoNexus()
 static void ResolveAutoPotOnce()
 {
     if (s_autoPotResolved) return;
+
+    // Try real class name first, fall back to BeeByte-obfuscated name.
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached(
+        "EquipmentManager", "UseInventoryItemByHotkey", 1,
+        false, "DecaGames.RotMG.Managers.Equipment");
+    if (!mi) mi = Il2CppHook::ResolveMethodCached(
+        "PNBNDBIPENP", "UseInventoryItemByHotkey", 1);
+    if (mi)
+        s_fnUseInvByHotkey = reinterpret_cast<UseInvByHotkeyFn>(mi->methodPointer);
+
+    // Field resolution (not a method lookup -- stays as-is).
     Resolver::Protection::safe_call([&]() {
-        Il2CppClass* em = Resolver::FindClass("DecaGames.RotMG.Managers.Equipment", "EquipmentManager");
-        if (!em) em = Resolver::FindClassLoose("PNBNDBIPENP");
-        if (em) {
-            const MethodInfo* mi = il2cpp_class_get_method_from_name(em, "UseInventoryItemByHotkey", 1);
-            if (mi && mi->methodPointer) {
-                s_fnUseInvByHotkey = reinterpret_cast<UseInvByHotkeyFn>(mi->methodPointer);
-            }
-        }
         Il2CppClass* fk = Resolver::FindClassLoose("FKALGHJIADI");
         if (fk) {
             FieldInfo* eqf = il2cpp_class_get_field_from_name(fk, "AJJJBDBNBLM");

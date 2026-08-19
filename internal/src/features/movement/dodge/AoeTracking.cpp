@@ -701,16 +701,11 @@ static void __fastcall ShowEffectDetour(void* self, void* msg, void* method)
 static bool HookShowEffectPath()
 {
     if (g_SfxTarget) return true;
-    Il2CppClass* klass = Resolver::GetClass("", kShowEffectClass);
-    if (!klass) {
-        AgentLogAoe("H1", "AoeTracking.cpp:HookShowEffectPath", "no_klass",
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached(
+        kShowEffectClass, kShowEffectMethod, kShowEffectParamCount, false, "");
+    if (!mi) {
+        AgentLogAoe("H1", "AoeTracking.cpp:HookShowEffectPath", "no_resolve",
             "{\"class\":\"HJMBOMEHGDJ\"}");
-        return false;
-    }
-    const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, kShowEffectMethod, kShowEffectParamCount);
-    if (!mi || !mi->methodPointer) {
-        AgentLogAoe("H1", "AoeTracking.cpp:HookShowEffectPath", "no_method",
-            mi ? "{\"methodPointer\":0}" : "{\"methodInfo\":0}");
         return false;
     }
 
@@ -758,19 +753,12 @@ static void TryInitInfrastructure()
 static bool HookThrowablePath()
 {
     if (g_GjjTarget) return true;
-    Il2CppClass* klass = Resolver::GetClass("", kThrowableClass);
-    if (!klass) {
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached(
+        kThrowableClass, kSpawnMethod, kGjjParamCount, false, "");
+    if (!mi) {
         // #region agent log
-        AgentLogAoe("H1", "AoeTracking.cpp:HookThrowablePath", "no_klass",
+        AgentLogAoe("H1", "AoeTracking.cpp:HookThrowablePath", "no_resolve",
             "{\"class\":\"GJJCEFJMNMK\"}");
-        // #endregion
-        return false;
-    }
-    const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, kSpawnMethod, kGjjParamCount);
-    if (!mi || !mi->methodPointer) {
-        // #region agent log
-        AgentLogAoe("H1", "AoeTracking.cpp:HookThrowablePath", "no_method",
-            mi ? "{\"methodPointer\":0}" : "{\"methodInfo\":0}");
         // #endregion
         return false;
     }
@@ -797,10 +785,9 @@ static bool HookThrowablePath()
 static bool HookFhohPath()
 {
     if (g_FhohTarget) return true;
-    Il2CppClass* klass = Resolver::GetClass("", kFhohClass);
-    if (!klass) return false;
-    const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, kSpawnMethod, kFhohParamCount);
-    if (!mi || !mi->methodPointer) return false;
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached(
+        kFhohClass, kSpawnMethod, kFhohParamCount, false, "");
+    if (!mi) return false;
 
     void* target = reinterpret_cast<void*>(mi->methodPointer);
     g_OrigFhohKob = nullptr;
@@ -818,19 +805,12 @@ static bool HookFhohPath()
 static bool HookExplosionPath()
 {
     if (g_ExplTarget) return true;
-    Il2CppClass* klass = Resolver::GetClass("", kExplSpawnerClass);
-    if (!klass) {
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached(
+        kExplSpawnerClass, kSpawnMethod, kExplParamCount, false, "");
+    if (!mi) {
         // #region agent log
-        AgentLogAoe("H1", "AoeTracking.cpp:HookExplosionPath", "no_klass",
+        AgentLogAoe("H1", "AoeTracking.cpp:HookExplosionPath", "no_resolve",
             "{\"class\":\"FGOFPGIIEPC\"}");
-        // #endregion
-        return false;
-    }
-    const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, kSpawnMethod, kExplParamCount);
-    if (!mi || !mi->methodPointer) {
-        // #region agent log
-        AgentLogAoe("H1", "AoeTracking.cpp:HookExplosionPath", "no_method",
-            mi ? "{\"methodPointer\":0}" : "{\"methodInfo\":0}");
         // #endregion
         return false;
     }

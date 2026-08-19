@@ -2,6 +2,7 @@
 #include "RuntimeOffsets.h"
 #include "GameState.h"
 #include "Il2CppResolver.h"
+#include "Il2CppHook.h"
 #include "core/runtime/MemRead.h"
 #include <mutex>
 #include <cstdio>
@@ -55,7 +56,7 @@ void FloatingTextService::ApplyPendingPluginText()
     }
 
     Il2CppClass* klass = Resolver::FindClassLoose("MapObjectUIManager");
-    const MethodInfo* mi = klass ? il2cpp_class_get_method_from_name(klass, "ShowFloatingText", 6) : nullptr;
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached("MapObjectUIManager", "ShowFloatingText", 6);
     app::MapObjectUIManager* localMgr = nullptr;
     void* local = GameState::GetLocalPtr();
 

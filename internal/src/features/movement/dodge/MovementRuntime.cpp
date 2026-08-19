@@ -2,6 +2,7 @@
 #include "MovementRuntime.h"
 
 #include "Il2CppResolver.h"
+#include "Il2CppHook.h"
 #include "DbgFileLog.h"
 #include "features/control/FeatureState.h"
 
@@ -28,15 +29,11 @@ float s_lastDeltaTime = 0.016f;
 void ResolveMoveTo()
 {
     if (s_moveResolved) return;
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* klass = Resolver::FindClassLoose("FKALGHJIADI");
-        if (!klass) return;
-        const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, "DGLCONCOIBO", 2);
-        if (!mi || !mi->methodPointer) return;
-        s_fnMoveTo = reinterpret_cast<MoveToFn>(mi->methodPointer);
-        s_miMoveTo = mi;
-        s_moveResolved = true;
-    });
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached("FKALGHJIADI", "DGLCONCOIBO", 2);
+    if (!mi) return;
+    s_fnMoveTo = reinterpret_cast<MoveToFn>(mi->methodPointer);
+    s_miMoveTo = mi;
+    s_moveResolved = true;
 }
 
 // DGLCONCOIBO (MoveTo) is virtual — the live player can be a FKALGHJIADI
@@ -84,27 +81,20 @@ float CallCalcMoveSpeedRaw(void* player)
 void ResolveCalcMoveSpeed()
 {
     if (s_cmsResolved) return;
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* klass = Resolver::FindClassLoose("FKALGHJIADI");
-        if (!klass) return;
-        const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, "GCFKGLKAPND", 0);
-        if (!mi || !mi->methodPointer) return;
-        s_fnCalcMoveSpeed = reinterpret_cast<CalcMoveSpeedFn>(mi->methodPointer);
-        s_cmsResolved = true;
-    });
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached("FKALGHJIADI", "GCFKGLKAPND", 0);
+    if (!mi) return;
+    s_fnCalcMoveSpeed = reinterpret_cast<CalcMoveSpeedFn>(mi->methodPointer);
+    s_cmsResolved = true;
 }
 
 void ResolveDeltaTime()
 {
     if (s_dtResolved) return;
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* klass = Resolver::FindClass("UnityEngine", "Time");
-        if (!klass) return;
-        const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, "get_deltaTime", 0);
-        if (!mi || !mi->methodPointer) return;
-        s_fnGetDeltaTime = reinterpret_cast<GetDeltaTimeFn>(mi->methodPointer);
-        s_dtResolved = true;
-    });
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached("Time", "get_deltaTime", 0,
+                                                            false, "UnityEngine");
+    if (!mi) return;
+    s_fnGetDeltaTime = reinterpret_cast<GetDeltaTimeFn>(mi->methodPointer);
+    s_dtResolved = true;
 }
 
 } // namespace

@@ -2,6 +2,7 @@
 #include "AutoAbility.h"
 #include "AutoAim.h"
 #include "Il2CppResolver.h"
+#include "Il2CppHook.h"
 #include "LocalPlayer.h"
 #include "core/runtime/MemRead.h"
 
@@ -38,17 +39,26 @@ ULONGLONG        s_lastFireMs     = 0;
 void ResolveOnce()
 {
     if (s_resolved) return;
+
+    // Try real class name first, fall back to BeeByte-obfuscated name.
+    const MethodInfo* miHk = Il2CppHook::ResolveMethodCached(
+        "EquipmentManager", "UseInventoryItemByHotkey", 1,
+        false, "DecaGames.RotMG.Managers.Equipment");
+    if (!miHk) miHk = Il2CppHook::ResolveMethodCached(
+        "PNBNDBIPENP", "UseInventoryItemByHotkey", 1);
+    if (miHk)
+        s_fnHotkey = reinterpret_cast<UseInvByHotkeyFn>(miHk->methodPointer);
+
+    const MethodInfo* miUse = Il2CppHook::ResolveMethodCached(
+        "EquipmentManager", "UseInventoryItem", 6,
+        false, "DecaGames.RotMG.Managers.Equipment");
+    if (!miUse) miUse = Il2CppHook::ResolveMethodCached(
+        "PNBNDBIPENP", "UseInventoryItem", 6);
+    if (miUse)
+        s_fnTargeted = reinterpret_cast<UseInvItemFn>(miUse->methodPointer);
+
+    // Field resolution (not a method lookup -- stays as-is).
     Resolver::Protection::safe_call([&]() {
-        Il2CppClass* em = Resolver::FindClass("DecaGames.RotMG.Managers.Equipment", "EquipmentManager");
-        if (!em) em = Resolver::FindClassLoose("PNBNDBIPENP");
-        if (em) {
-            const MethodInfo* miHk = il2cpp_class_get_method_from_name(em, "UseInventoryItemByHotkey", 1);
-            if (miHk && miHk->methodPointer)
-                s_fnHotkey = reinterpret_cast<UseInvByHotkeyFn>(miHk->methodPointer);
-            const MethodInfo* miUse = il2cpp_class_get_method_from_name(em, "UseInventoryItem", 6);
-            if (miUse && miUse->methodPointer)
-                s_fnTargeted = reinterpret_cast<UseInvItemFn>(miUse->methodPointer);
-        }
         Il2CppClass* fk = Resolver::FindClassLoose("FKALGHJIADI");
         if (fk) {
             FieldInfo* eqf = il2cpp_class_get_field_from_name(fk, "AJJJBDBNBLM");

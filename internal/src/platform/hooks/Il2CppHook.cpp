@@ -5,6 +5,10 @@
 
 #include "minhook/MinHook.h"
 
+#include <mutex>
+#include <string>
+#include <unordered_map>
+
 namespace Il2CppHook {
 
 void* ResolveMethod(const char* className, const char* methodName,
@@ -44,6 +48,56 @@ bool InstallMinHook(void* target, void* detour, void** original, const char* lab
     }
 
     return true;
+}
+
+// ─── Cached method resolution ───────────────────────────────────────────────
+static std::mutex                                         s_cacheMutex;
+static std::unordered_map<std::string, const MethodInfo*> s_cache;
+
+const MethodInfo* ResolveMethodCached(const char* className,
+                                       const char* methodName,
+                                       int argCount, bool loose,
+                                       const char* namespaze)
+{
+    // Build cache key: "<L|N><namespace>\0<className>\0<methodName>\0<argCount>"
+    std::string key;
+    key.reserve(64);
+    key += (loose ? 'L' : 'N');
+    key.append(namespaze ? namespaze : "");
+    key += '\0';
+    key.append(className);
+    key += '\0';
+    key.append(methodName);
+    key += '\0';
+    key.append(std::to_string(argCount));
+
+    {
+        std::lock_guard<std::mutex> lock(s_cacheMutex);
+        auto it = s_cache.find(key);
+        if (it != s_cache.end())
+            return it->second;
+    }
+
+    // Resolve (SEH-safe, same class-lookup logic as ResolveMethod).
+    const MethodInfo* result = nullptr;
+    Resolver::Protection::safe_call([&]() {
+        Il2CppClass* klass = loose ? Resolver::FindClassLoose(className)
+                                   : Resolver::GetClass(namespaze, className);
+        if (!klass) return;
+        const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, methodName, argCount);
+        if (mi && mi->methodPointer)
+            result = mi;
+    });
+
+    // Only cache successful resolutions — callers that retry on failure
+    // (DangerPlanner::TryInstall, SpeedHack::ResolveTargets, etc.) will
+    // re-attempt until the class/method appears.
+    if (result) {
+        std::lock_guard<std::mutex> lock(s_cacheMutex);
+        s_cache.emplace(std::move(key), result);
+    }
+
+    return result;
 }
 
 } // namespace Il2CppHook
