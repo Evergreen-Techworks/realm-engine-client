@@ -2,7 +2,8 @@ import type { PluginContext } from './api.js';
 import { sendDllFeature } from './api.js';
 
 // Maps the dashboard string value to the C++ TestTAB::DodgeMode enum.
-// Off=0, XDodge=1, RolloutGrid=2, RolloutQuad=3, zDodge=4, RePP=5.
+// Off=0, XDodge=1, RolloutGrid=2, RolloutQuad=3, zDodge=4, RePP=5,
+// PJDodge=6, UDodge (Unified)=7.
 // XDodge uses A* (goal-directed) with BFS fallback (immediate escape),
 // ported from XRebuild/XDriver decompile. RE-Sim does per-input forward
 // simulation; the two RE-Sim modes differ only in broad-phase backend
@@ -10,7 +11,9 @@ import { sendDllFeature } from './api.js';
 // intent-preserving slide-assist dodge. RePP (RE++) is the next-gen
 // reactive dodge. PJDodge is the predictive controller (exact segment CCD,
 // survival-first candidate selection, intent ladder, escape search).
-const DODGE_VALUES = ['off', 'xdodge', 'rollout-grid', 'rollout-quad', 'zdodge', 're-plus-plus', 'pj-dodge'] as const;
+// Unified (UDodge) merges PJDodge's predictive core with RePP's field
+// escape and autopilot goal layer.
+const DODGE_VALUES = ['off', 'xdodge', 'rollout-grid', 'rollout-quad', 'zdodge', 're-plus-plus', 'pj-dodge', 'unified'] as const;
 type ActiveDodgeMode = Exclude<(typeof DODGE_VALUES)[number], 'off'>;
 type SettingConfig = Parameters<PluginContext['registerSetting']>[1];
 type SettingCallback = Parameters<PluginContext['registerSetting']>[2];
@@ -65,6 +68,7 @@ export function register(ctx: PluginContext) {
       { label: 'zDodge', value: 'zdodge' },
       { label: 'RE++', value: 're-plus-plus' },
       { label: 'PJDodge', value: 'pj-dodge' },
+      { label: 'Unified (RE++ x PJDodge)', value: 'unified' },
     ],
   }, () => flush());
 
@@ -272,6 +276,52 @@ export function register(ctx: PluginContext) {
     onOff('[PJDodge] Lock follow (walk toward lock target)', 'off'),
     (v: string) => sendDllFeature('pjdodgeLockFollow', v === 'on' ? 1 : 0));
 
+  // ── UDodge (Unified) settings ─────────────────────────────────────────────
+  registerModeSetting('unified', 'udodgeHorizonMs', {
+    label: '[UDodge] Prediction horizon (ms)',
+    type: 'range', value: 600, min: 300, max: 1200, step: 25,
+  }, (v: number) => sendDllFeature('udodgeHorizonMs', v));
+  registerModeSetting('unified', 'udodgeLeadMs', {
+    label: '[UDodge] Command lead (ms — latency compensation)', advanced: true,
+    type: 'range', value: 40, min: 0, max: 150, step: 5,
+  }, (v: number) => sendDllFeature('udodgeLeadMs', v));
+  registerModeSetting('unified', 'udodgeHitScale', {
+    label: '[UDodge] Hit scale (1 = exact game hitbox)', advanced: true,
+    type: 'range', value: 1, min: 0.5, max: 1.5, step: 0.05,
+  }, (v: number) => sendDllFeature('udodgeHitScale', v));
+  registerModeSetting('unified', 'udodgeSafeWalk', onOff('[UDodge] Safe walk (avoid damaging ground)', 'on'),
+    (v: string) => sendDllFeature('udodgeSafeWalk', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeSpeedScale', onOff('[UDodge] Match intent speed on gentle overrides', 'on'),
+    (v: string) => sendDllFeature('udodgeSpeedScale', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgePredictionAccuracy',
+    onOff('[UDodge] Prediction accuracy (per-shot clock calibration)', 'on'),
+    (v: string) => sendDllFeature('udodgePredictionAccuracy', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeFieldEscape',
+    onOff('[UDodge] Field escape (Dijkstra route around walls when boxed in)', 'on'),
+    (v: string) => sendDllFeature('udodgeFieldEscape', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeMode', {
+    label: '[UDodge] Mode',
+    type: 'select',
+    value: 'assist',
+    options: [
+      { label: 'Assist', value: 'assist' },
+      { label: 'Autopilot', value: 'autopilot' },
+    ],
+  }, (v: string) => sendDllFeature('udodgeMode', v === 'autopilot' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeLockFollow',
+    onOff('[UDodge] Lock follow (walk toward lock target)', 'off'),
+    (v: string) => sendDllFeature('udodgeLockFollow', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeFollowLantern',
+    onOff('[UDodge][Autopilot] Follow stand-on object (lantern) — perf cost', 'off'),
+    (v: string) => sendDllFeature('udodgeFollowLantern', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeStandOnType', {
+    label: '[UDodge][Autopilot] Stand-on objType (0=off; e.g. Moonlight Village lantern)',
+    advanced: true,
+    type: 'range', value: 0, min: 0, max: 65535, step: 1,
+  }, (v: number) => sendDllFeature('udodgeStandOnType', v));
+  registerModeSetting('unified', 'udodgeDebugOverlay', onOff('[UDodge] Debug overlay', 'on'),
+    (v: string) => sendDllFeature('udodgeDebugOverlay', v === 'on' ? 1 : 0));
+
   registerModeSetting('xdodge', 'xdodgeAstar', onOff('[Goal] Smart goal pathing'),
     (v: string) => sendDllFeature('xdodgeAstar', v === 'on' ? 1 : 0));
   registerModeSetting('xdodge', 'xdodgeWeighting', onOff('[Goal] Weighted danger field'),
@@ -429,6 +479,16 @@ export function register(ctx: PluginContext) {
     sendDllFeature('pjdodgeLeadMs', ctx.getSetting<number>('pjdodgeLeadMs'));
     sendDllFeature('pjdodgeHitScale', ctx.getSetting<number>('pjdodgeHitScale'));
     for (const k of ['pjdodgeSafeWalk', 'pjdodgeSpeedScale', 'pjdodgePredictionAccuracy', 'pjdodgeDebugOverlay', 'pjdodgeLockFollow'] as const)
+      sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
+    // UDodge (unified) settings.
+    sendDllFeature('udodgeHorizonMs', ctx.getSetting<number>('udodgeHorizonMs'));
+    sendDllFeature('udodgeLeadMs', ctx.getSetting<number>('udodgeLeadMs'));
+    sendDllFeature('udodgeHitScale', ctx.getSetting<number>('udodgeHitScale'));
+    sendDllFeature('udodgeStandOnType', ctx.getSetting<number>('udodgeStandOnType'));
+    sendDllFeature('udodgeMode', ctx.getSetting<string>('udodgeMode') === 'autopilot' ? 1 : 0);
+    for (const k of ['udodgeSafeWalk', 'udodgeSpeedScale', 'udodgePredictionAccuracy',
+                     'udodgeFieldEscape', 'udodgeLockFollow', 'udodgeFollowLantern',
+                     'udodgeDebugOverlay'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     // Re-apply the 60fps cap here too. The onEnabledChange / clientConnected
     // handlers were the only places setting targetFrameRate, so if the cap
