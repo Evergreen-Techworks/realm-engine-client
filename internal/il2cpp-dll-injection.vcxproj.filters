@@ -44,6 +44,7 @@
     <ClCompile Include="src\features\movement\pjdodge\PJDodgeCore.cpp" />
     <ClCompile Include="src\features\movement\pjdodge\PJDodgeSensors.cpp" />
     <ClCompile Include="src\features\movement\pjdodge\PJDodgeDebug.cpp" />
+    <ClCompile Include="src\features\movement\udodge\UDodgeSensors.cpp" />
     <ClCompile Include="src\gui\tabs\CombatTab\CombatTAB.cpp" />
     <ClCompile Include="src\features\combat\autoaim\FeatAutoAim.cpp" />
     <ClCompile Include="src\features\combat\autoaim\FeatMagnetAim.cpp" />
@@ -172,6 +173,8 @@
     <ClInclude Include="src\features\movement\pjdodge\PJDodgeCore.h" />
     <ClInclude Include="src\features\movement\pjdodge\PJDodgeSensors.h" />
     <ClInclude Include="src\features\movement\pjdodge\PJDodgeDebug.h" />
+    <ClInclude Include="src\features\movement\udodge\UDodgeTypes.h" />
+    <ClInclude Include="src\features\movement\udodge\UDodgeSensors.h" />
     <ClInclude Include="vendor\minhook\MinHook.h" />
     <ClInclude Include="src\core\config\keybinds.h" />
     <ClInclude Include="src\core\runtime\Il2CppResolver.h" />
