@@ -222,10 +222,6 @@ void ApplyDodgeModeWithEnter(DodgeMode nextMode)
 // Legacy game hitbox display helpers. PlayerCollider is the only writer for
 // ObjectProperties.collisionRadiusMultiplier; this tab may read it for debug UI.
 // ─────────────────────────────────────────────────────────────────────────────
-static constexpr uint32_t kOffObjProps1      = 0x18;   // KJMONHENJEN.OBAKMCCDBJA
-static constexpr uint32_t kOffObjProps2      = 0x1C8;  // LKHPPBEGNOM.KKENJFFDMPO
-static constexpr uint32_t kOffCollisionMult  = 0x780;  // ObjectProperties.collisionRadiusMultiplier
-
 // Native speed mult: HBEAKBIHANL KDAJOMOFMJB via il2cpp_field_get_offset; optional UI scale in ProjectileTracking.
 static float g_flashSpeedMulUi = 1.f;
 
@@ -241,10 +237,10 @@ static float ReadCollisionMult(void* entityPtr)
     if (!entityPtr) return 1.0f;
     __try {
         uint8_t* e = reinterpret_cast<uint8_t*>(entityPtr);
-        void* op = *reinterpret_cast<void**>(e + kOffObjProps1);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        void* op = *reinterpret_cast<void**>(e + RuntimeOffsets::ObjProps);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (!op) return 1.0f;
         if (!Mem::AddrOk(op)) return 1.0f;
-        float mult = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(op) + kOffCollisionMult);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        float mult = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(op) + RuntimeOffsets::OP_CollRadiusMult);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (mult != mult || mult < 0.f || mult > 20.f) return 1.0f;  // NaN / invalid
         return mult;
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -256,10 +252,10 @@ static float ReadCollisionMultAlt(void* entityPtr)
     if (!entityPtr) return 1.0f;
     __try {
         uint8_t* e = reinterpret_cast<uint8_t*>(entityPtr);
-        void* op = *reinterpret_cast<void**>(e + kOffObjProps2);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        void* op = *reinterpret_cast<void**>(e + RuntimeOffsets::MoObjectProps);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (!op) return 1.0f;
         if (!Mem::AddrOk(op)) return 1.0f;
-        float mult = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(op) + kOffCollisionMult);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        float mult = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(op) + RuntimeOffsets::OP_CollRadiusMult);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (mult != mult || mult < 0.f || mult > 20.f) return 1.0f;
         return mult;
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -802,12 +798,10 @@ void TestTAB::Tick(bool menuVisible)
                     camX, camY, g_mouseWorldX, g_mouseWorldY, tpX, tpY);
 
                 if (okLand) {
-                    __try {
-                        *(float*)((uint8_t*)localPlayer + 0x3C) =  tpX;
-                        *(float*)((uint8_t*)localPlayer + 0x40) =  tpY;
-                        *(float*)((uint8_t*)localPlayer + 0x68) =  tpX;
-                        *(float*)((uint8_t*)localPlayer + 0x6C) = -tpY;
-                    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::PosX, tpX);
+                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::PosY, tpY);
+                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::KJ_Float3Pos, tpX);
+                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::KJ_Float3Pos + 4u, -tpY);
                 }
             }
         }

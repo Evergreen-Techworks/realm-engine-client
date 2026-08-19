@@ -1,6 +1,5 @@
 #include "pch-il2cpp.h"
 #include "ProjNoclip.h"
-#include "Il2CppResolver.h"
 #include "RuntimeOffsets.h"
 #include "core/runtime/MemRead.h"
 #include "platform/hooks/Il2CppHook.h"
@@ -37,23 +36,6 @@
 
 namespace {
 
-// ── Runtime field offsets (resolved once at Install time) ────────────────────
-// No ACTK shift: HBEAKBIHANL and BGAIOPJMHLO are both non-LKHPPBEGNOM classes.
-static uint32_t s_npmOff  = 0;   // HBEAKBIHANL.NPMECLDKGEF (bool)
-static uint32_t s_eokOff  = 0;   // KJMONHENJEN.EOKJOGFPLOA (BGAIOPJMHLO*)
-static uint32_t s_ebclOff = 0;   // BGAIOPJMHLO.EBCLNFDKKEH (int32_t/enum)
-
-// Fallback offsets derived from il2cpp-types.h struct layout.
-// KJMONHENJEN layout (known from resolved PosX=0x3C, ObjType=0x30):
-//   ptr×4 [0x10..0x28], int32×2 [0x30,0x34], bool×3 [0x38,0x39,0x3A], pad [0x3B],
-//   float PosX [0x3C], float PosY [0x40], float [0x44], bool [0x48], int32 [0x4C],
-//   float [0x50], pad [0x54..0x57], BGAIOPJMHLO* [0x58]
-static constexpr uint32_t kFallbackEokOff  = 0x58;
-// BGAIOPJMHLO layout (known from TileX=0x38, TileY=0x3C, TileType=0x40):
-//   uint16 [0x40], bool×2 [0x42,0x43], EBCLNFDKKEH int32 [0x44]
-static constexpr uint32_t kFallbackEbclOff = 0x44;
-// HBEAKBIHANL.NPMECLDKGEF — resolved only via IL2CPP; no reliable static fallback.
-
 // ── Hook state (accessed only from game thread during GJFKGLJEGKO execution) ─
 static bool     s_noclipApplied = false;
 static int32_t  s_savedLayer    = 0;
@@ -78,19 +60,19 @@ static bool __fastcall IACODGNOFMH_hook(void* thisPtr, int32_t a, int32_t b, voi
 
     if (origResult && s_enabled.load(std::memory_order_relaxed) && !s_noclipApplied)
     {
-        if (s_npmOff != 0 && Mem::AddrOk(thisPtr))
+        if (RuntimeOffsets::Hbeak_NoclipGuard != 0 && Mem::AddrOk(thisPtr))
         {
             __try {
                 const bool npm = *reinterpret_cast<bool*>(
-                    reinterpret_cast<uint8_t*>(thisPtr) + s_npmOff);
+                    reinterpret_cast<uint8_t*>(thisPtr) + RuntimeOffsets::Hbeak_NoclipGuard);  // raw-access-ok: hot-loop __try field sweep; shared-SEH save/restore must abort atomically
                 if (npm)
                 {
                     void* tile = *reinterpret_cast<void**>(
-                        reinterpret_cast<uint8_t*>(thisPtr) + s_eokOff);
+                        reinterpret_cast<uint8_t*>(thisPtr) + RuntimeOffsets::KJ_TileRef);  // raw-access-ok: hot-loop __try field sweep; shared-SEH save/restore must abort atomically
                     if (Mem::AddrOk(tile))
                     {
                         int32_t* layerPtr = reinterpret_cast<int32_t*>(
-                            reinterpret_cast<uint8_t*>(tile) + s_ebclOff);
+                            reinterpret_cast<uint8_t*>(tile) + RuntimeOffsets::Sq_Layer);  // raw-access-ok: hot-loop __try field sweep; shared-SEH save/restore must abort atomically
                         s_savedLayer    = *layerPtr;
                         s_savedTile     = tile;
                         *layerPtr       = 37;
@@ -117,7 +99,7 @@ static bool __fastcall GJFKGLJEGKO_hook(void* thisPtr, int32_t x, int32_t y, voi
     {
         __try {
             *reinterpret_cast<int32_t*>(
-                reinterpret_cast<uint8_t*>(s_savedTile) + s_ebclOff) = s_savedLayer;
+                reinterpret_cast<uint8_t*>(s_savedTile) + RuntimeOffsets::Sq_Layer) = s_savedLayer;  // raw-access-ok: hot-loop __try field sweep; shared-SEH save/restore must abort atomically
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
         s_noclipApplied = false;
         s_savedTile     = nullptr;
@@ -138,9 +120,6 @@ void Install()
 {
     if (s_installed) return;
 
-    Il2CppClass* hbeakKlass = Resolver::GetClass("", "HBEAKBIHANL");
-    if (!hbeakKlass) return;
-
     // Resolve GJFKGLJEGKO (2 int params).
     const MethodInfo* miGjfk = Il2CppHook::ResolveMethodCached("HBEAKBIHANL", "GJFKGLJEGKO", 2, false, "");
     if (!miGjfk) return;
@@ -149,35 +128,8 @@ void Install()
     const MethodInfo* miIacod = Il2CppHook::ResolveMethodCached("HBEAKBIHANL", "IACODGNOFMH", 2, false, "");
     if (!miIacod) return;
 
-    // Resolve field offsets via IL2CPP (no ACTK shift for these classes).
-    {
-        // HBEAKBIHANL.NPMECLDKGEF (bool) — walk hierarchy to find it.
-        FieldInfo* fi = nullptr;
-        for (Il2CppClass* k = hbeakKlass; k && !fi; k = il2cpp_class_get_parent(k))
-            fi = il2cpp_class_get_field_from_name(k, "NPMECLDKGEF");
-        if (fi) s_npmOff = static_cast<uint32_t>(il2cpp_field_get_offset(fi));
-    }
-    {
-        // KJMONHENJEN.EOKJOGFPLOA (BGAIOPJMHLO*).
-        Il2CppClass* kjmonKlass = Resolver::GetClass("", "KJMONHENJEN");
-        if (kjmonKlass) {
-            FieldInfo* fi = il2cpp_class_get_field_from_name(kjmonKlass, "EOKJOGFPLOA");
-            if (fi) s_eokOff = static_cast<uint32_t>(il2cpp_field_get_offset(fi));
-        }
-        if (s_eokOff == 0) s_eokOff = kFallbackEokOff;
-    }
-    {
-        // BGAIOPJMHLO.EBCLNFDKKEH (int32/enum).
-        Il2CppClass* bgaKlass = Resolver::GetClass("", "BGAIOPJMHLO");
-        if (bgaKlass) {
-            FieldInfo* fi = il2cpp_class_get_field_from_name(bgaKlass, "EBCLNFDKKEH");
-            if (fi) s_ebclOff = static_cast<uint32_t>(il2cpp_field_get_offset(fi));
-        }
-        if (s_ebclOff == 0) s_ebclOff = kFallbackEbclOff;
-    }
-
     // NPMECLDKGEF must resolve; without it we can't guard the hook safely.
-    if (s_npmOff == 0) return;
+    if (RuntimeOffsets::Hbeak_NoclipGuard == 0) return;
 
     s_gjfkTarget  = reinterpret_cast<void*>(miGjfk->methodPointer);
     s_iacodTarget = reinterpret_cast<void*>(miIacod->methodPointer);

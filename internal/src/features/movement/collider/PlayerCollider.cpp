@@ -9,7 +9,6 @@
 namespace PlayerCollider {
 namespace {
 
-constexpr uint32_t kOffCollisionMultiplierFallback = 0x780;
 constexpr size_t kMaxObjectPropertiesTargets = 3;
 constexpr size_t kMaxEntityCandidates = 2;
 
@@ -27,20 +26,10 @@ float g_multiplier = 1.0f;
 void* g_lastPlayer = nullptr;
 TrackedProperty g_tracked[kMaxObjectPropertiesTargets]{};
 size_t g_trackedCount = 0;
-uint32_t g_collisionMultiplierOffset = kOffCollisionMultiplierFallback;
 
 struct EntityCandidate {
     void* ptr = nullptr;
 };
-
-FieldInfo* FindFieldOnHierarchy(Il2CppClass* klass, const char* fieldName)
-{
-    for (Il2CppClass* current = klass; current; current = il2cpp_class_get_parent(current)) {
-        FieldInfo* field = il2cpp_class_get_field_from_name(current, fieldName);
-        if (field) return field;
-    }
-    return nullptr;
-}
 
 bool TryGetObjectClass(void* object, Il2CppClass*& outClass)
 {
@@ -67,111 +56,27 @@ bool ClassHierarchyHas(Il2CppClass* klass, const char* expectedName)
     return matched;
 }
 
-bool ResolveFieldOffset(Il2CppClass* klass, const char* fieldName, uint32_t fallback, uint32_t& outOffset, bool& outFromMetadata)
-{
-    outOffset = fallback;
-    outFromMetadata = false;
-    if (!klass || !fieldName) return false;
-
-    FieldInfo* field = nullptr;
-    if (!Resolver::Protection::safe_call([&]() {
-        field = FindFieldOnHierarchy(klass, fieldName);
-    }) || !field) {
-        return false;
-    }
-
-    return Resolver::Protection::safe_call([&]() {
-        outOffset = static_cast<uint32_t>(il2cpp_field_get_offset(field));
-        outFromMetadata = true;
-    });
-}
-
-void* ReadPointerRef(void* basePtr, uint32_t offset)
-{
-    if (!basePtr || offset == 0) return nullptr;
-    void* ptr = nullptr;
-    __try {
-        ptr = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(basePtr) + offset);
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        ptr = nullptr;
-    }
-    return Mem::AddrOk(ptr) ? ptr : nullptr;
-}
-
-void* ReadObjectPropertiesRef(void* entityPtr, uint32_t offset)
-{
-    return ReadPointerRef(entityPtr, offset);
-}
-
-bool ResolveCollisionMultiplierOffset(void* properties)
+bool IsObjectPropertiesInstance(void* properties)
 {
     Il2CppClass* propertiesClass = nullptr;
-    if (!TryGetObjectClass(properties, propertiesClass) || !ClassHierarchyHas(propertiesClass, "ObjectProperties"))
-        return false;
-
-    uint32_t offset = kOffCollisionMultiplierFallback;
-    bool fromMetadata = false;
-    ResolveFieldOffset(propertiesClass, "collisionRadiusMultiplier", kOffCollisionMultiplierFallback, offset, fromMetadata);
-    (void)fromMetadata;
-    g_collisionMultiplierOffset = offset;
-    return true;
-}
-
-uint32_t ResolveObjectPropertiesOffset(Il2CppClass* entityClass, const ObjectPropertiesTarget& target)
-{
-    const char* fieldName = nullptr;
-    if (std::strcmp(target.label, "base") == 0) fieldName = "OBAKMCCDBJA";
-    else if (std::strcmp(target.label, "map-object") == 0) fieldName = "KKENJFFDMPO";
-    else if (std::strcmp(target.label, "player-collision") == 0) fieldName = "GGBCADDBAPN";
-
-    uint32_t offset = target.offset;
-    bool fromMetadata = false;
-    if (fieldName)
-        ResolveFieldOffset(entityClass, fieldName, target.offset, offset, fromMetadata);
-    return offset;
+    return TryGetObjectClass(properties, propertiesClass) &&
+           ClassHierarchyHas(propertiesClass, "ObjectProperties");
 }
 
 void* ResolveViewDestroyEntity(void* localPlayer)
 {
-    Il2CppClass* localClass = nullptr;
-    uint32_t viewHandlerOffset = RuntimeOffsets::KJ_ViewHandler;
-    bool fromMetadata = false;
-    if (TryGetObjectClass(localPlayer, localClass))
-        ResolveFieldOffset(localClass, "MPGOFIHIDML", RuntimeOffsets::KJ_ViewHandler, viewHandlerOffset, fromMetadata);
-
-    void* viewHandler = ReadPointerRef(localPlayer, viewHandlerOffset);
-    Il2CppClass* viewClass = nullptr;
-    uint32_t destroyEntityOffset = RuntimeOffsets::VH_DestroyEntity;
-    fromMetadata = false;
-    if (TryGetObjectClass(viewHandler, viewClass))
-        ResolveFieldOffset(viewClass, "destroyEntity", RuntimeOffsets::VH_DestroyEntity, destroyEntityOffset, fromMetadata);
-
-    return ReadPointerRef(viewHandler, destroyEntityOffset);
+    void* viewHandler = Mem::ReadPtr(localPlayer, RuntimeOffsets::KJ_ViewHandler);
+    return Mem::ReadPtr(viewHandler, RuntimeOffsets::VH_DestroyEntity);
 }
 
 bool ReadCollisionMultiplier(void* properties, float& out)
 {
-    if (!properties) return false;
-    bool ok = false;
-    __try {
-        out = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(properties) + g_collisionMultiplierOffset);
-        ok = true;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
-    return ok;
+    return Mem::TryRead(properties, RuntimeOffsets::OP_CollRadiusMult, out);
 }
 
 bool WriteCollisionMultiplier(void* properties, float value)
 {
-    if (!properties) return false;
-    bool ok = false;
-    __try {
-        *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(properties) + g_collisionMultiplierOffset) = value;
-        ok = true;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
-    return ok;
+    return Mem::TryWrite(properties, RuntimeOffsets::OP_CollRadiusMult, value);
 }
 
 // Carry over a previously-captured original for an object we still track, so
@@ -228,9 +133,9 @@ size_t CollectPlayerObjectProperties(void* entity, const ObjectPropertiesTarget*
     size_t propertyCount = 0;
     const size_t count = targetCount < outCapacity ? targetCount : outCapacity;
     for (size_t i = 0; i < count; ++i) {
-        const uint32_t offset = ResolveObjectPropertiesOffset(entityClass, targets[i]);
-        void* properties = ReadObjectPropertiesRef(entity, offset);
-        if (!ResolveCollisionMultiplierOffset(properties)) continue;
+        const uint32_t offset = targets[i].offset;
+        void* properties = Mem::ReadPtr(entity, offset);
+        if (!IsObjectPropertiesInstance(properties)) continue;
         AddObjectPropertiesTarget(outProperties, propertyCount, properties);
     }
     return propertyCount;
@@ -266,7 +171,7 @@ bool ApplyEntityMultiplierTargets(void* entityPtr,
     size_t visitedCount = 0;
     const size_t count = targetCount < kMaxObjectPropertiesTargets ? targetCount : kMaxObjectPropertiesTargets;
     for (size_t i = 0; i < count; ++i) {
-        void* properties = ReadObjectPropertiesRef(entityPtr, targets[i].offset);
+        void* properties = Mem::ReadPtr(entityPtr, targets[i].offset);
         if (!properties) continue;
 
         bool duplicate = false;
