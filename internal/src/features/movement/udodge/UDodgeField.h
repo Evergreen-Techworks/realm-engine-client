@@ -14,18 +14,13 @@ struct EscapeResult {
 };
 
 // Dijkstra over a 21x21 half-tile grid centered on the player. Goal = first
-// popped non-start cell where Core::PointDwellClear(in, cell, arrivalMs,
-// kHoldMs) holds. Walls block; diagonal steps require both orthogonal
-// neighbors open (no corner-cutting); hazard cells cost extra but are
-// traversable. speedTilesPerMs converts accumulated distance to arrival time.
-// Game-update thread only (static scratch).
-EscapeResult FindEscape(const CoreInput& in, float speedTilesPerMs);
-
-// Instantaneous overload (plan 46): same 21×21 half-tile Dijkstra, goal =
-// first popped non-start cell where Core::PointClear holds. No arrival
-// times; hazard cells cost extra, pending zones and danger lanes cost more
-// but stay traversable (transit through danger may be the only way out of a
-// boxed-in room — the endpoint itself must be clear).
+// popped non-start cell where the spatial Core::PointClear goal test holds
+// (standable ground, outside every danger lane and active zone). Walls
+// block; diagonal steps require both orthogonal neighbors open (no
+// corner-cutting); hazard cells cost extra but are traversable, and pending
+// zones / danger lanes cost more but stay traversable (transit through
+// danger may be the only way out of a boxed-in room — the endpoint itself
+// must be clear). Game-update thread only (static scratch).
 EscapeResult FindEscape(const MapInput& in);
 
 } } // namespace UDodge::Field

@@ -15,25 +15,20 @@ constexpr int   kStandCandidate  = 0;
 constexpr int   kIntentCandidate = kDirectionCount + 1;   // 33
 constexpr int   kFieldCandidate  = kDirectionCount + 2;   // 34
 constexpr int   kCandidateCount  = kDirectionCount + 3;   // 35
-constexpr float kSampleMs        = 30.f;     // path-validation / resample step
-constexpr float kMaxTimeMs       = 1.0e9f;
 constexpr float kTwoPi           = 6.28318530717958647692f;
 
-// ── Snapshot capacities (fixed buffers — zero per-frame heap allocation) ─────
+// ── Map capacities (fixed buffers — zero per-frame heap allocation) ─────────
 constexpr int kMaxProjectiles = 96;
 constexpr int kMaxPathSamples = 24;
 constexpr int kMaxAoes        = 32;
 constexpr int kMaxEnemies     = 64;
 
-// ── Controller constants (reference-tuned; tiles / ms) ──────────────────────
+// ── Controller constants (reference-tuned; tiles) ───────────────────────────
 constexpr float kRelevanceClearance       = 1.0f;   // "could this shot matter" pad
 constexpr float kIntentSafeClearance      = 0.08f;  // safety floor for keeping/blending intent
 constexpr float kEmergencyIntentBand      = 0.14f;  // clearance we may trade for intent in emergencies
-constexpr float kUnavoidableImpactBandMs  = 60.f;   // impact time we may trade when a hit is unavoidable
 constexpr float kUnavoidableClearanceBand = 0.05f;
-constexpr float kEmergencyOverrideMs      = 100.f;  // impact sooner than this = emergency
-constexpr float kHysteresisMs             = 100.f;  // keep the chosen heading at least this long
-constexpr float kHysteresisScoreGain      = 0.25f;  // ...unless a new one is better by this much
+constexpr float kHysteresisScoreGain      = 0.25f;  // hold the chosen heading unless beaten by this much
 constexpr int   kCorridorNeighbors        = 3;      // half-width of the corridor-safety window
 
 struct Vec2 {
@@ -69,30 +64,6 @@ inline float MinChebOnSegment(float x0, float y0, float x1, float y1)
     return best;
 }
 
-// A projectile as a time-parametrized polyline (ms from "now", ascending; the
-// path already ends at the projectile's death, so no separate alive check).
-struct ProjectileThreat {
-    int32_t id = 0;
-    // Exalt IsHit threshold T (Chebyshev, player is a point): live
-    // runtimeChebyshevHalf when read, else the spawn heuristic, else 0.5.
-    float   hitHalf = 0.5f;
-    int     sampleCount = 0;
-    Vec2    samples[kMaxPathSamples]{};
-    float   sampleTimesMs[kMaxPathSamples]{};
-};
-
-// A telegraphed blast: dangerous exactly AT landingMs (throwables / novas /
-// circle telegraphs detonate when their timer ends — the flight is harmless).
-// A zone that has already landed but still has lifetime left persists as an
-// always-active disc (activeNow) for remainMs.
-struct AoeThreat {
-    Vec2  pos{};
-    float radius = 1.f;
-    float landingMs = 0.f;   // ms from now; 0 when activeNow
-    bool  activeNow = false; // already detonated, zone persists
-    float remainMs = 0.f;    // only meaningful when activeNow: remaining life
-};
-
 // A live enemy body. Proximity is scored (tiebreak), never a hard veto — the
 // only safe lane may run past an enemy.
 struct EnemyBlocker {
@@ -100,29 +71,10 @@ struct EnemyBlocker {
     float radius = 0.5f;
 };
 
-struct Snapshot {
-    ProjectileThreat projectiles[kMaxProjectiles]{};
-    int  projectileCount = 0;
-    AoeThreat aoes[kMaxAoes]{};
-    int  aoeCount = 0;
-    EnemyBlocker enemies[kMaxEnemies]{};
-    int  enemyCount = 0;
-    bool projectileSourceUnavailable = false;
-    bool limited = false;
-    // Autopilot boss lock — highest-maxHp enemy with a health bar, NOT
-    // range-culled (computed in the same enemy pass; RePP semantics).
-    bool    hasLock = false;
-    int32_t lockId  = 0;
-    Vec2    lockPos{};
-};
-
 struct Settings {
-    float horizonMs   = 600.f;   // prediction window        [200, 2000]
-    float leadMs      = 40.f;    // command-latency lead     [0, 250]
     float hitScale    = 1.0f;    // × per-shot hit threshold [0.25, 2.5]
     bool  safeWalk    = true;    // avoid damaging ground in path checks
     bool  speedScale  = true;    // match gentle overrides to intent speed
-    bool  predictionAccuracy = true;
     bool  fieldEscape = true;    // Dijkstra pocket search when boxed in
     bool  debugOverlay = true;
     int   mode        = 0;       // 0 = Assist, 1 = Autopilot
@@ -190,8 +142,8 @@ struct DangerMap {
     Vec2    lockPos{};
 };
 
-// Input for the instantaneous core (plan 46). Mirrors CoreInput minus every
-// time field: no nowMs, no horizon/lead — stepTiles is a DISTANCE.
+// Input for the instantaneous core. No time fields exist — stepTiles is a
+// DISTANCE (the candidate commitment length).
 struct MapInput {
     Vec2  player{};
     Vec2  intentDir{};          // unit WASD/goal direction; zero when idle
@@ -221,25 +173,10 @@ enum class Decision : uint8_t {
 
 struct CandidateDebug {
     Vec2  dir{};
-    float score = kMaxTimeMs;    // worst clearance over the horizon (tiles)
-    float impactMs = kMaxTimeMs; // first time clearance hits zero
-    float blockMs = kMaxTimeMs;  // first time the path hits a wall/hazard
     bool  valid = true;
-    float clearance = kMaxTimeMs;  // min hard clearance along the step segment (tiles)
-    float softCost  = 0.f;         // pending-zone penetration sum (tiles)
-    float blockDist = kMaxTimeMs;  // distance at which walls truncate the segment
-};
-
-struct CoreInput {
-    Vec2  player{};
-    Vec2  intentDir{};        // unit WASD direction; zero when idle
-    float  moveSpeed = 0.f;   // tiles per ms
-    double nowMs = 0.0;       // monotonic clock (ms) — double: tick counts exceed float precision
-    bool  movementLocked = false;
-    bool  playerOnHazard = false;   // standing on damaging ground right now
-    Settings settings{};
-    Env env{};
-    const Snapshot* sensors = nullptr;
+    float clearance = kHugeClearance;  // min hard clearance along the step segment (tiles)
+    float softCost  = 0.f;             // pending-zone penetration sum (tiles)
+    float blockDist = kHugeClearance;  // distance at which walls truncate the segment
 };
 
 struct CoreOutput {
@@ -255,18 +192,15 @@ struct CoreOutput {
     CandidateDebug candidates[kCandidateCount]{};
 };
 
-// Cross-frame controller state (hysteresis).
+// Cross-frame controller state (tick-locked hysteresis). Heading held while
+// the server tick is unchanged; re-decided at each NewTick sync.
 struct CoreState {
-    int    selectedCandidate = kStandCandidate;
-    double selectedUntilMs = 0.0;
-    // Tick-locked hysteresis (instantaneous core). Heading held while the
-    // server tick is unchanged; re-decided at each NewTick sync.
+    int      selectedCandidate = kStandCandidate;
     uint32_t selectedTick = 0;
     bool     haveTick = false;
     void Reset()
     {
         selectedCandidate = kStandCandidate;
-        selectedUntilMs = 0.0;
         selectedTick = 0;
         haveTick = false;
     }
