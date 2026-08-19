@@ -46,4 +46,27 @@ namespace Il2CppC {
         out[n] = '\0';
         return n;
     }
+
+    // Copy an IL2CPP System.String into a UTF-8 buffer via WideCharToMultiByte
+    // (correct for non-ASCII names). Rejects implausible lengths instead of
+    // truncating. Returns the number of bytes written (excluding the null).
+    int ReadStringUtf8(void* strPtr, char* out, int outCap) {
+        if (!Mem::AddrOk(strPtr) || out == nullptr || outCap <= 0) return 0;
+        out[0] = '\0';
+        int32_t len = Mem::ReadOr<int32_t>(strPtr, kStrLen, 0);
+        if (len <= 0 || len > 4096) return 0;
+        // Copy UTF-16 units under SEH, then convert.
+        wchar_t wbuf[512];
+        int n = (len < 511) ? len : 511;
+        const uint8_t* chars = reinterpret_cast<const uint8_t*>(strPtr) + kStrChars;
+        for (int i = 0; i < n; ++i) {
+            uint16_t ch = Mem::ReadOr<uint16_t>(chars + static_cast<size_t>(i) * 2u, 0, 0);
+            wbuf[i] = static_cast<wchar_t>(ch);
+        }
+        int written = WideCharToMultiByte(CP_UTF8, 0, wbuf, n, out, outCap - 1,
+                                          nullptr, nullptr);
+        if (written < 0) written = 0;
+        out[written] = '\0';
+        return written;
+    }
 }

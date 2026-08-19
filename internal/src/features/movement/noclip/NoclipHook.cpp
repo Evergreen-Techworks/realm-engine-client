@@ -54,22 +54,6 @@ static bool     s_resolved   = false;
 static bool     s_installed  = false;
 static uint64_t s_nextTryMs  = 0;
 
-static bool EnsureIl2CppThreadAttached()
-{
-    static thread_local bool attached = false;
-    if (attached)
-        return true;
-    if (!il2cpp_domain_get || !il2cpp_thread_attach)
-        return false;
-
-    Il2CppDomain* domain = il2cpp_domain_get();
-    if (!domain)
-        return false;
-
-    attached = il2cpp_thread_attach(domain) != nullptr;
-    return attached;
-}
-
 template <int I>
 static bool __fastcall Detour(void* self, float x, float y, void* method)
 {
@@ -99,7 +83,7 @@ static void ResolveTargets()
         return;
     s_nextTryMs = now + 1000;
 
-    if (!EnsureIl2CppThreadAttached())
+    if (!Il2CppHook::EnsureThreadAttached())
         return;
 
     // Resolve every predicate through the sanctioned resolver. ResolveMethod uses

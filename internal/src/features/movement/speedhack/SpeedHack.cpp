@@ -191,22 +191,6 @@ static void ResolveUnityTimeThunk(Fn& target, const char* icallNameText)
         target = reinterpret_cast<Fn>(thunk);
 }
 
-static bool EnsureIl2CppThreadAttached()
-{
-    static thread_local bool attached = false;
-    if (attached)
-        return true;
-    if (!il2cpp_domain_get || !il2cpp_thread_attach)
-        return false;
-
-    Il2CppDomain* domain = il2cpp_domain_get();
-    if (!domain)
-        return false;
-
-    attached = il2cpp_thread_attach(domain) != nullptr;
-    return attached;
-}
-
 static const MethodInfo* FindMethod(Il2CppClass* klass, const char* name, int argc)
 {
     if (!klass || !klass->name) return nullptr;
@@ -401,7 +385,7 @@ static void ResolveTargets()
 {
     if (s_resolved)
         return;
-    if (!EnsureIl2CppThreadAttached())
+    if (!Il2CppHook::EnsureThreadAttached())
         return;
 
     // Track time so we can give up on BeeByte-renamed anti-cheat classes.

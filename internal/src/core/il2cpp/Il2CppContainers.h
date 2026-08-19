@@ -47,4 +47,9 @@ namespace Il2CppC {
     int ListItems(void* listPtr, void** out, int outMax);
     // Copy an IL2CPP string into a UTF-8 buffer (best effort). Returns length.
     int ReadString(void* strPtr, char* out, int outCap);
+    // Copy an IL2CPP System.String into a UTF-8 buffer via WideCharToMultiByte
+    // (correct for non-ASCII names). Rejects implausible lengths (len <= 0 or
+    // len > 4096 -> returns 0). Always null-terminates when outCap > 0.
+    // Returns bytes written (excluding the null). SEH-safe.
+    int ReadStringUtf8(void* strPtr, char* out, int outCap);
 }

@@ -34,4 +34,10 @@ namespace Il2CppHook {
                                           int argCount,
                                           bool loose = true,
                                           const char* namespaze = "");
+
+    // Attach the calling OS thread to the IL2CPP domain (idempotent per thread,
+    // thread_local cached). Required before calling IL2CPP APIs from a thread
+    // the runtime has not seen (detour threads, worker threads). Returns false
+    // if the IL2CPP API is not initialised yet or attach fails.
+    bool EnsureThreadAttached();
 }

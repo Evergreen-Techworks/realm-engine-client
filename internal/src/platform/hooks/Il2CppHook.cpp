@@ -100,4 +100,20 @@ const MethodInfo* ResolveMethodCached(const char* className,
     return result;
 }
 
+bool EnsureThreadAttached()
+{
+    static thread_local bool attached = false;
+    if (attached)
+        return true;
+    if (!il2cpp_domain_get || !il2cpp_thread_attach)
+        return false;
+
+    Il2CppDomain* domain = il2cpp_domain_get();
+    if (!domain)
+        return false;
+
+    attached = il2cpp_thread_attach(domain) != nullptr;
+    return attached;
+}
+
 } // namespace Il2CppHook
