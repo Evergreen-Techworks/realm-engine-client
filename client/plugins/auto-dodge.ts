@@ -277,14 +277,14 @@ export function register(ctx: PluginContext) {
     (v: string) => sendDllFeature('pjdodgeLockFollow', v === 'on' ? 1 : 0));
 
   // ── UDodge (Unified) settings ─────────────────────────────────────────────
-  registerModeSetting('unified', 'udodgeHorizonMs', {
-    label: '[UDodge] Prediction horizon (ms)',
-    type: 'range', value: 600, min: 300, max: 1200, step: 25,
-  }, (v: number) => sendDllFeature('udodgeHorizonMs', v));
-  registerModeSetting('unified', 'udodgeLeadMs', {
-    label: '[UDodge] Command lead (ms — latency compensation)', advanced: true,
-    type: 'range', value: 40, min: 0, max: 150, step: 5,
-  }, (v: number) => sendDllFeature('udodgeLeadMs', v));
+  registerModeSetting('unified', 'udodgeLaneTiles', {
+    label: '[UDodge] Danger lane length (tiles)',
+    type: 'range', value: 12, min: 2, max: 16, step: 0.5,
+  }, (v: number) => sendDllFeature('udodgeLaneTiles', v));
+  registerModeSetting('unified', 'udodgeStepTiles', {
+    label: '[UDodge] Step distance (tiles, 0 = auto: one server tick)', advanced: true,
+    type: 'range', value: 0, min: 0, max: 3, step: 0.1,
+  }, (v: number) => sendDllFeature('udodgeStepTiles', v));
   registerModeSetting('unified', 'udodgeHitScale', {
     label: '[UDodge] Hit scale (1 = exact game hitbox)', advanced: true,
     type: 'range', value: 1, min: 0.5, max: 1.5, step: 0.05,
@@ -293,9 +293,6 @@ export function register(ctx: PluginContext) {
     (v: string) => sendDllFeature('udodgeSafeWalk', v === 'on' ? 1 : 0));
   registerModeSetting('unified', 'udodgeSpeedScale', onOff('[UDodge] Match intent speed on gentle overrides', 'on'),
     (v: string) => sendDllFeature('udodgeSpeedScale', v === 'on' ? 1 : 0));
-  registerModeSetting('unified', 'udodgePredictionAccuracy',
-    onOff('[UDodge] Prediction accuracy (per-shot clock calibration)', 'on'),
-    (v: string) => sendDllFeature('udodgePredictionAccuracy', v === 'on' ? 1 : 0));
   registerModeSetting('unified', 'udodgeFieldEscape',
     onOff('[UDodge] Field escape (Dijkstra route around walls when boxed in)', 'on'),
     (v: string) => sendDllFeature('udodgeFieldEscape', v === 'on' ? 1 : 0));
@@ -481,12 +478,12 @@ export function register(ctx: PluginContext) {
     for (const k of ['pjdodgeSafeWalk', 'pjdodgeSpeedScale', 'pjdodgePredictionAccuracy', 'pjdodgeDebugOverlay', 'pjdodgeLockFollow'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     // UDodge (unified) settings.
-    sendDllFeature('udodgeHorizonMs', ctx.getSetting<number>('udodgeHorizonMs'));
-    sendDllFeature('udodgeLeadMs', ctx.getSetting<number>('udodgeLeadMs'));
+    sendDllFeature('udodgeLaneTiles', ctx.getSetting<number>('udodgeLaneTiles'));
+    sendDllFeature('udodgeStepTiles', ctx.getSetting<number>('udodgeStepTiles'));
     sendDllFeature('udodgeHitScale', ctx.getSetting<number>('udodgeHitScale'));
     sendDllFeature('udodgeStandOnType', ctx.getSetting<number>('udodgeStandOnType'));
     sendDllFeature('udodgeMode', ctx.getSetting<string>('udodgeMode') === 'autopilot' ? 1 : 0);
-    for (const k of ['udodgeSafeWalk', 'udodgeSpeedScale', 'udodgePredictionAccuracy',
+    for (const k of ['udodgeSafeWalk', 'udodgeSpeedScale',
                      'udodgeFieldEscape', 'udodgeLockFollow', 'udodgeFollowLantern',
                      'udodgeDebugOverlay'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
