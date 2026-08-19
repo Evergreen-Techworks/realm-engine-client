@@ -138,6 +138,34 @@ bool LanternIntent(Vec2 player, const Settings& settings, Vec2& outTargetPos, Ve
     return true;
 }
 
+// Rasterize the plain-data occupancy+hazard grid the worker routes over (plan 60).
+// GAME THREAD ONLY: Sensors::CanOccupy / IsHazardAt touch live world memory, so this
+// can never move to the worker. HOT PATH: 81×81 = 6561 CanOccupy calls is the single
+// largest new game-thread cost, so WALL bits (bit0) are re-rasterized ONLY on a full
+// map rebuild (walls are static within a server tick), while HAZARD bits (bit1) refresh
+// every publish (cheap via the per-tick hazard memo). `grid` persists across frames
+// (a static in Tick), so unrebuilt wall bits survive. Runs inside the per-tick memo
+// lifetime — BuildMap/ReanchorMap cleared and repopulated the memo earlier this frame.
+void FillOccGrid(Planner::OccGrid& grid, Vec2 player, bool rebuildWalls)
+{
+    grid.center = player;
+    constexpr int R = Planner::kPlanGridRadius;
+    constexpr int S = Planner::kPlanGridSize;
+    for (int gy = 0; gy < S; ++gy) {
+        for (int gx = 0; gx < S; ++gx) {
+            const float wx = player.x + static_cast<float>(gx - R) * Planner::kPlanCellTiles;
+            const float wy = player.y + static_cast<float>(gy - R) * Planner::kPlanCellTiles;
+            uint8_t& f = grid.flags[gy * S + gx];
+            if (rebuildWalls) {
+                // Walls only (safeWalk=false) so hazard is a routing COST, not a block —
+                // matching UDodgeField::IsWall.
+                if (!Sensors::CanOccupy(wx, wy, false)) f |= 0x1; else f &= static_cast<uint8_t>(~0x1);
+            }
+            if (Sensors::IsHazardAt(wx, wy)) f |= 0x2; else f &= static_cast<uint8_t>(~0x2);
+        }
+    }
+}
+
 } // namespace
 
 void SetEnabled(bool enabled)
@@ -226,7 +254,10 @@ void Tick(void* player, float px, float py, float dt)
             // the worker's latest plan (non-blocking); the game thread never
             // blocks on the worker. Core::Evaluate below still runs every frame,
             // so bullet-reaction latency is unaffected by plan staleness.
-            Planner::PlannerSnapshot snap{};
+            // Large (rasterized grid + danger map) — keep off the stack; static so the
+            // grid's wall bits persist across frames for the rebuild-only rasterization.
+            // Every scalar field below is overwritten each publish, so no re-zeroing.
+            static Planner::PlannerSnapshot snap;
             snap.tickId           = g_map.tickId;
             snap.player           = in.player;
             snap.settings         = settings;
@@ -234,6 +265,10 @@ void Tick(void* player, float px, float py, float dt)
             snap.lockPos          = g_map.lockPos;
             snap.rangeResolved    = AutoAim::IsProjRangeResolved();
             snap.weaponRangeTiles = snap.rangeResolved ? AutoAim::GetProjRangeTiles() : 6.f;
+            // GAME-THREAD rasterization: walls on rebuild, hazard each publish. Copy the
+            // plain-data danger map for the worker's lane/zone routing cost.
+            FillOccGrid(snap.grid, in.player, rebuilt);
+            snap.map = g_map;
 
             Worker::PublishSnapshot(snap);
 
@@ -333,6 +368,9 @@ void Tick(void* player, float px, float py, float dt)
         d.fieldTarget = g_out.fieldTarget;
         d.hasLockTarget = apHasTarget;
         d.lockTarget = apTarget;
+        // Planned route from the consumed worker plan (plain data) — drawn on the overlay.
+        d.pathCount = std::clamp(g_lastPlan.pathCount, 0, kMaxPathPoints);
+        for (int i = 0; i < d.pathCount; ++i) d.path[i] = g_lastPlan.path[i];
         for (int i = 0; i < kCandidateCount; ++i) d.candidates[i] = g_out.candidates[i];
         d.map = g_map;
         PublishDebug(d);

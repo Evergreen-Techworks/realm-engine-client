@@ -22,6 +22,9 @@ constexpr int kMaxProjectiles = 96;
 constexpr int kMaxPathSamples = 24;
 constexpr int kMaxAoes        = 32;
 constexpr int kMaxEnemies     = 64;
+// Whole-window planner route cap (plan 60). Defined here so both the plain-data
+// Planner (UDodgePlanner.h, nested namespace) and DebugSnapshot below can see it.
+constexpr int kMaxPathPoints  = 48;
 
 // ── Controller constants (reference-tuned; tiles) ───────────────────────────
 // Wide reaction space substitutes for the deleted time/lead dimension: the
@@ -234,6 +237,8 @@ struct DebugSnapshot {
     Vec2  fieldTarget{};
     bool  hasLockTarget = false;
     Vec2  lockTarget{};
+    Vec2  path[kMaxPathPoints]{};   // planned route polyline (world coords) — plan 60
+    int   pathCount = 0;
     CandidateDebug candidates[kCandidateCount]{};
     DangerMap map{};
 };

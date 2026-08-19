@@ -150,6 +150,19 @@ void Render(const DebugSnapshot& snap,
         DrawLine(d, cam, snap.player, snap.fieldTarget, IM_COL32(255, 210, 0, 140), 1.5f);
     }
 
+    // Planned whole-window route (plan 60): the worker's Dijkstra polyline around
+    // walls/hazards/danger to the goal, drawn in cyan with a vertex dot per point and
+    // a goal marker at the end. Plain data — already world coords in the snapshot.
+    {
+        const int n = std::min(snap.pathCount, kMaxPathPoints);
+        for (int i = 0; i + 1 < n; ++i)
+            DrawLine(d, cam, snap.path[i], snap.path[i + 1], IM_COL32(0, 235, 255, 210), 2.f);
+        for (int i = 0; i < n; ++i)
+            DrawDot(d, cam, snap.path[i], 2.5f, IM_COL32(0, 235, 255, 180));
+        if (n > 0)
+            DrawWorldCircle(d, cam, snap.path[n - 1], 0.5f, IM_COL32(0, 235, 255, 230), 2.f);
+    }
+
     // Autopilot lock target (the biggest targetable enemy being orbited).
     if (snap.hasLockTarget) {
         ImVec2 s;
