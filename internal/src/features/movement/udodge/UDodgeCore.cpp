@@ -623,6 +623,32 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
         c.clearance[choice] >= c.reactMargin)
         speedScale = SelectAlignedSpeedMap(c, choice, intentVel, speed);
 
+    // Invariant: an override must never emit a zero move when SOME escape
+    // exists. If the chosen override direction is degenerate (stand), re-pick
+    // the best MOVING candidate by the shared clearance ladder — biased to the
+    // field escape when one is active — so "emergency + any escape ⇒ a real
+    // move" always holds. Only when no valid moving candidate exists at all does
+    // choice stay stand (genuinely nowhere to move).
+    if (LenSq(c.dirs[choice]) < 1e-6f) {
+        int moving = -1;
+        CandKey bestMoving{};
+        for (int cand = 0; cand < kCandidateCount; ++cand) {
+            if (!c.valid[cand] || LenSq(c.dirs[cand]) < 1e-6f) continue;
+            const CandKey k = KeyOf(c, cand, intentDir);
+            if (moving < 0 || BetterCandidate(k, bestMoving)) {
+                bestMoving = k;
+                moving = cand;
+            }
+        }
+        if (out.fieldActive && c.valid[kFieldCandidate] &&
+            LenSq(c.dirs[kFieldCandidate]) > 1e-6f)
+            moving = kFieldCandidate;
+        if (moving >= 0) {
+            choice = moving;
+            state.selectedCandidate = choice;
+        }
+    }
+
     // A pure survival win by the field candidate is a field escape; a blend
     // that happens to pick it keeps its blend decision.
     if (choice == kFieldCandidate &&

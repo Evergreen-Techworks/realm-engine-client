@@ -146,14 +146,23 @@ EscapeResult FindEscape(const MapInput& in)
     while (s_prev[step] != start && s_prev[step] != -1) step = s_prev[step];
     const int sgx = step % kSize, sgy = step / kSize;
     const Vec2 stepWorld = CellWorld(player, sgx, sgy);
+    const int ggx = goal % kSize, ggy = goal / kSize;   // goal cell coords
 
     // Guard the immediate move: the first step itself must be clear right now,
     // else defer to the caller's least-bad fallback.
     if (!Core::PointClear(in, stepWorld)) return res;
 
+    // A found escape must carry a real unit direction. If the first-step cell
+    // rounds onto the player cell (degenerate {0,0} first-dir), fall back to the
+    // goal-ward direction; if that is also degenerate there is nowhere to go —
+    // leave found=false so the caller uses its least-bad fallback.
+    Vec2 dir = Normalize(Sub(stepWorld, player));
+    if (LenSq(dir) < 1e-6f) dir = Normalize(Sub(CellWorld(player, ggx, ggy), player));
+    if (LenSq(dir) < 1e-6f) return res;
+
     res.found = true;
     res.target = stepWorld;
-    res.firstDir = Normalize(Sub(stepWorld, player));
+    res.firstDir = dir;
     return res;
 }
 
