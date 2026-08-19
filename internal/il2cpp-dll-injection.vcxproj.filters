@@ -67,6 +67,7 @@
     <ClCompile Include="src\features\account\CredentialCapture.cpp" />
     <ClCompile Include="src\features\combat\autoaim\AutoAim.cpp" />
     <ClCompile Include="src\features\combat\autoability\AutoAbility.cpp" />
+    <ClCompile Include="src\game\actions\ItemUse.cpp" />
     <ClCompile Include="src\features\movement\dodge\AoeTracking.cpp" />
     <ClCompile Include="src\features\visuals\skins\character\SkinChanger.cpp" />
     <ClCompile Include="src\features\visuals\skins\SkinDatabase.cpp" />
@@ -207,6 +208,7 @@
     <ClInclude Include="src\features\runtime\FeatureRuntime.h" />
     <ClInclude Include="src\game\symbols\BeebyteName.h" />
     <ClInclude Include="src\game\objects\GameObjects.h" />
+    <ClInclude Include="src\game\actions\ItemUse.h" />
     <ClInclude Include="vendor\detours\detours.h" />
     <ClInclude Include="vendor\imgui\imconfig.h" />
     <ClInclude Include="vendor\imgui\imgui.h" />

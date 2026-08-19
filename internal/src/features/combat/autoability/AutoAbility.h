@@ -13,11 +13,10 @@
 // Bard arc-aims, etc.) is a separate phase-2 enhancement that needs
 // real reverse-engineering work per class.
 //
-// Shares the same EquipmentManager plumbing pattern as the autopot
-// path inside FeatAutoNexus (resolves
-// EquipmentManager.UseInventoryItemByHotkey + the
-// FKALGHJIADI.AJJJBDBNBLM EquipmentManager field offset lazily on
-// first enabled tick).
+// Shares the EquipmentManager plumbing with the autopot path inside
+// FeatAutoNexus — both route through Game::ItemUse
+// (game/actions/ItemUse.h), which owns method resolution and the
+// player→EquipmentManager pointer read.
 namespace AutoAbility {
 
 void Tick();

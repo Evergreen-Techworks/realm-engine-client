@@ -89,6 +89,7 @@
     <ClCompile Include="src\features\combat\autoaim\AimHooks.cpp" />
     <ClCompile Include="src\features\combat\enemytracker\EnemyTracker.cpp" />
     <ClCompile Include="src\features\combat\autoability\AutoAbility.cpp" />
+    <ClCompile Include="src\game\actions\ItemUse.cpp" />
     <ClCompile Include="src\features\movement\dodge\AoeTracking.cpp" />
     <ClCompile Include="src\features\visuals\skins\character\SkinChanger.cpp" />
     <ClCompile Include="src\features\visuals\skins\SkinDatabase.cpp" />
@@ -176,6 +177,7 @@
     <ClInclude Include="src\core\il2cpp\il2cpp-init.h" />
     <ClInclude Include="src\core\il2cpp\Il2CppContainers.h" />
     <ClInclude Include="src\game\objects\GameObjects.h" />
+    <ClInclude Include="src\game\actions\ItemUse.h" />
     <ClInclude Include="src\core\il2cpp\pch-il2cpp.h" />
     <ClInclude Include="src\platform\dx11\Dx11.h" />
     <ClInclude Include="src\core\ipc\IpcBridge.h" />

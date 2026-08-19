@@ -13,6 +13,7 @@
 #include "Il2CppHook.h"
 #include "core/runtime/MemRead.h"
 #include "game/objects/GameObjects.h"
+#include "game/actions/ItemUse.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstdint>
@@ -29,14 +30,6 @@ static float g_predTimeMs    = 200.f;
 static bool  g_nexusProjDmg  = true;
 static bool  g_nexusTileDmg  = true;
 static bool  g_debugDraw     = false;
-
-// EquipmentManager.UseInventoryItemByHotkey — resolved lazily on first
-// use so the module costs nothing at startup. Cached forever once
-// resolved (function pointer is stable for the process lifetime).
-using UseInvByHotkeyFn = void(__fastcall*)(void* eqMgr, int32_t hotkey, void* methodInfo);
-static UseInvByHotkeyFn s_fnUseInvByHotkey = nullptr;
-static uint32_t          s_eqMgrFieldOff   = 0;   // FKALGHJIADI.AJJJBDBNBLM offset
-static bool              s_autoPotResolved = false;
 
 static ULONGLONG s_lastAutoNexusTick = 0;
 
@@ -574,53 +567,17 @@ static void RunAutoNexus()
 }
 
 // ── Item-use primitives ──────────────────────────────────────────────────
-// Resolve EquipmentManager.UseInventoryItemByHotkey + the EquipmentManager
-// pointer field on the player class. Idempotent — subsequent calls return
-// immediately when s_autoPotResolved is set.
-static void ResolveAutoPotOnce()
-{
-    if (s_autoPotResolved) return;
-
-    // Try real class name first, fall back to BeeByte-obfuscated name.
-    const MethodInfo* mi = Il2CppHook::ResolveMethodCached(
-        "EquipmentManager", "UseInventoryItemByHotkey", 1,
-        false, "DecaGames.RotMG.Managers.Equipment");
-    if (!mi) mi = Il2CppHook::ResolveMethodCached(
-        "PNBNDBIPENP", "UseInventoryItemByHotkey", 1);
-    if (mi)
-        s_fnUseInvByHotkey = reinterpret_cast<UseInvByHotkeyFn>(mi->methodPointer);
-
-    // Field resolution (not a method lookup -- stays as-is).
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* fk = Resolver::FindClassLoose("FKALGHJIADI");
-        if (fk) {
-            FieldInfo* eqf = il2cpp_class_get_field_from_name(fk, "AJJJBDBNBLM");
-            if (eqf) s_eqMgrFieldOff = static_cast<uint32_t>(il2cpp_field_get_offset(eqf));
-        }
-    });
-    if (s_fnUseInvByHotkey && s_eqMgrFieldOff) s_autoPotResolved = true;
-}
-
-static void* ReadEquipmentManagerPtr(void* localPlayer)
-{
-    if (!localPlayer || !s_eqMgrFieldOff) return nullptr;
-    return Mem::ReadPtr(localPlayer, s_eqMgrFieldOff);
-}
-
+// Game::ItemUse owns EquipmentManager method resolution and the
+// player→EquipmentManager pointer read (RuntimeOffsets::PlayerEquipMgr).
 static void TryDrinkHotkey(int hotkey, ULONGLONG& lastTickMs, ULONGLONG cooldownMs)
 {
-    ResolveAutoPotOnce();
-    if (!s_fnUseInvByHotkey || !s_eqMgrFieldOff) return;
+    if (!Game::ItemUse::Ready()) return;
     const ULONGLONG now = GetTickCount64();
     if (now - lastTickMs < cooldownMs) return;
-    void* lp = LocalPlayer::GetPtr();
-    if (!lp) return;
-    void* eqMgr = ReadEquipmentManagerPtr(lp);
-    if (!eqMgr) return;
-    Resolver::Protection::safe_call([&]() {
-        s_fnUseInvByHotkey(eqMgr, hotkey, nullptr);
-    });
-    lastTickMs = now;
+    if (Game::ItemUse::UseByHotkey(hotkey))
+        lastTickMs = now;
+    else
+        lastTickMs = now;   // preserve old behavior: cooldown starts on attempt
 }
 
 void Tick()

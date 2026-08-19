@@ -23,9 +23,6 @@ static const char* kCSAMethod     = "ELCBJAFBLJG"; // ComputeShootAngle
 static const char* kSWAMethod     = "EHGHCACPAGH"; // ShootWithAngle
 static const char* kSSPMethod     = "PMIANFBMMNN"; // SendShotPacket
 
-// shotData+0x1C is the angle field in the SHOOT packet struct
-static constexpr uint32_t kOffShotAngle = 0x1C;
-
 // ── Weapon-specific proj IDs ──────────────────────────────────────────────────
 static constexpr int32_t kProjIdCultStaff    = 0xB0EB; // Staff of Unholy Sacrifice
 static constexpr int32_t kProjIdColossusSlash = 0xB106; // Sword of the Colossus
@@ -126,7 +123,7 @@ void __fastcall SendShotPacketDetour(void* player, void* shotData, int32_t projC
             const float newAngle = ApplyWeaponTweaks(atan2f(
                 s_targetY.load(std::memory_order_relaxed) - py,
                 s_targetX.load(std::memory_order_relaxed) - px));
-            Mem::TryWrite<float>(shotData, kOffShotAngle, newAngle);
+            Mem::TryWrite<float>(shotData, RuntimeOffsets::Shot_Angle, newAngle);
             Mem::TryWrite<float>(player, RuntimeOffsets::Player_FacingAngle, newAngle);
         }
     }

@@ -1,10 +1,8 @@
 #include "pch-il2cpp.h"
 #include "AutoAbility.h"
 #include "AutoAim.h"
-#include "Il2CppResolver.h"
-#include "Il2CppHook.h"
 #include "LocalPlayer.h"
-#include "core/runtime/MemRead.h"
+#include "game/actions/ItemUse.h"
 
 #include <algorithm>
 #include <atomic>
@@ -21,55 +19,7 @@ std::atomic<int>   g_hotkey          { 1 };
 std::atomic<bool>  g_targetingOn     { false };
 std::atomic<int>   g_targetMode      { 0 };  // 0=AimAtEnemy, 1=Self
 
-// Hotkey path (lean default).
-using UseInvByHotkeyFn = void(__fastcall*)(void* eqMgr, int32_t hotkey, void* methodInfo);
-// Targeted path (per-class). Note Vector2 is passed by-value in the IL2CPP
-// ABI — its two floats occupy two register slots on x64 Windows.
-struct Vec2 { float x; float y; };
-using UseInvItemFn = bool(__fastcall*)(
-    void* eqMgr, void* player, int32_t slot, int32_t kind,
-    Vec2 pos, bool a, bool b, void* methodInfo);
-
-UseInvByHotkeyFn s_fnHotkey       = nullptr;
-UseInvItemFn     s_fnTargeted     = nullptr;
-uint32_t         s_eqMgrFieldOff  = 0;   // FKALGHJIADI.AJJJBDBNBLM offset
-bool             s_resolved       = false;
-ULONGLONG        s_lastFireMs     = 0;
-
-void ResolveOnce()
-{
-    if (s_resolved) return;
-
-    // Try real class name first, fall back to BeeByte-obfuscated name.
-    const MethodInfo* miHk = Il2CppHook::ResolveMethodCached(
-        "EquipmentManager", "UseInventoryItemByHotkey", 1,
-        false, "DecaGames.RotMG.Managers.Equipment");
-    if (!miHk) miHk = Il2CppHook::ResolveMethodCached(
-        "PNBNDBIPENP", "UseInventoryItemByHotkey", 1);
-    if (miHk)
-        s_fnHotkey = reinterpret_cast<UseInvByHotkeyFn>(miHk->methodPointer);
-
-    const MethodInfo* miUse = Il2CppHook::ResolveMethodCached(
-        "EquipmentManager", "UseInventoryItem", 6,
-        false, "DecaGames.RotMG.Managers.Equipment");
-    if (!miUse) miUse = Il2CppHook::ResolveMethodCached(
-        "PNBNDBIPENP", "UseInventoryItem", 6);
-    if (miUse)
-        s_fnTargeted = reinterpret_cast<UseInvItemFn>(miUse->methodPointer);
-
-    // Field resolution (not a method lookup -- stays as-is).
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* fk = Resolver::FindClassLoose("FKALGHJIADI");
-        if (fk) {
-            FieldInfo* eqf = il2cpp_class_get_field_from_name(fk, "AJJJBDBNBLM");
-            if (eqf) s_eqMgrFieldOff = static_cast<uint32_t>(il2cpp_field_get_offset(eqf));
-        }
-    });
-    // Resolved when we have AT LEAST the hotkey path + the eq-mgr offset.
-    // Targeted path is optional — if its method-info isn't found we fall
-    // back to hotkey-only and the targeting toggle becomes a no-op.
-    if (s_fnHotkey && s_eqMgrFieldOff) s_resolved = true;
-}
+ULONGLONG s_lastFireMs = 0;
 
 } // namespace
 
@@ -78,8 +28,7 @@ bool IsEnabled() { return g_enabled.load(std::memory_order_relaxed); }
 void Tick()
 {
     if (!IsEnabled()) return;
-    ResolveOnce();
-    if (!s_fnHotkey || !s_eqMgrFieldOff) return;
+    if (!Game::ItemUse::Ready()) return;
 
     const ULONGLONG now = GetTickCount64();
     const int cd = g_cooldownMs.load(std::memory_order_relaxed);
@@ -91,17 +40,12 @@ void Tick()
     const float pct = curMp / static_cast<float>(maxMp) * 100.f;
     if (pct < g_mpThresholdPct.load(std::memory_order_relaxed)) return;
 
-    void* lp = LocalPlayer::GetPtr();
-    if (!lp) return;
-    void* eqMgr = Mem::ReadPtr(lp, s_eqMgrFieldOff);
-    if (!eqMgr) return;
-
     const int hk = g_hotkey.load(std::memory_order_relaxed);
-    const bool targeting = g_targetingOn.load(std::memory_order_relaxed) && s_fnTargeted != nullptr;
+    const bool targeting = g_targetingOn.load(std::memory_order_relaxed) && Game::ItemUse::TargetedAvailable();
 
     if (targeting) {
         // Per-class targeting — compute aim point based on mode.
-        Vec2 target{ LocalPlayer::GetX(), LocalPlayer::GetY() };
+        struct AimPoint { float x; float y; } target{ LocalPlayer::GetX(), LocalPlayer::GetY() };
         const int mode = g_targetMode.load(std::memory_order_relaxed);
         if (mode == 0) {
             // AimAtEnemy: use AutoAim's resolved target if active, else
@@ -115,18 +59,10 @@ void Tick()
         }
         // mode 1 = Self — target stays at player position (set above)
 
-        // UseInventoryItem signature:
-        //   (eqMgr, player, slot, kind, Vector2 pos, bool ?, bool ?)
-        // We use kind=0 (default), bools=false (matches game's own ability
-        // press path observed in PlayerTAB's inventory-slot click).
-        Resolver::Protection::safe_call([&]() {
-            s_fnTargeted(eqMgr, lp, hk, 0, target, false, false, nullptr);
-        });
+        Game::ItemUse::UseTargeted(hk, target.x, target.y);
     } else {
         // Hotkey-only path (lean default).
-        Resolver::Protection::safe_call([&]() {
-            s_fnHotkey(eqMgr, hk, nullptr);
-        });
+        Game::ItemUse::UseByHotkey(hk);
     }
     s_lastFireMs = now;
 }
@@ -134,7 +70,7 @@ void Tick()
 void SetEnabled(bool on)
 {
     g_enabled.store(on, std::memory_order_relaxed);
-    if (on) ResolveOnce();
+    if (on) (void)Game::ItemUse::Ready();
 }
 
 void SetMpThresholdPct(float pct)
