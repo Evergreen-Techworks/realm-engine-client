@@ -92,6 +92,10 @@ struct Settings {
     float stepTiles = 0.f;   // candidate step distance; 0 = auto
                              // (tilesPerSec × kServerTickSec)        [0 | 0.4, 3]
     float reactMargin = 0.60f;  // reaction clearance floor (tiles) [0.05, 2.0]
+    float orbitRange = 0.f;  // boss orbit standoff (tiles); 0 = auto
+                             // (resolved weapon range × 0.85)        [0 | 2, 16]
+    int   planRadius = 20;   // planner window radius (grid cells) [8, 40]
+                             // shrinks the rasterized window to cut cost
 };
 
 // Host environment probe (kept as function pointers so the core stays free of
@@ -239,6 +243,7 @@ struct DebugSnapshot {
     Vec2  lockTarget{};
     Vec2  path[kMaxPathPoints]{};   // planned route polyline (world coords) — plan 60
     int   pathCount = 0;
+    bool  drawPath = true;          // gate the route overlay (udodgeDrawPath — plan 61)
     CandidateDebug candidates[kCandidateCount]{};
     DangerMap map{};
 };

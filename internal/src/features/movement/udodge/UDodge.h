@@ -50,5 +50,8 @@ void  SetMode(int mode);              int   GetMode();       // 0=Assist 1=Autop
 void  SetLockFollow(bool en);         bool  GetLockFollow();
 void  SetFollowLantern(bool en);      bool  GetFollowLantern();
 void  SetStandOnType(int t);          int   GetStandOnType();
+void  SetOrbitRange(float t);         float GetOrbitRange();   // tiles; 0 = auto
+void  SetPlanRadius(float cells);     float GetPlanRadius();   // grid cells [8,40]
+void  SetDrawPath(bool en);           bool  GetDrawPath();     // route overlay
 
 } // namespace UDodge

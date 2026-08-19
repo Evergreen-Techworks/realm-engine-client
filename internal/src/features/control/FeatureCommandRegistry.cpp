@@ -249,7 +249,10 @@ namespace {
             FH_INT("udodgeMode", UDodge::SetMode),
             FH_INT_BOOL("udodgeLockFollow", UDodge::SetLockFollow),
             FH_INT_BOOL("udodgeFollowLantern", UDodge::SetFollowLantern),
-            FH_INT("udodgeStandOnType", UDodge::SetStandOnType)
+            FH_INT("udodgeStandOnType", UDodge::SetStandOnType),
+            FH_FLOAT("udodgeOrbitRange", UDodge::SetOrbitRange),
+            FH_FLOAT("udodgePlanRadius", UDodge::SetPlanRadius),
+            FH_INT_BOOL("udodgeDrawPath", UDodge::SetDrawPath)
         };
         return ApplyFeatureTable(f, h, sizeof(h) / sizeof(h[0]));
     }

@@ -39,6 +39,9 @@ std::atomic<int>   g_mode{ 0 };
 std::atomic<bool>  g_lockFollow{ false };
 std::atomic<bool>  g_followLantern{ false };
 std::atomic<int>   g_standOnType{ 0 };
+std::atomic<float> g_orbitRange{ 0.f };    // boss orbit standoff (tiles); 0 = auto
+std::atomic<float> g_planRadius{ 20.f };   // planner window radius (grid cells) [8,40]
+std::atomic<bool>  g_drawPath{ true };     // draw the plan-60 route overlay
 
 // Game-update thread only.
 CoreState  g_state;
@@ -86,6 +89,9 @@ Settings ReadSettings()
     s.lockFollow   = g_lockFollow.load(std::memory_order_relaxed);
     s.followLantern = g_followLantern.load(std::memory_order_relaxed);
     s.standOnType   = g_standOnType.load(std::memory_order_relaxed);
+    const float orbit = g_orbitRange.load(std::memory_order_relaxed);
+    s.orbitRange   = orbit <= 0.f ? 0.f : Clamp(orbit, 2.f, 16.f);
+    s.planRadius   = ClampInt(static_cast<int>(std::lround(g_planRadius.load(std::memory_order_relaxed))), 8, 40);
     return s;
 }
 
@@ -146,16 +152,23 @@ bool LanternIntent(Vec2 player, const Settings& settings, Vec2& outTargetPos, Ve
 // every publish (cheap via the per-tick hazard memo). `grid` persists across frames
 // (a static in Tick), so unrebuilt wall bits survive. Runs inside the per-tick memo
 // lifetime — BuildMap/ReanchorMap cleared and repopulated the memo earlier this frame.
-void FillOccGrid(Planner::OccGrid& grid, Vec2 player, bool rebuildWalls)
+void FillOccGrid(Planner::OccGrid& grid, Vec2 player, bool rebuildWalls, int radiusCells)
 {
     grid.center = player;
     constexpr int R = Planner::kPlanGridRadius;
     constexpr int S = Planner::kPlanGridSize;
+    const int rad = std::clamp(radiusCells, 8, R);
     for (int gy = 0; gy < S; ++gy) {
         for (int gx = 0; gx < S; ++gx) {
+            uint8_t& f = grid.flags[gy * S + gx];
+            // Outside the (shrinkable) planner window: mark WALL and skip the CanOccupy
+            // probe — this is what lets a smaller radius cut the rasterize cost.
+            if (std::max(std::abs(gx - R), std::abs(gy - R)) > rad) {
+                f |= 0x1; f &= static_cast<uint8_t>(~0x2);
+                continue;
+            }
             const float wx = player.x + static_cast<float>(gx - R) * Planner::kPlanCellTiles;
             const float wy = player.y + static_cast<float>(gy - R) * Planner::kPlanCellTiles;
-            uint8_t& f = grid.flags[gy * S + gx];
             if (rebuildWalls) {
                 // Walls only (safeWalk=false) so hazard is a routing COST, not a block —
                 // matching UDodgeField::IsWall.
@@ -267,7 +280,7 @@ void Tick(void* player, float px, float py, float dt)
             snap.weaponRangeTiles = snap.rangeResolved ? AutoAim::GetProjRangeTiles() : 6.f;
             // GAME-THREAD rasterization: walls on rebuild, hazard each publish. Copy the
             // plain-data danger map for the worker's lane/zone routing cost.
-            FillOccGrid(snap.grid, in.player, rebuilt);
+            FillOccGrid(snap.grid, in.player, rebuilt, settings.planRadius);
             snap.map = g_map;
 
             Worker::PublishSnapshot(snap);
@@ -283,6 +296,10 @@ void Tick(void* player, float px, float py, float dt)
 
             // Cold start (no plan yet) leaves g_lastPlan default → firstDir {} →
             // pure dodge until the first plan lands (safe, transient).
+            // OVERRIDE PRECEDENCE (plan 61 §2): the plan's firstDir is fed ONLY as an
+            // overridable intent — Core::Evaluate below preserves it while safe
+            // (UDodgeCore.cpp:558-564) but pre-empts it the instant a bullet threatens
+            // (emergency/gentle override), so the dodge always wins over the boss path.
             in.intentDir = g_lastPlan.firstDir;
             apHasTarget  = g_lastPlan.hasGoal;
             apTarget     = g_lastPlan.goalPos;
@@ -369,8 +386,15 @@ void Tick(void* player, float px, float py, float dt)
         d.hasLockTarget = apHasTarget;
         d.lockTarget = apTarget;
         // Planned route from the consumed worker plan (plain data) — drawn on the overlay.
-        d.pathCount = std::clamp(g_lastPlan.pathCount, 0, kMaxPathPoints);
-        for (int i = 0; i < d.pathCount; ++i) d.path[i] = g_lastPlan.path[i];
+        // Gated by udodgeDrawPath (plan 61): when off, publish no route so the overlay
+        // (and Debug::Render's polyline) draw nothing.
+        d.drawPath = GetDrawPath();
+        if (d.drawPath) {
+            d.pathCount = std::clamp(g_lastPlan.pathCount, 0, kMaxPathPoints);
+            for (int i = 0; i < d.pathCount; ++i) d.path[i] = g_lastPlan.path[i];
+        } else {
+            d.pathCount = 0;
+        }
         for (int i = 0; i < kCandidateCount; ++i) d.candidates[i] = g_out.candidates[i];
         d.map = g_map;
         PublishDebug(d);
@@ -410,6 +434,19 @@ void RenderSettings()
 
     if (ImGui::Checkbox("Field escape (route around walls when boxed in)##udodge", &field)) SetFieldEscape(field);
     if (ImGui::Checkbox("Debug overlay##udodge", &dbg)) SetDebugOverlay(dbg);
+
+    bool drawPath = GetDrawPath();
+    if (ImGui::Checkbox("Draw planned route##udodge", &drawPath)) SetDrawPath(drawPath);
+    float orbit = GetOrbitRange();
+    if (ImGui::SliderFloat("Orbit range (tiles, 0 = auto)##udodge", &orbit, 0.f, 16.f)) SetOrbitRange(orbit);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Autopilot boss standoff distance. 0 = auto (resolved weapon\n"
+                          "range x 0.85). The orbit keeps this distance with range bands.");
+    float planR = GetPlanRadius();
+    if (ImGui::SliderFloat("Plan window radius (cells)##udodge", &planR, 8.f, 40.f, "%.0f")) SetPlanRadius(planR);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Planner window half-size in grid cells. Smaller shrinks the\n"
+                          "rasterized window and cuts per-frame cost if it stutters.");
 
     const char* modeLabels[] = { "Assist", "Autopilot" };
     int modeIdx = ClampInt(GetMode(), 0, 1);
@@ -490,5 +527,11 @@ void  SetFollowLantern(bool en) { g_followLantern.store(en, std::memory_order_re
 bool  GetFollowLantern() { return g_followLantern.load(std::memory_order_relaxed); }
 void  SetStandOnType(int t) { g_standOnType.store(t, std::memory_order_relaxed); }
 int   GetStandOnType() { return g_standOnType.load(std::memory_order_relaxed); }
+void  SetOrbitRange(float t) { g_orbitRange.store(t <= 0.f ? 0.f : Clamp(t, 2.f, 16.f), std::memory_order_relaxed); }
+float GetOrbitRange() { return g_orbitRange.load(std::memory_order_relaxed); }
+void  SetPlanRadius(float cells) { g_planRadius.store(Clamp(cells, 8.f, 40.f), std::memory_order_relaxed); }
+float GetPlanRadius() { return g_planRadius.load(std::memory_order_relaxed); }
+void  SetDrawPath(bool en) { g_drawPath.store(en, std::memory_order_relaxed); }
+bool  GetDrawPath() { return g_drawPath.load(std::memory_order_relaxed); }
 
 } // namespace UDodge

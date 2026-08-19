@@ -5,8 +5,8 @@
 #include <cmath>
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Threading note (Stage C1 verification — plan 58, Step 1; extended for D1/60):
-//   The weapon range that feeds OrbitIntent comes from AutoAim::GetProjRangeTiles()
+// Threading note (Stage C1 verification — plan 58, Step 1; extended for D1/60, D2/61):
+//   The weapon range that feeds the orbit goal policy comes from AutoAim::GetProjRangeTiles()
 //   / IsProjRangeResolved(), which are thin inline reads of a cached, static
 //   plain-data WeaponProfile (AutoAim.h:85-86 → WeaponCalibrator::GetProfile(),
 //   WeaponProfile.cpp:130 returns `static WeaponProfile s_profile`). That profile
@@ -34,6 +34,8 @@ constexpr float kActiveZoneCost = 120.f;  // active zone: heavy, but still trave
 constexpr float kRoot2          = 1.41421356f;
 constexpr float kInf            = 3.402823466e+38f;
 constexpr int   kGoalNudgeRing  = 8;      // search radius (cells) for a clear goal cell
+constexpr float kOrbitBand      = 1.0f;   // ± tolerance (tiles) around the desired standoff
+constexpr float kOrbitLead      = 0.9f;   // tangential lead of the in-band orbit goal
 
 int Idx(int gx, int gy) { return gy * kPlanGridSize + gx; }
 
@@ -105,20 +107,60 @@ float CellPenalty(const PlannerSnapshot& in, int idx, Vec2 cellWorld, float hitS
     return penalty;
 }
 
-// Orbit / keep-weapon-range steering toward a target at world (tx, ty). Pure math:
-// the resolved weapon range (selected on the game thread) is passed in as
-// `rangeTiles` instead of calling AutoAim. This is the DEGENERATE fallback (plan 58).
-Vec2 OrbitIntent(Vec2 player, float tx, float ty, float rangeTiles)
+// Desired standoff distance (tiles): the user's orbitRange when set (>0), else the
+// resolved weapon range × 0.85 (plan-58 auto default). Clamped to a sane band.
+float DesiredStandoff(const PlannerSnapshot& in)
 {
-    const Vec2 to = Sub(Vec2{ tx, ty }, player);
-    const float dist = Len(to);
-    if (dist < 1e-3f) return {};
-    const Vec2 dir = Mul(to, 1.f / dist);
-    const float range = std::clamp(rangeTiles, 2.f, 16.f);
-    const float desired = range * 0.85f;
-    if (dist > desired + 0.5f) return dir;             // too far → close in
-    if (dist < desired - 0.5f) return Mul(dir, -1.f);  // too close → back off
-    return Vec2{ -dir.y, dir.x };                       // in band → orbit (tangential)
+    const float manual = in.settings.orbitRange;
+    const float d = (manual > 0.f) ? manual
+                                   : std::clamp(in.weaponRangeTiles, 2.f, 16.f) * 0.85f;
+    return std::clamp(d, 1.5f, 16.f);
+}
+
+// Map a world position to its grid cell, clamped to the window.
+int CellOf(Vec2 center, float wx, float wy, int axis /*0=x,1=y*/)
+{
+    const float c = (axis == 0) ? center.x : center.y;
+    const float w = (axis == 0) ? wx : wy;
+    return ClampInt(static_cast<int>(std::lround((w - c) / kPlanCellTiles)) + kPlanGridRadius,
+                    0, kPlanGridSize - 1);
+}
+
+// Compute the ORBIT GOAL POSITION (plan 61) with range bands and a persistent orbit
+// sign (block-flip hysteresis). `sign` is a worker-local static carried across calls:
+//   • dist outside [desired ± band]  → goal = standoff point on the boss↔player line
+//     at `desired` (closes in when far, backs out when too close — same point either way).
+//   • in-band                        → goal = tangential point on the desired-radius
+//     circle, led along the current orbit `sign`. If that goal cell is blocked
+//     (wall / lane / active zone), FLIP the sign once and retake it; otherwise HOLD
+//     the sign so the orbit heading does not flip frame-to-frame.
+Vec2 OrbitGoalPos(const PlannerSnapshot& in, Vec2 center, float desired,
+                  int& sign, float hitScale)
+{
+    const Vec2  toBoss = Sub(in.lockPos, in.player);
+    const float dist   = Len(toBoss);
+    if (dist < 1e-3f) return in.lockPos;               // on top of the boss → degenerate
+    const Vec2 dir = Mul(toBoss, 1.f / dist);          // unit player→boss
+
+    if (dist > desired + kOrbitBand || dist < desired - kOrbitBand)
+        return Sub(in.lockPos, Mul(dir, desired));     // standoff point at `desired`
+
+    // In-band: pick the tangential orbit goal, flipping the sign only if it is blocked.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        const Vec2 tangent = (sign > 0) ? Vec2{ -dir.y, dir.x } : Vec2{ dir.y, -dir.x };
+        const Vec2 radialOut = Mul(dir, -1.f);         // boss→player
+        const Vec2 onCircle  = Normalize(Add(radialOut, Mul(tangent, kOrbitLead)));
+        const Vec2 g = Add(in.lockPos, Mul(onCircle, desired));
+        const int gx = CellOf(center, g.x, g.y, 0);
+        const int gy = CellOf(center, g.x, g.y, 1);
+        if (CellClear(in, Idx(gx, gy), CellWorld(center, gx, gy), hitScale))
+            return g;
+        sign = -sign;                                  // blocked → flip once and retry
+    }
+    // Both signs blocked: keep the (now-restored) sign's goal; Dijkstra decides reach.
+    const Vec2 tangent   = (sign > 0) ? Vec2{ -dir.y, dir.x } : Vec2{ dir.y, -dir.x };
+    const Vec2 onCircle  = Normalize(Add(Mul(dir, -1.f), Mul(tangent, kOrbitLead)));
+    return Add(in.lockPos, Mul(onCircle, desired));
 }
 
 } // namespace
@@ -131,18 +173,34 @@ void Compute(const PlannerSnapshot& in, PlanResult& out)
     if (!in.hasLock) return;   // no goal → clear path, firstDir {}
 
     out.hasGoal = true;
-    out.goalPos = in.lockPos;
 
     const Vec2  center   = in.grid.center;   // = player (grid center)
     const Vec2  player   = in.player;
     const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
-    const Vec2  orbitDir = OrbitIntent(player, in.lockPos.x, in.lockPos.y, in.weaponRangeTiles);
+
+    // ── Boss-fight goal policy (plan 61): range bands + persistent orbit sign. ──
+    // s_orbitSign lives on the WORKER thread only (Compute's single caller — plan 59),
+    // so no cross-thread state is introduced. OrbitGoalPos flips it only when blocked.
+    static int s_orbitSign = +1;
+    const float desired   = DesiredStandoff(in);
+    const Vec2  goalWorld = OrbitGoalPos(in, center, desired, s_orbitSign, hitScale);
+    out.goalPos = goalWorld;
+
+    // Orbit fallback direction (used when the route is degenerate / unreachable): head
+    // straight at the orbit goal, or tangentially if the goal collapses onto the player.
+    Vec2 orbitDir = Normalize(Sub(goalWorld, player));
+    if (LenSq(orbitDir) < 1e-6f) {
+        const Vec2 toBoss = Sub(in.lockPos, player);
+        const float d = Len(toBoss);
+        if (d > 1e-3f) {
+            const Vec2 dir = Mul(toBoss, 1.f / d);
+            orbitDir = (s_orbitSign > 0) ? Vec2{ -dir.y, dir.x } : Vec2{ dir.y, -dir.x };
+        }
+    }
 
     // ── Goal cell: map the goal world pos into the grid, clamp to the window. ──
-    int ggx = ClampInt(static_cast<int>(std::lround((in.lockPos.x - center.x) / kPlanCellTiles)) + kPlanGridRadius,
-                       0, kPlanGridSize - 1);
-    int ggy = ClampInt(static_cast<int>(std::lround((in.lockPos.y - center.y) / kPlanCellTiles)) + kPlanGridRadius,
-                       0, kPlanGridSize - 1);
+    int ggx = CellOf(center, goalWorld.x, goalWorld.y, 0);
+    int ggy = CellOf(center, goalWorld.x, goalWorld.y, 1);
 
     // The goal cell itself must be clear (plain-data PointClear). If the clamped cell
     // is blocked (wall / lane / active zone), nudge to the nearest clear cell in a

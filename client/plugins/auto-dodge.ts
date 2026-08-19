@@ -322,6 +322,16 @@ export function register(ctx: PluginContext) {
   }, (v: number) => sendDllFeature('udodgeStandOnType', v));
   registerModeSetting('unified', 'udodgeDebugOverlay', onOff('[UDodge] Debug overlay', 'on'),
     (v: string) => sendDllFeature('udodgeDebugOverlay', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeDrawPath', onOff('[UDodge] Draw planned route overlay', 'on'),
+    (v: string) => sendDllFeature('udodgeDrawPath', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeOrbitRange', {
+    label: '[UDodge][Autopilot] Orbit range (tiles, 0 = auto from weapon range)',
+    type: 'range', value: 0, min: 0, max: 16, step: 0.5,
+  }, (v: number) => sendDllFeature('udodgeOrbitRange', v));
+  registerModeSetting('unified', 'udodgePlanRadius', {
+    label: '[UDodge] Plan window radius (grid cells — smaller = cheaper)', advanced: true,
+    type: 'range', value: 20, min: 8, max: 40, step: 1,
+  }, (v: number) => sendDllFeature('udodgePlanRadius', v));
 
   registerModeSetting('xdodge', 'xdodgeAstar', onOff('[Goal] Smart goal pathing'),
     (v: string) => sendDllFeature('xdodgeAstar', v === 'on' ? 1 : 0));
@@ -487,10 +497,12 @@ export function register(ctx: PluginContext) {
     sendDllFeature('udodgeHitScale', ctx.getSetting<number>('udodgeHitScale'));
     sendDllFeature('udodgeReactMargin', ctx.getSetting<number>('udodgeReactMargin'));
     sendDllFeature('udodgeStandOnType', ctx.getSetting<number>('udodgeStandOnType'));
+    sendDllFeature('udodgeOrbitRange', ctx.getSetting<number>('udodgeOrbitRange'));
+    sendDllFeature('udodgePlanRadius', ctx.getSetting<number>('udodgePlanRadius'));
     sendDllFeature('udodgeMode', ctx.getSetting<string>('udodgeMode') === 'autopilot' ? 1 : 0);
     for (const k of ['udodgeSafeWalk', 'udodgeSpeedScale',
                      'udodgeFieldEscape', 'udodgeLockFollow', 'udodgeFollowLantern',
-                     'udodgeDebugOverlay'] as const)
+                     'udodgeDebugOverlay', 'udodgeDrawPath'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     // Re-apply the 60fps cap here too. The onEnabledChange / clientConnected
     // handlers were the only places setting targetFrameRate, so if the cap

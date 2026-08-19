@@ -153,7 +153,8 @@ void Render(const DebugSnapshot& snap,
     // Planned whole-window route (plan 60): the worker's Dijkstra polyline around
     // walls/hazards/danger to the goal, drawn in cyan with a vertex dot per point and
     // a goal marker at the end. Plain data — already world coords in the snapshot.
-    {
+    // Gated by udodgeDrawPath (plan 61).
+    if (snap.drawPath) {
         const int n = std::min(snap.pathCount, kMaxPathPoints);
         for (int i = 0; i + 1 < n; ++i)
             DrawLine(d, cam, snap.path[i], snap.path[i + 1], IM_COL32(0, 235, 255, 210), 2.f);
