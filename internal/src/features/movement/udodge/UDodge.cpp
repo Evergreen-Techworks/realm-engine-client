@@ -4,8 +4,10 @@
 #include "UDodgeCore.h"
 #include "UDodgeSensors.h"
 #include "UDodgeDebug.h"
+#include "UDodgePlanner.h"
 
 #include "MovementRuntime.h"
+#include "DbgFileLog.h"
 #include "ProjectileTracking.h"
 #include "SteerInput.h"
 #include "DangerPlanner.h"
@@ -97,65 +99,38 @@ void PublishMinimal(Decision decision, Vec2 player)
     PublishDebug(d);
 }
 
-// Orbit / keep-weapon-range steering toward a target at world (tx, ty).
-Vec2 OrbitIntent(Vec2 player, float tx, float ty)
+// Autopilot Priority 1 — STAND-ON override (the Moonlight Village lantern).
+// Gated behind `followLantern` (default OFF): it iterates WorldTAB's full entity
+// list — the only source that includes UNTARGETABLE objects — which is a real
+// per-frame cost AND carries the same game-thread-vs-render-refresh race the
+// shipped zDodge already has on GetEntities. So it is opt-in for that one dungeon
+// mechanic; normal play never touches GetEntities. This walks IL2CPP objects and
+// therefore STAYS on the game thread (it can never move to the planner worker).
+//
+// Returns true and fills outTargetPos/outDir when a stand-on object is found.
+bool LanternIntent(Vec2 player, const Settings& settings, Vec2& outTargetPos, Vec2& outDir)
 {
-    const Vec2 to = Sub(Vec2{ tx, ty }, player);
-    const float dist = Len(to);
-    if (dist < 1e-3f) return {};
-    const Vec2 dir = Mul(to, 1.f / dist);
-    const float range = std::clamp(AutoAim::IsProjRangeResolved() ? AutoAim::GetProjRangeTiles() : 6.f, 2.f, 16.f);
-    const float desired = range * 0.85f;
-    if (dist > desired + 0.5f) return dir;             // too far → close in
-    if (dist < desired - 0.5f) return Mul(dir, -1.f);  // too close → back off
-    return Vec2{ -dir.y, dir.x };                       // in band → orbit (tangential)
-}
+    if (!(settings.followLantern && settings.standOnType != 0)) return false;
 
-// Autopilot intent.
-//
-// Priority 1 — STAND-ON override (the Moonlight Village lantern). Gated behind
-// `followLantern` (default OFF): it iterates WorldTAB's full entity list — the
-// only source that includes UNTARGETABLE objects — which is a real per-frame
-// cost AND carries the same game-thread-vs-render-refresh race the shipped
-// zDodge already has on GetEntities. So it is opt-in for that one dungeon
-// mechanic; normal play never touches GetEntities.
-//
-// Priority 2 — BOSS lock from the sensor's fresh, game-thread enemy pass
-// (highest-maxHp; sticky even at low current HP). No GetEntities here.
-//
-// Survival always dominates: this is only the goal the planner pursues; the
-// dodge layer overrides it the instant the goal move is unsafe (flee for free).
-Vec2 AutopilotIntent(const DangerMap& sn, Vec2 player, const Settings& settings,
-                     bool& outHasTarget, Vec2& outTargetPos)
-{
-    outHasTarget = false;
-
-    if (settings.followLantern && settings.standOnType != 0) {
-        const std::vector<WorldEntity>& ents = WorldTAB::GetEntities();
-        bool found = false;
-        int32_t soId = 0;
-        float soX = 0.f, soY = 0.f, bestSq = 1e18f;
-        for (const WorldEntity& e : ents) {
-            if (e.isLocal || e.objType != settings.standOnType) continue;
-            const float dx = e.x - player.x, dy = e.y - player.y;
-            const float d2 = dx * dx + dy * dy;
-            if (d2 < bestSq) { bestSq = d2; soId = e.objectId; soX = e.x; soY = e.y; found = true; }
-        }
-        if (found) {
-            WorldTAB::GetEntityLivePos(soId, soX, soY);   // live if available
-            outHasTarget = true;
-            outTargetPos = { soX, soY };
-            const Vec2 to = Sub(outTargetPos, player);
-            const float dist = Len(to);
-            if (dist <= 0.35f) return {};                  // on it → hold position
-            return Mul(to, 1.f / dist);                    // walk straight onto it
-        }
+    const std::vector<WorldEntity>& ents = WorldTAB::GetEntities();
+    bool found = false;
+    int32_t soId = 0;
+    float soX = 0.f, soY = 0.f, bestSq = 1e18f;
+    for (const WorldEntity& e : ents) {
+        if (e.isLocal || e.objType != settings.standOnType) continue;
+        const float dx = e.x - player.x, dy = e.y - player.y;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 < bestSq) { bestSq = d2; soId = e.objectId; soX = e.x; soY = e.y; found = true; }
     }
+    if (!found) return false;
 
-    if (!sn.hasLock) return {};
-    outHasTarget = true;
-    outTargetPos = sn.lockPos;
-    return OrbitIntent(player, sn.lockPos.x, sn.lockPos.y);
+    WorldTAB::GetEntityLivePos(soId, soX, soY);   // live if available
+    outTargetPos = { soX, soY };
+    const Vec2 to = Sub(outTargetPos, player);
+    const float dist = Len(to);
+    if (dist <= 0.35f) outDir = {};                // on it → hold position
+    else               outDir = Mul(to, 1.f / dist); // walk straight onto it
+    return true;
 }
 
 } // namespace
@@ -227,8 +202,30 @@ void Tick(void* player, float px, float py, float dt)
     if (steer.active) {
         in.intentDir = { steer.dirX, steer.dirY };
     } else if (settings.mode == 1 /*Autopilot*/) {
-        in.intentDir = AutopilotIntent(g_map, in.player, settings, apHasTarget, apTarget);
         intentIsAuto = true;
+        // Priority 1 — lantern stand-on (game-thread IL2CPP entity walk).
+        if (LanternIntent(in.player, settings, apTarget, in.intentDir)) {
+            apHasTarget = true;
+        } else {
+            // Priority 2 — boss-lock orbit through the plain-data planner seam.
+            // The weapon range is resolved HERE (game thread) into a plain float,
+            // so Planner::Compute stays pure — no IL2CPP crosses the snapshot.
+            Planner::PlannerSnapshot snap{};
+            snap.tickId           = g_map.tickId;
+            snap.player           = in.player;
+            snap.settings         = settings;
+            snap.hasLock          = g_map.hasLock;
+            snap.lockPos          = g_map.lockPos;
+            snap.rangeResolved    = AutoAim::IsProjRangeResolved();
+            snap.weaponRangeTiles = snap.rangeResolved ? AutoAim::GetProjRangeTiles() : 6.f;
+
+            Planner::PlanResult plan{};
+            Planner::Compute(snap, plan);
+
+            in.intentDir = plan.firstDir;
+            apHasTarget  = plan.hasGoal;
+            apTarget     = plan.goalPos;
+        }
     } else if (settings.lockFollow) {
         float gx = 0.f, gy = 0.f;
         if (DangerPlanner::GetExternalGoal(gx, gy)) {
@@ -268,8 +265,23 @@ void Tick(void* player, float px, float py, float dt)
 
     if (g_out.overrideActive || autoWalk) {
         moveTarget = Add(in.player, Mul(g_out.velocity, frameMs));
-        if (!DodgeRuntime::CallMoveTo(player, moveTarget.x, moveTarget.y))
-            moveFailed = true;
+        const bool ok = DodgeRuntime::CallMoveTo(player, moveTarget.x, moveTarget.y);
+        if (!ok) moveFailed = true;
+        static int s_mvN = 0;
+        if ((s_mvN++ % 120) == 0)
+            DBG_FILE_LOG("[UDodge] MOVE dec=" << (int)g_out.decision
+                << " ov=" << g_out.overrideActive << " aw=" << autoWalk
+                << " |v|=" << Len(g_out.velocity) << " frameMs=" << frameMs
+                << " -> (" << moveTarget.x << "," << moveTarget.y
+                << ") from (" << in.player.x << "," << in.player.y << ") ok=" << ok);
+    } else {
+        static int s_noMvN = 0;
+        if ((s_noMvN++ % 120) == 0)
+            DBG_FILE_LOG("[UDodge] NO-MOVE dec=" << (int)g_out.decision
+                << " ov=" << g_out.overrideActive << " aw=" << autoWalk
+                << " |v|=" << Len(g_out.velocity)
+                << " standClr=" << g_out.standClearance
+                << " threats=" << g_out.threatCount);
     }
 
     if (settings.debugOverlay) {
