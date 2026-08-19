@@ -2,6 +2,8 @@
 #include "gui/CamState.h"
 #include "gui/tabs/CameraTAB.h"
 #include "gui/tabs/WorldTAB.h"
+#include "core/runtime/MemRead.h"
+#include "core/runtime/RuntimeOffsets.h"
 #include "DirectX.h"
 #include <windows.h>
 
@@ -24,13 +26,9 @@ bool s_useMeasuredBasis = true;
 static bool ReadLivePlayerXY(float& outX, float& outY)
 {
     void* p = WorldTAB::GetLocalPtr();
-    if (p) {
-        __try {
-            outX = *(float*)((uint8_t*)p + 0x3C);
-            outY = *(float*)((uint8_t*)p + 0x40);
-            return true;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    }
+    if (Mem::TryRead(p, RuntimeOffsets::PosX, outX) &&
+        Mem::TryRead(p, RuntimeOffsets::PosY, outY))
+        return true;
     outX = WorldTAB::GetLocalX();
     outY = WorldTAB::GetLocalY();
     return true;
