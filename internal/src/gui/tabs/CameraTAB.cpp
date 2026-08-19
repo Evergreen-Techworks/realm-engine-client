@@ -8,6 +8,7 @@
 #include "gui/CamState.h"
 #include "W2S.h"
 #include "Il2CppResolver.h"
+#include "Il2CppHook.h"
 #include "RuntimeOffsets.h"
 #include "core/runtime/MemRead.h"
 #include "DirectX.h"
@@ -111,16 +112,16 @@ static void EnsureCameraMethods(Il2CppObject* camMgrObj)
     Il2CppClass* cmKlass = il2cpp_object_get_class(camMgrObj);
 
     // CameraManager methods
-    if (cmKlass && !s_setCameraAngle)
-        s_setCameraAngle = il2cpp_class_get_method_from_name(cmKlass, "SetCameraAngle", 1);
-    if (cmKlass && !s_changeOffsetMode)
-        s_changeOffsetMode = il2cpp_class_get_method_from_name(cmKlass, "ChangeOffsetMode", 0);
-    if (cmKlass && !s_getOffsetMode) {
-        s_getOffsetMode = il2cpp_class_get_method_from_name(cmKlass, "ANBDPNHJBHG",    0);
+    if (!s_setCameraAngle)
+        s_setCameraAngle = Il2CppHook::ResolveMethodCached("CameraManager", "SetCameraAngle", 1);
+    if (!s_changeOffsetMode)
+        s_changeOffsetMode = Il2CppHook::ResolveMethodCached("CameraManager", "ChangeOffsetMode", 0);
+    if (!s_getOffsetMode) {
+        s_getOffsetMode = Il2CppHook::ResolveMethodCached("CameraManager", "ANBDPNHJBHG", 0);
         if (!s_getOffsetMode)
-            s_getOffsetMode = il2cpp_class_get_method_from_name(cmKlass, "get_IOABMGFJLLP", 0);
+            s_getOffsetMode = Il2CppHook::ResolveMethodCached("CameraManager", "get_IOABMGFJLLP", 0);
         if (!s_getOffsetMode)
-            s_getOffsetMode = il2cpp_class_get_method_from_name(cmKlass, "IOABMGFJLLP",    0);
+            s_getOffsetMode = Il2CppHook::ResolveMethodCached("CameraManager", "IOABMGFJLLP", 0);
     }
 
     // Transform methods (from mainCameraContainer)
@@ -131,9 +132,9 @@ static void EnsureCameraMethods(Il2CppObject* camMgrObj)
             Il2CppClass* xk = il2cpp_object_get_class(reinterpret_cast<Il2CppObject*>(xfrm));
             if (xk) {
                 if (!s_getEulerAngles)
-                    s_getEulerAngles = il2cpp_class_get_method_from_name(xk, "get_eulerAngles", 0);
+                    s_getEulerAngles = Il2CppHook::ResolveMethodCached("Transform", "get_eulerAngles", 0, true, "UnityEngine");
                 if (!s_getPosition)
-                    s_getPosition = il2cpp_class_get_method_from_name(xk, "get_position", 0);
+                    s_getPosition = Il2CppHook::ResolveMethodCached("Transform", "get_position", 0, true, "UnityEngine");
             }
         }
     }
@@ -145,7 +146,7 @@ static void EnsureCameraMethods(Il2CppObject* camMgrObj)
         if (Mem::AddrOk(unityCam)) {
             Il2CppClass* ck = il2cpp_object_get_class(reinterpret_cast<Il2CppObject*>(unityCam));
             if (ck)
-                s_getPixelRect = il2cpp_class_get_method_from_name(ck, "get_pixelRect", 0);
+                s_getPixelRect = Il2CppHook::ResolveMethodCached("Camera", "get_pixelRect", 0, true, "UnityEngine");
         }
     }
 
@@ -171,10 +172,8 @@ static bool InvokeStaticIntGetter(const MethodInfo* method, float& out)
 static bool GetUnityScreenSize(float& outWidth, float& outHeight)
 {
     if (!s_screenWidthMethod || !s_screenHeightMethod) {
-        Il2CppClass* screen = Resolver::FindClass("UnityEngine", "Screen");
-        if (!screen) return false;
-        s_screenWidthMethod = il2cpp_class_get_method_from_name(screen, "get_width", 0);
-        s_screenHeightMethod = il2cpp_class_get_method_from_name(screen, "get_height", 0);
+        s_screenWidthMethod  = Il2CppHook::ResolveMethodCached("Screen", "get_width",  0, false, "UnityEngine");
+        s_screenHeightMethod = Il2CppHook::ResolveMethodCached("Screen", "get_height", 0, false, "UnityEngine");
         if (!s_screenWidthMethod || !s_screenHeightMethod) return false;
     }
     return InvokeStaticIntGetter(s_screenWidthMethod,  outWidth)
@@ -703,10 +702,8 @@ namespace CameraTAB {
             return false;
 
         if (!s_worldToScreenPointMethod) {
-            Il2CppClass* klass = il2cpp_object_get_class(camObj);
-            if (!klass) return false;
             s_worldToScreenPointMethod =
-                il2cpp_class_get_method_from_name(klass, "WorldToScreenPoint", 1);
+                Il2CppHook::ResolveMethodCached("Camera", "WorldToScreenPoint", 1, true, "UnityEngine");
             if (!s_worldToScreenPointMethod) return false;
         }
 

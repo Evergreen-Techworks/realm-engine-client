@@ -13,85 +13,9 @@
 #include "Il2CppHook.h"
 #include "RuntimeOffsets.h"
 #include "core/runtime/MemRead.h"
+#include "core/il2cpp/Il2CppContainers.h"
 #include "game/objects/GameObjects.h"
 #include "game/math/MoveSpeed.h"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Equipment sub-class offsets — remain locally resolved because they belong to
-// EquipmentManager / ItemSlot classes, not FKALGHJIADI.  See plan 25 "Out of
-// scope" for why these stay here.
-// ─────────────────────────────────────────────────────────────────────────────
-static constexpr uint32_t kFB_EM_SLOTS  = 0x48;
-static constexpr uint32_t kFB_ITEM_OP   = 0x58;
-static constexpr uint32_t kFB_ITEM_TYPE = 0x60;
-
-// Hardcoded condition offset from .lst analysis — HasConditionEffect reads
-// [this+0x440].  No BeeByte alias exists for this internal field.
-static constexpr uint32_t kCondRawOffset = 0x440;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Locally cached equipment sub-class offsets
-// ─────────────────────────────────────────────────────────────────────────────
-static uint32_t s_emEquipSlots   = kFB_EM_SLOTS;
-static uint32_t s_itemObjProps   = kFB_ITEM_OP;
-static uint32_t s_itemObjType    = kFB_ITEM_TYPE;
-static bool     s_equipResolved  = false;
-
-static FieldInfo* FindFieldOnHierarchy(Il2CppClass* klass, const char* fieldName)
-{
-    for (Il2CppClass* k = klass; k; k = il2cpp_class_get_parent(k)) {
-        FieldInfo* f = il2cpp_class_get_field_from_name(k, fieldName);
-        if (f)
-            return f;
-    }
-    return nullptr;
-}
-
-static Il2CppClass* ResolveEquipmentManagerClass()
-{
-    Il2CppClass* k = Resolver::FindClass("DecaGames.RotMG.Managers.Equipment", "EquipmentManager");
-    if (k)
-        return k;
-    return Resolver::FindClassLoose("PNBNDBIPENP");
-}
-
-static Il2CppClass* ResolveItemSlotClass()
-{
-    Il2CppClass* k = Resolver::FindClass("DecaGames.RotMG.UI.Slots", "ItemSlot");
-    if (k)
-        return k;
-    return Resolver::FindClassLoose("CMHHJNPDMHJ");
-}
-
-// Resolve equipment sub-class offsets (EquipmentManager.equipmentSlots, ItemSlot fields).
-// Only called once — these belong to different IL2CPP classes from the player stats.
-static void EnsureEquipmentOffsets()
-{
-    if (s_equipResolved)
-        return;
-
-    Il2CppClass* em = ResolveEquipmentManagerClass();
-    if (em) {
-        FieldInfo* es = FindFieldOnHierarchy(em, "equipmentSlots");
-        if (es)
-            s_emEquipSlots = static_cast<uint32_t>(il2cpp_field_get_offset(es));
-    }
-
-    Il2CppClass* item = ResolveItemSlotClass();
-    if (item) {
-        FieldInfo* fOp = FindFieldOnHierarchy(item, "HLJFBHLMANJ");
-        if (fOp)
-            s_itemObjProps = static_cast<uint32_t>(il2cpp_field_get_offset(fOp));
-        FieldInfo* fTid = FindFieldOnHierarchy(item, "INAAIAHOEFE");
-        if (fTid)
-            s_itemObjType = static_cast<uint32_t>(il2cpp_field_get_offset(fTid));
-    }
-
-    // Mark resolved once both classes have been attempted (success or not).
-    // Fallback constants stay in place for any unresolved field.
-    if (em || item)
-        s_equipResolved = true;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Equipment slots: EquipmentManager.equipmentSlots[] — same order as game static ids
@@ -154,29 +78,8 @@ static float g_autoInterval = 1.0f;
 // Raw-memory reads and pointer validation now go through Mem::
 // (core/runtime/MemRead.h).
 
-// Read a managed Il2CppString* into a fixed-size char buffer.
-static bool ReadManagedString(const void* strPtr, char* buf, int bufSize)
-{
-    if (!Mem::AddrOk(strPtr)) return false;
-    int32_t len = 0;
-    if (!Mem::TryRead(strPtr, 0x10u, len)) return false;
-    if (len <= 0 || len >= bufSize) return false;
-
-    wchar_t wbuf[128] = {};
-    bool ok = Resolver::Protection::safe_call([&]() {
-        const wchar_t* chars = reinterpret_cast<const wchar_t*>(
-            reinterpret_cast<const uint8_t*>(strPtr) + 0x14u);
-        int n = (len < 127) ? len : 127;
-        memcpy(wbuf, chars, static_cast<size_t>(n) * sizeof(wchar_t));
-    });
-    if (!ok) return false;
-    WideCharToMultiByte(CP_UTF8, 0, wbuf, len, buf, bufSize - 1, nullptr, nullptr);
-    return buf[0] != '\0';
-}
-
 // EquipmentManager.equipmentSlots[i] → ItemSlot HLJFBHLMANJ (ObjectProperties*), INAAIAHOEFE (type id).
-static void ReadEquipmentSlots(void* localFk, PlayerSnap& s,
-                                uint32_t offSlots, uint32_t offOp, uint32_t offTid)
+static void ReadEquipmentSlots(void* localFk, PlayerSnap& s)
 {
     for (int i = 0; i < kEquipSlotCount; ++i)
         s.equipment[i] = {};
@@ -184,16 +87,12 @@ static void ReadEquipmentSlots(void* localFk, PlayerSnap& s,
     if (!localFk || !Mem::AddrOk(localFk))
         return;
 
-    const uint32_t offEm = RuntimeOffsets::PlayerEquipMgr;
-
     const bool ok = Resolver::Protection::safe_call([&]() {
-        void* em = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(localFk) + offEm);
+        void* em = Mem::ReadPtr(localFk, RuntimeOffsets::PlayerEquipMgr);
         if (!Mem::AddrOk(em))
             return;
 
-        void* arr = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(em) + offSlots);
+        void* arr = Mem::ReadPtr(em, RuntimeOffsets::EM_EquipSlots);
         if (!Mem::AddrOk(arr))
             return;
 
@@ -210,9 +109,8 @@ static void ReadEquipmentSlots(void* localFk, PlayerSnap& s,
             if (!Mem::AddrOk(slot))
                 continue;
 
-            uint8_t* sp = reinterpret_cast<uint8_t*>(slot);
-            void* op = *reinterpret_cast<void**>(sp + offOp);
-            int32_t tid = *reinterpret_cast<int32_t*>(sp + offTid);
+            void* op = Mem::ReadPtr(slot, RuntimeOffsets::Item_ObjProps);
+            int32_t tid = Mem::ReadOr<int32_t>(slot, RuntimeOffsets::Item_ObjType, 0);
 
             EquipSlotSnap& es = s.equipment[i];
             es.readable = true;
@@ -241,8 +139,6 @@ static void DoRefresh()
     g_valid = false;
     if (!lp || !Mem::AddrOk(lp)) return;
 
-    EnsureEquipmentOffsets();
-
     PlayerSnap s = {};
 
     Game::Character ch(lp);
@@ -264,11 +160,11 @@ static void DoRefresh()
     // Player name (Il2CppString*)
     void* namePtr = nullptr;
     if (Mem::TryRead(lp, RuntimeOffsets::PlayerName, namePtr))
-        ReadManagedString(namePtr, s.name, sizeof(s.name));
+        Il2CppC::ReadStringUtf8(namePtr, s.name, sizeof(s.name));
     if (s.name[0] == '\0')
         strcpy_s(s.name, "<?>");
 
-    ReadEquipmentSlots(lp, s, s_emEquipSlots, s_itemObjProps, s_itemObjType);
+    ReadEquipmentSlots(lp, s);
 
     // [A] COHCKAPOLCA UInt32[] pointer path (same as WorldTAB / CombatTAB)
     {
@@ -281,7 +177,7 @@ static void DoRefresh()
     // [B] MPJGAPJBBBF single-int condition field (BeeByte-resolved at runtime)
     Mem::TryRead(lp, RuntimeOffsets::PlayerCondInt, s.condInt);
     // [C] raw [this+0x440] — the exact offset HasConditionEffect reads in the .lst
-    Mem::TryRead(lp, kCondRawOffset, s.condRaw);
+    Mem::TryRead(lp, RuntimeOffsets::Player_CondRaw, s.condRaw);
 
     if (!s_miCalcMoveSpeed) {
         s_miCalcMoveSpeed = Il2CppHook::ResolveMethodCached("FKALGHJIADI", "GCFKGLKAPND", 0);
