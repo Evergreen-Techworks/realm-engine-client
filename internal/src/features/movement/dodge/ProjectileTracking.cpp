@@ -255,7 +255,11 @@ void* __fastcall SpawnProjectileDetour(
 
     bool ownerIsEnemy = false;
     const bool ownerClassified = TryReadObjectPropertiesIsEnemy(objProps, ownerIsEnemy);
-    const bool isEnemyShot = !isLocalShot && ((ownerClassified && ownerIsEnemy) || (!ownerClassified && canHitPlayer));
+    // Broadened: store any shot the owner is classed enemy OR that can hit the
+    // player, regardless of the (occasionally stale) OP_IsEnemy classified flag.
+    // A dodge must see everything that can hit the player; own outgoing shots are
+    // already excluded by the isLocalShot guard. Shared with PJDodge (intended).
+    const bool isEnemyShot = !isLocalShot && (ownerIsEnemy || canHitPlayer);
     if (!isLocalShot && !isEnemyShot)
         return ret;
 

@@ -6,6 +6,7 @@
 #include "MemRead.h"
 #include "ProjectileTracking.h"
 #include "RuntimeOffsets.h"
+#include "DbgFileLog.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
 #include "gui/tabs/WorldTAB.h"
 #include "gui/tabs/TestTAB.h"
@@ -190,13 +191,46 @@ bool LaneFromFreshTrace(LaneThreat& lane, const WorldProjectile& p, float elapse
     return lane.pointCount >= 2;
 }
 
-// Trace one lane: cached path preferred, fresh trace fallback. When neither
-// yields a path, the lane stays a single-point threat (the live disc still
-// blocks).
+// Straight-line fallback: when both trajectory builders fail, extrapolate the
+// bullet forward along its live heading so the lane is never a single far point
+// at the bullet head (which starves the relevance gate). A straight ray is the
+// correct present-tense danger for a shot whose curve model is unavailable.
+// Steps spatially by kTraceStepMs-equivalent increments up to laneCap tiles.
+bool LaneFromStraightExtrapolation(LaneThreat& lane, const WorldProjectile& p, float laneCap)
+{
+    if (!IsFinitePoint(p.x, p.y)) return false;
+    if (!IsFinite(p.angle)) return false;
+
+    const float dx = std::cos(p.angle);
+    const float dy = std::sin(p.angle);
+    if (!IsFinitePoint(dx, dy)) return false;
+
+    // tiles/ms = speed(raw)/10000 × speedMul; fall back to a nominal walk-speed
+    // step if speed is unread/garbage so the lane still spans a useful distance.
+    const float speedMul = (IsFinite(p.speedMul) && p.speedMul > 0.f) ? p.speedMul : 1.f;
+    float tilesPerMs = (IsFinite(p.speed) && p.speed > 0.f) ? (p.speed / 10000.f) * speedMul : 0.f;
+    float stepDist = tilesPerMs * kTraceStepMs;
+    if (!IsFinite(stepDist) || stepDist <= 1e-3f) stepDist = 0.5f;   // ~0.5 tile/step fallback
+
+    lane.pointCount = 0;
+    lane.points[lane.pointCount++] = { p.x, p.y };   // live position = anchor
+    float pathLen = 0.f;
+    while (lane.pointCount < kMaxLanePoints) {
+        pathLen += stepDist;
+        lane.points[lane.pointCount++] = { p.x + dx * pathLen, p.y + dy * pathLen };
+        if (pathLen >= laneCap) break;
+    }
+    return lane.pointCount >= 2;
+}
+
+// Trace one lane: cached path preferred, fresh trace fallback, then a straight
+// live-heading extrapolation. Only when even that fails does the lane collapse
+// to a single-point threat (the live disc still blocks).
 void TraceLane(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, float laneCap)
 {
     if (LaneFromCachedPath(lane, p, elapsedMs, laneCap)) return;
     if (LaneFromFreshTrace(lane, p, elapsedMs, laneCap)) return;
+    if (LaneFromStraightExtrapolation(lane, p, laneCap)) return;
     lane.pointCount = 1;
     lane.points[0] = { p.x, p.y };
 }
@@ -288,10 +322,19 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
     // path as pure geometry. Same filter chain as Build.
     s_projs.clear();
     ProjectileTracking::CopyActiveForDraw(s_projs);
+    {
+        static int s_bmN = 0;
+        if ((s_bmN++ % 120) == 0)
+            DBG_FILE_LOG("[UDodge] BuildMap rawProjs=" << s_projs.size()
+                << " localId=" << localId << " player=(" << playerX << "," << playerY
+                << ") cullTiles=" << kThreatCullTiles);
+    }
     for (const WorldProjectile& p : s_projs) {
         if (!p.valid) continue;
-        if (localId != 0 && p.attackerObjId == localId) continue;
-        if (localId != 0 && static_cast<int32_t>(p.ownerObjId) == localId) continue;
+        // A shot that can hit the player is never our own outgoing shot — guard
+        // the localId self-filter so a mis-attributed enemy shot is never eaten.
+        if (!p.canHitPlayer && localId != 0 && p.attackerObjId == localId) continue;
+        if (!p.canHitPlayer && localId != 0 && static_cast<int32_t>(p.ownerObjId) == localId) continue;
         if (!p.canHitPlayer && p.attackerObjId == 0 && static_cast<int32_t>(p.ownerObjId) == 0) continue;
         if (!IsFinitePoint(p.x, p.y)) continue;
         if (DistSq(p.x, p.y, playerX, playerY) > cullSq) continue;
@@ -316,6 +359,12 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
     // AoE zones → present-tense discs (active = landed & persisting; pending
     // = telegraphed soft cost).
     RebuildZones(out, playerX, playerY, settings, nowMs);
+    {
+        static int s_bmDoneN = 0;
+        if ((s_bmDoneN++ % 120) == 0)
+            DBG_FILE_LOG("[UDodge] BuildMap DONE lanes=" << out.laneCount
+                << " zones=" << out.zoneCount << " enemies=" << out.enemyCount);
+    }
 }
 
 bool ReadWorldTick(uint32_t& outTickId)
@@ -347,8 +396,10 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
     int  liveCount = 0;
     for (const WorldProjectile& p : s_projs) {
         if (!p.valid) continue;
-        if (localId != 0 && p.attackerObjId == localId) continue;
-        if (localId != 0 && static_cast<int32_t>(p.ownerObjId) == localId) continue;
+        // A shot that can hit the player is never our own outgoing shot — guard
+        // the localId self-filter so a mis-attributed enemy shot is never eaten.
+        if (!p.canHitPlayer && localId != 0 && p.attackerObjId == localId) continue;
+        if (!p.canHitPlayer && localId != 0 && static_cast<int32_t>(p.ownerObjId) == localId) continue;
         if (!p.canHitPlayer && p.attackerObjId == 0 && static_cast<int32_t>(p.ownerObjId) == 0) continue;
         if (!IsFinitePoint(p.x, p.y)) continue;
         if (DistSq(p.x, p.y, playerX, playerY) > cullSq) continue;

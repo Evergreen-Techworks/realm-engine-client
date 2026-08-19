@@ -429,10 +429,14 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
         if (standDist <= c.step + half + kRelevanceClearance &&
             c.relevantCount < kMaxProjectiles)
             c.relevant[c.relevantCount++] = i;
+        // Unify the threat gate with the scoring-relevance threshold above
+        // (c.step + half + kRelevanceClearance): any lane worth SCORING must
+        // also trip the NoThreat gate, else a relevant-but-not-counted lane
+        // returns NoThreat before scoring ever runs.
         float direct = standDist;
-        for (int j = 0; j < intentProbeCount && direct > half + kRelevanceClearance; ++j)
+        for (int j = 0; j < intentProbeCount && direct > c.step + half + kRelevanceClearance; ++j)
             direct = std::min(direct, LaneDistCheb(L, intentProbes[j]));
-        if (direct <= half + kRelevanceClearance) ++directLaneThreats;
+        if (direct <= c.step + half + kRelevanceClearance) ++directLaneThreats;
     }
 
     bool directZoneThreat = false;
