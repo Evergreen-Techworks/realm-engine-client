@@ -282,6 +282,8 @@ void Tick(void* player, float px, float py, float dt)
             static int s_mvN = 0;
             if ((s_mvN++ % 120) == 0)
                 DBG_FILE_LOG("[UDodge] MOVE kind=" << (int)g_solve.kind
+                    << (g_solve.prePosition ? " PREPOS" : " IMMED")
+                    << " pocketDist=" << g_solve.pocketDist
                     << " clr=" << g_solve.clearance << " frameMs=" << frameMs
                     << " -> (" << moveTarget.x << "," << moveTarget.y
                     << ") from (" << in.player.x << "," << in.player.y << ") ok=" << ok);
@@ -290,6 +292,7 @@ void Tick(void* player, float px, float py, float dt)
         static int s_noMvN = 0;
         if ((s_noMvN++ % 120) == 0)
             DBG_FILE_LOG("[UDodge] NO-MOVE kind=" << (int)g_solve.kind
+                << " pocketDist=" << g_solve.pocketDist
                 << " clr=" << g_solve.clearance);
     }
 

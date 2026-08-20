@@ -11,6 +11,17 @@
 // Pure data + math over the plain-data DangerMap and the Env probes already in
 // MapInput. No IL2CPP, no globals, no worker thread.
 //
+// LOOKAHEAD (plan 64 extension). The per-tick candidate set only reaches one
+// move budget, so a greedy "safest cell NOW" pick has no way to PLAN toward a
+// gap it cannot reach in a single step — in a dense shot wall it dead-ends
+// inside a shot. On top of the immediate layer the solver runs a bounded
+// nearest-durable-safe-pocket search over a horizon larger than one tick
+// (kULookaheadTiles) and steers the immediate pick toward that pocket, so the
+// player pre-positions INTO the gap over 2–3 ticks. The trigger is a DURABILITY
+// test on the current spot: if a lane's forward path already crosses it (only
+// momentarily safe — a wall closing), move toward the pocket now; only when the
+// stand is itself a durable pocket with comfortable margin do we HOLD.
+//
 // HONEST GUARANTEE. "Numerically impossible to get hit" holds ONLY for the
 // SolveKind::Safe case: a provably-safe point existed within the move budget
 // and we placed the player there. When the reachable disk is fully covered
@@ -42,6 +53,13 @@ struct SolveResult {
     Vec2      target{};        // world position to drive toward this tick
     bool      shouldMove = false;
     float     clearance = 0.f; // server-accurate clearance at target
+    // ── Lookahead (plan 64 extension) ────────────────────────────────────────
+    // prePosition: this tick's move is a PRE-POSITIONING step toward a durable
+    // lookahead pocket a few tiles away — the current spot is only momentarily
+    // safe (a wall is closing), so we walk into the gap now instead of waiting
+    // to be threatened. false = the move is an immediate dodge / hold.
+    bool      prePosition = false;
+    float     pocketDist  = 0.f; // reach to the nearest durable pocket (0 = none, or standing in one)
 };
 
 // Solve for the best reachable position this server tick.

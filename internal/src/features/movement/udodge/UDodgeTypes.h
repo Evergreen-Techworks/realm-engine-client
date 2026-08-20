@@ -52,6 +52,28 @@ constexpr float kSolveStandBias    = 0.15f; // score the stand point gets so we 
 constexpr float kSolveOutRangeW    = 1.6f;  // penalty per tile a dodge point sits OUTSIDE the boss
                                             // weapon range — prefer dodging inward, stay in shooting range
 
+// ── Lookahead path planning (plan 64 extension; baked, NO user sliders) ──────
+// The per-tick candidate set only reaches one move budget (≈1–1.5 tiles). In a
+// dense shot wall no cell within that disk is safe NOW, so the greedy solver
+// fell to Fallback and left the player inside a shot even though a durable gap
+// sat a few tiles away. Because every lane already encodes its bullet's WHOLE
+// forward travel path as geometry, a point clear of ALL lanes by a margin is a
+// DURABLE-safe pocket — no bullet will ever pass through it. So we search a
+// horizon LARGER than one tick for the NEAREST such pocket and steer the
+// immediate solve toward it, pre-positioning INTO the gap over 2–3 ticks
+// before the wall closes.
+constexpr float kULookaheadTiles = 6.0f;  // horizon radius for the durable-pocket search (tiles)
+constexpr float kUPocketMargin   = 0.35f; // clearance (tiles) a cell needs BEYOND the hard safety
+                                          // boundary (PointSafety already folds in the bullet half +
+                                          // player half) to count as a DURABLE pocket — and the
+                                          // comfortable margin the current spot needs to just HOLD
+constexpr int   kUPocketRings    = 12;    // concentric rings out to kULookaheadTiles (0.5-tile step)
+constexpr int   kUPocketAngles   = 24;    // angular samples per ring (15° resolution)
+constexpr float kSolvePocketW    = 0.9f;  // pre-position steer: reward advancing toward the durable
+                                          // pocket. Does NOT fade near danger (the pocket IS the safe
+                                          // direction) — unlike the orbit goal term, which does.
+constexpr float kSolveFallbackPocketW = 0.5f; // fallback: bias the least-bad step toward the pocket/gap
+
 struct Vec2 {
     float x = 0.f;
     float y = 0.f;

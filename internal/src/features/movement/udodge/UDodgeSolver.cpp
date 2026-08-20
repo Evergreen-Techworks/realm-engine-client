@@ -24,8 +24,8 @@ static_assert(kUPlayerHalf > 0.f, "safety test must include the player half-exte
 constexpr int   kSolveAngles = 32;
 constexpr int   kSolveRings   = 4;
 constexpr float kRingFrac[kSolveRings] = { 0.25f, 0.5f, 0.75f, 1.0f };
-// stand + rings + goal-direction point.
-constexpr int   kMaxCandidates = 1 + kSolveRings * kSolveAngles + 1;   // 74
+// stand + rings + goal-direction point + pocket-direction point.
+constexpr int   kMaxCandidates = 1 + kSolveRings * kSolveAngles + 2;   // 131
 
 struct Cand {
     Vec2  pos{};
@@ -56,22 +56,15 @@ Vec2 FlowDir(const MapInput& in)
 // every candidate scored here, so these terms only choose AMONG safe points and
 // can never trade safety away). Baked weights (kSolve*), NO user sliders.
 float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
-                Vec2 flow, Vec2 prevDir, float b)
+                Vec2 flow, Vec2 prevDir, float b,
+                bool prePosition, bool pocketFound, Vec2 pocketPos)
 {
     float score = 0.f;
 
     // Continuity — reward continuing the last committed heading (kills jitter).
-    // The stand point (dir {}) scores 0 here.
+    // The stand point (dir {}) scores 0 here. Applies in both modes.
     if (LenSq(c.dir) > 1e-6f && LenSq(prevDir) > 1e-6f)
         score += kSolveCommitW * std::max(0.f, Dot(c.dir, prevDir));
-
-    // Advance toward the goal, but fade the pull to zero as the point approaches
-    // the safety floor so near danger the dodge never chases the orbit line.
-    if (goal.active) {
-        const float progress = Len(Sub(player, goal.pos)) - Len(Sub(c.pos, goal.pos));
-        const float ramp = std::clamp((c.clr - kULatencyPad) / kUScoreStyleBand, 0.f, 1.f);
-        score += kSolveGoalW * progress * ramp;
-    }
 
     // RePP-style perpendicular sidestep tiebreak (component of dir ⟂ to flow).
     if (LenSq(flow) > 1e-6f && LenSq(c.dir) > 1e-6f) {
@@ -80,11 +73,33 @@ float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
         score += kSolvePerpW * perp;
     }
 
+    // Gentle comfort tiebreak, capped so it never dominates. Both modes.
+    score += kSolveClearW * std::min(c.clr, kSolveClearComfort);
+
+    if (prePosition && pocketFound) {
+        // ── Pre-position mode: the current spot is only momentarily safe (a wall
+        // is closing), so the objective is to ADVANCE toward the durable pocket.
+        // This term does NOT fade near danger (unlike the orbit goal below) — the
+        // pocket is safe by construction, so heading for it is always correct.
+        const float progress = Len(Sub(player, pocketPos)) - Len(Sub(c.pos, pocketPos));
+        score += kSolvePocketW * progress;
+        // Only a light reach penalty — reaching the gap is the point — and NO
+        // stand bias (holding on a non-durable spot is exactly what we avoid).
+        score -= kSolveMoveW * 0.25f * c.moveDist / std::max(b, 1e-3f);
+        return score;
+    }
+
+    // ── Standard mode: rank durable-safe options (orbit / minimal disruption). ─
+    // Advance toward the goal, but fade the pull to zero as the point approaches
+    // the safety floor so near danger the dodge never chases the orbit line.
+    if (goal.active) {
+        const float progress = Len(Sub(player, goal.pos)) - Len(Sub(c.pos, goal.pos));
+        const float ramp = std::clamp((c.clr - kULatencyPad) / kUScoreStyleBand, 0.f, 1.f);
+        score += kSolveGoalW * progress * ramp;
+    }
+
     // Minimal disruption — prefer the nearest safe point.
     score -= kSolveMoveW * c.moveDist / std::max(b, 1e-3f);
-
-    // Gentle comfort tiebreak, capped so it never dominates.
-    score += kSolveClearW * std::min(c.clr, kSolveClearComfort);
 
     // Stay in shooting range: penalize a dodge point that sits OUTSIDE the boss
     // weapon range, so we dodge inward/laterally and keep our range instead of
@@ -102,7 +117,8 @@ float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
     return score;
 }
 
-int BuildCandidates(const MapInput& in, float b, const Goal& goal, Cand* out)
+int BuildCandidates(const MapInput& in, float b, const Goal& goal,
+                    bool pocketFound, Vec2 pocketPos, Cand* out)
 {
     const Vec2 player = in.player;
     int n = 0;
@@ -130,6 +146,23 @@ int BuildCandidates(const MapInput& in, float b, const Goal& goal, Cand* out)
     // Goal-direction point clamped to the budget.
     if (goal.active) {
         const Vec2 to = Sub(goal.pos, player);
+        const float d = Len(to);
+        if (d > 1e-4f) {
+            const float r = std::min(d, b);
+            const Vec2 dir = Mul(to, 1.f / d);
+            out[n].pos = Add(player, Mul(dir, r));
+            out[n].dir = dir;
+            out[n].moveDist = r;
+            ++n;
+        }
+    }
+
+    // Pocket-direction point clamped to the budget — the exact reachable step
+    // toward the nearest durable lookahead pocket, so the immediate solve always
+    // has a candidate pointing straight at the gap (the rings only resolve to
+    // ~15°). This is how a multi-tile pocket is approached one budget at a time.
+    if (pocketFound) {
+        const Vec2 to = Sub(pocketPos, player);
         const float d = Len(to);
         if (d > 1e-4f) {
             const float r = std::min(d, b);
@@ -171,6 +204,81 @@ void Evaluate(const MapInput& in, Cand* c, int n)
     }
 }
 
+// ── Lookahead: nearest durable-safe pocket ──────────────────────────────────
+struct Pocket {
+    bool  found = false;
+    Vec2  pos{};
+    float dist = 0.f;   // reach distance from the player to the pocket
+};
+
+// A DURABLE-safe pocket. Core::PointSafety is the min, over every lane, of
+// Cheb-to-lane − (bulletHalf·scale + kUPlayerHalf); a lane is the bullet's LIVE
+// position followed by its WHOLE remaining travel path as geometry, so a point
+// with PointSafety ≥ margin is clear of every bullet's entire future path, not
+// just its instantaneous position — no bullet will ever pass through it. On top
+// of that hard-safety floor we require kUPocketMargin of comfort, occupiable
+// ground, and no enemy body. (Active zones already subtract into PointSafety.)
+bool IsDurablePocket(const MapInput& in, Vec2 p)
+{
+    const bool walkable = !in.env.canOccupy ||
+                 in.env.canOccupy(p.x, p.y, in.settings.safeWalk);
+    if (!walkable) return false;
+    if (EnemyBlocked(in, p)) return false;
+    return Core::PointSafety(in, p) >= kUPocketMargin;
+}
+
+// Search a horizon LARGER than one tick's move budget for the NEAREST durable
+// pocket. Concentric rings outward (nearest-first) with early-out at the first
+// ring that contains one; among that ring's pockets, tie-break toward the goal
+// (and, when a boss is locked, toward the in-weapon-range side). The stand
+// point is tested first — if the current spot is already durable it is the
+// nearest possible pocket (dist 0), which the caller reads as "HOLD".
+//
+// Cost is bounded and tick-gated: at most kUPocketRings×kUPocketAngles (288)
+// PointSafety evals, and it early-exits the instant a nearer ring yields a
+// pocket — typically far fewer. That is a few thousand cheap Cheb ops at 5 Hz.
+Pocket FindNearestPocket(const MapInput& in, const Goal& goal)
+{
+    Pocket best;
+    const Vec2 player = in.player;
+
+    if (IsDurablePocket(in, player)) {
+        best.found = true; best.pos = player; best.dist = 0.f;
+        return best;
+    }
+
+    const float step = kULookaheadTiles / static_cast<float>(kUPocketRings);
+    for (int ri = 1; ri <= kUPocketRings; ++ri) {
+        const float r = step * static_cast<float>(ri);
+        bool  ringHit = false;
+        float ringBestTie = -kHugeClearance;
+        Vec2  ringBestPos{};
+        for (int k = 0; k < kUPocketAngles; ++k) {
+            const float ang = kTwoPi * static_cast<float>(k) / static_cast<float>(kUPocketAngles);
+            const Vec2 p = Add(player, Vec2{ std::cos(ang) * r, std::sin(ang) * r });
+            if (!IsDurablePocket(in, p)) continue;
+            // Tie-break within the ring: advance toward the goal, and (locked)
+            // keep the pocket inside weapon range so we don't flee out of range.
+            float tie = 0.f;
+            if (goal.active)
+                tie += Len(Sub(player, goal.pos)) - Len(Sub(p, goal.pos));
+            if (goal.fromLock && goal.maxRange > 0.f) {
+                const float distToBoss = Len(Sub(p, goal.lockPos));
+                if (distToBoss > goal.maxRange)
+                    tie -= kSolveOutRangeW * (distToBoss - goal.maxRange);
+            }
+            if (!ringHit || tie > ringBestTie) {
+                ringHit = true; ringBestTie = tie; ringBestPos = p;
+            }
+        }
+        if (ringHit) {
+            best.found = true; best.pos = ringBestPos; best.dist = r;
+            return best;   // nearest ring with a pocket wins
+        }
+    }
+    return best;   // no durable pocket within the horizon
+}
+
 } // namespace
 
 void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
@@ -181,19 +289,27 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
 
     const float b = std::max(moveBudgetTiles, 1e-3f);
 
+    // ── Lookahead: nearest durable-safe pocket over a horizon > one tick ─────
+    // Because lanes encode each bullet's whole forward path, a point clear of
+    // all lanes by margin is durably safe. Find the nearest such pocket and let
+    // it drive the immediate solve so we pre-position INTO the gap before the
+    // wall closes, rather than greedily picking the safest cell reachable NOW.
+    const Pocket pocket = FindNearestPocket(in, goal);
+    const bool standDurable = pocket.found && pocket.dist <= 1e-4f;
+    out.pocketDist = pocket.found ? pocket.dist : 0.f;
+
     Cand cands[kMaxCandidates];
-    const int n = BuildCandidates(in, b, goal, cands);
+    const int n = BuildCandidates(in, b, goal, pocket.found, pocket.pos, cands);
     Evaluate(in, cands, n);
 
-    // ── Hold when already safe (stand = candidate 0) ─────────────────────────
-    // Do not twitch off a safe stand, and do not fight the player's own WASD
-    // movement (the game drives that). Idle and WASD both hold here; the solver
-    // still overrides to dodge the instant standing is unsafe (below). The ONE
-    // exception: a boss lock that has drifted OUTSIDE weapon range actively
-    // repositions inward to get back into shooting range (falls through so the
-    // goal + out-of-range terms pull the pick inward).
-    const bool standSafe = cands[0].safe;
-    if (standSafe) {
+    // ── Hold ONLY when the current spot is itself a DURABLE pocket ───────────
+    // Momentary safety is not enough: if a lane's forward path already crosses
+    // the stand (a wall closing) it is not durable, so we pre-position toward
+    // the pocket below instead of waiting to be threatened. When the stand IS a
+    // durable pocket with comfortable margin we hold (no jitter) and do not
+    // fight the player's own WASD. The ONE exception: a boss lock that drifted
+    // OUTSIDE weapon range repositions inward to get back into shooting range.
+    if (standDurable) {
         bool repositionInward = false;
         if (goal.fromLock && goal.maxRange > 0.f)
             repositionInward = Len(Sub(in.player, goal.lockPos)) > goal.maxRange;
@@ -207,17 +323,24 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         }
     }
 
+    // Pre-positioning: the stand is not a durable pocket but a reachable one
+    // exists — steer the immediate pick toward it (the pocket becomes the goal
+    // the per-tick solve advances toward, one budget at a time).
+    const bool prePosition = pocket.found && !standDurable;
+
     // ── Hard constraint met: choose AMONG the safe points by smart direction ─
-    // Safety is already guaranteed for every safe candidate; the objective only
-    // ranks them (continuity + goal + sidestep + minimal-move + comfort + stand
-    // bias). argmax over the safe set → Safe (or Hold if the stand point wins).
+    // Safety is a hard filter (every scored candidate is provably safe); the
+    // objective only ranks them. In pre-position mode the ranking maximizes
+    // progress toward the durable pocket; otherwise it is the standard
+    // continuity + orbit-goal + minimal-move + comfort + stand-bias ranking.
     const Vec2 flow = FlowDir(in);
     const Vec2 prevDir = state.lastMoveDir;
     int best = -1;
     float bestScore = -kHugeClearance;
     for (int i = 0; i < n; ++i) {
         if (!cands[i].safe) continue;
-        const float s = ScoreCand(cands[i], in.player, goal, flow, prevDir, b);
+        const float s = ScoreCand(cands[i], in.player, goal, flow, prevDir, b,
+                                  prePosition, pocket.found, pocket.pos);
         if (best < 0 || s > bestScore) {
             bestScore = s;
             best = i;
@@ -229,43 +352,63 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         out.target = w.pos;
         out.clearance = w.clr;
         if (w.stand || w.moveDist <= 1e-4f) {
+            // Only the safe stand beats every reachable step — no safe progress
+            // toward the pocket is possible this tick, so hold and re-solve next
+            // tick when the bullets (and thus the reachable safe cells) shift.
             out.kind = SolveKind::Hold;
             out.shouldMove = false;
         } else {
             out.kind = SolveKind::Safe;
             out.shouldMove = true;
+            out.prePosition = prePosition;
             state.lastMoveDir = w.dir;
         }
         return;
     }
 
-    // ── Fallback: no safe reachable cell — least-bad (max-min-clearance) ─────
+    // ── Fallback: no safe reachable cell — least-bad, biased toward the gap ──
+    // Maximize clearance (max-min-clearance) but bias the step toward the durable
+    // pocket so we head for the gap, not a dead end. Clearance still leads so we
+    // never step into materially worse danger just to chase the pocket.
     const float standClr = Core::PointSafety(in, in.player);
-    int bestClr = -1;
-    float bestClrVal = -kHugeClearance;
+    const float playerToPocket = pocket.found ? Len(Sub(in.player, pocket.pos)) : 0.f;
+    int best2 = -1;
+    float best2Val = -kHugeClearance;
     for (int i = 0; i < n; ++i) {
         if (!cands[i].occOk) continue;
-        if (cands[i].clr > bestClrVal) {
-            bestClrVal = cands[i].clr;
-            bestClr = i;
+        float val = cands[i].clr;
+        if (pocket.found) {
+            const float prog = playerToPocket - Len(Sub(cands[i].pos, pocket.pos));
+            val += kSolveFallbackPocketW * prog;
+        }
+        if (val > best2Val) { best2Val = val; best2 = i; }
+    }
+
+    if (best2 >= 0) {
+        const Cand& w = cands[best2];
+        // Move only if it actually helps: strictly higher clearance than standing,
+        // OR it steps toward the pocket without dropping clearance meaningfully.
+        const float progToward = pocket.found
+            ? playerToPocket - Len(Sub(w.pos, pocket.pos)) : 0.f;
+        const bool helps = w.clr > standClr + 1e-3f ||
+                           (pocket.found && progToward > 1e-3f &&
+                            w.clr >= standClr - kUPocketMargin);
+        if (helps && w.moveDist > 1e-4f) {
+            out.kind = SolveKind::Fallback;
+            out.target = w.pos;
+            out.clearance = w.clr;
+            out.shouldMove = true;
+            out.prePosition = prePosition;
+            if (LenSq(w.dir) > 1e-6f) state.lastMoveDir = w.dir;
+            return;
         }
     }
 
     // Nowhere reachable improves on standing still → hold and say so honestly.
-    if (bestClr < 0 || bestClrVal <= standClr) {
-        out.kind = SolveKind::Surrounded;
-        out.target = in.player;
-        out.clearance = standClr;
-        out.shouldMove = false;
-        return;
-    }
-
-    const Cand& w = cands[bestClr];
-    out.kind = SolveKind::Fallback;
-    out.target = w.pos;
-    out.clearance = w.clr;
-    out.shouldMove = true;
-    if (LenSq(w.dir) > 1e-6f) state.lastMoveDir = w.dir;
+    out.kind = SolveKind::Surrounded;
+    out.target = in.player;
+    out.clearance = standClr;
+    out.shouldMove = false;
 }
 
 } } // namespace UDodge::Solver
