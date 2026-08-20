@@ -278,11 +278,16 @@ static void DoRefresh()
     // The obfuscator reused the name "inputModule" for both the Camera field (0x50
     // in the Apr 6 dump) and a separate CustomInputModule field (0x58), so we can't
     // trust get_field_from_name alone — we iterate and disambiguate by type.
-    uint32_t camFieldOff = RuntimeOffsets::CM_UnityCam; // hardcoded fallback
-    bool     camFieldResolved = false;
-    {
+    // Resolve the Camera field offset ONCE and cache it. This loop iterates every
+    // field of the class through IL2CPP reflection — far too costly to run every
+    // frame (it was a real per-frame FPS drain). The offset is fixed for a game
+    // build, so settle it the first time the manager class is available.
+    static uint32_t s_camFieldOff  = RuntimeOffsets::CM_UnityCam; // fallback
+    static bool     s_camFieldDone = false;
+    if (!s_camFieldDone) {
         Il2CppClass* cmKlass = il2cpp_object_get_class(camMgrObj);
         if (cmKlass) {
+            bool found = false;
             void* iter = nullptr;
             while (true) {
                 FieldInfo* f = il2cpp_class_get_fields(cmKlass, &iter);
@@ -293,20 +298,23 @@ static void DoRefresh()
                 if (!fc) continue;
                 const char* tn = il2cpp_class_get_name(fc);
                 if (tn && strcmp(tn, "Camera") == 0) {
-                    camFieldOff      = static_cast<uint32_t>(il2cpp_field_get_offset(f));
-                    camFieldResolved = true;
-                    DBG_FILE_LOG("[CameraTAB] UnityCam field resolved dynamically: name=\""
+                    s_camFieldOff = static_cast<uint32_t>(il2cpp_field_get_offset(f));
+                    found = true;
+                    DBG_FILE_LOG("[CameraTAB] UnityCam field resolved (cached once): name=\""
                         << (il2cpp_field_get_name(f) ? il2cpp_field_get_name(f) : "?")
-                        << "\" offset=0x" << std::hex << camFieldOff << std::dec);
+                        << "\" offset=0x" << std::hex << s_camFieldOff << std::dec);
                     break;
                 }
             }
-        }
-        if (!camFieldResolved) {
-            DBG_FILE_LOG("[CameraTAB] UnityCam field NOT found dynamically — using fallback 0x"
-                << std::hex << RuntimeOffsets::CM_UnityCam << std::dec);
+            // Class was available: settle now and never re-iterate. Only keep
+            // retrying (leave s_camFieldDone false) while the manager is absent.
+            s_camFieldDone = true;
+            if (!found)
+                DBG_FILE_LOG("[CameraTAB] UnityCam field NOT found — fallback 0x"
+                    << std::hex << RuntimeOffsets::CM_UnityCam << std::dec);
         }
     }
+    const uint32_t camFieldOff = s_camFieldOff;
     void* unityCam = nullptr;
     Mem::TryRead(camMgrObj, camFieldOff, unityCam);
     if (Mem::AddrOk(unityCam)) {

@@ -7,10 +7,12 @@ namespace UDodge { namespace Planner {
 // window (calling Sensors::CanOccupy / IsHazardAt per cell — game-thread-only);
 // the worker runs the route planner over this grid ALONE, touching no IL2CPP.
 // The radius is a constant so plan 61 can expose it (drop to 24 on regression).
-constexpr int   kPlanGridRadius = 40;                       // cells from center
-constexpr int   kPlanGridSize   = kPlanGridRadius * 2 + 1;  // 81
+constexpr int   kPlanGridRadius = 24;                       // cells from center
+constexpr int   kPlanGridSize   = kPlanGridRadius * 2 + 1;  // 49
 constexpr int   kPlanGridCells  = kPlanGridSize * kPlanGridSize;
-constexpr float kPlanCellTiles  = 0.5f;                     // 40 tiles reach each way
+constexpr float kPlanCellTiles  = 0.5f;                     // 12 tiles reach each way —
+                                          // ample for boss orbit; the 40/81x81 grid was
+                                          // rasterizing ~6.5k cells per tick and spiking frames
 // kMaxPathPoints (route cap) is defined in UDodgeTypes.h so DebugSnapshot shares it;
 // it is visible here through the enclosing UDodge namespace.
 
