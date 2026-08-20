@@ -260,7 +260,14 @@ void Tick(void* player, float px, float py, float dt)
     // rebuild this frame, force a same-frame re-solve so the spawn is dodged
     // immediately (preserves today's structural-change reflex without a worker).
     if (g_solve.shouldMove) {
+        // Fallback and PRE-POSITION targets skip the instantaneous spatial
+        // re-check: a pre-position step is deliberately spatially-unsafe NOW (it
+        // threads a time-gap) and was validated temporally at solve time. A
+        // mid-tick bullet spawn still forces a structural rebuild + re-solve
+        // (rebuilt), so the temporal plan is refreshed whenever the shot set
+        // changes — the reflex is preserved without the spatial veto fighting it.
         bool targetOk = g_solve.kind == Solver::SolveKind::Fallback ||
+                        g_solve.prePosition ||
                         Core::PointSafe(in, g_solve.target, kULatencyPad);
         if (!targetOk && !rebuilt) {
             Sensors::BuildMap(g_map, px, py, settings);
@@ -282,8 +289,9 @@ void Tick(void* player, float px, float py, float dt)
             static int s_mvN = 0;
             if ((s_mvN++ % 120) == 0)
                 DBG_FILE_LOG("[UDodge] MOVE kind=" << (int)g_solve.kind
-                    << (g_solve.prePosition ? " PREPOS" : " IMMED")
+                    << (g_solve.prePosition ? " PREPOS(temporal)" : " IMMED")
                     << " pocketDist=" << g_solve.pocketDist
+                    << " tempLanes=" << (int)g_solve.tempLanes
                     << " clr=" << g_solve.clearance << " frameMs=" << frameMs
                     << " -> (" << moveTarget.x << "," << moveTarget.y
                     << ") from (" << in.player.x << "," << in.player.y << ") ok=" << ok);

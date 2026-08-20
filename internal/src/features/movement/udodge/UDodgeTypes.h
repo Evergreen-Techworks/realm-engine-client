@@ -69,10 +69,25 @@ constexpr float kUPocketMargin   = 0.35f; // clearance (tiles) a cell needs BEYO
                                           // comfortable margin the current spot needs to just HOLD
 constexpr int   kUPocketRings    = 12;    // concentric rings out to kULookaheadTiles (0.5-tile step)
 constexpr int   kUPocketAngles   = 24;    // angular samples per ring (15° resolution)
-constexpr float kSolvePocketW    = 0.9f;  // pre-position steer: reward advancing toward the durable
-                                          // pocket. Does NOT fade near danger (the pocket IS the safe
-                                          // direction) — unlike the orbit goal term, which does.
 constexpr float kSolveFallbackPocketW = 0.5f; // fallback: bias the least-bad step toward the pocket/gap
+
+// ── Temporal lookahead (plan 64 ext; baked, NO user sliders) ─────────────────
+// The static durable-pocket test above treats each lane (bullet's whole forward
+// path) as permanently dangerous — spatially safe but over-conservative: it
+// cannot thread a gap in TIME (stand where a bullet WILL be but only after it
+// has passed, or before it arrives). The temporal test marches time forward over
+// a bounded horizon and checks the player's along-path position against each
+// bullet's PREDICTED position at the moment the player is actually there. The
+// prediction reuses the trajectory the sensors already traced with ComputePosAt
+// (LaneThreat::pointTimesMs) — no re-prediction, so it stays cheap. The
+// instantaneous lane-based safety (PointSafety) remains the conservative floor
+// for the immediate per-tick reflex; temporal only upgrades the LOOKAHEAD.
+constexpr int   kUTemporalSteps    = 5;      // march samples beyond t=0 (horizon = steps × stepMs)
+constexpr float kUTemporalStepMs   = 100.f;  // coarse march step (~half a server tick) — swept-segment
+                                             // checks between samples prevent a fast bullet tunnelling
+// horizon = kUTemporalSteps × kUTemporalStepMs = 500 ms ≈ 2.5 server ticks
+constexpr float kUTemporalCullTiles = 8.f;   // only predict bullets whose traced path passes within this
+                                             // radius of the player over the horizon (skip far/receding)
 
 struct Vec2 {
     float x = 0.f;
@@ -143,10 +158,16 @@ struct Env {
     bool (*isHazard)(float x, float y) = nullptr;
 };
 
-// ── Instantaneous danger map (plan 45) ──────────────────────────────────────
-// Present-tense spatial danger only. No time values are stored: lane points
-// are the projectile's LIVE position followed by its remaining travel path as
-// pure geometry; zones are discs classified active (hard) / pending (soft).
+// ── Instantaneous danger map (plan 45; temporal lookahead plan 64 ext) ──────
+// Spatial danger plus a thin TIME axis on lanes. Lane points are the
+// projectile's LIVE position followed by its remaining travel path as geometry
+// (points[0] = live), and pointTimesMs[i] is the time (ms from NOW) at which the
+// bullet reaches points[i] — i.e. the polyline is the bullet's spacetime
+// trajectory, sampled by the same ComputePosAt / cached-path model that traced
+// the geometry. The instantaneous safety tests ignore the times (whole path =
+// dangerous NOW — the conservative floor); the temporal lookahead reads them to
+// thread TIME-gaps (stand where a bullet only WILL be, or has already passed).
+// Zones are discs classified active (hard) / pending (soft).
 
 constexpr int   kMaxLanePoints    = 24;     // per-lane polyline cap
 constexpr float kHugeClearance    = 1.0e9f; // "no danger anywhere" sentinel
@@ -161,6 +182,9 @@ struct LaneThreat {
     float    hitHalf       = 0.5f; // game IsHit Chebyshev half (same rule as before)
     int      pointCount    = 0;
     Vec2     points[kMaxLanePoints]{};   // points[0] = live position (anchor)
+    float    pointTimesMs[kMaxLanePoints]{}; // time (ms from NOW) the bullet reaches points[i]; [0]=0 (live).
+                                             // The temporal lookahead interpolates bullet-position-at-time from
+                                             // this; the instantaneous safety tests never read it.
 };
 
 struct ZoneThreat {

@@ -15,12 +15,21 @@
 // move budget, so a greedy "safest cell NOW" pick has no way to PLAN toward a
 // gap it cannot reach in a single step — in a dense shot wall it dead-ends
 // inside a shot. On top of the immediate layer the solver runs a bounded
-// nearest-durable-safe-pocket search over a horizon larger than one tick
-// (kULookaheadTiles) and steers the immediate pick toward that pocket, so the
-// player pre-positions INTO the gap over 2–3 ticks. The trigger is a DURABILITY
-// test on the current spot: if a lane's forward path already crosses it (only
-// momentarily safe — a wall closing), move toward the pocket now; only when the
-// stand is itself a durable pocket with comfortable margin do we HOLD.
+// nearest-pocket search over a horizon larger than one tick (kULookaheadTiles)
+// and pre-positions the player INTO the gap over 2–3 ticks.
+//
+// TEMPORAL. The pocket test is TIME-parameterized: it predicts where every
+// relevant bullet is GOING (reusing the trajectory the sensors already traced,
+// LaneThreat::pointTimesMs — no re-prediction) and asks whether the player's
+// along-path position is clear AT THE MOMENT the player is actually there. This
+// threads gaps in TIME (stand where a bullet only WILL be, or has already
+// passed) that the static whole-path test forbids, with a comfort margin so a
+// slightly-off prediction can't clip. The instantaneous lane-based safety stays
+// the CONSERVATIVE FLOOR for the immediate reflex; temporal only upgrades the
+// lookahead/pre-positioning. The trigger is a durability test on the current
+// spot: if a bullet will sweep through it over the horizon (a wall closing),
+// walk the validated path to the pocket now; only when the stand is itself a
+// durable temporal pocket do we HOLD.
 //
 // HONEST GUARANTEE. "Numerically impossible to get hit" holds ONLY for the
 // SolveKind::Safe case: a provably-safe point existed within the move budget
@@ -60,6 +69,7 @@ struct SolveResult {
     // to be threatened. false = the move is an immediate dodge / hold.
     bool      prePosition = false;
     float     pocketDist  = 0.f; // reach to the nearest durable pocket (0 = none, or standing in one)
+    uint8_t   tempLanes   = 0;   // relevant bullets fed to the temporal test (post-cull) — diagnostics
 };
 
 // Solve for the best reachable position this server tick.

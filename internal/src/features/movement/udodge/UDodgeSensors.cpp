@@ -149,8 +149,12 @@ bool LaneFromCachedPath(LaneThreat& lane, const WorldProjectile& p, float elapse
     if (anchor < 0 || anchor >= count) return false;
     const float ax = p.pathX[anchor], ay = p.pathY[anchor];
     if (!IsFinitePoint(ax, ay)) return false;
+    // Time base: the cached sample times are ms-since-spawn; rebase onto the live
+    // anchor so pointTimesMs is ms-from-NOW (points[0] = live = t 0).
+    const float tAnchor = IsFinite(p.pathSampleTimesMs[anchor]) ? p.pathSampleTimesMs[anchor] : 0.f;
 
     lane.pointCount = 0;
+    lane.pointTimesMs[lane.pointCount] = 0.f;
     lane.points[lane.pointCount++] = { p.x, p.y };   // live position = anchor
     float pathLen = 0.f;
     for (int i = anchor + 1; i < count && lane.pointCount < kMaxLanePoints; ++i) {
@@ -160,6 +164,7 @@ bool LaneFromCachedPath(LaneThreat& lane, const WorldProjectile& p, float elapse
         if (IsFinite(p.lifetime) && p.lifetime > 0.f && sMs > p.lifetime) break;
         const Vec2 pt = { p.x + (p.pathX[i] - ax), p.y + (p.pathY[i] - ay) };
         pathLen += Len(Sub(pt, lane.points[lane.pointCount - 1]));
+        lane.pointTimesMs[lane.pointCount] = std::max(0.f, sMs - tAnchor);
         lane.points[lane.pointCount++] = pt;
         if (pathLen >= laneCap) break;
     }
@@ -177,6 +182,7 @@ bool LaneFromFreshTrace(LaneThreat& lane, const WorldProjectile& p, float elapse
     const float offY = p.y - ay;
 
     lane.pointCount = 0;
+    lane.pointTimesMs[lane.pointCount] = 0.f;
     lane.points[lane.pointCount++] = { p.x, p.y };   // live position = anchor
     float pathLen = 0.f;
     for (int k = 1; lane.pointCount < kMaxLanePoints; ++k) {
@@ -186,6 +192,8 @@ bool LaneFromFreshTrace(LaneThreat& lane, const WorldProjectile& p, float elapse
         if (!TryPredict(p, tMs, x, y)) break;
         const Vec2 pt = { x + offX, y + offY };
         pathLen += Len(Sub(pt, lane.points[lane.pointCount - 1]));
+        // Time from NOW: k uniform kTraceStepMs steps ahead of the live anchor.
+        lane.pointTimesMs[lane.pointCount] = static_cast<float>(k) * kTraceStepMs;
         lane.points[lane.pointCount++] = pt;
         if (pathLen >= laneCap) break;
     }
@@ -214,10 +222,14 @@ bool LaneFromStraightExtrapolation(LaneThreat& lane, const WorldProjectile& p, f
     if (!IsFinite(stepDist) || stepDist <= 1e-3f) stepDist = 0.5f;   // ~0.5 tile/step fallback
 
     lane.pointCount = 0;
+    lane.pointTimesMs[lane.pointCount] = 0.f;
     lane.points[lane.pointCount++] = { p.x, p.y };   // live position = anchor
     float pathLen = 0.f;
     while (lane.pointCount < kMaxLanePoints) {
         pathLen += stepDist;
+        // stepDist == tilesPerMs × kTraceStepMs when speed is known, so each
+        // spatial step is one kTraceStepMs of travel time (proxy when unknown).
+        lane.pointTimesMs[lane.pointCount] = static_cast<float>(lane.pointCount) * kTraceStepMs;
         lane.points[lane.pointCount++] = { p.x + dx * pathLen, p.y + dy * pathLen };
         if (pathLen >= laneCap) break;
     }
@@ -234,6 +246,7 @@ void TraceLane(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, floa
     if (LaneFromStraightExtrapolation(lane, p, laneCap)) return;
     lane.pointCount = 1;
     lane.points[0] = { p.x, p.y };
+    lane.pointTimesMs[0] = 0.f;   // trajectory unknown → temporal test treats it as static (conservative)
 }
 
 // Zone pass — present-tense classification only: every not-yet-expired zone
@@ -429,10 +442,18 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
         }
         const Vec2 live  = { p.x, p.y };
         const Vec2 shift = Sub(live, lane.points[nearest]);
+        // Rebase the time axis too: the new live anchor is t 0, and the surviving
+        // forward points keep their remaining travel time (times are monotonic,
+        // outCount ≤ i so the in-place shift never clobbers an unread entry).
+        const float tBase = lane.pointTimesMs[nearest];
         lane.points[0] = live;
+        lane.pointTimesMs[0] = 0.f;
         int outCount = 1;
-        for (int i = nearest + 1; i < lane.pointCount; ++i)
-            lane.points[outCount++] = Add(lane.points[i], shift);
+        for (int i = nearest + 1; i < lane.pointCount; ++i) {
+            lane.pointTimesMs[outCount] = std::max(0.f, lane.pointTimesMs[i] - tBase);
+            lane.points[outCount] = Add(lane.points[i], shift);
+            ++outCount;
+        }
         lane.pointCount = outCount;   // nearest == last ⇒ single live point
     }
     if (liveCount != map.laneCount) return false;        // a lane's shot retired

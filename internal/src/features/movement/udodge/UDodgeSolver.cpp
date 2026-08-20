@@ -56,40 +56,15 @@ Vec2 FlowDir(const MapInput& in)
 // every candidate scored here, so these terms only choose AMONG safe points and
 // can never trade safety away). Baked weights (kSolve*), NO user sliders.
 float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
-                Vec2 flow, Vec2 prevDir, float b,
-                bool prePosition, bool pocketFound, Vec2 pocketPos)
+                Vec2 flow, Vec2 prevDir, float b)
 {
     float score = 0.f;
 
     // Continuity — reward continuing the last committed heading (kills jitter).
-    // The stand point (dir {}) scores 0 here. Applies in both modes.
+    // The stand point (dir {}) scores 0 here.
     if (LenSq(c.dir) > 1e-6f && LenSq(prevDir) > 1e-6f)
         score += kSolveCommitW * std::max(0.f, Dot(c.dir, prevDir));
 
-    // RePP-style perpendicular sidestep tiebreak (component of dir ⟂ to flow).
-    if (LenSq(flow) > 1e-6f && LenSq(c.dir) > 1e-6f) {
-        const float par = Dot(c.dir, flow);
-        const float perp = std::sqrt(std::max(0.f, 1.f - par * par));
-        score += kSolvePerpW * perp;
-    }
-
-    // Gentle comfort tiebreak, capped so it never dominates. Both modes.
-    score += kSolveClearW * std::min(c.clr, kSolveClearComfort);
-
-    if (prePosition && pocketFound) {
-        // ── Pre-position mode: the current spot is only momentarily safe (a wall
-        // is closing), so the objective is to ADVANCE toward the durable pocket.
-        // This term does NOT fade near danger (unlike the orbit goal below) — the
-        // pocket is safe by construction, so heading for it is always correct.
-        const float progress = Len(Sub(player, pocketPos)) - Len(Sub(c.pos, pocketPos));
-        score += kSolvePocketW * progress;
-        // Only a light reach penalty — reaching the gap is the point — and NO
-        // stand bias (holding on a non-durable spot is exactly what we avoid).
-        score -= kSolveMoveW * 0.25f * c.moveDist / std::max(b, 1e-3f);
-        return score;
-    }
-
-    // ── Standard mode: rank durable-safe options (orbit / minimal disruption). ─
     // Advance toward the goal, but fade the pull to zero as the point approaches
     // the safety floor so near danger the dodge never chases the orbit line.
     if (goal.active) {
@@ -98,8 +73,18 @@ float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
         score += kSolveGoalW * progress * ramp;
     }
 
+    // RePP-style perpendicular sidestep tiebreak (component of dir ⟂ to flow).
+    if (LenSq(flow) > 1e-6f && LenSq(c.dir) > 1e-6f) {
+        const float par = Dot(c.dir, flow);
+        const float perp = std::sqrt(std::max(0.f, 1.f - par * par));
+        score += kSolvePerpW * perp;
+    }
+
     // Minimal disruption — prefer the nearest safe point.
     score -= kSolveMoveW * c.moveDist / std::max(b, 1e-3f);
+
+    // Gentle comfort tiebreak, capped so it never dominates.
+    score += kSolveClearW * std::min(c.clr, kSolveClearComfort);
 
     // Stay in shooting range: penalize a dodge point that sits OUTSIDE the boss
     // weapon range, so we dodge inward/laterally and keep our range instead of
@@ -204,45 +189,144 @@ void Evaluate(const MapInput& in, Cand* c, int n)
     }
 }
 
-// ── Lookahead: nearest durable-safe pocket ──────────────────────────────────
+// ── Temporal lookahead: nearest pocket that is safe over the next N ticks ────
+// The static test above (PointSafety ≥ margin) treats a lane as dangerous over
+// its WHOLE forward path — correct but over-conservative, since it can't thread
+// a gap in TIME. The temporal layer instead asks: given where every bullet is
+// GOING (its traced trajectory, times and all), is the player's along-path
+// position clear AT THE MOMENT the player is actually there? This threads
+// time-gaps the static test forbids while keeping a comfort margin so a
+// slightly-off prediction can't clip the player.
+
+constexpr int kUTemporalSamples = kUTemporalSteps + 1;   // includes t = 0
+
 struct Pocket {
     bool  found = false;
     Vec2  pos{};
     float dist = 0.f;   // reach distance from the player to the pocket
 };
 
-// A DURABLE-safe pocket. Core::PointSafety is the min, over every lane, of
-// Cheb-to-lane − (bulletHalf·scale + kUPlayerHalf); a lane is the bullet's LIVE
-// position followed by its WHOLE remaining travel path as geometry, so a point
-// with PointSafety ≥ margin is clear of every bullet's entire future path, not
-// just its instantaneous position — no bullet will ever pass through it. On top
-// of that hard-safety floor we require kUPocketMargin of comfort, occupiable
-// ground, and no enemy body. (Active zones already subtract into PointSafety.)
-bool IsDurablePocket(const MapInput& in, Vec2 p)
+// Per-tick temporal context: for each RELEVANT lane, the bullet's predicted
+// position at each march sample time, plus its effective hit half. Built once
+// per Solve from the lane polylines (no re-prediction); read many times by the
+// pocket search. Fixed-size — no per-tick heap.
+struct TempCtx {
+    int   count = 0;
+    Vec2  pos[kMaxProjectiles][kUTemporalSamples];   // bullet position at t = k·stepMs
+    float half[kMaxProjectiles];                     // hitHalf·scale + kUPlayerHalf
+};
+
+// Sample one lane's bullet position at each march time by interpolating its
+// spacetime polyline (points + pointTimesMs). Monotone cursor over the polyline
+// as t increases → O(points + samples). Beyond the traced horizon the position
+// clamps to the last traced point (conservative — never invents "safe").
+void SampleLaneOverTime(const LaneThreat& L, Vec2* outPos)
+{
+    const int cnt = L.pointCount;
+    if (cnt <= 0) { for (int k = 0; k < kUTemporalSamples; ++k) outPos[k] = Vec2{}; return; }
+    if (cnt == 1) { for (int k = 0; k < kUTemporalSamples; ++k) outPos[k] = L.points[0]; return; }
+
+    int seg = 0;
+    for (int k = 0; k < kUTemporalSamples; ++k) {
+        const float t = static_cast<float>(k) * kUTemporalStepMs;
+        while (seg + 1 < cnt - 1 && t > L.pointTimesMs[seg + 1]) ++seg;
+        const float t0 = L.pointTimesMs[seg];
+        const float t1 = L.pointTimesMs[seg + 1];
+        if (t <= t0)       outPos[k] = L.points[seg];
+        else if (t >= t1)  outPos[k] = L.points[seg + 1];   // clamp at path end
+        else {
+            const float f = (t - t0) / std::max(t1 - t0, 1e-3f);
+            outPos[k] = Add(L.points[seg], Mul(Sub(L.points[seg + 1], L.points[seg]), f));
+        }
+    }
+}
+
+// Build the temporal context: predict every lane's future positions once, and
+// cull lanes whose whole traced path stays outside the pocket-search region
+// (far / receding shots contribute nothing to a pocket within kULookaheadTiles).
+void BuildTempCtx(const MapInput& in, TempCtx& ctx)
+{
+    ctx.count = 0;
+    if (!in.map) return;
+    const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
+    const float cull = kUTemporalCullTiles;
+    for (int i = 0; i < in.map->laneCount && ctx.count < kMaxProjectiles; ++i) {
+        const LaneThreat& L = in.map->lanes[i];
+        if (L.pointCount <= 0) continue;
+        Vec2 samples[kUTemporalSamples];
+        SampleLaneOverTime(L, samples);
+        float minD = kHugeClearance;
+        for (int k = 0; k < kUTemporalSamples; ++k)
+            minD = std::min(minD, Len(Sub(samples[k], in.player)));
+        if (minD > cull) continue;                       // far/receding — irrelevant to nearby pockets
+        const int idx = ctx.count++;
+        for (int k = 0; k < kUTemporalSamples; ++k) ctx.pos[idx][k] = samples[k];
+        ctx.half[idx] = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + kUPlayerHalf;
+    }
+}
+
+// TIME-parameterized clearance test. The player walks STRAIGHT from its live
+// position toward P at its own speed, arriving at tArrive, then holds at P. March
+// time over the horizon: at each step check the player's position against every
+// relevant bullet's SWEPT segment over that step (swept, so a fast bullet cannot
+// tunnel between samples). Clear at every step ⇒ the whole path to P — and
+// holding there — dodges the moving bullets, with kUPocketMargin of slack.
+bool TemporalPathClear(const MapInput& in, const TempCtx& ctx, Vec2 P)
+{
+    const Vec2  player = in.player;
+    const Vec2  to = Sub(P, player);
+    const float dist = Len(to);
+    const Vec2  dir = dist > 1e-4f ? Mul(to, 1.f / dist) : Vec2{};
+    const float v = in.speed;   // tiles/ms
+    const float tArrive = (v > 1e-6f) ? dist / v : (dist > 1e-4f ? kHugeClearance : 0.f);
+
+    for (int li = 0; li < ctx.count; ++li) {
+        const float half = ctx.half[li] + kUPocketMargin;
+        for (int k = 0; k < kUTemporalSteps; ++k) {
+            const float t = static_cast<float>(k) * kUTemporalStepMs;
+            const Vec2 pp = (t >= tArrive) ? P : Add(player, Mul(dir, v * t));
+            const Vec2 b0 = ctx.pos[li][k];
+            const Vec2 b1 = ctx.pos[li][k + 1];
+            if (MinChebOnSegment(b0.x - pp.x, b0.y - pp.y,
+                                 b1.x - pp.x, b1.y - pp.y) <= half) return false;
+        }
+        // Final sample (t = horizon): player is holding at P by now.
+        const float tEnd = static_cast<float>(kUTemporalSteps) * kUTemporalStepMs;
+        const Vec2 ppEnd = (tEnd >= tArrive) ? P : Add(player, Mul(dir, v * tEnd));
+        const Vec2 bEnd = ctx.pos[li][kUTemporalSteps];
+        if (Cheb(bEnd.x - ppEnd.x, bEnd.y - ppEnd.y) <= half) return false;
+    }
+    return true;
+}
+
+// A durable TEMPORAL pocket: occupiable, off enemy bodies, and temporally clear
+// (path + hold) over the horizon. For the STAND point we additionally require it
+// be spatially safe RIGHT NOW (the conservative floor: never "hold" on a spot a
+// bullet is currently inside), so temporal only ever makes us hold LESS, never
+// more, than the instantaneous safety guarantees.
+bool IsDurablePocketTemporal(const MapInput& in, const TempCtx& ctx, Vec2 p, bool isStand)
 {
     const bool walkable = !in.env.canOccupy ||
                  in.env.canOccupy(p.x, p.y, in.settings.safeWalk);
     if (!walkable) return false;
     if (EnemyBlocked(in, p)) return false;
-    return Core::PointSafety(in, p) >= kUPocketMargin;
+    if (isStand && Core::PointSafety(in, p) < kULatencyPad) return false;   // safe-now floor
+    return TemporalPathClear(in, ctx, p);
 }
 
-// Search a horizon LARGER than one tick's move budget for the NEAREST durable
-// pocket. Concentric rings outward (nearest-first) with early-out at the first
-// ring that contains one; among that ring's pockets, tie-break toward the goal
-// (and, when a boss is locked, toward the in-weapon-range side). The stand
-// point is tested first — if the current spot is already durable it is the
-// nearest possible pocket (dist 0), which the caller reads as "HOLD".
-//
-// Cost is bounded and tick-gated: at most kUPocketRings×kUPocketAngles (288)
-// PointSafety evals, and it early-exits the instant a nearer ring yields a
-// pocket — typically far fewer. That is a few thousand cheap Cheb ops at 5 Hz.
-Pocket FindNearestPocket(const MapInput& in, const Goal& goal)
+// Search a horizon LARGER than one tick's budget for the NEAREST temporal pocket.
+// Concentric rings outward (nearest-first), early-out at the first ring with one;
+// tie-break toward the goal (and, locked, toward the in-weapon-range side). The
+// stand point is tested first — if it is durable it is the nearest pocket (dist
+// 0), which the caller reads as "HOLD". Cost is bounded and tick-gated: at most
+// kUPocketRings×kUPocketAngles temporal tests, each kUTemporalSteps×ctx.count
+// swept-segment ops, early-exiting the instant a nearer ring yields a pocket.
+Pocket FindNearestPocket(const MapInput& in, const TempCtx& ctx, const Goal& goal)
 {
     Pocket best;
     const Vec2 player = in.player;
 
-    if (IsDurablePocket(in, player)) {
+    if (IsDurablePocketTemporal(in, ctx, player, true)) {
         best.found = true; best.pos = player; best.dist = 0.f;
         return best;
     }
@@ -256,9 +340,7 @@ Pocket FindNearestPocket(const MapInput& in, const Goal& goal)
         for (int k = 0; k < kUPocketAngles; ++k) {
             const float ang = kTwoPi * static_cast<float>(k) / static_cast<float>(kUPocketAngles);
             const Vec2 p = Add(player, Vec2{ std::cos(ang) * r, std::sin(ang) * r });
-            if (!IsDurablePocket(in, p)) continue;
-            // Tie-break within the ring: advance toward the goal, and (locked)
-            // keep the pocket inside weapon range so we don't flee out of range.
+            if (!IsDurablePocketTemporal(in, ctx, p, false)) continue;
             float tie = 0.f;
             if (goal.active)
                 tie += Len(Sub(player, goal.pos)) - Len(Sub(p, goal.pos));
@@ -276,7 +358,7 @@ Pocket FindNearestPocket(const MapInput& in, const Goal& goal)
             return best;   // nearest ring with a pocket wins
         }
     }
-    return best;   // no durable pocket within the horizon
+    return best;   // no temporal pocket within the horizon
 }
 
 } // namespace
@@ -289,12 +371,16 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
 
     const float b = std::max(moveBudgetTiles, 1e-3f);
 
-    // ── Lookahead: nearest durable-safe pocket over a horizon > one tick ─────
-    // Because lanes encode each bullet's whole forward path, a point clear of
-    // all lanes by margin is durably safe. Find the nearest such pocket and let
-    // it drive the immediate solve so we pre-position INTO the gap before the
-    // wall closes, rather than greedily picking the safest cell reachable NOW.
-    const Pocket pocket = FindNearestPocket(in, goal);
+    // ── Temporal lookahead: nearest pocket safe over the next N ticks ────────
+    // Predict every relevant bullet's trajectory (reusing the traced polyline),
+    // then find the nearest cell where the STRAIGHT walk to it — and holding
+    // there — dodges the moving bullets in TIME. This threads gaps the static
+    // whole-path test cannot, and it drives the pre-positioning below.
+    TempCtx ctx;
+    BuildTempCtx(in, ctx);
+    out.tempLanes = static_cast<uint8_t>(std::min(ctx.count, 255));
+
+    const Pocket pocket = FindNearestPocket(in, ctx, goal);
     const bool standDurable = pocket.found && pocket.dist <= 1e-4f;
     out.pocketDist = pocket.found ? pocket.dist : 0.f;
 
@@ -302,13 +388,11 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     const int n = BuildCandidates(in, b, goal, pocket.found, pocket.pos, cands);
     Evaluate(in, cands, n);
 
-    // ── Hold ONLY when the current spot is itself a DURABLE pocket ───────────
-    // Momentary safety is not enough: if a lane's forward path already crosses
-    // the stand (a wall closing) it is not durable, so we pre-position toward
-    // the pocket below instead of waiting to be threatened. When the stand IS a
-    // durable pocket with comfortable margin we hold (no jitter) and do not
-    // fight the player's own WASD. The ONE exception: a boss lock that drifted
-    // OUTSIDE weapon range repositions inward to get back into shooting range.
+    // ── Hold ONLY when the current spot is a DURABLE temporal pocket ─────────
+    // i.e. it is safe right now AND no bullet will sweep through it over the
+    // horizon. If a wall is closing (a bullet WILL arrive), the stand is not
+    // durable, so we pre-position toward the pocket instead of waiting. The ONE
+    // exception: a boss lock drifted OUTSIDE weapon range repositions inward.
     if (standDurable) {
         bool repositionInward = false;
         if (goal.fromLock && goal.maxRange > 0.f)
@@ -323,24 +407,46 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         }
     }
 
-    // Pre-positioning: the stand is not a durable pocket but a reachable one
-    // exists — steer the immediate pick toward it (the pocket becomes the goal
-    // the per-tick solve advances toward, one budget at a time).
-    const bool prePosition = pocket.found && !standDurable;
+    // ── Pre-position along the temporally-validated path ─────────────────────
+    // The stand is not durable but a reachable temporal pocket exists, and the
+    // whole straight walk to it was validated against where the bullets are
+    // GOING. So step straight toward it, clamped to the per-tick budget — even
+    // through a cell that is spatially-unsafe NOW but that the bullet has not
+    // reached / has already left. This is the TIME-thread the static immediate
+    // reflex cannot make. Occupancy is still hard: if a wall blocks the straight
+    // step we fall through to the conservative spatial reflex for this tick.
+    if (pocket.found && !standDurable) {
+        const Vec2  to = Sub(pocket.pos, in.player);
+        const float d = Len(to);
+        if (d > 1e-4f) {
+            const Vec2  dir = Mul(to, 1.f / d);
+            const float r = std::min(d, b);
+            const Vec2  target = Add(in.player, Mul(dir, r));
+            const bool  walkable = !in.env.canOccupy ||
+                         in.env.canOccupy(target.x, target.y, in.settings.safeWalk);
+            if (walkable && !EnemyBlocked(in, target)) {
+                out.kind = SolveKind::Safe;
+                out.target = target;
+                out.clearance = Core::PointSafety(in, target);   // spatial clr (may be <0 — the point of temporal)
+                out.shouldMove = true;
+                out.prePosition = true;
+                state.lastMoveDir = dir;
+                return;
+            }
+        }
+    }
 
-    // ── Hard constraint met: choose AMONG the safe points by smart direction ─
-    // Safety is a hard filter (every scored candidate is provably safe); the
-    // objective only ranks them. In pre-position mode the ranking maximizes
-    // progress toward the durable pocket; otherwise it is the standard
-    // continuity + orbit-goal + minimal-move + comfort + stand-bias ranking.
+    // ── Conservative reflex: choose AMONG the spatially-SAFE reachable cells ──
+    // The instantaneous lane-based floor, unchanged. Runs when the stand is not
+    // durable and no temporal pocket is reachable this tick (or a wall blocks the
+    // straight path) — never gets less safe than the pre-temporal build.
     const Vec2 flow = FlowDir(in);
     const Vec2 prevDir = state.lastMoveDir;
     int best = -1;
     float bestScore = -kHugeClearance;
     for (int i = 0; i < n; ++i) {
         if (!cands[i].safe) continue;
-        const float s = ScoreCand(cands[i], in.player, goal, flow, prevDir, b,
-                                  prePosition, pocket.found, pocket.pos);
+        const float s = ScoreCand(cands[i], in.player, goal, flow, prevDir, b);
         if (best < 0 || s > bestScore) {
             bestScore = s;
             best = i;
@@ -352,15 +458,11 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         out.target = w.pos;
         out.clearance = w.clr;
         if (w.stand || w.moveDist <= 1e-4f) {
-            // Only the safe stand beats every reachable step — no safe progress
-            // toward the pocket is possible this tick, so hold and re-solve next
-            // tick when the bullets (and thus the reachable safe cells) shift.
             out.kind = SolveKind::Hold;
             out.shouldMove = false;
         } else {
             out.kind = SolveKind::Safe;
             out.shouldMove = true;
-            out.prePosition = prePosition;
             state.lastMoveDir = w.dir;
         }
         return;
@@ -398,7 +500,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             out.target = w.pos;
             out.clearance = w.clr;
             out.shouldMove = true;
-            out.prePosition = prePosition;
+            out.prePosition = pocket.found && !standDurable;
             if (LenSq(w.dir) > 1e-6f) state.lastMoveDir = w.dir;
             return;
         }
