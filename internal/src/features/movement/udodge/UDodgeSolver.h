@@ -1,5 +1,6 @@
 #pragma once
 #include "UDodgeTypes.h"
+#include "UDodgePathfinder.h"   // Path::PlanResult — the worker's lookahead route
 
 // UDodge per-tick safe-position solver (plan 64). Each server tick it computes
 // the player position — within the legal per-tick move budget — that lies
@@ -11,12 +12,18 @@
 // Pure data + math over the plain-data DangerMap and the Env probes already in
 // MapInput. No IL2CPP, no globals, no worker thread.
 //
-// LOOKAHEAD (plan 64 extension). The per-tick candidate set only reaches one
-// move budget, so a greedy "safest cell NOW" pick has no way to PLAN toward a
-// gap it cannot reach in a single step — in a dense shot wall it dead-ends
-// inside a shot. On top of the immediate layer the solver runs a bounded
-// nearest-pocket search over a horizon larger than one tick (kULookaheadTiles)
-// and pre-positions the player INTO the gap over 2–3 ticks.
+// LOOKAHEAD (plan 64 / grid pathfinder plan 65). The per-tick candidate set only
+// reaches one move budget, so a greedy "safest cell NOW" pick has no way to PLAN
+// toward a gap it cannot reach in a single step — in a dense shot wall it
+// dead-ends inside a shot, and a straight-line pocket search cannot route AROUND
+// a wall/bullet-wall to a safe gap off the direct ray. On top of the immediate
+// layer the solver consumes a WAYPOINT ROUTE produced by the async grid
+// pathfinder (UDodgePathfinder, run on the UDodge::Worker thread): a bounded grid
+// Dijkstra that curves around blocked/dangerous cells to the nearest durable-safe
+// cell, expanding its window outward when nothing safe is near. The route's first
+// step (≈ one budget ahead) is the pre-position target; over ticks the player
+// follows the curve around the obstacle. The route is a LOOKAHEAD BIAS only — it
+// may be a tick or two stale, and the immediate layer stays authoritative.
 //
 // TEMPORAL. The pocket test is TIME-parameterized: it predicts where every
 // relevant bullet is GOING (reusing the trajectory the sensors already traced,
@@ -33,17 +40,15 @@
 //
 // IN-RANGE DISK (locked boss). When a boss is LOCKED (goal.fromLock, goal.maxRange
 // = weaponRange) the movement manifold is the FILLED DISK of radius weaponRange
-// around the boss — every spot from which the boss is still hittable. The solver
-// runs its normal open-space lookahead but CONSTRAINS the durable-pocket search
-// to that disk: it finds the NEAREST safe temporal pocket ANYWHERE inside weapon
-// range (in, out, or around the boss — it may cut across the inside of the disk
-// or drift to the far side, whatever the nearest safe spot is) and pre-positions
-// to it, threading the pattern while keeping the boss hittable. The stay-in-range
-// preference is governed by kSolveOutRangeW on the immediate reflex and the disk
-// gate on the pocket search. Safety STILL OVERRIDES: if no safe pocket exists
-// inside the disk the search is re-run UNCONSTRAINED (leave range to dodge, then
-// return once clear). This constraint applies ONLY when locked; unlocked play is
-// unchanged.
+// around the boss — every spot from which the boss is still hittable. The grid
+// pathfinder CONSTRAINS its goal cells to that disk: it routes to the NEAREST safe
+// cell ANYWHERE inside weapon range (cutting across the inside of the disk or
+// drifting to the far side, whatever the nearest safe spot is), keeping the boss
+// hittable. The stay-in-range preference is governed by kSolveOutRangeW on the
+// immediate reflex and the disk gate on the route search. Safety STILL OVERRIDES:
+// if no safe cell exists inside the disk the pathfinder re-runs UNCONSTRAINED
+// (leave range to dodge, then return once clear — PlanResult::outOfRange). This
+// constraint applies ONLY when locked; unlocked play is unchanged.
 //
 // HONEST GUARANTEE. "Numerically impossible to get hit" holds ONLY for the
 // SolveKind::Safe case: a provably-safe point existed within the move budget
@@ -93,13 +98,29 @@ struct SolveResult {
     bool      inRangeDisk = false;
     bool      outOfRange  = false; // true = no safe pocket existed in the disk, so the search
                                    // left weapon range to dodge (safety override); returns when clear
+    // ── Grid pathfinder (plan 65) ────────────────────────────────────────────
+    // The lookahead target is chosen by a bounded grid Dijkstra that routes a
+    // waypoint path AROUND obstacles to the nearest durable-safe area, not by the
+    // straight-line pocket search. These describe the route this tick's move
+    // follows (diagnostics only; the immediate temporal floor can still override).
+    bool      followedRoute = false; // this tick's move stepped along a multi-waypoint grid route
+    uint8_t   routeWaypoints = 0;    // number of route cells (PATH len=<n>) — 0 when no route
+    bool      routeExpanded  = false;// the grid window grew past the base radius to find the goal
+    uint16_t  routePops      = 0;    // cells finalized by Dijkstra (perf diagnostics)
+    uint8_t   routeRadius    = 0;    // final window radius in cells (diagnostics)
 };
 
 // Solve for the best reachable position this server tick.
 //   moveBudgetTiles = per-tick reach = tilesPerSec × kServerTickSec (in.stepTiles).
 //   goal            = soft preference (lock standoff / WASD); never overrides safety.
+//   route           = the WORKER thread's latest grid route (lookahead direction /
+//                     goal bias only; may be a tick or two stale — the immediate
+//                     micro-dodge floor below stays authoritative regardless, and
+//                     re-validates the actual step taken temporally). Pass a
+//                     default-constructed (found=false) PlanResult when the worker
+//                     is cold / the route is too stale → pure immediate dodge.
 //   state.lastMoveDir is read (commitment term) and updated (chosen heading).
 void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
-           CoreState& state, SolveResult& out);
+           const Path::PlanResult& route, CoreState& state, SolveResult& out);
 
 } } // namespace UDodge::Solver

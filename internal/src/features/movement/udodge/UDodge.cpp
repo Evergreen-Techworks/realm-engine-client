@@ -3,6 +3,8 @@
 #include "UDodgeTypes.h"
 #include "UDodgeCore.h"
 #include "UDodgeSolver.h"
+#include "UDodgePathfinder.h"
+#include "UDodgeWorker.h"
 #include "UDodgeSensors.h"
 #include "UDodgeDebug.h"
 
@@ -48,6 +50,12 @@ DangerMap  g_map;
 // Per-tick safe-position solver result — game-thread-owned, cached for one
 // server tick and re-validated (or re-solved) every frame (plan 64).
 Solver::SolveResult g_solve;
+// Latest grid route from the async worker (plan 65). Game-thread-owned cache,
+// refreshed from Worker::TryGetLatestPlan when the worker isn't busy; consumed by
+// the solver as a lookahead bias. g_lastPubSeq is the newest snapshot sequence we
+// published, used to gate route staleness (never chase a badly-stale plan).
+Path::PlanResult g_route;
+uint32_t         g_lastPubSeq = 0;
 
 std::mutex    g_debugMutex;
 
@@ -106,16 +114,52 @@ void PublishMinimal(Decision decision, Vec2 player)
     PublishDebug(d);
 }
 
+// Rasterize the plain-data occupancy+hazard grid the worker pathfinds over
+// (plan 65). GAME-THREAD ONLY — Sensors::CanOccupy / IsHazardAt touch live world
+// memory, which is exactly why occupancy is baked into a plain grid here and the
+// worker never calls Env. HOT PATH: kUPathMaxCells (49×49 = 2401) CanOccupy probes
+// is the largest new game-thread cost, so WALL bits (bit0) are re-rasterized ONLY
+// when rebuildWalls (a full map rebuild — walls are static within a server tick);
+// HAZARD bits (bit1) refresh every call (cheap via the per-tick hazard memo).
+// `grid` persists across frames (a static in Tick), so unrebuilt wall bits survive.
+// Runs inside the per-tick memo lifetime (BuildMap/ReanchorMap populated it).
+void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls)
+{
+    grid.center = player;
+    constexpr int R = kUPathMaxRadCells;
+    constexpr int S = kUPathMaxSide;
+    for (int gy = 0; gy < S; ++gy) {
+        for (int gx = 0; gx < S; ++gx) {
+            uint8_t& f = grid.flags[gy * S + gx];
+            const float wx = player.x + static_cast<float>(gx - R) * kUPathCellTiles;
+            const float wy = player.y + static_cast<float>(gy - R) * kUPathCellTiles;
+            if (rebuildWalls) {
+                // Walls only (safeWalk=false) so hazard is a SEPARATE bit — the
+                // worker folds safeWalk in itself to match Sensors::CanOccupy.
+                if (!Sensors::CanOccupy(wx, wy, false)) f |= 0x1;
+                else                                    f &= static_cast<uint8_t>(~0x1);
+            }
+            if (Sensors::IsHazardAt(wx, wy)) f |= 0x2;
+            else                             f &= static_cast<uint8_t>(~0x2);
+        }
+    }
+}
+
 } // namespace
 
 void SetEnabled(bool enabled)
 {
-    if (enabled)
+    if (enabled) {
         ProjectileTracking::Install();   // sensors need the projectile hook
+        Worker::Start();                 // async grid-pathfinder worker (plan 65)
+    }
     g_enabled.store(enabled, std::memory_order_relaxed);
     if (!enabled) {
+        Worker::Stop();                  // JOIN the worker before releasing state it never touches
         g_state.Reset();
         g_solve = Solver::SolveResult{};
+        g_route = Path::PlanResult{};
+        g_lastPubSeq = 0;
         PublishDebug(DebugSnapshot{});
     }
 }
@@ -125,8 +169,11 @@ bool IsEnabled() { return g_enabled.load(std::memory_order_relaxed); }
 void OnEnter()
 {
     ProjectileTracking::Install();   // sensors need the projectile hook
+    Worker::Start();                 // async grid-pathfinder worker (plan 65)
     g_state.Reset();
     g_solve = Solver::SolveResult{};
+    g_route = Path::PlanResult{};
+    g_lastPubSeq = 0;
     PublishDebug(DebugSnapshot{});
 }
 
@@ -243,12 +290,65 @@ void Tick(void* player, float px, float py, float dt)
         goal.maxRange = weaponRange;   // IN-RANGE DISK radius: the solver pathfinds anywhere within this
     }
 
+    // ── Async grid pathfinder: publish snapshot + consume latest route ───────
+    // The heavy grid Dijkstra + radius expansion runs on the WORKER thread over a
+    // PLAIN-DATA snapshot; the game thread NEVER blocks on it. Publish is gated to
+    // the ACTUAL server-tick change (~5 Hz) — the rasterize (FillOccGrid) + the
+    // snapshot copy are the only added game-thread cost, so they run at tick rate,
+    // not per frame. The route we consume only BIASES the lookahead; the immediate
+    // micro-dodge floor below stays authoritative even when it is a tick stale.
+    static Path::PlannerSnapshot s_snap;   // large (danger map + occ grid) — keep off the stack
+    static uint32_t s_lastPubTick = 0xFFFFFFFFu;
+    static int      s_pubFrame    = 0;
+    const bool tickChanged      = tickOk && tick != s_lastPubTick;
+    const bool throttleFallback = !tickOk && ((s_pubFrame++ % 12) == 0);
+    if (tickChanged || throttleFallback) {
+        // Publish is tick-gated, so re-rasterize walls each publish (once per tick,
+        // ~5 Hz) — keeps the grid aligned as the player moves without per-frame cost.
+        FillOccGrid(s_snap.grid, in.player, true);
+        s_snap.tickId           = g_map.tickId;
+        s_snap.player           = in.player;
+        s_snap.moveBudget       = b;
+        s_snap.settings         = settings;
+        s_snap.goalActive       = goal.active;
+        s_snap.goalPos          = goal.pos;
+        s_snap.hasLock          = goal.fromLock;
+        s_snap.lockPos          = goal.lockPos;
+        s_snap.weaponRangeTiles = goal.fromLock ? goal.maxRange : 0.f;
+        s_snap.map              = g_map;    // plain-data danger copy (lanes/zones/enemies)
+        const uint32_t pub = Worker::PublishSnapshot(s_snap);
+        if (pub) g_lastPubSeq = pub;
+        if (tickOk) s_lastPubTick = tick;
+    }
+
+    // Refresh the cached route when the worker isn't busy (non-blocking — keeps the
+    // last route on contention / cold start).
+    Path::PlanResult fresh{};
+    if (Worker::TryGetLatestPlan(fresh)) {
+        g_route = fresh;
+        static int s_wpN = 0;
+        if ((s_wpN++ % 120) == 0)
+            DBG_FILE_LOG("[UDodge] Worker route seq=" << g_route.forSeq
+                << " found=" << g_route.found << " len=" << g_route.waypoints
+                << " gridR=" << g_route.radiusCells << " pops=" << g_route.pops
+                << " expanded=" << g_route.expanded);
+    }
+
+    // Staleness gate: only feed the solver a route recent enough to trust as a
+    // lookahead. Too stale (or cold) → an empty route → pure immediate dodge.
+    Path::PlanResult routeForSolve{};
+    if (g_route.found &&
+        g_lastPubSeq >= g_route.forSeq &&
+        (g_lastPubSeq - g_route.forSeq) <= kUPlanMaxStaleSeq) {
+        routeForSolve = g_route;
+    }
+
     // ── Solve once per server tick ──────────────────────────────────────────
     // A rebuild means the tick id changed or a structural projectile change forced
     // it — re-solve then and cache; between ticks the cached target is held and
     // merely re-validated + walked below.
     if (rebuilt)
-        Solver::Solve(in, b, goal, g_state, g_solve);
+        Solver::Solve(in, b, goal, routeForSolve, g_state, g_solve);
 
     const float frameMs = Clamp(dt * 1000.f, 1.f, 250.f);
     Vec2 moveTarget = in.player;
@@ -273,7 +373,7 @@ void Tick(void* player, float px, float py, float dt)
             Sensors::BuildMap(g_map, px, py, settings);
             g_map.tickId = tick;
             g_map.tickValid = tickOk;
-            Solver::Solve(in, b, goal, g_state, g_solve);
+            Solver::Solve(in, b, goal, routeForSolve, g_state, g_solve);
             targetOk = g_solve.shouldMove;
         }
         if (g_solve.shouldMove && targetOk) {
@@ -294,6 +394,14 @@ void Tick(void* player, float px, float py, float dt)
                                    ? (g_solve.prePosition ? " DISK-OOR-PREPOS" : " DISK-OOR")
                                    : (g_solve.prePosition ? " INRANGE-PREPOS" : " INRANGE"))
                             : (g_solve.prePosition ? " PREPOS(temporal)" : " IMMED"))
+                    // Route tag: following a curved multi-waypoint grid route around
+                    // an obstacle (PATH) vs a straight immediate/pre-position step.
+                    << (g_solve.followedRoute
+                            ? (g_solve.routeExpanded ? " PATH+EXP len=" : " PATH len=")
+                            : " STRAIGHT len=")
+                    << (int)g_solve.routeWaypoints
+                    << " gridR=" << (int)g_solve.routeRadius
+                    << " pops=" << (int)g_solve.routePops
                     << " bossDist=" << (g_map.hasLock
                             ? std::sqrt((g_solve.target.x - g_map.lockPos.x) * (g_solve.target.x - g_map.lockPos.x)
                                       + (g_solve.target.y - g_map.lockPos.y) * (g_solve.target.y - g_map.lockPos.y))

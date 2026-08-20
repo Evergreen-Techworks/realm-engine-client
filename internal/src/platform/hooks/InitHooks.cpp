@@ -97,9 +97,11 @@ void DetourUninitialization()
         ProjectileTracking::Uninstall();
 
         // Disable UDodge before DLL unload so it stops driving movement and
-        // clears its published state (plan 64 retired the background worker, so
-        // there is no longer a thread to join here). DangerPlanner::Uninstall()
-        // above has already stopped the game-thread Tick that feeds it.
+        // clears its published state. SetEnabled(false) also Stop()s + JOINs the
+        // plan-65 async grid-pathfinder worker, so no thread outlives the DLL
+        // (Worker::Stop is idempotent — safe if UDodge was never enabled).
+        // DangerPlanner::Uninstall() above has already stopped the game-thread
+        // Tick that feeds it.
         UDodge::SetEnabled(false);
 
         // 4) Disable any remaining MinHook hooks, then release the library (safe if never initialized).

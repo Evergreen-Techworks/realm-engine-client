@@ -1,6 +1,7 @@
 #include "pch-il2cpp.h"
 #include "UDodgeSolver.h"
 #include "UDodgeCore.h"
+#include "UDodgePathfinder.h"
 
 #include <algorithm>
 #include <cmath>
@@ -202,12 +203,6 @@ void Evaluate(const MapInput& in, Cand* c, int n)
 
 constexpr int kUTemporalSamples = kUTemporalSteps + 1;   // includes t = 0
 
-struct Pocket {
-    bool  found = false;
-    Vec2  pos{};
-    float dist = 0.f;   // reach distance from the player to the pocket
-};
-
 // Per-tick temporal context: for each RELEVANT lane, the bullet's predicted
 // position at each march sample time, plus its effective hit half. Built once
 // per Solve from the lane polylines (no re-prediction); read many times by the
@@ -316,71 +311,10 @@ bool IsDurablePocketTemporal(const MapInput& in, const TempCtx& ctx, Vec2 p, boo
     return TemporalPathClear(in, ctx, p);
 }
 
-// Search a horizon LARGER than one tick's budget for the NEAREST temporal pocket.
-// Concentric rings outward (nearest-first), early-out at the first ring with one;
-// tie-break toward the goal (and, locked, toward the in-weapon-range side). The
-// stand point is tested first — if it is durable it is the nearest pocket (dist
-// 0), which the caller reads as "HOLD". Cost is bounded and tick-gated: at most
-// kUPocketRings×kUPocketAngles temporal tests, each kUTemporalSteps×ctx.count
-// swept-segment ops, early-exiting the instant a nearer ring yields a pocket.
-//
-// IN-RANGE DISK (locked boss). When diskR > 0 the OUTWARD pocket search is gated
-// to the filled disk of radius diskR around goal.lockPos — a pocket only counts
-// if it keeps the boss hittable (dist-to-boss ≤ diskR + slack). This makes the
-// locked-boss manifold the whole in-range area: it still finds the NEAREST safe
-// pocket anywhere (cutting across the inside of the disk or drifting to the far
-// side), just never one that leaves weapon range. The caller re-runs with
-// diskR = 0 when the gated pass finds nothing (safety override: leave range to
-// dodge). The stand point is NOT gated — an out-of-range durable stand is handled
-// by the caller's reposition-inward path, not treated as a pocket to hold on.
-Pocket FindNearestPocket(const MapInput& in, const TempCtx& ctx, const Goal& goal,
-                         float diskR)
-{
-    Pocket best;
-    const Vec2 player = in.player;
-    const float diskLimit = diskR > 0.f ? diskR + kUInRangeSlack : 0.f;
-
-    if (IsDurablePocketTemporal(in, ctx, player, true)) {
-        best.found = true; best.pos = player; best.dist = 0.f;
-        return best;
-    }
-
-    const float step = kULookaheadTiles / static_cast<float>(kUPocketRings);
-    for (int ri = 1; ri <= kUPocketRings; ++ri) {
-        const float r = step * static_cast<float>(ri);
-        bool  ringHit = false;
-        float ringBestTie = -kHugeClearance;
-        Vec2  ringBestPos{};
-        for (int k = 0; k < kUPocketAngles; ++k) {
-            const float ang = kTwoPi * static_cast<float>(k) / static_cast<float>(kUPocketAngles);
-            const Vec2 p = Add(player, Vec2{ std::cos(ang) * r, std::sin(ang) * r });
-            // In-range-disk gate: locked → the pocket must keep the boss hittable.
-            if (diskLimit > 0.f && Len(Sub(p, goal.lockPos)) > diskLimit) continue;
-            if (!IsDurablePocketTemporal(in, ctx, p, false)) continue;
-            float tie = 0.f;
-            if (goal.active)
-                tie += Len(Sub(player, goal.pos)) - Len(Sub(p, goal.pos));
-            if (goal.fromLock && goal.maxRange > 0.f) {
-                const float distToBoss = Len(Sub(p, goal.lockPos));
-                if (distToBoss > goal.maxRange)
-                    tie -= kSolveOutRangeW * (distToBoss - goal.maxRange);
-            }
-            if (!ringHit || tie > ringBestTie) {
-                ringHit = true; ringBestTie = tie; ringBestPos = p;
-            }
-        }
-        if (ringHit) {
-            best.found = true; best.pos = ringBestPos; best.dist = r;
-            return best;   // nearest ring with a pocket wins
-        }
-    }
-    return best;   // no temporal pocket within the horizon
-}
-
 } // namespace
 
 void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
-           CoreState& state, SolveResult& out)
+           const Path::PlanResult& route, CoreState& state, SolveResult& out)
 {
     out = SolveResult{};
     if (!in.map) { out.kind = SolveKind::Hold; return; }
@@ -396,33 +330,41 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     BuildTempCtx(in, ctx);
     out.tempLanes = static_cast<uint8_t>(std::min(ctx.count, 255));
 
-    // ── In-range-disk pocket search (locked boss constrains the manifold) ────
-    // When a boss is LOCKED, pathfind over the FILLED DISK of radius weaponRange
-    // (goal.maxRange) around it: find the nearest safe temporal pocket ANYWHERE
-    // inside weapon range so the boss stays hittable — the search may cut across
-    // the inside of the disk or drift to the far side, whatever the nearest safe
-    // spot is. Safety OVERRIDES: if no pocket exists inside the disk, re-run the
-    // search UNCONSTRAINED (leave range to dodge, then return once clear). When
-    // NOT locked, diskR = 0 and this is the plain open-space search (unchanged).
+    // ── HOLD gate: is the current spot a DURABLE temporal pocket? ────────────
+    // Safe right now AND no bullet will sweep through it over the horizon. If a
+    // wall is closing (a bullet WILL arrive) the stand is not durable, so we plan
+    // a route out instead of waiting. This is the immediate-reflex floor for the
+    // stand: temporal only ever makes us hold LESS than instantaneous safety.
+    const bool standDurable = IsDurablePocketTemporal(in, ctx, in.player, true);
+
+    // ── Grid route from the WORKER thread (lookahead direction / goal bias) ──
+    // The bounded grid Dijkstra that routes AROUND obstacles to the nearest
+    // durable-safe cell (with radius expansion + in-range-disk gating) runs
+    // ASYNC on the worker; here we only CONSUME its latest plain-data result. It
+    // supersedes the straight-line pocket search for choosing the lookahead
+    // target, but it is advisory: the immediate micro-dodge below stays the hard
+    // safety floor and re-validates the actual step taken temporally, so a stale
+    // route can never cost us a hit. When the worker is cold / the route is too
+    // stale the caller passes found=false and this is a pure immediate dodge.
     const bool lockedDisk = goal.fromLock && goal.maxRange > 0.f;
     out.inRangeDisk = lockedDisk;
-    Pocket pocket = FindNearestPocket(in, ctx, goal, lockedDisk ? goal.maxRange : 0.f);
-    if (lockedDisk && !pocket.found) {
-        pocket = FindNearestPocket(in, ctx, goal, 0.f);   // safety override: leave range
-        if (pocket.found && pocket.dist > 1e-4f) out.outOfRange = true;
-    }
-    const bool standDurable = pocket.found && pocket.dist <= 1e-4f;
-    out.pocketDist = pocket.found ? pocket.dist : 0.f;
+    out.outOfRange  = route.outOfRange;
+
+    // Route diagnostics (target selection is the grid route, not the ring pocket).
+    const bool  pocketFound = route.found;
+    const Vec2  pocketPos   = route.stepTarget;   // reflex candidate + fallback bias point
+    out.pocketDist    = route.found ? route.goalDist : 0.f;
+    out.routeWaypoints = static_cast<uint8_t>(std::min(route.waypoints, 255));
+    out.routeExpanded  = route.expanded;
+    out.routePops      = static_cast<uint16_t>(std::min(route.pops, 65535));
+    out.routeRadius    = static_cast<uint8_t>(std::min(route.radiusCells, 255));
 
     Cand cands[kMaxCandidates];
-    const int n = BuildCandidates(in, b, goal, pocket.found, pocket.pos, cands);
+    const int n = BuildCandidates(in, b, goal, pocketFound, pocketPos, cands);
     Evaluate(in, cands, n);
 
     // ── Hold ONLY when the current spot is a DURABLE temporal pocket ─────────
-    // i.e. it is safe right now AND no bullet will sweep through it over the
-    // horizon. If a wall is closing (a bullet WILL arrive), the stand is not
-    // durable, so we pre-position toward the pocket instead of waiting. The ONE
-    // exception: a boss lock drifted OUTSIDE weapon range repositions inward.
+    // The ONE exception: a boss lock drifted OUTSIDE weapon range repositions inward.
     if (standDurable) {
         bool repositionInward = false;
         if (goal.fromLock && goal.maxRange > 0.f)
@@ -437,16 +379,15 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         }
     }
 
-    // ── Pre-position along the temporally-validated path ─────────────────────
-    // The stand is not durable but a reachable temporal pocket exists, and the
-    // whole straight walk to it was validated against where the bullets are
-    // GOING. So step straight toward it, clamped to the per-tick budget — even
-    // through a cell that is spatially-unsafe NOW but that the bullet has not
-    // reached / has already left. This is the TIME-thread the static immediate
-    // reflex cannot make. Occupancy is still hard: if a wall blocks the straight
-    // step we fall through to the conservative spatial reflex for this tick.
-    if (pocket.found && !standDurable) {
-        const Vec2  to = Sub(pocket.pos, in.player);
+    // ── Pre-position: step along the grid route toward the safe area ─────────
+    // The stand is not durable but a route to a safe area exists. Step ≈ one
+    // budget along the route (the curve around the obstacle the straight-line
+    // solver cannot make). The IMMEDIATE FLOOR: validate the actual step taken
+    // with the temporal check — if the straight step to stepTarget would eat a
+    // shot in TIME, reject it and fall through to the conservative spatial reflex
+    // so the route never costs us a hit. Occupancy is hard (walls/enemies).
+    if (route.found && !standDurable) {
+        const Vec2  to = Sub(route.stepTarget, in.player);
         const float d = Len(to);
         if (d > 1e-4f) {
             const Vec2  dir = Mul(to, 1.f / d);
@@ -454,12 +395,14 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             const Vec2  target = Add(in.player, Mul(dir, r));
             const bool  walkable = !in.env.canOccupy ||
                          in.env.canOccupy(target.x, target.y, in.settings.safeWalk);
-            if (walkable && !EnemyBlocked(in, target)) {
+            if (walkable && !EnemyBlocked(in, target) &&
+                TemporalPathClear(in, ctx, target)) {   // immediate-step temporal floor
                 out.kind = SolveKind::Safe;
                 out.target = target;
-                out.clearance = Core::PointSafety(in, target);   // spatial clr (may be <0 — the point of temporal)
+                out.clearance = Core::PointSafety(in, target);   // spatial clr (may be <0 — time-threaded)
                 out.shouldMove = true;
                 out.prePosition = true;
+                out.followedRoute = true;
                 state.lastMoveDir = dir;
                 return;
             }
@@ -503,14 +446,14 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     // pocket so we head for the gap, not a dead end. Clearance still leads so we
     // never step into materially worse danger just to chase the pocket.
     const float standClr = Core::PointSafety(in, in.player);
-    const float playerToPocket = pocket.found ? Len(Sub(in.player, pocket.pos)) : 0.f;
+    const float playerToPocket = pocketFound ? Len(Sub(in.player, pocketPos)) : 0.f;
     int best2 = -1;
     float best2Val = -kHugeClearance;
     for (int i = 0; i < n; ++i) {
         if (!cands[i].occOk) continue;
         float val = cands[i].clr;
-        if (pocket.found) {
-            const float prog = playerToPocket - Len(Sub(cands[i].pos, pocket.pos));
+        if (pocketFound) {
+            const float prog = playerToPocket - Len(Sub(cands[i].pos, pocketPos));
             val += kSolveFallbackPocketW * prog;
         }
         if (val > best2Val) { best2Val = val; best2 = i; }
@@ -519,18 +462,19 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     if (best2 >= 0) {
         const Cand& w = cands[best2];
         // Move only if it actually helps: strictly higher clearance than standing,
-        // OR it steps toward the pocket without dropping clearance meaningfully.
-        const float progToward = pocket.found
-            ? playerToPocket - Len(Sub(w.pos, pocket.pos)) : 0.f;
+        // OR it steps toward the route's gap without dropping clearance meaningfully.
+        const float progToward = pocketFound
+            ? playerToPocket - Len(Sub(w.pos, pocketPos)) : 0.f;
         const bool helps = w.clr > standClr + 1e-3f ||
-                           (pocket.found && progToward > 1e-3f &&
+                           (pocketFound && progToward > 1e-3f &&
                             w.clr >= standClr - kUPocketMargin);
         if (helps && w.moveDist > 1e-4f) {
             out.kind = SolveKind::Fallback;
             out.target = w.pos;
             out.clearance = w.clr;
             out.shouldMove = true;
-            out.prePosition = pocket.found && !standDurable;
+            out.prePosition = pocketFound && !standDurable;
+            out.followedRoute = pocketFound && route.waypoints > 2;
             if (LenSq(w.dir) > 1e-6f) state.lastMoveDir = w.dir;
             return;
         }

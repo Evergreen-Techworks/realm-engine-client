@@ -105,6 +105,45 @@ constexpr float kUTemporalCullTiles = 8.f;   // only predict bullets whose trace
 constexpr float kUInRangeSlack = 0.35f;  // tiles of grace added to weaponRange when gating pockets to the
                                          // disk, so a pocket right at the boundary still counts as in-range
 
+// ── Grid pathfinder (route AROUND obstacles; baked, NO user sliders) ─────────
+// The straight-line durable-pocket search can only reach a gap that lies on an
+// unobstructed ray from the player: if a bullet wall or a real wall sits between
+// the player and the nearest safe area it REJECTS that area and settles for a
+// nearer, worse one — it cannot route around the obstruction. This layer lays a
+// coarse local occupancy/cost grid over a bounded window centered on the player
+// and runs an 8-neighbour Dijkstra (no diagonal corner-cutting) to the NEAREST
+// durable-safe cell, producing a WAYPOINT PATH that curves around blocked and
+// dangerous cells. Its first step (clamped to the per-tick budget) becomes the
+// lookahead target; over successive ticks the player follows the route around
+// the obstacle. Per-cell cost is the CHEAP spatial Core::PointSafety (NOT a full
+// temporal march per cell — the temporal check is reserved for validating the
+// single immediate step actually taken). If no durable-safe cell exists in the
+// base window the window EXPANDS outward in steps up to the cap and re-searches,
+// so it reaches a safe area farther out rather than dead-ending.
+constexpr float kUPathCellTiles    = 0.5f;  // grid cell size (tiles) — coarse for FPS
+constexpr int   kUPathBaseRadCells = 12;    // initial window radius (cells) = 6 tiles
+constexpr int   kUPathMaxRadCells  = 24;    // expansion cap (cells) = 12 tiles
+constexpr int   kUPathRadStepCells = 6;     // window growth per expansion step (3 tiles)
+constexpr float kUPathDangerW      = 30.f;  // cost per tile of PointSafety BELOW the pocket margin
+                                            // (grades how strongly the route bends around danger)
+constexpr float kUPathHitPenalty   = 120.f; // extra cost for a cell INSIDE the server hit region
+                                            // (PointSafety < 0) — traversable only when boxed in
+constexpr float kUPathRoot2        = 1.41421356f;
+constexpr int   kUPathMaxSide      = kUPathMaxRadCells * 2 + 1;                    // 49
+constexpr int   kUPathMaxCells     = kUPathMaxSide * kUPathMaxSide;               // 49x49 = 2401
+constexpr int   kUPathHeapCap      = kUPathMaxCells * 8;  // fixed min-heap (lazy Dijkstra, done-check on pop)
+
+// ── Async pathfinder worker (plan 65; two-rate MPC — baked, NO user sliders) ──
+// The heavy grid Dijkstra + radius expansion runs on a DEDICATED WORKER THREAD
+// over a plain-data snapshot (rebuilt from the retired plan-58/59 seam), NOT on
+// the game thread. The game thread's per-tick micro-dodge (the immediate safe
+// cell + temporal step) stays the HARD SAFETY FLOOR and never blocks on the
+// worker; it consumes the worker's latest route only as a lookahead direction /
+// goal bias, and stays safe even when the route is a tick or two stale. This cap
+// is the publish-sequence lag beyond which the game thread ignores the route and
+// dodges purely on the immediate floor (no chasing a badly-stale plan).
+constexpr uint32_t kUPlanMaxStaleSeq = 3;
+
 struct Vec2 {
     float x = 0.f;
     float y = 0.f;

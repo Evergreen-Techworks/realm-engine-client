@@ -63,6 +63,8 @@
     <ClCompile Include="src\features\movement\udodge\UDodgeSensors.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodgeCore.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodgeSolver.cpp" />
+    <ClCompile Include="src\features\movement\udodge\UDodgePathfinder.cpp" />
+    <ClCompile Include="src\features\movement\udodge\UDodgeWorker.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodge.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodgeDebug.cpp" />
     <ClCompile Include="src\gui\tabs\CombatTab\CombatTAB.cpp" />
@@ -251,6 +253,8 @@
     <ClInclude Include="src\features\movement\udodge\UDodgeSensors.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeCore.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeSolver.h" />
+    <ClInclude Include="src\features\movement\udodge\UDodgePathfinder.h" />
+    <ClInclude Include="src\features\movement\udodge\UDodgeWorker.h" />
     <ClInclude Include="src\features\movement\udodge\UDodge.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeDebug.h" />
     <ClInclude Include="vendor\minhook\MinHook.h" />
