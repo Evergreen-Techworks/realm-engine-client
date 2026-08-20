@@ -283,13 +283,17 @@ void Tick(void* player, float px, float py, float dt)
         snap.lockPos          = g_map.lockPos;
         snap.rangeResolved    = AutoAim::IsProjRangeResolved();
         snap.weaponRangeTiles = snap.rangeResolved ? AutoAim::GetProjRangeTiles() : 6.f;
-        // GAME-THREAD rasterization: walls on rebuild, hazard each publish. Copy the
-        // plain-data danger map for the worker's lane/zone routing cost.
-        FillOccGrid(snap.grid, in.player, rebuilt, settings.planRadius);
-        snap.map = g_map;
-
-        const uint32_t pub = Worker::PublishSnapshot(snap);
-        if (pub) g_lastPubSeq = pub;
+        // GAME-THREAD rasterization + publish is the expensive part (thousands of
+        // tile probes over the grid). Do it ONLY on a server-tick rebuild (~5 Hz),
+        // not every render frame — the route is world-space and committed, and the
+        // game thread follows it via the live-position carrot below, so planning at
+        // tick rate is ample and per-frame rasterization was the FPS drain.
+        if (rebuilt) {
+            FillOccGrid(snap.grid, in.player, true, settings.planRadius);
+            snap.map = g_map;
+            const uint32_t pub = Worker::PublishSnapshot(snap);
+            if (pub) g_lastPubSeq = pub;
+        }
 
         Planner::PlanResult fresh{};
         if (Worker::TryGetLatestPlan(fresh)) {
