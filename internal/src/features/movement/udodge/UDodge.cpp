@@ -228,6 +228,11 @@ void Tick(void* player, float px, float py, float dt)
             goal.active = true;
             goal.pos = Add(g_map.lockPos, Mul(dir, standoff));  // on the player-side ray
         }
+        // Stay-in-range: the solver holds when safe & in range, repositions inward
+        // when we drift past weaponRange, and biases dodges to keep the range.
+        goal.fromLock = true;
+        goal.lockPos  = g_map.lockPos;
+        goal.maxRange = weaponRange;
     }
 
     // ── Solve once per server tick ──────────────────────────────────────────

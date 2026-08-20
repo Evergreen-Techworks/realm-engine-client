@@ -22,6 +22,12 @@ namespace UDodge { namespace Solver {
 struct Goal {
     bool  active = false;   // a soft target exists (lock standoff or WASD intent)
     Vec2  pos{};            // world target we would like to progress toward
+    bool  fromLock = false; // true = boss-lock orbit (may actively reposition to
+                            // stay in range); false = WASD/idle (game drives — the
+                            // solver only overrides to dodge, never to walk a goal)
+    Vec2  lockPos{};        // locked boss position (for the stay-in-range preference)
+    float maxRange = 0.f;   // keep within this distance of the boss (0 = no limit) —
+                            // dodges are biased inward so we never flee out of range
 };
 
 enum class SolveKind : uint8_t {

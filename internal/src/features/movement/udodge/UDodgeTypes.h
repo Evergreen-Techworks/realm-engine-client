@@ -49,6 +49,8 @@ constexpr float kSolveMoveW        = 1.2f;  // minimal-disruption penalty (prefe
 constexpr float kSolveClearW       = 0.25f; // gentle comfort tiebreak, capped
 constexpr float kSolveClearComfort = 1.0f;  // clearance (tiles) above which comfort stops rewarding
 constexpr float kSolveStandBias    = 0.15f; // score the stand point gets so we don't twitch off a safe stand
+constexpr float kSolveOutRangeW    = 1.6f;  // penalty per tile a dodge point sits OUTSIDE the boss
+                                            // weapon range — prefer dodging inward, stay in shooting range
 
 struct Vec2 {
     float x = 0.f;

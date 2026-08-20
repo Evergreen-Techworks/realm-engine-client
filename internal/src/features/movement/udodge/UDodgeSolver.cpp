@@ -86,6 +86,15 @@ float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
     // Gentle comfort tiebreak, capped so it never dominates.
     score += kSolveClearW * std::min(c.clr, kSolveClearComfort);
 
+    // Stay in shooting range: penalize a dodge point that sits OUTSIDE the boss
+    // weapon range, so we dodge inward/laterally and keep our range instead of
+    // fleeing outward. Only when locked (goal.fromLock) with a real range.
+    if (goal.fromLock && goal.maxRange > 0.f) {
+        const float distToBoss = Len(Sub(c.pos, goal.lockPos));
+        if (distToBoss > goal.maxRange)
+            score -= kSolveOutRangeW * (distToBoss - goal.maxRange);
+    }
+
     // Stand bias: when standing still is safe and nothing is clearly better,
     // hold (minimal disruption) instead of twitching off a safe stand.
     if (c.stand) score += kSolveStandBias;
@@ -158,6 +167,28 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     Cand cands[kMaxCandidates];
     const int n = BuildCandidates(in, b, goal, cands);
     Evaluate(in, cands, n);
+
+    // ── Hold when already safe (stand = candidate 0) ─────────────────────────
+    // Do not twitch off a safe stand, and do not fight the player's own WASD
+    // movement (the game drives that). Idle and WASD both hold here; the solver
+    // still overrides to dodge the instant standing is unsafe (below). The ONE
+    // exception: a boss lock that has drifted OUTSIDE weapon range actively
+    // repositions inward to get back into shooting range (falls through so the
+    // goal + out-of-range terms pull the pick inward).
+    const bool standSafe = cands[0].safe;
+    if (standSafe) {
+        bool repositionInward = false;
+        if (goal.fromLock && goal.maxRange > 0.f)
+            repositionInward = Len(Sub(in.player, goal.lockPos)) > goal.maxRange;
+        if (!repositionInward) {
+            out.kind = SolveKind::Hold;
+            out.target = in.player;
+            out.clearance = cands[0].clr;
+            out.shouldMove = false;
+            state.lastMoveDir = {};   // fresh commitment when the next dodge starts
+            return;
+        }
+    }
 
     // ── Hard constraint met: choose AMONG the safe points by smart direction ─
     // Safety is already guaranteed for every safe candidate; the objective only
