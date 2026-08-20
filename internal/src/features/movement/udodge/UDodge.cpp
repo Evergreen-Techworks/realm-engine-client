@@ -14,6 +14,7 @@
 #include "AutoAim.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
+#include "gui/tabs/CameraTAB.h"
 
 #include <imgui/imgui.h>
 #include <algorithm>
@@ -209,7 +210,14 @@ void Tick(void* player, float px, float py, float dt)
     // (pure dodge that never wanders).
     Solver::Goal goal{};
     if (steer.active && (steer.dirX != 0.f || steer.dirY != 0.f)) {
-        const Vec2 dir = Normalize(Vec2{ steer.dirX, steer.dirY });
+        // WASD is relative to the ROTATED camera view (W = up on screen). Rotate
+        // the raw screen-space direction by the live camera yaw so movement matches
+        // what the player sees when the camera is turned.
+        const float camRad = CameraTAB::GetAngle() * (kTwoPi / 360.f);
+        const float cs = std::cos(camRad), sn = std::sin(camRad);
+        const Vec2 dir = Normalize(Vec2{
+            steer.dirX * cs - steer.dirY * sn,
+            steer.dirX * sn + steer.dirY * cs });
         if (LenSq(dir) > 1e-6f) {
             goal.active = true;
             goal.pos = Add(in.player, Mul(dir, b));   // WASD intent one budget ahead

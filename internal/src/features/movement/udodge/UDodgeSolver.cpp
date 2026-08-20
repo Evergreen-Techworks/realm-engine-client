@@ -21,9 +21,9 @@ static_assert(kUPlayerHalf > 0.f, "safety test must include the player half-exte
 // K headings, plus (when a goal exists) the goal-direction point clamped to the
 // budget. K = 24 ≈ 15° resolution; three rings resolve any gap the player can
 // physically fit through inside one tick's reach.
-constexpr int   kSolveAngles = 24;
-constexpr int   kSolveRings   = 3;
-constexpr float kRingFrac[kSolveRings] = { 0.34f, 0.67f, 1.0f };
+constexpr int   kSolveAngles = 32;
+constexpr int   kSolveRings   = 4;
+constexpr float kRingFrac[kSolveRings] = { 0.25f, 0.5f, 0.75f, 1.0f };
 // stand + rings + goal-direction point.
 constexpr int   kMaxCandidates = 1 + kSolveRings * kSolveAngles + 1;   // 74
 
