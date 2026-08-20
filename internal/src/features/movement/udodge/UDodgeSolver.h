@@ -31,6 +31,22 @@
 // walk the validated path to the pocket now; only when the stand is itself a
 // durable temporal pocket do we HOLD.
 //
+// ORBIT-RING (locked boss). When a boss is LOCKED (goal.fromLock, goal.standoff
+// set) the orbit RING — the circle of radius = standoff around the boss — becomes
+// the pathfinding manifold instead of open space. The solver samples the FULL
+// 360° of the ring (kURingAngles angles × a small in/out radius band), evaluates
+// each ring point with the SAME safety machinery (Env::canOccupy, EnemyBlocked,
+// Core::PointSafety ≥ floor, and the temporal path/hold clear over the horizon),
+// finds the NEAREST safe arc by ANGULAR distance from the player's current angle
+// around the boss (shortest way round, tie-broken to keep the same orbit
+// direction — continuity/anti-jitter), and weaves ALONG the ring toward it over
+// successive ticks, clamped to the per-tick move budget. This threads the boss's
+// radial bullet pattern while staying in weapon range, rather than wandering in
+// and out. Safety STILL OVERRIDES: when no ring step is safe/reachable this tick
+// the ring layer defers and the open-space immediate/pocket/fallback layers run,
+// free to step OFF the ring to dodge — never trading a hit to stay on the ring.
+// The ring layer is ONLY the locked-boss path; unlocked behavior is unchanged.
+//
 // HONEST GUARANTEE. "Numerically impossible to get hit" holds ONLY for the
 // SolveKind::Safe case: a provably-safe point existed within the move budget
 // and we placed the player there. When the reachable disk is fully covered
@@ -48,6 +64,9 @@ struct Goal {
     Vec2  lockPos{};        // locked boss position (for the stay-in-range preference)
     float maxRange = 0.f;   // keep within this distance of the boss (0 = no limit) —
                             // dodges are biased inward so we never flee out of range
+    float standoff = 0.f;   // desired orbit-ring radius (tiles): weaponRange×0.85 or the
+                            // orbitRange override. When fromLock && standoff>0 the RING is
+                            // the pathfinding manifold — see the ORBIT-RING section below.
 };
 
 enum class SolveKind : uint8_t {
@@ -70,6 +89,13 @@ struct SolveResult {
     bool      prePosition = false;
     float     pocketDist  = 0.f; // reach to the nearest durable pocket (0 = none, or standing in one)
     uint8_t   tempLanes   = 0;   // relevant bullets fed to the temporal test (post-cull) — diagnostics
+    // ── Orbit-ring pathfinding (locked-boss only) ────────────────────────────
+    // ringPath: this tick's decision came from the ORBIT-RING solver — the target
+    // is a point on the standoff ring around the locked boss (weaving along the
+    // ring toward the nearest safe arc), not an open-space pocket/immediate cell.
+    bool      ringPath   = false;
+    float     ringArcDeg = 0.f;  // signed angular distance (deg) around the ring to the chosen
+                                 // safe arc (+ = CCW, − = CW); 0 = holding on the current arc
 };
 
 // Solve for the best reachable position this server tick.

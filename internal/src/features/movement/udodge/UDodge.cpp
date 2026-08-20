@@ -241,6 +241,7 @@ void Tick(void* player, float px, float py, float dt)
         goal.fromLock = true;
         goal.lockPos  = g_map.lockPos;
         goal.maxRange = weaponRange;
+        goal.standoff = standoff;   // ORBIT-RING radius: the solver makes this circle the manifold
     }
 
     // ── Solve once per server tick ──────────────────────────────────────────
@@ -289,7 +290,11 @@ void Tick(void* player, float px, float py, float dt)
             static int s_mvN = 0;
             if ((s_mvN++ % 120) == 0)
                 DBG_FILE_LOG("[UDodge] MOVE kind=" << (int)g_solve.kind
-                    << (g_solve.prePosition ? " PREPOS(temporal)" : " IMMED")
+                    << (g_solve.ringPath
+                            ? (g_solve.prePosition ? " RING-PREPOS" : " RING")
+                            : (g_solve.prePosition ? " PREPOS(temporal)" : " IMMED"))
+                    << (g_solve.ringPath ? " arc=" : " ")
+                    << (g_solve.ringPath ? g_solve.ringArcDeg : 0.f)
                     << " pocketDist=" << g_solve.pocketDist
                     << " tempLanes=" << (int)g_solve.tempLanes
                     << " clr=" << g_solve.clearance << " frameMs=" << frameMs

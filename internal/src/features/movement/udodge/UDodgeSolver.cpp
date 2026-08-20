@@ -361,6 +361,185 @@ Pocket FindNearestPocket(const MapInput& in, const TempCtx& ctx, const Goal& goa
     return best;   // no temporal pocket within the horizon
 }
 
+// ── Orbit-ring pathfinding (locked-boss only) ────────────────────────────────
+// When a boss is LOCKED the standoff RING is the pathfinding manifold. We sample
+// the full circle, find the nearest SAFE arc, and weave along the ring toward it.
+// All safety uses the SAME primitives as the open-space layers; the ring only
+// constrains WHERE we look. When the ring offers no safe/reachable step this tick
+// the caller falls through to the open-space layers (free to step off-ring).
+
+// TIME-parameterized HOLD test: the player STANDS at P for the whole horizon
+// (no travel). Marches every relevant bullet's swept segment against P over the
+// horizon with the same margin as the pocket test. This is the durability test
+// for a candidate ARC we may be several ticks away from — it must be safe to
+// arrive-and-hold there, independent of the straight chord from the live
+// position (which TemporalPathClear tests for the immediate step we actually take).
+bool TemporalHoldClear(const TempCtx& ctx, Vec2 P)
+{
+    for (int li = 0; li < ctx.count; ++li) {
+        const float half = ctx.half[li] + kUPocketMargin;
+        for (int k = 0; k < kUTemporalSteps; ++k) {
+            const Vec2 b0 = ctx.pos[li][k];
+            const Vec2 b1 = ctx.pos[li][k + 1];
+            if (MinChebOnSegment(b0.x - P.x, b0.y - P.y,
+                                 b1.x - P.x, b1.y - P.y) <= half) return false;
+        }
+    }
+    return true;
+}
+
+// In/out radius band, standoff FIRST (preferred), then inward/outward micro-adjust.
+constexpr float kRingBandOff[kURingRadii] = { 0.f, -kURingBand, +kURingBand };
+
+// A DURABLE safe arc point at `ang`: try the band radii (standoff first) and
+// return the first that is occupiable, off enemy bodies, spatially safe NOW, and
+// temporally durable (safe to arrive-and-hold over the horizon). The chosen
+// radius micro-adjusts in/out to thread the pattern while staying on the ring.
+bool RingArcDurable(const MapInput& in, const TempCtx& ctx, Vec2 center,
+                    float ang, float standoff, Vec2& outPos)
+{
+    const Vec2 u{ std::cos(ang), std::sin(ang) };
+    for (int i = 0; i < kURingRadii; ++i) {
+        const float r = standoff + kRingBandOff[i];
+        if (r < kURingMinRadius) continue;
+        const Vec2 p = Add(center, Mul(u, r));
+        const bool walkable = !in.env.canOccupy ||
+                     in.env.canOccupy(p.x, p.y, in.settings.safeWalk);
+        if (!walkable || EnemyBlocked(in, p)) continue;
+        if (Core::PointSafety(in, p) < kULatencyPad) continue;   // safe-now floor
+        if (!TemporalHoldClear(ctx, p)) continue;                // durable over horizon
+        outPos = p;
+        return true;
+    }
+    return false;
+}
+
+// The immediate ring STEP at `ang`: like RingArcDurable but validated with the
+// temporal PATH test (the straight chord the player actually walks this tick),
+// not the stationary hold test — because we travel there now.
+bool RingStepReachable(const MapInput& in, const TempCtx& ctx, Vec2 center,
+                       float ang, float standoff, Vec2& outPos)
+{
+    const Vec2 u{ std::cos(ang), std::sin(ang) };
+    for (int i = 0; i < kURingRadii; ++i) {
+        const float r = standoff + kRingBandOff[i];
+        if (r < kURingMinRadius) continue;
+        const Vec2 p = Add(center, Mul(u, r));
+        const bool walkable = !in.env.canOccupy ||
+                     in.env.canOccupy(p.x, p.y, in.settings.safeWalk);
+        if (!walkable || EnemyBlocked(in, p)) continue;
+        if (Core::PointSafety(in, p) < kULatencyPad) continue;   // safe-now floor
+        if (!TemporalPathClear(in, ctx, p)) continue;            // straight chord clear in TIME
+        outPos = p;
+        return true;
+    }
+    return false;
+}
+
+struct RingSolve {
+    bool  move = false;      // step toward a ring target this tick
+    bool  hold = false;      // already on a durable safe arc — hold
+    bool  defer = false;     // ring offers nothing safe/reachable — fall through to open space
+    Vec2  target{};
+    Vec2  dir{};
+    bool  prePosition = false;
+    float arcDeg = 0.f;      // signed degrees to the chosen arc (+CCW / −CW)
+};
+
+// Ring solve: find the nearest safe arc by ANGULAR distance and weave toward it.
+// Returns move / hold / defer. On defer the caller runs the open-space layers.
+RingSolve SolveRing(const MapInput& in, const TempCtx& ctx, const Goal& goal,
+                    float b, CoreState& state)
+{
+    RingSolve rr;
+    const Vec2  center = goal.lockPos;
+    const float standoff = goal.standoff;
+    const Vec2  radial = Sub(in.player, center);
+    const float rdist = Len(radial);
+    if (rdist < 1e-3f || standoff < kURingMinRadius) { rr.defer = true; return rr; }
+
+    const float playerAng = std::atan2(radial.y, radial.x);
+    const Vec2  radialU = Mul(radial, 1.f / rdist);
+    const Vec2  tangentCCW{ -radialU.y, radialU.x };
+    // Orbit-continuity sign from the last committed heading (anti-jitter tiebreak).
+    const float orbitPrev = Dot(state.lastMoveDir, tangentCCW);
+
+    const float dAng = kTwoPi / static_cast<float>(kURingAngles);
+    constexpr float kRad2Deg = 57.2957795f;
+
+    // Nearest safe arc: scan angular offset outward from the player's angle in
+    // BOTH directions; the smallest offset with a durable arc wins. Tie (both
+    // sides safe at the same offset) → keep the previous orbit direction.
+    int  bestK = -1, bestDir = 0;
+    Vec2 bestPos{};
+    {
+        Vec2 p0;
+        if (RingArcDurable(in, ctx, center, playerAng, standoff, p0)) {
+            bestK = 0; bestDir = 0; bestPos = p0;
+        } else {
+            const int steps = kURingAngles / 2;
+            for (int k = 1; k <= steps; ++k) {
+                Vec2 pcc, pcw;
+                const bool cok = RingArcDurable(in, ctx, center, playerAng + k * dAng, standoff, pcc);
+                const bool wok = RingArcDurable(in, ctx, center, playerAng - k * dAng, standoff, pcw);
+                if (!cok && !wok) continue;
+                bestK = k;
+                if (cok && wok) {
+                    if (orbitPrev >= 0.f) { bestDir = +1; bestPos = pcc; }
+                    else                  { bestDir = -1; bestPos = pcw; }
+                } else if (cok) { bestDir = +1; bestPos = pcc; }
+                else            { bestDir = -1; bestPos = pcw; }
+                break;
+            }
+        }
+    }
+
+    if (bestK < 0) { rr.defer = true; return rr; }   // no safe arc anywhere → step off-ring
+
+    rr.arcDeg = static_cast<float>(bestDir) * static_cast<float>(bestK) * dAng * kRad2Deg;
+
+    // The nearest safe arc is at the player's current angle: settle onto the ring
+    // there (micro radial move) or HOLD if already on it.
+    if (bestDir == 0) {
+        const Vec2  to = Sub(bestPos, in.player);
+        const float d = Len(to);
+        if (d <= kURingHoldEps) { rr.hold = true; rr.target = in.player; return rr; }
+        // Move straight onto the ring point — validated as a durable arc; confirm
+        // the short chord is temporally clear too, else defer.
+        if (TemporalPathClear(in, ctx, bestPos)) {
+            rr.move = true; rr.target = bestPos; rr.dir = Mul(to, 1.f / d);
+            return rr;
+        }
+        rr.defer = true; return rr;
+    }
+
+    // Weave ALONG the ring toward the safe arc: advance the player's angle by at
+    // most the per-tick angular budget (arc length ≈ move budget b) in bestDir,
+    // and take the reachable ring step there. If that specific step is not
+    // safe/reachable, defer — the open-space layers will dodge off-ring this tick
+    // and the ring is retried next tick (step-off-and-return).
+    const float angBudget = b / std::max(standoff, 1e-3f);
+    const float angDist   = static_cast<float>(bestK) * dAng;
+    const float stepAng   = std::min(angBudget, angDist);
+    const float targetAng = playerAng + static_cast<float>(bestDir) * stepAng;
+
+    Vec2 stepPos;
+    if (RingStepReachable(in, ctx, center, targetAng, standoff, stepPos)) {
+        const Vec2  to = Sub(stepPos, in.player);
+        const float d = Len(to);
+        if (d > 1e-4f) {
+            rr.move = true;
+            rr.target = stepPos;
+            rr.dir = Mul(to, 1.f / d);
+            rr.prePosition = stepAng < angDist - 1e-4f;   // still short of the arc → pre-positioning
+            return rr;
+        }
+    }
+
+    rr.defer = true;   // immediate ring step blocked → open-space dodge (off-ring)
+    return rr;
+}
+
 } // namespace
 
 void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
@@ -379,6 +558,41 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     TempCtx ctx;
     BuildTempCtx(in, ctx);
     out.tempLanes = static_cast<uint8_t>(std::min(ctx.count, 255));
+
+    // ── Orbit-ring pathfinding (locked boss only) ────────────────────────────
+    // When a boss is LOCKED the standoff RING is the pathfinding manifold: find
+    // the nearest SAFE arc (safe now AND durable over the horizon) and weave
+    // along the ring toward it, staying in weapon range. This PREFERS the ring
+    // when a ring step is safe-and-reachable; when it isn't, the ring layer
+    // DEFERS and the open-space immediate/pocket/fallback layers below run —
+    // free to step OFF the ring to dodge, then return once clear. Safety is
+    // never traded to stay on the ring (every ring step is PointSafety-safe now
+    // and temporally clear). Unlocked play skips this entirely (unchanged).
+    if (goal.fromLock && goal.standoff > 0.f) {
+        const RingSolve rr = SolveRing(in, ctx, goal, b, state);
+        if (rr.hold) {
+            out.kind = SolveKind::Hold;
+            out.target = in.player;
+            out.clearance = Core::PointSafety(in, in.player);
+            out.shouldMove = false;
+            out.ringPath = true;
+            out.ringArcDeg = 0.f;
+            // Keep lastMoveDir so the next weave preserves orbit direction.
+            return;
+        }
+        if (rr.move) {
+            out.kind = SolveKind::Safe;
+            out.target = rr.target;
+            out.clearance = Core::PointSafety(in, rr.target);
+            out.shouldMove = true;
+            out.prePosition = rr.prePosition;
+            out.ringPath = true;
+            out.ringArcDeg = rr.arcDeg;
+            state.lastMoveDir = rr.dir;
+            return;
+        }
+        // rr.defer → fall through to the open-space layers (step off-ring to dodge).
+    }
 
     const Pocket pocket = FindNearestPocket(in, ctx, goal);
     const bool standDurable = pocket.found && pocket.dist <= 1e-4f;

@@ -89,6 +89,24 @@ constexpr float kUTemporalStepMs   = 100.f;  // coarse march step (~half a serve
 constexpr float kUTemporalCullTiles = 8.f;   // only predict bullets whose traced path passes within this
                                              // radius of the player over the horizon (skip far/receding)
 
+// ── Orbit-ring pathfinding (locked-boss only; baked, NO user sliders) ────────
+// When a boss is LOCKED the orbit RING (circle of radius = standoff around the
+// boss) becomes the pathfinding manifold: the solver samples the FULL 360° of
+// the ring, finds the nearest SAFE arc (safe NOW and durable over the temporal
+// horizon), and weaves ALONG the ring toward it — the way a skilled player
+// threads a radial bullet pattern while staying in weapon range. A small in/out
+// radius band lets it micro-adjust radius to dodge without leaving the ring.
+// Safety still OVERRIDES the ring: when no ring step is safe/reachable this tick
+// the solver falls through to the open-space immediate/pocket/fallback layers
+// and is free to step OFF the ring, returning to it once clear. This path runs
+// ONLY when locked; unlocked behavior (open-space lookahead + temporal) is
+// unchanged.
+constexpr int   kURingAngles    = 36;    // full-circle angular samples (10° resolution)
+constexpr int   kURingRadii     = 3;     // standoff + in/out band (see kURingBand)
+constexpr float kURingBand      = 0.75f; // in/out radius micro-adjust (tiles) each side of standoff
+constexpr float kURingMinRadius = 0.5f;  // never sample a ring radius closer than this to the boss
+constexpr float kURingHoldEps   = 0.20f; // already on the safe arc within this reach ⇒ HOLD (no twitch)
+
 struct Vec2 {
     float x = 0.f;
     float y = 0.f;
