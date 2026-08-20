@@ -5,8 +5,6 @@
 #include "UDodgeSolver.h"
 #include "UDodgeSensors.h"
 #include "UDodgeDebug.h"
-#include "UDodgePlanner.h"
-#include "UDodgeWorker.h"
 
 #include "MovementRuntime.h"
 #include "DbgFileLog.h"
@@ -50,13 +48,6 @@ CoreOutput g_out;
 // Per-tick safe-position solver result — game-thread-owned, cached for one
 // server tick and re-validated (or re-solved) every frame (plan 64).
 Solver::SolveResult g_solve;
-// Last plan the worker handed back — game-thread-owned cache, kept across frames
-// when TryGetLatestPlan finds the worker busy (staleness is acceptable; the
-// dodge safety layer runs every frame regardless — plan 59).
-Planner::PlanResult g_lastPlan;
-// Highest publish sequence the game thread has successfully handed the worker.
-// Used to gate plan freshness so a stale/absent plan never drives movement (plan 63).
-uint32_t g_lastPubSeq = 0;
 
 std::mutex    g_debugMutex;
 
@@ -119,16 +110,12 @@ void PublishMinimal(Decision decision, Vec2 player)
 
 void SetEnabled(bool enabled)
 {
-    if (enabled) {
-        ProjectileTracking::Install();
-        Worker::Start();
-    }
+    if (enabled)
+        ProjectileTracking::Install();   // sensors need the projectile hook
     g_enabled.store(enabled, std::memory_order_relaxed);
     if (!enabled) {
-        Worker::Stop();   // JOIN the worker before releasing state it never touches
         g_state.Reset();
         g_solve = Solver::SolveResult{};
-        g_lastPlan = Planner::PlanResult{};
         PublishDebug(DebugSnapshot{});
     }
 }
@@ -137,11 +124,9 @@ bool IsEnabled() { return g_enabled.load(std::memory_order_relaxed); }
 
 void OnEnter()
 {
-    ProjectileTracking::Install();
-    Worker::Start();
+    ProjectileTracking::Install();   // sensors need the projectile hook
     g_state.Reset();
     g_solve = Solver::SolveResult{};
-    g_lastPlan = Planner::PlanResult{};
     PublishDebug(DebugSnapshot{});
 }
 

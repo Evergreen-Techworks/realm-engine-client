@@ -63,11 +63,8 @@
     <ClCompile Include="src\features\movement\udodge\UDodgeSensors.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodgeCore.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodgeSolver.cpp" />
-    <ClCompile Include="src\features\movement\udodge\UDodgeField.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodge.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodgeDebug.cpp" />
-    <ClCompile Include="src\features\movement\udodge\UDodgePlanner.cpp" />
-    <ClCompile Include="src\features\movement\udodge\UDodgeWorker.cpp" />
     <ClCompile Include="src\gui\tabs\CombatTab\CombatTAB.cpp" />
     <ClCompile Include="src\features\combat\autoaim\FeatAutoAim.cpp" />
     <ClCompile Include="src\features\combat\autoaim\FeatMagnetAim.cpp" />
@@ -254,11 +251,8 @@
     <ClInclude Include="src\features\movement\udodge\UDodgeSensors.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeCore.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeSolver.h" />
-    <ClInclude Include="src\features\movement\udodge\UDodgeField.h" />
     <ClInclude Include="src\features\movement\udodge\UDodge.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeDebug.h" />
-    <ClInclude Include="src\features\movement\udodge\UDodgePlanner.h" />
-    <ClInclude Include="src\features\movement\udodge\UDodgeWorker.h" />
     <ClInclude Include="vendor\minhook\MinHook.h" />
     <ClInclude Include="src\core\config\keybinds.h" />
     <ClInclude Include="src\core\runtime\Il2CppResolver.h" />

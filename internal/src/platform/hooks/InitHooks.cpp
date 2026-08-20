@@ -96,12 +96,10 @@ void DetourUninitialization()
         AutoAim::Uninstall();
         ProjectileTracking::Uninstall();
 
-        // Join the UDodge planner worker (plan 59) before DLL unload — a
-        // background thread whose code pages get unmapped would crash. Safe even
-        // if UDodge was never enabled (Worker::Stop is idempotent); the worker
-        // holds no IL2CPP state, so this late join cannot touch freed game data.
-        // DangerPlanner::Uninstall() above has already stopped the game-thread
-        // Tick that feeds it.
+        // Disable UDodge before DLL unload so it stops driving movement and
+        // clears its published state (plan 64 retired the background worker, so
+        // there is no longer a thread to join here). DangerPlanner::Uninstall()
+        // above has already stopped the game-thread Tick that feeds it.
         UDodge::SetEnabled(false);
 
         // 4) Disable any remaining MinHook hooks, then release the library (safe if never initialized).

@@ -1,6 +1,5 @@
 #include "pch-il2cpp.h"
 #include "UDodgeCore.h"
-#include "UDodgeField.h"
 
 #include <algorithm>
 #include <cmath>
@@ -627,35 +626,9 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
         return;
     }
 
-    // ── Field escape: the ONLY fallback layer (no timed search exists) ──────
+    // Field escape retired (plan 64): the solver's max-min-clearance fallback
+    // subsumes "boxed in", so no Dijkstra pocket search runs here any more.
     out.fieldActive = false;
-    if (in.settings.fieldEscape && speed > 0.f) {
-        bool boxedIn = true;   // no compass candidate has safe clearance
-        for (int cand = 1; cand <= kDirectionCount; ++cand)
-            if (c.valid[cand] && c.clearance[cand] >= c.reactMargin) {
-                boxedIn = false;
-                break;
-            }
-        bool hazardStuck = c.hazardEscape;
-        if (hazardStuck)
-            for (int cand = 0; cand < kCandidateCount; ++cand)
-                if (c.valid[cand] && c.hazardExitDist[cand] < kHugeClearance) {
-                    hazardStuck = false;
-                    break;
-                }
-        if (boxedIn || hazardStuck) {
-            const Field::EscapeResult esc = Field::FindEscape(in);
-            if (esc.found) {
-                const int fc = kFieldCandidate;
-                c.dirs[fc] = esc.firstDir;
-                c.valid[fc] = true;
-                BuildProbes(c, fc);
-                ScoreCandidate(c, fc);
-                out.fieldActive = true;
-                out.fieldTarget = esc.target;
-            }
-        }
-    }
 
     // ── Hazard escape: get off damaging ground first, dodging on the way ────
     if (c.hazardEscape) {
@@ -789,12 +762,6 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
             state.selectedCandidate = choice;
         }
     }
-
-    // A pure survival win by the field candidate is a field escape; a blend
-    // that happens to pick it keeps its blend decision.
-    if (choice == kFieldCandidate &&
-        (decision == Decision::GentleOverride || decision == Decision::EmergencyOverride))
-        decision = Decision::FieldEscape;
 
     // Remember the committed heading for next-frame directional commitment.
     state.lastMoveDir = Normalize(c.dirs[choice]);
