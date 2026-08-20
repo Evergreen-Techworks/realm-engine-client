@@ -284,15 +284,21 @@ void Tick(void* player, float px, float py, float dt)
         snap.rangeResolved    = AutoAim::IsProjRangeResolved();
         snap.weaponRangeTiles = snap.rangeResolved ? AutoAim::GetProjRangeTiles() : 6.f;
         // GAME-THREAD rasterization + publish is the expensive part (thousands of
-        // tile probes over the grid). Do it ONLY on a server-tick rebuild (~5 Hz),
-        // not every render frame — the route is world-space and committed, and the
-        // game thread follows it via the live-position carrot below, so planning at
-        // tick rate is ample and per-frame rasterization was the FPS drain.
-        if (rebuilt) {
+        // tile probes over the grid). Gate it to the ACTUAL server-tick change
+        // (~5 Hz) — NOT `rebuilt`, which fires almost every frame in combat as
+        // projectiles spawn/despawn. The route is world-space and committed, and
+        // the game thread follows it via the live-position carrot below, so
+        // planning at tick rate is ample. This is the per-frame FPS drain fix.
+        static uint32_t s_lastPubTick = 0xFFFFFFFFu;
+        static int      s_pubFrame    = 0;
+        const bool tickChanged      = tickOk && tick != s_lastPubTick;
+        const bool throttleFallback = !tickOk && ((s_pubFrame++ % 12) == 0);
+        if (tickChanged || throttleFallback) {
             FillOccGrid(snap.grid, in.player, true, settings.planRadius);
             snap.map = g_map;
             const uint32_t pub = Worker::PublishSnapshot(snap);
             if (pub) g_lastPubSeq = pub;
+            if (tickOk) s_lastPubTick = tick;
         }
 
         Planner::PlanResult fresh{};
