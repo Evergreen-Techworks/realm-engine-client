@@ -50,6 +50,10 @@ constexpr float kUScoreIntentW  = 2.0f;   // goal/WASD alignment reward
 constexpr float kUScoreCommitW  = 2.5f;   // directional-commitment reward (anti-jitter)
 constexpr float kUScoreSoftW    = 1.0f;   // pending-zone penetration penalty
 constexpr float kUScoreDeadband = 0.4f;   // hysteresis flip deadband (score units)
+constexpr float kUScoreStyleBand = 1.5f;  // clearance headroom (tiles above reactMargin)
+                                          // over which the orbit/intent pull ramps to full;
+                                          // near the danger floor it fades so an accurate
+                                          // dodge always beats staying on the orbit line
 
 // Whole-window plan freshness gate (plan 63): a plan older than this many
 // publish sequences NEVER drives movement (no wander on worker contention).

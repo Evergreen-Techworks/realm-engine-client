@@ -272,8 +272,14 @@ float ScoreOf(const MapCtx& c, int cand, Vec2 intent,
     const bool moving = LenSq(d) > 1e-6f;
 
     float score = std::clamp(c.clearance[cand], -2.f, 4.f) * kUScoreClearW;  // safety
-    if (LenSq(intent) > 1e-6f)
-        score += Dot(d, intent) * kUScoreIntentW;                            // goal/WASD
+    // Orbit/goal pull yields to safety: it ramps in only as the candidate's
+    // clearance rises above the danger floor, so a threatened dodge picks the
+    // clean move instead of skimming a shot to hold the orbit line.
+    if (LenSq(intent) > 1e-6f) {
+        const float headroom =
+            std::clamp((c.clearance[cand] - c.reactMargin) / kUScoreStyleBand, 0.f, 1.f);
+        score += Dot(d, intent) * kUScoreIntentW * headroom;                 // goal/WASD
+    }
     if (flow.has && moving) {                                                // sidestep
         const float parallel = std::fabs(Dot(d, flow.dir));
         score += (1.f - 2.f * parallel) * flow.coherence * kUScorePerpW;
