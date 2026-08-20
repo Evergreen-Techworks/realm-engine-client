@@ -290,6 +290,7 @@ void Tick(void* player, float px, float py, float dt)
             case Solver::SolveKind::Fallback:   d.decision = Decision::EmergencyOverride; break;
             case Solver::SolveKind::Surrounded: d.decision = Decision::MovementLocked;  break;
         }
+        d.solveKind = static_cast<uint8_t>(g_solve.kind);
         d.player = in.player;
         d.intentDir = goal.active ? Normalize(Sub(goal.pos, in.player)) : Vec2{};
         d.moveTarget = g_solve.shouldMove ? g_solve.target : in.player;
@@ -323,11 +324,12 @@ void Tick(void* player, float px, float py, float dt)
 
 void RenderSettings()
 {
-    float hit     = GetHitScale();
-    bool  safe    = GetSafeWalk();
-    bool  spd     = GetSpeedScale();
-    bool  field   = GetFieldEscape();
-    bool  dbg     = GetDebugOverlay();
+    // Only the controls that still drive the per-tick solver remain (plan 64):
+    // the reactive engine's step distance / plan-window radius / draw-path /
+    // lock-follow / field-escape controls were retired. NO new settings.
+    float hit  = GetHitScale();
+    bool  safe = GetSafeWalk();
+    bool  dbg  = GetDebugOverlay();
 
     float lane = GetLaneTiles();
     if (ImGui::SliderFloat("Danger lane length (tiles)##udodge", &lane, 2.f, 16.f)) SetLaneTiles(lane);
@@ -335,45 +337,18 @@ void RenderSettings()
         ImGui::SetTooltip("How far ahead of each bullet its danger lane is painted.\n"
                           "Longer = react earlier to distant shots; shorter = only\n"
                           "dodge nearby bullets.");
-    float stepT = GetStepTiles();
-    if (ImGui::SliderFloat("Step distance (tiles, 0 = auto)##udodge", &stepT, 0.f, 3.f)) SetStepTiles(stepT);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Candidate commitment distance. 0 = one server tick of\n"
-                          "motion (tilesPerSec x 0.2s) — the natural quantum of a\n"
-                          "per-tick replanner.");
     if (ImGui::SliderFloat("Hit scale##udodge", &hit, 0.5f, 1.5f)) SetHitScale(hit);
-    float react = GetReactMargin();
-    if (ImGui::SliderFloat("Reaction margin (tiles)##udodge", &react, 0.05f, 2.0f)) SetReactMargin(react);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Spatial clearance the dodge keeps from bullets. This is\n"
-                          "the wide reaction space that replaces the deleted time\n"
-                          "dimension: higher = start dodging sooner and keep more\n"
-                          "buffer (smoother); lower = brush closer.");
+        ImGui::SetTooltip("Scales the bullet hit half-extent in the safety test.\n"
+                          "The player half-extent + latency pad are always included.");
     if (ImGui::Checkbox("Safe walk (avoid damaging ground)##udodge", &safe)) SetSafeWalk(safe);
-    if (ImGui::Checkbox("Match intent speed##udodge", &spd)) SetSpeedScale(spd);
-
-    if (ImGui::Checkbox("Field escape (route around walls when boxed in)##udodge", &field)) SetFieldEscape(field);
     if (ImGui::Checkbox("Debug overlay##udodge", &dbg)) SetDebugOverlay(dbg);
 
-    bool drawPath = GetDrawPath();
-    if (ImGui::Checkbox("Draw planned route##udodge", &drawPath)) SetDrawPath(drawPath);
     float orbit = GetOrbitRange();
     if (ImGui::SliderFloat("Orbit range (tiles, 0 = auto)##udodge", &orbit, 0.f, 16.f)) SetOrbitRange(orbit);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Autopilot boss standoff distance. 0 = auto (resolved weapon\n"
-                          "range x 0.85). The orbit keeps this distance with range bands.");
-    float planR = GetPlanRadius();
-    if (ImGui::SliderFloat("Plan window radius (cells)##udodge", &planR, 8.f, 40.f, "%.0f")) SetPlanRadius(planR);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Planner window half-size in grid cells. Smaller shrinks the\n"
-                          "rasterized window and cuts per-frame cost if it stutters.");
-
-    bool lockF = GetLockFollow();
-    if (ImGui::Checkbox("Lock follow (walk toward lock target)##udodge", &lockF)) SetLockFollow(lockF);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("When on, consumes the enemy lock / follow target as the\n"
-                          "walk direction when no WASD input is active. WASD always\n"
-                          "overrides. Off = pure dodge, no auto-walk.");
+        ImGui::SetTooltip("Boss lock standoff distance. 0 = auto (resolved weapon\n"
+                          "range x 0.85). Consumed only as a soft goal over safe points.");
 
     bool followLantern = GetFollowLantern();
     if (ImGui::Checkbox("Autopilot: follow stand-on object (perf cost)##udodge", &followLantern)) SetFollowLantern(followLantern);

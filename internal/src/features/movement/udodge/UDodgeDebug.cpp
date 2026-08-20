@@ -23,20 +23,14 @@ bool ToScreen(Vec2 p, float camX, float camY, float angle, float zoom, float cx,
     return true;
 }
 
-const char* DecisionText(Decision d)
+// Solver::SolveKind label (published as a plain uint8 in the snapshot).
+const char* SolveKindText(uint8_t k)
 {
-    switch (d) {
-        case Decision::None:                   return "idle";
-        case Decision::NoThreat:               return "clear";
-        case Decision::MovementLocked:         return "locked";
-        case Decision::PreserveSafeIntent:     return "intent-safe";
-        case Decision::GentleOverride:         return "gentle";
-        case Decision::GentleManualBlend:      return "gentle-blend";
-        case Decision::EmergencyOverride:      return "EMERGENCY";
-        case Decision::EmergencyManualBlend:   return "emergency-blend";
-        case Decision::UnavoidableManualBlend: return "unavoidable-blend";
-        case Decision::HazardEscape:           return "hazard-escape";
-        case Decision::FieldEscape:            return "field-escape";
+    switch (k) {
+        case 0: return "hold";        // Hold — already safe, nothing better
+        case 1: return "safe";        // Safe — moved to a provably-safe cell
+        case 2: return "FALLBACK";    // Fallback — least-bad (no safe cell reachable)
+        case 3: return "SURROUNDED";  // Surrounded — nowhere improves; holding
     }
     return "?";
 }
@@ -70,6 +64,8 @@ void DrawWorldCircle(ImDrawList* d, const Cam& c, Vec2 center, float radiusTiles
 
 } // namespace
 
+// Simplified per-tick-solver overlay (plan 64): the danger map, the reachable
+// ring (one tick's move budget), the chosen safe target, and the SolveKind label.
 void Render(const DebugSnapshot& snap,
             float camX, float camY, float angle, float zoom, float cx, float cy)
 {
@@ -78,7 +74,7 @@ void Render(const DebugSnapshot& snap,
     if (!d) return;
     const Cam cam{ camX, camY, angle, zoom, cx, cy };
 
-    // Header: map contents + stand clearance + tick-sync state.
+    // Header: SolveKind + map contents + server-accurate stand clearance + tick sync.
     char clearBuf[24];
     if (snap.standClearance >= kHugeClearance)
         std::snprintf(clearBuf, sizeof(clearBuf), "safe");
@@ -90,8 +86,8 @@ void Render(const DebugSnapshot& snap,
     else
         std::snprintf(tickBuf, sizeof(tickBuf), "tick:--(deg)");
     char buf[192];
-    std::snprintf(buf, sizeof(buf), "UDodge [%s]  threats:%d  lanes:%d  zones:%d  clear:%s  step:%.1ft  %s %s",
-                  DecisionText(snap.decision), snap.threatCount,
+    std::snprintf(buf, sizeof(buf), "UDodge [%s]  lanes:%d  zones:%d  clear:%s  budget:%.1ft  %s %s",
+                  SolveKindText(snap.solveKind),
                   snap.map.laneCount, snap.map.zoneCount, clearBuf, snap.stepTiles,
                   tickBuf, snap.rebuiltThisFrame ? "SYNC" : "hold");
     d->AddText(ImVec2(12.f, 12.f), IM_COL32(120, 220, 255, 255), buf);
@@ -119,79 +115,21 @@ void Render(const DebugSnapshot& snap,
     for (int i = 0; i < std::min(snap.map.enemyCount, kMaxEnemies); ++i)
         DrawDot(d, cam, snap.map.enemies[i].pos, 4.f, IM_COL32(230, 60, 230, 150));
 
-    // Candidate fan: ray endpoint = the step segment, truncated where walls
-    // block it. Green = safe clearance, yellow→red = shrinking clearance,
-    // grey = blocked at the start.
-    for (int i = 1; i <= kDirectionCount; ++i) {
-        const CandidateDebug& c = snap.candidates[i];
-        const Vec2 end = Add(snap.player, Mul(c.dir, std::min(snap.stepTiles, c.blockDist)));
-        ImU32 col;
-        if (!c.valid) col = IM_COL32(120, 120, 120, 90);
-        else if (c.clearance >= snap.reactMargin)
-            col = IM_COL32(60, 230, 90, 140);
-        else {
-            const float f = std::clamp(c.clearance / 0.5f, 0.f, 1.f);
-            col = IM_COL32(230, static_cast<int>(60 + 160 * f), 50, 130);
-        }
-        DrawLine(d, cam, snap.player, end, col, i == snap.candidate ? 3.f : 1.f);
-    }
+    // Reachable ring: the disk the solver sampled this tick (radius = one tick's
+    // move budget). The chosen target always lies within it.
+    DrawWorldCircle(d, cam, snap.player, snap.stepTiles, IM_COL32(80, 180, 255, 110), 1.5f);
 
-    // Field candidate ray (orange) — the Dijkstra pocket's first step.
-    if (snap.candidates[kFieldCandidate].valid) {
-        const CandidateDebug& c = snap.candidates[kFieldCandidate];
-        const Vec2 end = Add(snap.player, Mul(c.dir, std::min(snap.stepTiles, c.blockDist)));
-        DrawLine(d, cam, snap.player, end, IM_COL32(255, 160, 40, 200),
-                 kFieldCandidate == snap.candidate ? 3.f : 1.5f);
-    }
-
-    // Field pocket marker: where the escape field routed to.
-    if (snap.fieldActive) {
-        DrawWorldCircle(d, cam, snap.fieldTarget, 0.4f, IM_COL32(255, 210, 0, 220), 2.f);
-        DrawLine(d, cam, snap.player, snap.fieldTarget, IM_COL32(255, 210, 0, 140), 1.5f);
-    }
-
-    // Planned whole-window route (plan 60): the worker's Dijkstra polyline around
-    // walls/hazards/danger to the goal, drawn in cyan with a vertex dot per point and
-    // a goal marker at the end. Plain data — already world coords in the snapshot.
-    // Gated by udodgeDrawPath (plan 61).
-    if (snap.drawPath) {
-        const int n = std::min(snap.pathCount, kMaxPathPoints);
-        for (int i = 0; i + 1 < n; ++i)
-            DrawLine(d, cam, snap.path[i], snap.path[i + 1], IM_COL32(0, 235, 255, 210), 2.f);
-        for (int i = 0; i < n; ++i)
-            DrawDot(d, cam, snap.path[i], 2.5f, IM_COL32(0, 235, 255, 180));
-        if (n > 0)
-            DrawWorldCircle(d, cam, snap.path[n - 1], 0.5f, IM_COL32(0, 235, 255, 230), 2.f);
-    }
-
-    // Autopilot lock target (the biggest targetable enemy being orbited).
+    // Goal marker (lock standoff / WASD intent), when a soft goal is active.
     if (snap.hasLockTarget) {
-        ImVec2 s;
-        if (ToScreen(snap.lockTarget, camX, camY, angle, zoom, cx, cy, s)) {
-            d->AddCircle(s, 13.f, IM_COL32(255, 70, 70, 230), 16, 2.f);
-            d->AddLine(ImVec2(s.x - 16.f, s.y), ImVec2(s.x + 16.f, s.y), IM_COL32(255, 70, 70, 200), 1.5f);
-            d->AddLine(ImVec2(s.x, s.y - 16.f), ImVec2(s.x, s.y + 16.f), IM_COL32(255, 70, 70, 200), 1.5f);
-        }
+        DrawWorldCircle(d, cam, snap.lockTarget, 0.4f, IM_COL32(255, 70, 70, 200), 2.f);
+        DrawLine(d, cam, snap.player, snap.lockTarget, IM_COL32(255, 70, 70, 120), 1.f);
     }
 
-    // Threat flow (orange, scaled by coherence): aggregate travel direction of the
-    // nearby danger lanes — the smart dodge sidesteps PERPENDICULAR to this (plan 63).
-    if (snap.flowCoherence > 0.05f)
-        DrawLine(d, cam, snap.player,
-                 Add(snap.player, Mul(snap.flowDir, 1.5f * std::clamp(snap.flowCoherence, 0.f, 1.f))),
-                 IM_COL32(255, 120, 0, 200), 2.f);
-
-    // Intent (cyan) and committed move (yellow).
-    if (LenSq(snap.intentDir) > 1e-4f)
-        DrawLine(d, cam, snap.player,
-                 Add(snap.player, Mul(snap.intentDir, 1.5f)), IM_COL32(60, 220, 220, 200), 2.f);
+    // Chosen safe target: yellow dot (red on a failed MoveTo) + heading line.
     if (snap.overrideActive) {
+        DrawLine(d, cam, snap.player, snap.moveTarget, IM_COL32(255, 210, 0, 200), 2.5f);
         DrawDot(d, cam, snap.moveTarget, 5.f,
                 snap.moveFailed ? IM_COL32(255, 60, 60, 230) : IM_COL32(255, 210, 0, 230));
-        const CandidateDebug& c = snap.candidates[std::clamp(snap.candidate, 0, kCandidateCount - 1)];
-        DrawLine(d, cam, snap.player,
-                 Add(snap.player, Mul(c.dir, snap.speed * snap.speedScale * 300.f)),
-                 IM_COL32(255, 210, 0, 200), 2.5f);
     }
 }
 

@@ -220,6 +220,7 @@ struct CoreState {
 struct DebugSnapshot {
     bool     active = false;
     Decision decision = Decision::None;
+    uint8_t  solveKind = 0;   // Solver::SolveKind (Hold/Safe/Fallback/Surrounded)
     Vec2  player{};
     Vec2  intentDir{};
     Vec2  moveTarget{};
