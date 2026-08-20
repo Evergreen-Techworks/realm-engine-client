@@ -29,4 +29,18 @@ bool PointClear(const MapInput& in, Vec2 pos);
 // refuse advancing the route toward a cell inside/near a bullet lane.
 float PointClearance(const MapInput& in, Vec2 pos);
 
+// Server-accurate clearance (tiles) at `pos`: the minimum over every lane
+// (Cheb − (hitHalf·hitScale + kUPlayerHalf)) and every ACTIVE zone
+// (Euclid − (radius + kUPlayerHalf)). >0 ⇒ pos is OUTSIDE the server hit
+// region of all shots; ≤0 ⇒ pos would be hit. Walls/hazard NOT considered
+// (caller probes occupancy). Pending zones are cost-only, excluded here.
+// This is PointClearance folded with the player half-extent (plan 64) — the
+// safety test the solver requires (the raw PointClearance omits it, so its
+// "safe" is ~0.21 tiles too optimistic).
+float PointSafety(const MapInput& in, Vec2 pos);
+
+// Hard safety predicate used by the solver: occupancy-clear AND
+// PointSafety(pos) >= pad. `pad` lets the solver require the latency margin.
+bool PointSafe(const MapInput& in, Vec2 pos, float pad);
+
 } } // namespace UDodge::Core

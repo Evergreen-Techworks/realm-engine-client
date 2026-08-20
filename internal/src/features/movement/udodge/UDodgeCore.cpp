@@ -448,6 +448,37 @@ float PointClearance(const MapInput& in, Vec2 pos)
     return best;
 }
 
+// Server-accurate clearance (plan 64): PointClearance with the player half-extent
+// folded into every subtracted lane half and active-zone radius — the divergence
+// fix. The game hit test is |dx|,|dy| < bulletHalf·scale + kPlayerHalf, so a point
+// is truly outside a shot only when Cheb − (half + kUPlayerHalf) > 0.
+float PointSafety(const MapInput& in, Vec2 pos)
+{
+    if (!in.map) return 0.f;
+    const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
+    float best = kHugeClearance;
+    for (int i = 0; i < in.map->laneCount; ++i) {
+        const LaneThreat& L = in.map->lanes[i];
+        if (L.pointCount <= 0) continue;
+        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + kUPlayerHalf;
+        best = std::min(best, LaneDistCheb(L, pos) - half);
+    }
+    for (int i = 0; i < in.map->zoneCount; ++i) {
+        const ZoneThreat& z = in.map->zones[i];
+        // Pending zones are cost-only (soft) — only active discs subtract clearance.
+        if (z.active) best = std::min(best, Len(Sub(z.pos, pos)) - (z.radius + kUPlayerHalf));
+    }
+    return best;
+}
+
+bool PointSafe(const MapInput& in, Vec2 pos, float pad)
+{
+    if (!in.map) return false;
+    if (in.env.canOccupy && !in.env.canOccupy(pos.x, pos.y, in.settings.safeWalk))
+        return false;   // wall, or hazard endpoint when safeWalk is on
+    return PointSafety(in, pos) >= pad;
+}
+
 void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
 {
     out = CoreOutput{};

@@ -55,6 +55,27 @@ constexpr float kUScoreStyleBand = 1.5f;  // clearance headroom (tiles above rea
                                           // near the danger floor it fades so an accurate
                                           // dodge always beats staying on the orbit line
 
+// ── Per-tick safe-position solver (plan 64; baked-in, NO user sliders) ───────
+// Server-accurate hit geometry. The game's IsHit (FUN_18015be50) folds the
+// player half-extent into effR; our DangerMap lane.hitHalf is the BULLET half
+// only, so the safety test must add this. Value mirrors DodgeHit::kPlayerHalf.
+constexpr float kUPlayerHalf = 0.2139f;
+// Baked command-latency safety pad (tiles): keep the chosen point this far
+// clear of the server hit boundary so a bullet seen one RTT ahead of our read
+// can't clip it. NO user setting.
+constexpr float kULatencyPad = 0.10f;
+
+// Smart-direction objective weights over the SAFE candidate set. Safety is a
+// hard constraint (every scored point is already provably safe); these only
+// choose AMONG safe points and can never trade safety away.
+constexpr float kSolveCommitW      = 1.0f;  // directional continuity (anti-jitter)
+constexpr float kSolveGoalW        = 0.8f;  // goal/WASD progress (fades near danger)
+constexpr float kSolvePerpW        = 0.35f; // lateral sidestep tiebreak
+constexpr float kSolveMoveW        = 1.2f;  // minimal-disruption penalty (prefer nearest safe)
+constexpr float kSolveClearW       = 0.25f; // gentle comfort tiebreak, capped
+constexpr float kSolveClearComfort = 1.0f;  // clearance (tiles) above which comfort stops rewarding
+constexpr float kSolveStandBias    = 0.15f; // score the stand point gets so we don't twitch off a safe stand
+
 // Path-yields-to-safety (dodge authority). The path/orbit intent is a SOFT
 // macro-goal: it may STEER (be preserved, or bias candidate selection) only
 // while the path direction keeps this much clearance ABOVE the reaction floor
