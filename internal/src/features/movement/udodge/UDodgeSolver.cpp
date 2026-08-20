@@ -73,11 +73,13 @@ float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
         score += kSolveGoalW * progress * ramp;
     }
 
-    // RePP-style perpendicular sidestep tiebreak (component of dir ⟂ to flow).
+    // RePP-style perpendicular sidestep: reward moving ACROSS the incoming
+    // stream, PENALIZE moving along its axis — both fleeing straight back and
+    // charging straight in. (1 − 2|par|): +1 lateral, −1 radial. This is what
+    // stops it from preferring a backpedal over a left/right sidestep.
     if (LenSq(flow) > 1e-6f && LenSq(c.dir) > 1e-6f) {
         const float par = Dot(c.dir, flow);
-        const float perp = std::sqrt(std::max(0.f, 1.f - par * par));
-        score += kSolvePerpW * perp;
+        score += kSolvePerpW * (1.f - 2.f * std::fabs(par));
     }
 
     // Minimal disruption — prefer the nearest safe point.

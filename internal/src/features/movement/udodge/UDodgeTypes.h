@@ -44,7 +44,8 @@ constexpr float kULatencyPad = 0.10f;
 // choose AMONG safe points and can never trade safety away.
 constexpr float kSolveCommitW      = 1.0f;  // directional continuity (anti-jitter)
 constexpr float kSolveGoalW        = 0.8f;  // goal/WASD progress (fades near danger)
-constexpr float kSolvePerpW        = 0.35f; // lateral sidestep tiebreak
+constexpr float kSolvePerpW        = 1.2f;  // lateral sidestep vs radial flee/charge: strong enough
+                                            // that a left/right sidestep beats a backpedal's clearance edge
 constexpr float kSolveMoveW        = 1.2f;  // minimal-disruption penalty (prefer nearest safe)
 constexpr float kSolveClearW       = 0.25f; // gentle comfort tiebreak, capped
 constexpr float kSolveClearComfort = 1.0f;  // clearance (tiles) above which comfort stops rewarding
