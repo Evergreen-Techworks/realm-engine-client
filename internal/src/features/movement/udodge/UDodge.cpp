@@ -214,6 +214,23 @@ void Tick(void* player, float px, float py, float dt)
     if (!player || !std::isfinite(px) || !std::isfinite(py)) return;
     if (!DodgeRuntime::EnsureResolved()) return;
 
+    // ── TEMP perf probe: measure the full UDodge::Tick cost on the game thread.
+    // RAII so it captures every return path. Logs avg/max ms every 120 ticks.
+    struct TickTimer {
+        LARGE_INTEGER t0;
+        TickTimer() { QueryPerformanceCounter(&t0); }
+        ~TickTimer() {
+            LARGE_INTEGER t1, f; QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&f);
+            const double ms = double(t1.QuadPart - t0.QuadPart) * 1000.0 / double(f.QuadPart);
+            static double s_sum = 0.0; static double s_max = 0.0; static int s_n = 0;
+            s_sum += ms; if (ms > s_max) s_max = ms;
+            if (++s_n >= 120) {
+                DBG_FILE_LOG("[UDodge] Tick avg=" << (s_sum / s_n) << "ms max=" << s_max << "ms");
+                s_sum = 0.0; s_max = 0.0; s_n = 0;
+            }
+        }
+    } _tickTimer;
+
     const Settings settings = ReadSettings();
     const SteerInput::SteerState steer = SteerInput::Get();
 
@@ -353,11 +370,22 @@ void Tick(void* player, float px, float py, float dt)
     // generated, and the core judged the intent safe, walk it ourselves.
     // NoThreat returns before wall validation runs, so probe the move target
     // against walls here to avoid walking into them.
+    //
+    // Path-follows-yield-to-bullets: the route is a SOFT macro-goal, so the walk
+    // MUST also respect the danger map — never advance the path toward a cell that
+    // is inside or near a bullet lane / active zone. NoThreat can return for a lane
+    // just outside the relevance gate that the route heads straight into, and the
+    // move target reaches past the core's step segment; so gate the auto-walk on
+    // the step target keeping the reaction margin of bullet clearance. When it is
+    // not clear we HOLD (the per-frame near-dodge drives any real escape), instead
+    // of walking the route into shots.
     bool autoWalk = false;
     if (!g_out.overrideActive && intentIsAuto && LenSq(in.intentDir) > 1e-6f &&
         (g_out.decision == Decision::NoThreat || g_out.decision == Decision::PreserveSafeIntent)) {
         const Vec2 probe = Add(in.player, Mul(g_out.velocity, std::max(frameMs, 100.f)));
-        autoWalk = Sensors::CanOccupy(probe.x, probe.y, settings.safeWalk);
+        const bool wallOk    = Sensors::CanOccupy(probe.x, probe.y, settings.safeWalk);
+        const bool bulletOk  = Core::PointClearance(in, probe) >= settings.reactMargin;
+        autoWalk = wallOk && bulletOk;
     }
 
     if (g_out.overrideActive || autoWalk) {

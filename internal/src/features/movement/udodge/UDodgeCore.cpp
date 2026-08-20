@@ -429,6 +429,25 @@ bool PointClear(const MapInput& in, Vec2 pos)
     return true;
 }
 
+float PointClearance(const MapInput& in, Vec2 pos)
+{
+    if (!in.map) return 0.f;
+    const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
+    float best = kHugeClearance;
+    for (int i = 0; i < in.map->laneCount; ++i) {
+        const LaneThreat& L = in.map->lanes[i];
+        if (L.pointCount <= 0) continue;
+        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale;
+        best = std::min(best, LaneDistCheb(L, pos) - half);
+    }
+    for (int i = 0; i < in.map->zoneCount; ++i) {
+        const ZoneThreat& z = in.map->zones[i];
+        // Pending zones are cost-only (soft) — only active discs subtract clearance.
+        if (z.active) best = std::min(best, Len(Sub(z.pos, pos)) - z.radius);
+    }
+    return best;
+}
+
 void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
 {
     out = CoreOutput{};
@@ -618,17 +637,32 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
         return;
     }
 
+    // ── Path yields to safety — the near-dodge is the authority (dodge-first) ─
+    // The path/orbit intent is a SOFT macro-goal. It may STEER only while the
+    // path direction keeps COMFORTABLE clearance (reactMargin + preserve band) —
+    // not merely the bare reaction floor, which let the walker hug a bullet lane
+    // and follow the route into shots. The instant the path itself is threatened
+    // below that comfort line (or wall-blocked, or crossing a pending zone), the
+    // path stops steering: `selIntent` drops to zero so ALL candidate selection
+    // below ignores the route and picks the safest heading (clearance +
+    // perp-sidestep + commitment) — free to break directly away from or across
+    // the path as far as survival needs, rejoining once the path clears.
+    const float intentComfort = c.reactMargin + kUIntentPreserveBand;
+    const bool  pathSteers = hasIntent && c.valid[kIntentCandidate] &&
+                             c.clearance[kIntentCandidate] >= intentComfort &&
+                             c.softCost[kIntentCandidate] == 0.f;
+    const Vec2  selIntent = pathSteers ? intentDir : Vec2{};
+
     // Directional-commitment memory (plan 63): the heading committed last frame,
     // used by ScoreOf below to reward continuing it (anti-jitter).
     const Vec2 prevDir = state.lastMoveDir;
-    const int proposed = SelectProposed(c, intentDir, flow, prevDir);
+    const int proposed = SelectProposed(c, selIntent, flow, prevDir);
 
     // ── Intent-preservation ladder ───────────────────────────────────────────
-    // Wall-blocked intent can't be preserved — fall through to the override
-    // path so the core picks a heading that's both danger- and wall-safe.
-    if (c.valid[kIntentCandidate] &&
-        c.clearance[kIntentCandidate] >= c.reactMargin &&
-        c.softCost[kIntentCandidate] == 0.f) {
+    // Preserve (walk) the path ONLY while it steers — i.e. it is comfortably
+    // bullet-clear. Otherwise fall through to the override path so the near-dodge
+    // picks a heading that is danger- and wall-safe, breaking off the route.
+    if (pathSteers) {
         state.lastMoveDir = intentDir;   // remember the orbit/goal heading
         FinishMap(c, out, intentVel, false, state.selectedCandidate, 1.f, threatCount,
                   Decision::PreserveSafeIntent);
@@ -648,7 +682,7 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
         float bestScore = -kHugeClearance;
         for (int cand = 0; cand < kCandidateCount; ++cand) {
             if (!c.valid[cand] || c.clearance[cand] < c.reactMargin) continue;
-            const float s = ScoreOf(c, cand, intentDir, flow, prevDir);
+            const float s = ScoreOf(c, cand, selIntent, flow, prevDir);
             if (s > bestScore) { bestScore = s; choice = cand; }
         }
         if (choice != proposed) decision = Decision::GentleManualBlend;
@@ -660,7 +694,7 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
         float bestScore = -kHugeClearance;
         for (int cand = 0; cand < kCandidateCount; ++cand) {
             if (!c.valid[cand] || c.clearance[cand] < acceptable) continue;
-            const float s = ScoreOf(c, cand, intentDir, flow, prevDir);
+            const float s = ScoreOf(c, cand, selIntent, flow, prevDir);
             if (s > bestScore) { bestScore = s; choice = cand; }
         }
         if (choice != proposed) decision = Decision::EmergencyManualBlend;
@@ -671,7 +705,7 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
         float bestScore = -kHugeClearance;
         for (int cand = 0; cand < kCandidateCount; ++cand) {
             if (!c.valid[cand] || c.clearance[cand] < acceptableClearance) continue;
-            const float s = ScoreOf(c, cand, intentDir, flow, prevDir);
+            const float s = ScoreOf(c, cand, selIntent, flow, prevDir);
             if (s > bestScore) { bestScore = s; choice = cand; }
         }
         if (choice != proposed) decision = Decision::UnavoidableManualBlend;
@@ -686,8 +720,8 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
     if (held != choice && c.valid[held] &&
         LenSq(c.dirs[held]) > 1e-6f &&
         c.clearance[held] >= c.reactMargin &&
-        ScoreOf(c, held, intentDir, flow, prevDir)
-            >= ScoreOf(c, choice, intentDir, flow, prevDir) - kUScoreDeadband) {
+        ScoreOf(c, held, selIntent, flow, prevDir)
+            >= ScoreOf(c, choice, selIntent, flow, prevDir) - kUScoreDeadband) {
         choice = held;
     } else {
         state.selectedCandidate = choice;
@@ -710,7 +744,7 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
         float bestMoving = -kHugeClearance;
         for (int cand = 0; cand < kCandidateCount; ++cand) {
             if (!c.valid[cand] || LenSq(c.dirs[cand]) < 1e-6f) continue;
-            const float s = ScoreOf(c, cand, intentDir, flow, prevDir);
+            const float s = ScoreOf(c, cand, selIntent, flow, prevDir);
             if (moving < 0 || s > bestMoving) {
                 bestMoving = s;
                 moving = cand;

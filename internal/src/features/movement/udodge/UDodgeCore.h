@@ -21,4 +21,12 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out);
 // Enemy bodies deliberately NOT checked (score-only in this engine).
 bool PointClear(const MapInput& in, Vec2 pos);
 
+// Hard bullet clearance (tiles) at `pos`: the minimum, over every danger lane
+// (Chebyshev distance − hitHalf×hitScale) and every ACTIVE zone (Euclidean −
+// radius), of how far `pos` sits OUTSIDE the danger. Large positive = far from
+// all bullets; ≤ 0 = inside a lane/zone. Walls/hazard are NOT considered here —
+// the caller probes occupancy separately. Used by path-following (auto-walk) to
+// refuse advancing the route toward a cell inside/near a bullet lane.
+float PointClearance(const MapInput& in, Vec2 pos);
+
 } } // namespace UDodge::Core

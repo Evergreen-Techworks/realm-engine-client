@@ -29,7 +29,12 @@ namespace {
 // heavy active-zone cost so a boxed goal stays reachable (traversable, never blocked).
 constexpr float kHazardCost     = 40.f;   // discourage routing through hazard ground
 constexpr float kZoneCost       = 25.f;   // pending-zone cells cost more
-constexpr float kLaneCost       = 60.f;   // danger-lane cells cost more
+constexpr float kLaneCost       = 100.f;  // danger-lane cells cost heavily (≈ active-zone /
+                                          // enemy-body weight) so the planned route bends
+                                          // AROUND bullet streams up front — still a COST,
+                                          // never a block, so a boxed goal stays reachable.
+                                          // The per-frame near-dodge remains the authority:
+                                          // no static route can be bullet-safe as shots move.
 constexpr float kActiveZoneCost = 120.f;  // active zone: heavy, but still traversable
 constexpr float kEnemyBodyCost  = 110.f;  // enemy body: heavy (≈ active zone) COST, not a
                                           // block, so a boxed goal stays reachable

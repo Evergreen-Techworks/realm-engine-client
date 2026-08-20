@@ -55,6 +55,21 @@ constexpr float kUScoreStyleBand = 1.5f;  // clearance headroom (tiles above rea
                                           // near the danger floor it fades so an accurate
                                           // dodge always beats staying on the orbit line
 
+// Path-yields-to-safety (dodge authority). The path/orbit intent is a SOFT
+// macro-goal: it may STEER (be preserved, or bias candidate selection) only
+// while the path direction keeps this much clearance ABOVE the reaction floor
+// (reactMargin). The instant the path itself is threatened below that comfort
+// line, the near-dodge takes FULL authority — the intent influence drops to
+// zero and the dodge picks the safest heading regardless of the path, free to
+// move directly away from or across it, rejoining once the path clears again.
+constexpr float kUIntentPreserveBand = 1.0f;  // tiles of clearance headroom the path must
+                                              // keep (above reactMargin) to steer at all
+// Path-follow bullet-clearance floor: a machine-generated intent (orbit route)
+// is auto-walked ONLY when the step target keeps at least the reaction margin of
+// clearance from every bullet lane / active zone — path-following never advances
+// toward a cell inside or near a bullet lane (it holds instead, and the per-frame
+// near-dodge then drives the escape).
+
 // Whole-window plan freshness gate (plan 63): a plan older than this many
 // publish sequences NEVER drives movement (no wander on worker contention).
 constexpr uint32_t kUPlanMaxStaleSeq = 8;
