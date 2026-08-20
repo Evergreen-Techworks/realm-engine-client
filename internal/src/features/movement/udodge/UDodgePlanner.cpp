@@ -31,6 +31,11 @@ constexpr float kHazardCost     = 40.f;   // discourage routing through hazard g
 constexpr float kZoneCost       = 25.f;   // pending-zone cells cost more
 constexpr float kLaneCost       = 60.f;   // danger-lane cells cost more
 constexpr float kActiveZoneCost = 120.f;  // active zone: heavy, but still traversable
+constexpr float kEnemyBodyCost  = 110.f;  // enemy body: heavy (≈ active zone) COST, not a
+                                          // block, so a boxed goal stays reachable
+constexpr float kEnemyBodyPad   = 0.5f;   // small pad (tiles) around the body radius — kept
+                                          // ≈ one body so it never disturbs orbiting the
+                                          // LOCKED boss at weapon range (goal is far from bodies)
 constexpr float kRoot2          = 1.41421356f;
 constexpr float kInf            = 3.402823466e+38f;
 constexpr int   kGoalNudgeRing  = 8;      // search radius (cells) for a clear goal cell
@@ -104,6 +109,14 @@ float CellPenalty(const PlannerSnapshot& in, int idx, Vec2 cellWorld, float hitS
         const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale;
         if (LaneDistCheb(L, cellWorld) <= half) { penalty += kLaneCost; break; }
     }
+    // Enemy bodies (Stage D3 fix 2): route AROUND other mobs. A cell within
+    // (enemy radius + small pad) of any enemy body costs heavily but is NOT a hard
+    // block, so a goal boxed by mobs stays reachable. The pad stays ≈ one body so
+    // this never perturbs orbiting the locked boss (its goal sits far from bodies).
+    for (int ei = 0; ei < in.map.enemyCount; ++ei) {
+        const EnemyBlocker& e = in.map.enemies[ei];
+        if (Len(Sub(e.pos, cellWorld)) <= e.radius + kEnemyBodyPad) { penalty += kEnemyBodyCost; break; }
+    }
     return penalty;
 }
 
@@ -163,48 +176,20 @@ Vec2 OrbitGoalPos(const PlannerSnapshot& in, Vec2 center, float desired,
     return Add(in.lockPos, Mul(onCircle, desired));
 }
 
-} // namespace
-
-void Compute(const PlannerSnapshot& in, PlanResult& out)
+// Route the player-center cell to `goalWorld` over the plain grid (Stage D1
+// Dijkstra, extracted so BOTH the fresh candidate and the held-route re-cost run
+// through one code path). Fills out_path/out_count (world coords, downsampled) and
+// returns true when a route to the goal cell was found; false when the goal is
+// degenerate (rounds onto the player) or walled off.
+bool ComputeRoute(const PlannerSnapshot& in, Vec2 center, float hitScale,
+                  Vec2 goalWorld, Vec2 out_path[kMaxPathPoints], int& out_count)
 {
-    out = PlanResult{};
-    out.forSeq = in.seq;
+    out_count = 0;
 
-    if (!in.hasLock) return;   // no goal → clear path, firstDir {}
-
-    out.hasGoal = true;
-
-    const Vec2  center   = in.grid.center;   // = player (grid center)
-    const Vec2  player   = in.player;
-    const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
-
-    // ── Boss-fight goal policy (plan 61): range bands + persistent orbit sign. ──
-    // s_orbitSign lives on the WORKER thread only (Compute's single caller — plan 59),
-    // so no cross-thread state is introduced. OrbitGoalPos flips it only when blocked.
-    static int s_orbitSign = +1;
-    const float desired   = DesiredStandoff(in);
-    const Vec2  goalWorld = OrbitGoalPos(in, center, desired, s_orbitSign, hitScale);
-    out.goalPos = goalWorld;
-
-    // Orbit fallback direction (used when the route is degenerate / unreachable): head
-    // straight at the orbit goal, or tangentially if the goal collapses onto the player.
-    Vec2 orbitDir = Normalize(Sub(goalWorld, player));
-    if (LenSq(orbitDir) < 1e-6f) {
-        const Vec2 toBoss = Sub(in.lockPos, player);
-        const float d = Len(toBoss);
-        if (d > 1e-3f) {
-            const Vec2 dir = Mul(toBoss, 1.f / d);
-            orbitDir = (s_orbitSign > 0) ? Vec2{ -dir.y, dir.x } : Vec2{ dir.y, -dir.x };
-        }
-    }
-
-    // ── Goal cell: map the goal world pos into the grid, clamp to the window. ──
+    // Goal cell: map the goal world pos into the grid, clamp to the window; if the
+    // clamped cell is blocked, nudge to the nearest clear cell in a small ring.
     int ggx = CellOf(center, goalWorld.x, goalWorld.y, 0);
     int ggy = CellOf(center, goalWorld.x, goalWorld.y, 1);
-
-    // The goal cell itself must be clear (plain-data PointClear). If the clamped cell
-    // is blocked (wall / lane / active zone), nudge to the nearest clear cell in a
-    // small ring — keeps the route terminating on a standable cell near the target.
     if (!CellClear(in, Idx(ggx, ggy), CellWorld(center, ggx, ggy), hitScale)) {
         bool found = false;
         for (int r = 1; r <= kGoalNudgeRing && !found; ++r) {
@@ -224,23 +209,15 @@ void Compute(const PlannerSnapshot& in, PlanResult& out)
 
     const int start   = Idx(kPlanGridRadius, kPlanGridRadius);
     const int goalIdx = Idx(ggx, ggy);
-
-    // Degenerate: goal rounds onto the player cell → nothing to route, orbit.
-    if (goalIdx == start) {
-        out.firstDir = orbitDir;
-        return;
-    }
+    if (goalIdx == start) return false;   // goal rounds onto the player cell → orbit
 
     // ── Dijkstra over the plain grid (linear-scan, ported from UDodgeField.cpp). ──
-    // Static scratch: Worker::WorkerLoop is the ONLY caller of Compute (single worker
-    // thread — verified plan 59), so this is never shared across threads and needs no
-    // per-call allocation. It holds no IL2CPP data — pure plain-data ints/floats.
+    // Static scratch: the worker thread is Compute's ONLY caller (plan 59), so this
+    // is never shared across threads and holds only plain-data ints/floats.
     static float s_cost[kPlanGridCells];
     static int   s_prev[kPlanGridCells];
     static bool  s_done[kPlanGridCells];
-    for (int i = 0; i < kPlanGridCells; ++i) {
-        s_cost[i] = kInf; s_prev[i] = -1; s_done[i] = false;
-    }
+    for (int i = 0; i < kPlanGridCells; ++i) { s_cost[i] = kInf; s_prev[i] = -1; s_done[i] = false; }
     s_cost[start] = 0.f;
 
     static constexpr int kDx[8] = { 1, -1, 0,  0, 1,  1, -1, -1 };
@@ -248,10 +225,7 @@ void Compute(const PlannerSnapshot& in, PlanResult& out)
 
     bool reached = false;
     for (int iter = 0; iter < kPlanGridCells; ++iter) {
-        // Pop the lowest-cost unfinished cell (linear scan — matches Field; the
-        // search early-exits when the goal cell is finalized).
-        int cur = -1;
-        float best = kInf;
+        int cur = -1; float best = kInf;
         for (int i = 0; i < kPlanGridCells; ++i)
             if (!s_done[i] && s_cost[i] < best) { best = s_cost[i]; cur = i; }
         if (cur < 0) break;
@@ -266,53 +240,34 @@ void Compute(const PlannerSnapshot& in, PlanResult& out)
             if (s_done[ni]) continue;
             if (IsWall(in.grid, ni)) continue;   // never route through a wall
             if (kDx[k] != 0 && kDy[k] != 0) {
-                // No corner-cutting (UDodgeField.cpp:113-120): a diagonal is valid
-                // only if BOTH orthogonal cells it passes between are open.
+                // No corner-cutting: a diagonal is valid only if BOTH orthogonal
+                // cells it passes between are open.
                 if (IsWall(in.grid, Idx(cgx + kDx[k], cgy)) ||
                     IsWall(in.grid, Idx(cgx, cgy + kDy[k]))) continue;
             }
             const Vec2 nw = CellWorld(center, nx, ny);
             const float stepDist = (kDx[k] != 0 && kDy[k] != 0) ? kPlanCellTiles * kRoot2 : kPlanCellTiles;
             const float nc = s_cost[cur] + stepDist + CellPenalty(in, ni, nw, hitScale);
-            if (nc < s_cost[ni]) {
-                s_cost[ni] = nc;
-                s_prev[ni] = cur;
-            }
+            if (nc < s_cost[ni]) { s_cost[ni] = nc; s_prev[ni] = cur; }
         }
     }
+    if (!reached) return false;   // goal unreachable (walled off) → orbit fallback
 
-    if (!reached) {           // goal unreachable (walled off) → orbit fallback
-        out.firstDir = orbitDir;
-        return;
-    }
-
-    // ── Reconstruct the cell chain goal → start, count length. ────────────────
-    int chainLen = 0;
-    for (int c = goalIdx; c != -1; c = s_prev[c]) {
-        ++chainLen;
-        if (c == start) break;
-    }
-    if (chainLen <= 1) {      // goal == start (shouldn't happen — guarded above)
-        out.firstDir = orbitDir;
-        return;
-    }
-
-    // Fill a forward (start → goal) index chain, then downsample to ≤ kMaxPathPoints.
+    // ── Reconstruct goal → start, reverse to start → goal, downsample. ────────
     static int s_chain[kPlanGridCells];
     int n = 0;
     for (int c = goalIdx; c != -1 && n < kPlanGridCells; c = s_prev[c]) {
         s_chain[n++] = c;
         if (c == start) break;
     }
-    // s_chain currently holds goal..start; reverse in place to start..goal.
+    if (n <= 1) return false;
     for (int i = 0, j = n - 1; i < j; ++i, --j) { int t = s_chain[i]; s_chain[i] = s_chain[j]; s_chain[j] = t; }
 
-    // Downsample: always keep the first (player) and last (goal) points.
     int outCount = 0;
     if (n <= kMaxPathPoints) {
         for (int i = 0; i < n; ++i) {
             const int c = s_chain[i];
-            out.path[outCount++] = CellWorld(center, c % kPlanGridSize, c / kPlanGridSize);
+            out_path[outCount++] = CellWorld(center, c % kPlanGridSize, c / kPlanGridSize);
         }
     } else {
         const int last = kMaxPathPoints - 1;
@@ -320,14 +275,161 @@ void Compute(const PlannerSnapshot& in, PlanResult& out)
             int i = (s == last) ? (n - 1)
                                 : static_cast<int>((static_cast<int64_t>(s) * (n - 1)) / last);
             const int c = s_chain[i];
-            out.path[outCount++] = CellWorld(center, c % kPlanGridSize, c / kPlanGridSize);
+            out_path[outCount++] = CellWorld(center, c % kPlanGridSize, c / kPlanGridSize);
         }
     }
-    out.pathCount = outCount;
+    out_count = outCount;
+    return true;
+}
 
-    // First-step direction from the second path point; fall back to orbit if degenerate.
-    out.firstDir = (outCount >= 2) ? Normalize(Sub(out.path[1], player)) : orbitDir;
-    if (LenSq(out.firstDir) < 1e-6f) out.firstDir = orbitDir;
+// Integrate a route's traversal cost (geometric length + summed per-cell danger
+// penalty) by sampling the polyline at ~cell spacing in the CURRENT grid. Run for
+// BOTH the fresh and held routes so their costs compare on ONE scale. Sets `blocked`
+// when any sample leaves the window or lands on a wall — i.e. an invalid held route.
+float RouteCost(const PlannerSnapshot& in, Vec2 center, float hitScale,
+                const Vec2* pts, int n, bool& blocked)
+{
+    blocked = (n < 2);
+    if (n < 2) return kInf;
+    float cost = 0.f;
+    for (int i = 0; i + 1 < n; ++i) {
+        const Vec2 a = pts[i], b = pts[i + 1];
+        const Vec2 seg = Sub(b, a);
+        const float segLen = Len(seg);
+        cost += segLen;
+        const int steps = std::max(1, static_cast<int>(std::ceil(segLen / kPlanCellTiles)));
+        for (int s = 1; s <= steps; ++s) {
+            const Vec2 p = Add(a, Mul(seg, static_cast<float>(s) / static_cast<float>(steps)));
+            const int gx = static_cast<int>(std::lround((p.x - center.x) / kPlanCellTiles)) + kPlanGridRadius;
+            const int gy = static_cast<int>(std::lround((p.y - center.y) / kPlanCellTiles)) + kPlanGridRadius;
+            if (gx < 0 || gx >= kPlanGridSize || gy < 0 || gy >= kPlanGridSize) { blocked = true; continue; }
+            const int idx = Idx(gx, gy);
+            if (IsWall(in.grid, idx)) { blocked = true; continue; }
+            cost += CellPenalty(in, idx, CellWorld(center, gx, gy), hitScale);
+        }
+    }
+    return cost;
+}
+
+// Carrot heading: aim at the nearest route waypoint at least kCommitLookaheadTiles
+// AHEAD of the player (found forward from the closest waypoint, so it never points
+// backward and it advances as the player walks the route). Falls back when the
+// route collapses onto the player.
+Vec2 CarrotDir(const Vec2* pts, int n, Vec2 player, Vec2 fallback)
+{
+    if (n <= 0) return fallback;
+    int nearest = 0; float bestD = kInf;
+    for (int i = 0; i < n; ++i) {
+        const float d = LenSq(Sub(pts[i], player));
+        if (d < bestD) { bestD = d; nearest = i; }
+    }
+    for (int i = nearest; i < n; ++i) {
+        const Vec2 d = Sub(pts[i], player);
+        if (LenSq(d) >= kCommitLookaheadTiles * kCommitLookaheadTiles) return Normalize(d);
+    }
+    const Vec2 d = Sub(pts[n - 1], player);
+    return (LenSq(d) > 1e-6f) ? Normalize(d) : fallback;
+}
+
+// Worker-local held route carried across Compute calls. Compute's single caller is
+// the worker thread (plan 59), so this introduces NO cross-thread state (same basis
+// as s_orbitSign / the Dijkstra scratch above).
+struct HeldRoute {
+    bool active = false;
+    Vec2 path[kMaxPathPoints]{};
+    int  pathCount = 0;
+    Vec2 goalPos{};   // the goal this route committed to (drift check vs. fresh goal)
+};
+
+} // namespace
+
+void Compute(const PlannerSnapshot& in, PlanResult& out)
+{
+    // Worker-local commitment state (single-threaded caller — see HeldRoute above).
+    static HeldRoute s_held;
+
+    out = PlanResult{};
+    out.forSeq = in.seq;
+
+    if (!in.hasLock) { s_held.active = false; return; }   // no goal → drop commitment
+
+    out.hasGoal = true;
+
+    const Vec2  center   = in.grid.center;   // = player (grid center)
+    const Vec2  player   = in.player;
+    const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
+
+    // ── Boss-fight goal policy (plan 61): range bands + persistent orbit sign. ──
+    // s_orbitSign lives on the WORKER thread only (Compute's single caller — plan 59),
+    // so no cross-thread state is introduced. OrbitGoalPos flips it only when blocked.
+    static int s_orbitSign = +1;
+    const float desired   = DesiredStandoff(in);
+    const Vec2  goalWorld = OrbitGoalPos(in, center, desired, s_orbitSign, hitScale);
+
+    // Orbit fallback direction (used when the route is degenerate / unreachable): head
+    // straight at the orbit goal, or tangentially if the goal collapses onto the player.
+    Vec2 orbitDir = Normalize(Sub(goalWorld, player));
+    if (LenSq(orbitDir) < 1e-6f) {
+        const Vec2 toBoss = Sub(in.lockPos, player);
+        const float d = Len(toBoss);
+        if (d > 1e-3f) {
+            const Vec2 dir = Mul(toBoss, 1.f / d);
+            orbitDir = (s_orbitSign > 0) ? Vec2{ -dir.y, dir.x } : Vec2{ dir.y, -dir.x };
+        }
+    }
+
+    // ── Fresh candidate route to the current orbit goal (recomputed every cycle). ─
+    static Vec2 s_fresh[kMaxPathPoints];
+    int  freshCount = 0;
+    const bool haveFresh = ComputeRoute(in, center, hitScale, goalWorld, s_fresh, freshCount);
+    bool  freshBlocked = false;
+    const float freshCost = haveFresh
+        ? RouteCost(in, center, hitScale, s_fresh, freshCount, freshBlocked)
+        : kInf;
+
+    // ── Re-cost the HELD route against the CURRENT snapshot (fix 1: commitment). ──
+    // Is any held cell now a wall / off-window? Has its total danger cost spiked?
+    bool  heldBlocked = true;
+    float heldCost    = kInf;
+    if (s_held.active)
+        heldCost = RouteCost(in, center, hitScale, s_held.path, s_held.pathCount, heldBlocked);
+    const bool heldUsable = s_held.active && !heldBlocked;
+    const bool goalMoved  = s_held.active &&
+                            Len(Sub(goalWorld, s_held.goalPos)) > kCommitGoalMoveTiles;
+
+    // KEEP the held route while it is still valid, its goal has not drifted past the
+    // threshold, and a fresh alternative is not cheaper than it by more than the
+    // hysteresis margin (which also covers "held danger spiked over fresh"). This
+    // makes the published firstDir STABLE so the per-frame dodge weaves ALONG it.
+    // REPLACE only on: held blocked/off-window, goal moved, fresh cheaper past the
+    // margin, or no held route yet.
+    const bool keepHeld = heldUsable && !goalMoved &&
+                          (!haveFresh || heldCost <= freshCost + kCommitCostHysteresis);
+
+    const HeldRoute* pub = nullptr;
+    if (keepHeld) {
+        pub = &s_held;                        // commit: publish the held route
+    } else if (haveFresh) {
+        s_held.active    = true;              // replace: adopt the fresh route
+        s_held.pathCount = std::clamp(freshCount, 0, kMaxPathPoints);
+        for (int i = 0; i < s_held.pathCount; ++i) s_held.path[i] = s_fresh[i];
+        s_held.goalPos   = goalWorld;
+        pub = &s_held;
+    }
+
+    if (pub) {
+        out.pathCount = std::clamp(pub->pathCount, 0, kMaxPathPoints);
+        for (int i = 0; i < out.pathCount; ++i) out.path[i] = pub->path[i];
+        out.goalPos  = pub->goalPos;
+        out.firstDir = CarrotDir(pub->path, pub->pathCount, player, orbitDir);
+        if (LenSq(out.firstDir) < 1e-6f) out.firstDir = orbitDir;
+        return;
+    }
+
+    // No usable held route AND no fresh route → orbit fallback (drop commitment).
+    s_held.active = false;
+    out.goalPos   = goalWorld;
+    out.firstDir  = orbitDir;
 }
 
 } } // namespace UDodge::Planner

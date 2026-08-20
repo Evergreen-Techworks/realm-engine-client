@@ -44,6 +44,25 @@ struct PlanResult {
     int      pathCount = 0;
 };
 
+// ── Path-commitment tuning (Stage D3 — worker-local held-route hysteresis) ───
+// Compute keeps a worker-local HELD route across cycles instead of re-deriving
+// (and thus jittering) the intent every worker tick. Each cycle it re-costs the
+// held route against the fresh snapshot and only REPLACES it when the held route
+// is blocked/out-of-window, the goal has drifted past kCommitGoalMoveTiles, or a
+// fresh route is cheaper than the held route by more than kCommitCostHysteresis
+// (which doubles as the "held danger spiked over fresh" margin). Otherwise the
+// held route's firstDir is published so the intent is STABLE and the per-frame
+// dodge micro-weaves ALONG it. These are baked-in constants (NO user settings).
+//   • kCommitGoalMoveTiles  — goal drift (tiles) that forces a re-route (~2-3 tiles).
+//   • kCommitCostHysteresis — how much costlier (route-integral units: geometric
+//     length + summed per-cell danger penalty) the held route may be than a fresh
+//     alternative before we abandon commitment. ~one danger-lane crossing worth.
+//   • kCommitLookaheadTiles — carrot distance: firstDir aims at the nearest held
+//     waypoint at least this far ahead, so it advances as the player walks the route.
+constexpr float kCommitGoalMoveTiles  = 2.5f;
+constexpr float kCommitCostHysteresis = 80.f;
+constexpr float kCommitLookaheadTiles = 0.75f;
+
 // Pure, host-independent, thread-safe: no IL2CPP, no globals, no I/O.
 void Compute(const PlannerSnapshot& in, PlanResult& out);
 
