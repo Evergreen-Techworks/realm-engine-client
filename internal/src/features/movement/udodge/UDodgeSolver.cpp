@@ -8,6 +8,14 @@
 namespace UDodge { namespace Solver {
 namespace {
 
+// The solver's HARD safety constraint is Core::PointSafety / Core::PointSafe,
+// which fold the player half-extent (kUPlayerHalf) into every bullet hit region
+// and active-zone radius. That is the divergence fix (plan 64): without it a
+// point the solver calls "safe" could still sit ~0.21 tiles inside the server's
+// hit square and the player gets clipped. Assert the constant is live so this
+// dependency is explicit at the solver boundary.
+static_assert(kUPlayerHalf > 0.f, "safety test must include the player half-extent");
+
 // ── Reachable candidate set (tiny, ≤ ~1.9 tiles) ────────────────────────────
 // The stand point plus polar rings at 0.34/0.67/1.0 of the move budget over
 // K headings, plus (when a goal exists) the goal-direction point clamped to the
