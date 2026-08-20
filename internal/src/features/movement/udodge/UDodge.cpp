@@ -35,7 +35,6 @@ std::atomic<bool>  g_safeWalk{ true };
 std::atomic<bool>  g_speedScale{ true };
 std::atomic<bool>  g_fieldEscape{ true };
 std::atomic<bool>  g_debugOverlay{ true };
-std::atomic<int>   g_mode{ 0 };
 std::atomic<bool>  g_lockFollow{ false };
 std::atomic<bool>  g_followLantern{ false };
 std::atomic<int>   g_standOnType{ 0 };
@@ -51,6 +50,9 @@ CoreOutput g_out;
 // when TryGetLatestPlan finds the worker busy (staleness is acceptable; the
 // dodge safety layer runs every frame regardless — plan 59).
 Planner::PlanResult g_lastPlan;
+// Highest publish sequence the game thread has successfully handed the worker.
+// Used to gate plan freshness so a stale/absent plan never drives movement (plan 63).
+uint32_t g_lastPubSeq = 0;
 
 std::mutex    g_debugMutex;
 
@@ -85,7 +87,6 @@ Settings ReadSettings()
     s.speedScale   = g_speedScale.load(std::memory_order_relaxed);
     s.fieldEscape  = g_fieldEscape.load(std::memory_order_relaxed);
     s.debugOverlay = g_debugOverlay.load(std::memory_order_relaxed);
-    s.mode         = ClampInt(g_mode.load(std::memory_order_relaxed), 0, 1);
     s.lockFollow   = g_lockFollow.load(std::memory_order_relaxed);
     s.followLantern = g_followLantern.load(std::memory_order_relaxed);
     s.standOnType   = g_standOnType.load(std::memory_order_relaxed);
@@ -248,63 +249,71 @@ void Tick(void* player, float px, float py, float dt)
     MapInput in{};
     in.player = { px, py };
 
-    // Intent priority: WASD (always wins) → Autopilot goal → lock-follow
-    // external goal. Machine-generated intents may be auto-walked below.
+    // Intent priority (plan 63; lock-driven, no mode setting):
+    //   WASD (always wins) → lantern stand-on → user-locked enemy engagement
+    //   → lock-follow external goal → pure assist/dodge. Machine-generated
+    //   intents may be auto-walked below. With NO enemy lock (g_map.hasLock is
+    //   true ONLY while the user Shift+Click-locked a LIVE enemy) and no WASD /
+    //   lantern / lock-follow, in.intentDir stays {} → pure dodge that never wanders.
     bool intentIsAuto = false, apHasTarget = false;
     Vec2 apTarget{};
     if (steer.active) {
-        in.intentDir = { steer.dirX, steer.dirY };
-    } else if (settings.mode == 1 /*Autopilot*/) {
+        in.intentDir = { steer.dirX, steer.dirY };            // WASD always wins
+    } else if (LanternIntent(in.player, settings, apTarget, in.intentDir)) {
+        intentIsAuto = true; apHasTarget = true;              // opt-in stand-on object
+    } else if (g_map.hasLock) {
+        // ENGAGE the user-locked enemy through the background orbit planner worker
+        // (plan 59). The weapon range is resolved HERE (game thread) into a plain
+        // float, so the snapshot stays pure — no IL2CPP crosses the thread boundary.
+        // We PUBLISH (non-blocking) and CONSUME the worker's latest plan
+        // (non-blocking); the game thread never blocks on the worker. Core::Evaluate
+        // below still runs every frame, so bullet-reaction latency is unaffected.
+        // OVERRIDE PRECEDENCE (plan 61 §2): the plan's firstDir is fed ONLY as an
+        // overridable intent — Core::Evaluate preserves it while safe but pre-empts
+        // it the instant a bullet threatens, so the dodge always wins over the path.
+        // Large (rasterized grid + danger map) — keep off the stack; static so the
+        // grid's wall bits persist across frames for the rebuild-only rasterization.
+        // Every scalar field below is overwritten each publish, so no re-zeroing.
         intentIsAuto = true;
-        // Priority 1 — lantern stand-on (game-thread IL2CPP entity walk).
-        if (LanternIntent(in.player, settings, apTarget, in.intentDir)) {
-            apHasTarget = true;
+        static Planner::PlannerSnapshot snap;
+        snap.tickId           = g_map.tickId;
+        snap.player           = in.player;
+        snap.settings         = settings;
+        snap.hasLock          = g_map.hasLock;
+        snap.lockPos          = g_map.lockPos;
+        snap.rangeResolved    = AutoAim::IsProjRangeResolved();
+        snap.weaponRangeTiles = snap.rangeResolved ? AutoAim::GetProjRangeTiles() : 6.f;
+        // GAME-THREAD rasterization: walls on rebuild, hazard each publish. Copy the
+        // plain-data danger map for the worker's lane/zone routing cost.
+        FillOccGrid(snap.grid, in.player, rebuilt, settings.planRadius);
+        snap.map = g_map;
+
+        const uint32_t pub = Worker::PublishSnapshot(snap);
+        if (pub) g_lastPubSeq = pub;
+
+        Planner::PlanResult fresh{};
+        if (Worker::TryGetLatestPlan(fresh)) {
+            g_lastPlan = fresh;   // refresh the cache when the worker isn't busy
+            static int s_wpN = 0;
+            if ((s_wpN++ % 120) == 0)
+                DBG_FILE_LOG("[UDodge] Worker plan seq=" << g_lastPlan.forSeq
+                    << " hasGoal=" << g_lastPlan.hasGoal);
+        }
+
+        // Strict freshness: a stale/absent plan NEVER drives movement (no wander).
+        // Cold start (no plan yet) or a plan built for a much older publish leaves
+        // in.intentDir {} → pure dodge + hold until a fresh route lands.
+        const bool planFresh = g_lastPlan.hasGoal &&
+                               g_lastPubSeq >= g_lastPlan.forSeq &&
+                               (g_lastPubSeq - g_lastPlan.forSeq) <= kUPlanMaxStaleSeq;
+        if (planFresh && LenSq(g_lastPlan.firstDir) > 1e-6f) {
+            in.intentDir = g_lastPlan.firstDir; apHasTarget = true; apTarget = g_lastPlan.goalPos;
         } else {
-            // Priority 2 — boss-lock orbit through the background planner worker
-            // (plan 59). The weapon range is resolved HERE (game thread) into a
-            // plain float, so the snapshot stays pure — no IL2CPP crosses the
-            // thread boundary. We PUBLISH the snapshot (non-blocking) and CONSUME
-            // the worker's latest plan (non-blocking); the game thread never
-            // blocks on the worker. Core::Evaluate below still runs every frame,
-            // so bullet-reaction latency is unaffected by plan staleness.
-            // Large (rasterized grid + danger map) — keep off the stack; static so the
-            // grid's wall bits persist across frames for the rebuild-only rasterization.
-            // Every scalar field below is overwritten each publish, so no re-zeroing.
-            static Planner::PlannerSnapshot snap;
-            snap.tickId           = g_map.tickId;
-            snap.player           = in.player;
-            snap.settings         = settings;
-            snap.hasLock          = g_map.hasLock;
-            snap.lockPos          = g_map.lockPos;
-            snap.rangeResolved    = AutoAim::IsProjRangeResolved();
-            snap.weaponRangeTiles = snap.rangeResolved ? AutoAim::GetProjRangeTiles() : 6.f;
-            // GAME-THREAD rasterization: walls on rebuild, hazard each publish. Copy the
-            // plain-data danger map for the worker's lane/zone routing cost.
-            FillOccGrid(snap.grid, in.player, rebuilt, settings.planRadius);
-            snap.map = g_map;
-
-            Worker::PublishSnapshot(snap);
-
-            Planner::PlanResult fresh{};
-            if (Worker::TryGetLatestPlan(fresh)) {
-                g_lastPlan = fresh;   // refresh the cache when the worker isn't busy
-                static int s_wpN = 0;
-                if ((s_wpN++ % 120) == 0)
-                    DBG_FILE_LOG("[UDodge] Worker plan seq=" << g_lastPlan.forSeq
-                        << " hasGoal=" << g_lastPlan.hasGoal);
-            }
-
-            // Cold start (no plan yet) leaves g_lastPlan default → firstDir {} →
-            // pure dodge until the first plan lands (safe, transient).
-            // OVERRIDE PRECEDENCE (plan 61 §2): the plan's firstDir is fed ONLY as an
-            // overridable intent — Core::Evaluate below preserves it while safe
-            // (UDodgeCore.cpp:558-564) but pre-empts it the instant a bullet threatens
-            // (emergency/gentle override), so the dodge always wins over the boss path.
-            in.intentDir = g_lastPlan.firstDir;
-            apHasTarget  = g_lastPlan.hasGoal;
-            apTarget     = g_lastPlan.goalPos;
+            in.intentDir = {}; apHasTarget = false;           // no route yet → dodge + hold
         }
     } else if (settings.lockFollow) {
+        // Legacy external-goal fallback (opt-in) — only reached when NOT engaging
+        // a lock. Later folding candidate (plan 63 out-of-scope note).
         float gx = 0.f, gy = 0.f;
         if (DangerPlanner::GetExternalGoal(gx, gy)) {
             const float dx = gx - px, dy = gy - py, d = std::sqrt(dx * dx + dy * dy);
@@ -383,6 +392,8 @@ void Tick(void* player, float px, float py, float dt)
         d.rebuiltThisFrame = rebuilt;
         d.fieldActive = g_out.fieldActive;
         d.fieldTarget = g_out.fieldTarget;
+        d.flowDir = g_out.flowDir;
+        d.flowCoherence = g_out.flowCoherence;
         d.hasLockTarget = apHasTarget;
         d.lockTarget = apTarget;
         // Planned route from the consumed worker plan (plain data) — drawn on the overlay.
@@ -447,10 +458,6 @@ void RenderSettings()
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Planner window half-size in grid cells. Smaller shrinks the\n"
                           "rasterized window and cuts per-frame cost if it stutters.");
-
-    const char* modeLabels[] = { "Assist", "Autopilot" };
-    int modeIdx = ClampInt(GetMode(), 0, 1);
-    if (ImGui::Combo("Mode##udodge", &modeIdx, modeLabels, IM_ARRAYSIZE(modeLabels))) SetMode(modeIdx);
 
     bool lockF = GetLockFollow();
     if (ImGui::Checkbox("Lock follow (walk toward lock target)##udodge", &lockF)) SetLockFollow(lockF);
@@ -519,8 +526,6 @@ void  SetFieldEscape(bool en) { g_fieldEscape.store(en, std::memory_order_relaxe
 bool  GetFieldEscape() { return g_fieldEscape.load(std::memory_order_relaxed); }
 void  SetDebugOverlay(bool en) { g_debugOverlay.store(en, std::memory_order_relaxed); }
 bool  GetDebugOverlay() { return g_debugOverlay.load(std::memory_order_relaxed); }
-void  SetMode(int mode) { g_mode.store(ClampInt(mode, 0, 1), std::memory_order_relaxed); }
-int   GetMode() { return g_mode.load(std::memory_order_relaxed); }
 void  SetLockFollow(bool en) { g_lockFollow.store(en, std::memory_order_relaxed); }
 bool  GetLockFollow() { return g_lockFollow.load(std::memory_order_relaxed); }
 void  SetFollowLantern(bool en) { g_followLantern.store(en, std::memory_order_relaxed); }

@@ -246,7 +246,6 @@ namespace {
             FH_INT_BOOL("udodgeSpeedScale", UDodge::SetSpeedScale),
             FH_INT_BOOL("udodgeFieldEscape", UDodge::SetFieldEscape),
             FH_INT_BOOL("udodgeDebugOverlay", UDodge::SetDebugOverlay),
-            FH_INT("udodgeMode", UDodge::SetMode),
             FH_INT_BOOL("udodgeLockFollow", UDodge::SetLockFollow),
             FH_INT_BOOL("udodgeFollowLantern", UDodge::SetFollowLantern),
             FH_INT("udodgeStandOnType", UDodge::SetStandOnType),

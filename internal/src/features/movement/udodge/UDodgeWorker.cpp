@@ -90,16 +90,17 @@ void Stop()
     g_running.store(false, std::memory_order_relaxed);
 }
 
-void PublishSnapshot(const Planner::PlannerSnapshot& snap)
+uint32_t PublishSnapshot(const Planner::PlannerSnapshot& snap)
 {
     std::unique_lock<std::mutex> lk(g_snapMutex, std::try_to_lock);
     if (!lk.owns_lock())
-        return;   // contention → drop this frame's publish; NEVER block the game thread
+        return 0;   // contention → drop this frame's publish; NEVER block the game thread
     g_pendingSnap = snap;
-    g_pendingSnap.seq = ++g_seq;
+    const uint32_t seq = g_pendingSnap.seq = ++g_seq;
     g_haveSnap = true;
     lk.unlock();
     g_snapCv.notify_one();
+    return seq;
 }
 
 bool TryGetLatestPlan(Planner::PlanResult& out)

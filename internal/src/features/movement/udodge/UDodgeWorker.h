@@ -17,7 +17,9 @@ void Stop();   // joins the worker thread; idempotent (safe if never started)
 
 // Game thread → worker. Non-blocking: on lock contention the publish is dropped
 // (the worker keeps the previous snapshot); the game thread NEVER blocks.
-void PublishSnapshot(const Planner::PlannerSnapshot& snap);
+// Returns the publish sequence assigned to this snapshot, or 0 if the publish
+// was dropped on contention (freshness plumbing — plan 63).
+uint32_t PublishSnapshot(const Planner::PlannerSnapshot& snap);
 
 // Worker → game thread. Non-blocking: returns false on contention or when no
 // plan has been produced yet; the game thread then keeps its own last-known plan.

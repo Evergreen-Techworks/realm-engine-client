@@ -7,6 +7,7 @@
 #include "ProjectileTracking.h"
 #include "RuntimeOffsets.h"
 #include "DbgFileLog.h"
+#include "DangerPlanner.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
 #include "gui/tabs/WorldTAB.h"
 #include "gui/tabs/TestTAB.h"
@@ -294,11 +295,10 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
     const int32_t localId = ProjectileTracking::GetLocalPlayerObjectId();
 
     // Enemies → proximity blockers (scored by the core, never a hard veto),
-    // plus the Autopilot boss lock in the same pass. No break on `limited` —
+    // plus the user's enemy lock in the same pass. No break on `limited` —
     // the lock scan must see all enemies.
     EnemyTracker::Tick();
-    int32_t lockId = 0, lockMaxHp = -1;
-    float   lockX = 0.f, lockY = 0.f;
+    const int32_t userLockId = DangerPlanner::GetEnemyLock();   // 0 = no lock
     for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot()) {
         if (!IsFinitePoint(e.x, e.y)) continue;
         if (DistSq(e.x, e.y, playerX, playerY) <= cullSq) {
@@ -309,14 +309,14 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
                 b.radius = kEnemyRadius;
             }
         }
-        // Boss lock: biggest real-HP enemy (sticky via constant maxHp), NOT
-        // range-culled so autopilot keeps range to a far boss.
-        if (e.hasHealthBar && e.hp > 0 && e.maxHp > 0 &&
-            (e.maxHp > lockMaxHp || (e.maxHp == lockMaxHp && e.id < lockId))) {
-            lockMaxHp = e.maxHp; lockId = e.id; lockX = e.x; lockY = e.y;
+        // Lock the enemy the USER locked on (Shift+Click), only while it is ALIVE.
+        // Not range-culled, so we keep orbit range to a far locked boss. Dead
+        // (hp<=0) / despawned (absent) / unlocked (userLockId==0) ⇒ never matched
+        // ⇒ hasLock stays false ⇒ pure assist.
+        if (userLockId != 0 && e.id == userLockId && e.hp > 0 && IsFinitePoint(e.x, e.y)) {
+            out.hasLock = true; out.lockId = e.id; out.lockPos = { e.x, e.y };
         }
     }
-    if (lockMaxHp >= 0) { out.hasLock = true; out.lockId = lockId; out.lockPos = { lockX, lockY }; }
 
     // Projectiles → danger lanes: live position (anchor) + remaining travel
     // path as pure geometry. Same filter chain as Build.

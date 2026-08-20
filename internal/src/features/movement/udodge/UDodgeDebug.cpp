@@ -174,6 +174,13 @@ void Render(const DebugSnapshot& snap,
         }
     }
 
+    // Threat flow (orange, scaled by coherence): aggregate travel direction of the
+    // nearby danger lanes — the smart dodge sidesteps PERPENDICULAR to this (plan 63).
+    if (snap.flowCoherence > 0.05f)
+        DrawLine(d, cam, snap.player,
+                 Add(snap.player, Mul(snap.flowDir, 1.5f * std::clamp(snap.flowCoherence, 0.f, 1.f))),
+                 IM_COL32(255, 120, 0, 200), 2.f);
+
     // Intent (cyan) and committed move (yellow).
     if (LenSq(snap.intentDir) > 1e-4f)
         DrawLine(d, cam, snap.player,

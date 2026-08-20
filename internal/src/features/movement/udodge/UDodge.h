@@ -46,7 +46,6 @@ void  SetSafeWalk(bool en);           bool  GetSafeWalk();
 void  SetSpeedScale(bool en);         bool  GetSpeedScale();
 void  SetFieldEscape(bool en);        bool  GetFieldEscape();
 void  SetDebugOverlay(bool en);       bool  GetDebugOverlay();
-void  SetMode(int mode);              int   GetMode();       // 0=Assist 1=Autopilot
 void  SetLockFollow(bool en);         bool  GetLockFollow();
 void  SetFollowLantern(bool en);      bool  GetFollowLantern();
 void  SetStandOnType(int t);          int   GetStandOnType();

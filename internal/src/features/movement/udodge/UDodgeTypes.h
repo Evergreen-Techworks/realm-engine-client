@@ -38,6 +38,23 @@ constexpr float kUnavoidableClearanceBand = 0.05f;
 constexpr float kHysteresisScoreGain      = 0.25f;  // hold the chosen heading unless beaten by this much
 constexpr int   kCorridorNeighbors        = 3;      // half-width of the corridor-safety window
 
+// ── Smart-dodge weighted score (plan 63; baked-in, NO user sliders) ─────────
+// ScoreOf re-ranks ONLY within the already-safety-floored candidate set, so
+// these convert a straight retreat into a committed lateral sidestep without
+// ever overriding a hard-safety filter. Ratios mirror RePP (1.5 / 5.0 / 2.5)
+// with perp scaled to 3.0 because UDodge re-ranks within the floored set.
+// Change here + recompile if the feel needs tuning.
+constexpr float kUScoreClearW   = 1.5f;   // clearance reward (top end +4×1.5 = +6 dominates)
+constexpr float kUScorePerpW    = 3.0f;   // perpendicular-sidestep reward (anti-flee)
+constexpr float kUScoreIntentW  = 2.0f;   // goal/WASD alignment reward
+constexpr float kUScoreCommitW  = 2.5f;   // directional-commitment reward (anti-jitter)
+constexpr float kUScoreSoftW    = 1.0f;   // pending-zone penetration penalty
+constexpr float kUScoreDeadband = 0.4f;   // hysteresis flip deadband (score units)
+
+// Whole-window plan freshness gate (plan 63): a plan older than this many
+// publish sequences NEVER drives movement (no wander on worker contention).
+constexpr uint32_t kUPlanMaxStaleSeq = 8;
+
 struct Vec2 {
     float x = 0.f;
     float y = 0.f;
@@ -84,7 +101,6 @@ struct Settings {
     bool  speedScale  = true;    // match gentle overrides to intent speed
     bool  fieldEscape = true;    // Dijkstra pocket search when boxed in
     bool  debugOverlay = true;
-    int   mode        = 0;       // 0 = Assist, 1 = Autopilot
     bool  lockFollow  = false;   // consume DangerPlanner external goal as intent
     bool  followLantern = false; // Autopilot: stand-on object scan (perf cost)
     int   standOnType   = 0;     // objType to stand on (0 = off)
@@ -201,6 +217,8 @@ struct CoreOutput {
     Decision decision = Decision::None;
     bool  fieldActive = false;   // field candidate was generated this frame
     Vec2  fieldTarget{};         // pocket cell (world) the field routed to
+    Vec2  flowDir{};             // aggregate threat-flow direction (plan 63; debug only)
+    float flowCoherence = 0.f;   // 0..1 flow coherence (plan 63; debug only)
     CandidateDebug candidates[kCandidateCount]{};
 };
 
@@ -210,11 +228,13 @@ struct CoreState {
     int      selectedCandidate = kStandCandidate;
     uint32_t selectedTick = 0;
     bool     haveTick = false;
+    Vec2     lastMoveDir{};   // last committed heading — directional-commitment memory (plan 63)
     void Reset()
     {
         selectedCandidate = kStandCandidate;
         selectedTick = 0;
         haveTick = false;
+        lastMoveDir = {};
     }
 };
 
@@ -239,6 +259,8 @@ struct DebugSnapshot {
     bool  rebuiltThisFrame = false;  // true = full layout rebuild; false = re-anchored
     bool  fieldActive = false;
     Vec2  fieldTarget{};
+    Vec2  flowDir{};             // threat-flow arrow (plan 63)
+    float flowCoherence = 0.f;   // 0..1 flow coherence (plan 63)
     bool  hasLockTarget = false;
     Vec2  lockTarget{};
     Vec2  path[kMaxPathPoints]{};   // planned route polyline (world coords) — plan 60

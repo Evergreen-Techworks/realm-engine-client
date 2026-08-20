@@ -300,15 +300,6 @@ export function register(ctx: PluginContext) {
   registerModeSetting('unified', 'udodgeFieldEscape',
     onOff('[UDodge] Field escape (Dijkstra route around walls when boxed in)', 'on'),
     (v: string) => sendDllFeature('udodgeFieldEscape', v === 'on' ? 1 : 0));
-  registerModeSetting('unified', 'udodgeMode', {
-    label: '[UDodge] Mode',
-    type: 'select',
-    value: 'assist',
-    options: [
-      { label: 'Assist', value: 'assist' },
-      { label: 'Autopilot', value: 'autopilot' },
-    ],
-  }, (v: string) => sendDllFeature('udodgeMode', v === 'autopilot' ? 1 : 0));
   registerModeSetting('unified', 'udodgeLockFollow',
     onOff('[UDodge] Lock follow (walk toward lock target)', 'off'),
     (v: string) => sendDllFeature('udodgeLockFollow', v === 'on' ? 1 : 0));
@@ -499,7 +490,6 @@ export function register(ctx: PluginContext) {
     sendDllFeature('udodgeStandOnType', ctx.getSetting<number>('udodgeStandOnType'));
     sendDllFeature('udodgeOrbitRange', ctx.getSetting<number>('udodgeOrbitRange'));
     sendDllFeature('udodgePlanRadius', ctx.getSetting<number>('udodgePlanRadius'));
-    sendDllFeature('udodgeMode', ctx.getSetting<string>('udodgeMode') === 'autopilot' ? 1 : 0);
     for (const k of ['udodgeSafeWalk', 'udodgeSpeedScale',
                      'udodgeFieldEscape', 'udodgeLockFollow', 'udodgeFollowLantern',
                      'udodgeDebugOverlay', 'udodgeDrawPath'] as const)

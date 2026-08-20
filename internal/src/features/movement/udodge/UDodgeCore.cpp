@@ -227,20 +227,76 @@ bool BetterCandidate(const CandKey& a, const CandKey& b)
     return a.dot > b.dot;
 }
 
-int SelectProposed(const MapCtx& c)
+// ── Threat flow (plan 63) — anti-flee ───────────────────────────────────────
+// Aggregate travel direction of the relevant danger lanes near the player, with
+// a coherence measure. Each lane's travel is Normalize(points[last]-points[0])
+// (points[0] = live bullet position); near lanes dominate via proximity weight.
+// Zones (static discs) have no travel and are omitted (RePP parity). Pure math
+// over the plain-data map, O(relevantCount) ≤ 96.
+struct ThreatFlow { Vec2 dir{}; float coherence = 0.f; bool has = false; };
+
+ThreatFlow ComputeThreatFlow(const MapCtx& c)
 {
-    const Vec2 intent = c.dirs[kIntentCandidate];
+    Vec2 sum{}; float total = 0.f;
+    for (int r = 0; r < c.relevantCount; ++r) {
+        const LaneThreat& L = c.m->lanes[c.relevant[r]];
+        if (L.pointCount < 2) continue;
+        const Vec2 travel = Normalize(Sub(L.points[L.pointCount - 1], L.points[0]));
+        if (LenSq(travel) <= 1e-4f) continue;
+        const float standDist = LaneDistCheb(L, c.in->player);   // near lanes dominate
+        const float w = 1.f / (1.f + std::max(0.f, standDist));
+        sum = Add(sum, Mul(travel, w));
+        total += w;
+    }
+    ThreatFlow f{};
+    if (total <= 0.f) return f;
+    const float mag = Len(sum);
+    f.coherence = std::clamp(mag / total, 0.f, 1.f);
+    f.has = mag > 1e-4f;
+    f.dir = f.has ? Mul(sum, 1.f / mag) : Vec2{};
+    return f;
+}
+
+// ── Weighted candidate score (plan 63) — replaces the lexicographic RANKING ──
+// Re-ranks ONLY within the already-safety-floored candidate set: rewards
+// clearance (safety), goal/WASD alignment, moving PERPENDICULAR to the threat
+// flow (a lateral sidestep, not a retreat), and CONTINUING the current heading
+// (directional commitment — kills the flip-flop); penalizes pending-zone
+// penetration. Every hard-safety filter stays byte-for-byte; this only decides
+// which SAFE candidate wins.
+float ScoreOf(const MapCtx& c, int cand, Vec2 intent,
+              const ThreatFlow& flow, Vec2 prevDir)
+{
+    if (!c.valid[cand]) return -kHugeClearance;
+    const Vec2 d = c.dirs[cand];
+    const bool moving = LenSq(d) > 1e-6f;
+
+    float score = std::clamp(c.clearance[cand], -2.f, 4.f) * kUScoreClearW;  // safety
+    if (LenSq(intent) > 1e-6f)
+        score += Dot(d, intent) * kUScoreIntentW;                            // goal/WASD
+    if (flow.has && moving) {                                                // sidestep
+        const float parallel = std::fabs(Dot(d, flow.dir));
+        score += (1.f - 2.f * parallel) * flow.coherence * kUScorePerpW;
+    }
+    if (moving && LenSq(prevDir) > 1e-6f)                                     // commitment
+        score += Dot(d, prevDir) * kUScoreCommitW;
+    score -= c.softCost[cand] * kUScoreSoftW;                                 // pending zones
+    return score;
+}
+
+int SelectProposed(const MapCtx& c, Vec2 intent, const ThreatFlow& flow, Vec2 prevDir)
+{
     int proposed = kStandCandidate;
-    CandKey best = KeyOf(c, kStandCandidate, intent);
+    float best = ScoreOf(c, kStandCandidate, intent, flow, prevDir);
 
     // Also considers the field candidate; only the intent candidate is skipped
-    // (it is judged by the ladder, not clearance selection).
+    // (it is judged by the ladder, not the weighted-score selection).
     for (int cand = 1; cand < kCandidateCount; ++cand) {
         if (cand == kIntentCandidate) continue;
         if (!c.valid[cand]) continue;
-        const CandKey k = KeyOf(c, cand, intent);
-        if (BetterCandidate(k, best)) {
-            best = k;
+        const float s = ScoreOf(c, cand, intent, flow, prevDir);
+        if (s > best) {
+            best = s;
             proposed = cand;
         }
     }
@@ -439,6 +495,12 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
         if (direct <= c.step + half + kRelevanceClearance) ++directLaneThreats;
     }
 
+    // ── Threat flow (plan 63): computed once after the relevance pass. Used by
+    // the weighted selection score below and published to the debug overlay.
+    const ThreatFlow flow = ComputeThreatFlow(c);
+    out.flowDir = flow.dir;
+    out.flowCoherence = flow.coherence;
+
     bool directZoneThreat = false;
     for (int i = 0; i < c.m->zoneCount; ++i) {
         const ZoneThreat& z = c.m->zones[i];
@@ -550,7 +612,10 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
         return;
     }
 
-    const int proposed = SelectProposed(c);
+    // Directional-commitment memory (plan 63): the heading committed last frame,
+    // used by ScoreOf below to reward continuing it (anti-jitter).
+    const Vec2 prevDir = state.lastMoveDir;
+    const int proposed = SelectProposed(c, intentDir, flow, prevDir);
 
     // ── Intent-preservation ladder ───────────────────────────────────────────
     // Wall-blocked intent can't be preserved — fall through to the override
@@ -558,6 +623,7 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
     if (c.valid[kIntentCandidate] &&
         c.clearance[kIntentCandidate] >= c.reactMargin &&
         c.softCost[kIntentCandidate] == 0.f) {
+        state.lastMoveDir = intentDir;   // remember the orbit/goal heading
         FinishMap(c, out, intentVel, false, state.selectedCandidate, 1.f, threatCount,
                   Decision::PreserveSafeIntent);
         return;
@@ -569,54 +635,58 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
     Decision decision = emergency ? Decision::EmergencyOverride : Decision::GentleOverride;
 
     if (!emergency) {
-        // Not urgent: among all fully-safe candidates, pick the most
-        // intent-aligned. (Iterates every candidate and skips !valid — the
-        // field candidate, once real, competes here too.)
-        float bestDot = -kHugeClearance;
+        // Not urgent: among all fully-safe candidates, pick the best weighted
+        // score (perp-sidestep + commitment + intent). The clearance floor is
+        // unchanged, so this only re-ranks the ALREADY-SAFE set. (Iterates every
+        // candidate and skips !valid — the field candidate, once real, competes.)
+        float bestScore = -kHugeClearance;
         for (int cand = 0; cand < kCandidateCount; ++cand) {
             if (!c.valid[cand] || c.clearance[cand] < c.reactMargin) continue;
-            const float dot = Dot(c.dirs[cand], intentDir);
-            if (dot > bestDot) { bestDot = dot; choice = cand; }
+            const float s = ScoreOf(c, cand, intentDir, flow, prevDir);
+            if (s > bestScore) { bestScore = s; choice = cand; }
         }
         if (choice != proposed) decision = Decision::GentleManualBlend;
     } else if (hasIntent && c.clearance[proposed] >= c.reactMargin) {
         // Survival is achievable: allow a slightly-worse-but-still-safe
-        // candidate that better matches the player's intent.
+        // candidate that better matches intent/sidestep/commitment.
         const float acceptable =
             std::max(c.reactMargin, c.clearance[proposed] - kEmergencyIntentBand);
-        float bestDot = -kHugeClearance;
+        float bestScore = -kHugeClearance;
         for (int cand = 0; cand < kCandidateCount; ++cand) {
             if (!c.valid[cand] || c.clearance[cand] < acceptable) continue;
-            const float dot = Dot(c.dirs[cand], intentDir);
-            if (dot > bestDot) { bestDot = dot; choice = cand; }
+            const float s = ScoreOf(c, cand, intentDir, flow, prevDir);
+            if (s > bestScore) { bestScore = s; choice = cand; }
         }
         if (choice != proposed) decision = Decision::EmergencyManualBlend;
     } else if (hasIntent) {
         // A hit may be unavoidable: trade only within a tight clearance band.
         const float acceptableClearance =
             c.clearance[proposed] - kUnavoidableClearanceBand;
-        float bestDot = -kHugeClearance;
+        float bestScore = -kHugeClearance;
         for (int cand = 0; cand < kCandidateCount; ++cand) {
             if (!c.valid[cand] || c.clearance[cand] < acceptableClearance) continue;
-            const float dot = Dot(c.dirs[cand], intentDir);
-            if (dot > bestDot) { bestDot = dot; choice = cand; }
+            const float s = ScoreOf(c, cand, intentDir, flow, prevDir);
+            if (s > bestScore) { bestScore = s; choice = cand; }
         }
         if (choice != proposed) decision = Decision::UnavoidableManualBlend;
     }
 
-    // ── Tick-locked hysteresis: keep the heading chosen this server tick
-    // unless it went unsafe or the new pick is clearly better. ───────────────
+    // ── Directional-commitment hysteresis (plan 63): keep the heading committed
+    // last frame across ticks unless it went unsafe or a new pick clearly beats
+    // it by more than the score deadband. Dropping the per-tick gate makes the
+    // commitment persist; the clearance[held] >= reactMargin guard still forces
+    // an immediate switch the instant the held heading becomes unsafe. ────────
     const int held = state.selectedCandidate;
-    if (state.haveTick && state.selectedTick == in.tickId &&
-        c.valid[held] && c.clearance[held] >= c.reactMargin &&
-        (!hasIntent || Dot(c.dirs[held], intentDir) >= Dot(c.dirs[choice], intentDir) - 0.05f) &&
-        c.clearance[choice] < c.clearance[held] + kHysteresisScoreGain) {
+    if (held != choice && c.valid[held] &&
+        LenSq(c.dirs[held]) > 1e-6f &&
+        c.clearance[held] >= c.reactMargin &&
+        ScoreOf(c, held, intentDir, flow, prevDir)
+            >= ScoreOf(c, choice, intentDir, flow, prevDir) - kUScoreDeadband) {
         choice = held;
     } else {
         state.selectedCandidate = choice;
     }
-    state.selectedTick = in.tickId;
-    state.haveTick = true;
+    state.selectedTick = in.tickId; state.haveTick = true;
 
     float speedScale = 1.f;
     if (in.settings.speedScale && choice != kStandCandidate &&
@@ -631,12 +701,12 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
     // choice stay stand (genuinely nowhere to move).
     if (LenSq(c.dirs[choice]) < 1e-6f) {
         int moving = -1;
-        CandKey bestMoving{};
+        float bestMoving = -kHugeClearance;
         for (int cand = 0; cand < kCandidateCount; ++cand) {
             if (!c.valid[cand] || LenSq(c.dirs[cand]) < 1e-6f) continue;
-            const CandKey k = KeyOf(c, cand, intentDir);
-            if (moving < 0 || BetterCandidate(k, bestMoving)) {
-                bestMoving = k;
+            const float s = ScoreOf(c, cand, intentDir, flow, prevDir);
+            if (moving < 0 || s > bestMoving) {
+                bestMoving = s;
                 moving = cand;
             }
         }
@@ -654,6 +724,9 @@ void Evaluate(const MapInput& in, CoreState& state, CoreOutput& out)
     if (choice == kFieldCandidate &&
         (decision == Decision::GentleOverride || decision == Decision::EmergencyOverride))
         decision = Decision::FieldEscape;
+
+    // Remember the committed heading for next-frame directional commitment.
+    state.lastMoveDir = Normalize(c.dirs[choice]);
 
     FinishMap(c, out, Mul(c.dirs[choice], speed * speedScale), true, choice, speedScale,
               threatCount, decision);
