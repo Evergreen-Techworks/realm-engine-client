@@ -2,6 +2,7 @@
 #include "UDodge.h"
 #include "UDodgeTypes.h"
 #include "UDodgeCore.h"
+#include "UDodgeSolver.h"
 #include "UDodgeSensors.h"
 #include "UDodgeDebug.h"
 #include "UDodgePlanner.h"
@@ -46,6 +47,9 @@ std::atomic<bool>  g_drawPath{ true };     // draw the plan-60 route overlay
 CoreState  g_state;
 DangerMap  g_map;
 CoreOutput g_out;
+// Per-tick safe-position solver result — game-thread-owned, cached for one
+// server tick and re-validated (or re-solved) every frame (plan 64).
+Solver::SolveResult g_solve;
 // Last plan the worker handed back — game-thread-owned cache, kept across frames
 // when TryGetLatestPlan finds the worker busy (staleness is acceptable; the
 // dodge safety layer runs every frame regardless — plan 59).
@@ -111,75 +115,6 @@ void PublishMinimal(Decision decision, Vec2 player)
     PublishDebug(d);
 }
 
-// Autopilot Priority 1 — STAND-ON override (the Moonlight Village lantern).
-// Gated behind `followLantern` (default OFF): it iterates WorldTAB's full entity
-// list — the only source that includes UNTARGETABLE objects — which is a real
-// per-frame cost AND carries the same game-thread-vs-render-refresh race the
-// shipped zDodge already has on GetEntities. So it is opt-in for that one dungeon
-// mechanic; normal play never touches GetEntities. This walks IL2CPP objects and
-// therefore STAYS on the game thread (it can never move to the planner worker).
-//
-// Returns true and fills outTargetPos/outDir when a stand-on object is found.
-bool LanternIntent(Vec2 player, const Settings& settings, Vec2& outTargetPos, Vec2& outDir)
-{
-    if (!(settings.followLantern && settings.standOnType != 0)) return false;
-
-    const std::vector<WorldEntity>& ents = WorldTAB::GetEntities();
-    bool found = false;
-    int32_t soId = 0;
-    float soX = 0.f, soY = 0.f, bestSq = 1e18f;
-    for (const WorldEntity& e : ents) {
-        if (e.isLocal || e.objType != settings.standOnType) continue;
-        const float dx = e.x - player.x, dy = e.y - player.y;
-        const float d2 = dx * dx + dy * dy;
-        if (d2 < bestSq) { bestSq = d2; soId = e.objectId; soX = e.x; soY = e.y; found = true; }
-    }
-    if (!found) return false;
-
-    WorldTAB::GetEntityLivePos(soId, soX, soY);   // live if available
-    outTargetPos = { soX, soY };
-    const Vec2 to = Sub(outTargetPos, player);
-    const float dist = Len(to);
-    if (dist <= 0.35f) outDir = {};                // on it → hold position
-    else               outDir = Mul(to, 1.f / dist); // walk straight onto it
-    return true;
-}
-
-// Rasterize the plain-data occupancy+hazard grid the worker routes over (plan 60).
-// GAME THREAD ONLY: Sensors::CanOccupy / IsHazardAt touch live world memory, so this
-// can never move to the worker. HOT PATH: 81×81 = 6561 CanOccupy calls is the single
-// largest new game-thread cost, so WALL bits (bit0) are re-rasterized ONLY on a full
-// map rebuild (walls are static within a server tick), while HAZARD bits (bit1) refresh
-// every publish (cheap via the per-tick hazard memo). `grid` persists across frames
-// (a static in Tick), so unrebuilt wall bits survive. Runs inside the per-tick memo
-// lifetime — BuildMap/ReanchorMap cleared and repopulated the memo earlier this frame.
-void FillOccGrid(Planner::OccGrid& grid, Vec2 player, bool rebuildWalls, int radiusCells)
-{
-    grid.center = player;
-    constexpr int R = Planner::kPlanGridRadius;
-    constexpr int S = Planner::kPlanGridSize;
-    const int rad = std::clamp(radiusCells, 8, R);
-    for (int gy = 0; gy < S; ++gy) {
-        for (int gx = 0; gx < S; ++gx) {
-            uint8_t& f = grid.flags[gy * S + gx];
-            // Outside the (shrinkable) planner window: mark WALL and skip the CanOccupy
-            // probe — this is what lets a smaller radius cut the rasterize cost.
-            if (std::max(std::abs(gx - R), std::abs(gy - R)) > rad) {
-                f |= 0x1; f &= static_cast<uint8_t>(~0x2);
-                continue;
-            }
-            const float wx = player.x + static_cast<float>(gx - R) * Planner::kPlanCellTiles;
-            const float wy = player.y + static_cast<float>(gy - R) * Planner::kPlanCellTiles;
-            if (rebuildWalls) {
-                // Walls only (safeWalk=false) so hazard is a routing COST, not a block —
-                // matching UDodgeField::IsWall.
-                if (!Sensors::CanOccupy(wx, wy, false)) f |= 0x1; else f &= static_cast<uint8_t>(~0x1);
-            }
-            if (Sensors::IsHazardAt(wx, wy)) f |= 0x2; else f &= static_cast<uint8_t>(~0x2);
-        }
-    }
-}
-
 } // namespace
 
 void SetEnabled(bool enabled)
@@ -192,6 +127,7 @@ void SetEnabled(bool enabled)
     if (!enabled) {
         Worker::Stop();   // JOIN the worker before releasing state it never touches
         g_state.Reset();
+        g_solve = Solver::SolveResult{};
         g_lastPlan = Planner::PlanResult{};
         PublishDebug(DebugSnapshot{});
     }
@@ -204,6 +140,7 @@ void OnEnter()
     ProjectileTracking::Install();
     Worker::Start();
     g_state.Reset();
+    g_solve = Solver::SolveResult{};
     g_lastPlan = Planner::PlanResult{};
     PublishDebug(DebugSnapshot{});
 }
@@ -232,7 +169,6 @@ void Tick(void* player, float px, float py, float dt)
     } _tickTimer;
 
     const Settings settings = ReadSettings();
-    const SteerInput::SteerState steer = SteerInput::Get();
 
     int32_t hp = 0, maxHp = 0;
     float spd = 0.f, tilesPerSec = 0.f;
@@ -266,88 +202,6 @@ void Tick(void* player, float px, float py, float dt)
     MapInput in{};
     in.player = { px, py };
 
-    // Intent priority (plan 63; lock-driven, no mode setting):
-    //   WASD (always wins) → lantern stand-on → user-locked enemy engagement
-    //   → lock-follow external goal → pure assist/dodge. Machine-generated
-    //   intents may be auto-walked below. With NO enemy lock (g_map.hasLock is
-    //   true ONLY while the user Shift+Click-locked a LIVE enemy) and no WASD /
-    //   lantern / lock-follow, in.intentDir stays {} → pure dodge that never wanders.
-    bool intentIsAuto = false, apHasTarget = false;
-    Vec2 apTarget{};
-    if (steer.active) {
-        in.intentDir = { steer.dirX, steer.dirY };            // WASD always wins
-    } else if (LanternIntent(in.player, settings, apTarget, in.intentDir)) {
-        intentIsAuto = true; apHasTarget = true;              // opt-in stand-on object
-    } else if (g_map.hasLock) {
-        // ENGAGE the user-locked enemy through the background orbit planner worker
-        // (plan 59). The weapon range is resolved HERE (game thread) into a plain
-        // float, so the snapshot stays pure — no IL2CPP crosses the thread boundary.
-        // We PUBLISH (non-blocking) and CONSUME the worker's latest plan
-        // (non-blocking); the game thread never blocks on the worker. Core::Evaluate
-        // below still runs every frame, so bullet-reaction latency is unaffected.
-        // OVERRIDE PRECEDENCE (plan 61 §2): the plan's firstDir is fed ONLY as an
-        // overridable intent — Core::Evaluate preserves it while safe but pre-empts
-        // it the instant a bullet threatens, so the dodge always wins over the path.
-        // Large (rasterized grid + danger map) — keep off the stack; static so the
-        // grid's wall bits persist across frames for the rebuild-only rasterization.
-        // Every scalar field below is overwritten each publish, so no re-zeroing.
-        intentIsAuto = true;
-        static Planner::PlannerSnapshot snap;
-        snap.tickId           = g_map.tickId;
-        snap.player           = in.player;
-        snap.settings         = settings;
-        snap.hasLock          = g_map.hasLock;
-        snap.lockPos          = g_map.lockPos;
-        snap.rangeResolved    = AutoAim::IsProjRangeResolved();
-        snap.weaponRangeTiles = snap.rangeResolved ? AutoAim::GetProjRangeTiles() : 6.f;
-        // GAME-THREAD rasterization + publish is the expensive part (thousands of
-        // tile probes over the grid). Gate it to the ACTUAL server-tick change
-        // (~5 Hz) — NOT `rebuilt`, which fires almost every frame in combat as
-        // projectiles spawn/despawn. The route is world-space and committed, and
-        // the game thread follows it via the live-position carrot below, so
-        // planning at tick rate is ample. This is the per-frame FPS drain fix.
-        static uint32_t s_lastPubTick = 0xFFFFFFFFu;
-        static int      s_pubFrame    = 0;
-        const bool tickChanged      = tickOk && tick != s_lastPubTick;
-        const bool throttleFallback = !tickOk && ((s_pubFrame++ % 12) == 0);
-        if (tickChanged || throttleFallback) {
-            FillOccGrid(snap.grid, in.player, true, settings.planRadius);
-            snap.map = g_map;
-            const uint32_t pub = Worker::PublishSnapshot(snap);
-            if (pub) g_lastPubSeq = pub;
-            if (tickOk) s_lastPubTick = tick;
-        }
-
-        Planner::PlanResult fresh{};
-        if (Worker::TryGetLatestPlan(fresh)) {
-            g_lastPlan = fresh;   // refresh the cache when the worker isn't busy
-            static int s_wpN = 0;
-            if ((s_wpN++ % 120) == 0)
-                DBG_FILE_LOG("[UDodge] Worker plan seq=" << g_lastPlan.forSeq
-                    << " hasGoal=" << g_lastPlan.hasGoal);
-        }
-
-        // Strict freshness: a stale/absent plan NEVER drives movement (no wander).
-        // Cold start (no plan yet) or a plan built for a much older publish leaves
-        // in.intentDir {} → pure dodge + hold until a fresh route lands.
-        const bool planFresh = g_lastPlan.hasGoal &&
-                               g_lastPubSeq >= g_lastPlan.forSeq &&
-                               (g_lastPubSeq - g_lastPlan.forSeq) <= kUPlanMaxStaleSeq;
-        if (planFresh && LenSq(g_lastPlan.firstDir) > 1e-6f) {
-            in.intentDir = g_lastPlan.firstDir; apHasTarget = true; apTarget = g_lastPlan.goalPos;
-        } else {
-            in.intentDir = {}; apHasTarget = false;           // no route yet → dodge + hold
-        }
-    } else if (settings.lockFollow) {
-        // Legacy external-goal fallback (opt-in) — only reached when NOT engaging
-        // a lock. Later folding candidate (plan 63 out-of-scope note).
-        float gx = 0.f, gy = 0.f;
-        if (DangerPlanner::GetExternalGoal(gx, gy)) {
-            const float dx = gx - px, dy = gy - py, d = std::sqrt(dx * dx + dy * dy);
-            if (d > 0.3f) { in.intentDir = { dx / d, dy / d }; intentIsAuto = true; }
-        }
-    }
-
     in.speed = std::max(0.f, std::isfinite(tilesPerSec) ? tilesPerSec : 0.f) / 1000.f;
     in.stepTiles = settings.stepTiles > 0.f
         ? settings.stepTiles
@@ -360,91 +214,100 @@ void Tick(void* player, float px, float py, float dt)
     in.env.isHazard = &Sensors::IsHazardAt;
     in.map = &g_map;
 
-    Core::Evaluate(in, g_state, g_out);
+    // in.stepTiles IS the per-tick move budget (tilesPerSec × kServerTickSec).
+    const float b = in.stepTiles;
+
+    // ── Goal (soft preference only) ─────────────────────────────────────────
+    // Pure dodge for now (plan 64 step 3): the goal stays inactive so the solver
+    // never wanders. WASD steer / boss-lock orbit standoff are reinstated in step 5.
+    Solver::Goal goal{};
+
+    // ── Solve once per server tick ──────────────────────────────────────────
+    // A rebuild means the tick id changed or a structural projectile change forced
+    // it — re-solve then and cache; between ticks the cached target is held and
+    // merely re-validated + walked below.
+    if (rebuilt)
+        Solver::Solve(in, b, goal, g_state, g_solve);
 
     const float frameMs = Clamp(dt * 1000.f, 1.f, 250.f);
     Vec2 moveTarget = in.player;
     bool moveFailed = false;
 
-    // Auto-walk: when the core does not override, the intent is machine-
-    // generated, and the core judged the intent safe, walk it ourselves.
-    // NoThreat returns before wall validation runs, so probe the move target
-    // against walls here to avoid walking into them.
-    //
-    // Path-follows-yield-to-bullets: the route is a SOFT macro-goal, so the walk
-    // MUST also respect the danger map — never advance the path toward a cell that
-    // is inside or near a bullet lane / active zone. NoThreat can return for a lane
-    // just outside the relevance gate that the route heads straight into, and the
-    // move target reaches past the core's step segment; so gate the auto-walk on
-    // the step target keeping the reaction margin of bullet clearance. When it is
-    // not clear we HOLD (the per-frame near-dodge drives any real escape), instead
-    // of walking the route into shots.
-    bool autoWalk = false;
-    if (!g_out.overrideActive && intentIsAuto && LenSq(in.intentDir) > 1e-6f &&
-        (g_out.decision == Decision::NoThreat || g_out.decision == Decision::PreserveSafeIntent)) {
-        const Vec2 probe = Add(in.player, Mul(g_out.velocity, std::max(frameMs, 100.f)));
-        const bool wallOk    = Sensors::CanOccupy(probe.x, probe.y, settings.safeWalk);
-        const bool bulletOk  = Core::PointClearance(in, probe) >= settings.reactMargin;
-        autoWalk = wallOk && bulletOk;
-    }
-
-    if (g_out.overrideActive || autoWalk) {
-        moveTarget = Add(in.player, Mul(g_out.velocity, frameMs));
-        const bool ok = DodgeRuntime::CallMoveTo(player, moveTarget.x, moveTarget.y);
-        if (!ok) moveFailed = true;
-        static int s_mvN = 0;
-        if ((s_mvN++ % 120) == 0)
-            DBG_FILE_LOG("[UDodge] MOVE dec=" << (int)g_out.decision
-                << " ov=" << g_out.overrideActive << " aw=" << autoWalk
-                << " |v|=" << Len(g_out.velocity) << " frameMs=" << frameMs
-                << " -> (" << moveTarget.x << "," << moveTarget.y
-                << ") from (" << in.player.x << "," << in.player.y << ") ok=" << ok);
+    // ── Drive toward the solved target through the game's speed-clamped MoveTo ─
+    // Every frame: re-validate the cached target against the re-anchored map. If
+    // it went unsafe mid-tick (a new shot re-anchored onto it) and we did not
+    // rebuild this frame, force a same-frame re-solve so the spawn is dodged
+    // immediately (preserves today's structural-change reflex without a worker).
+    if (g_solve.shouldMove) {
+        bool targetOk = g_solve.kind == Solver::SolveKind::Fallback ||
+                        Core::PointSafe(in, g_solve.target, kULatencyPad);
+        if (!targetOk && !rebuilt) {
+            Sensors::BuildMap(g_map, px, py, settings);
+            g_map.tickId = tick;
+            g_map.tickValid = tickOk;
+            Solver::Solve(in, b, goal, g_state, g_solve);
+            targetOk = g_solve.shouldMove;
+        }
+        if (g_solve.shouldMove && targetOk) {
+            const Vec2 to = Sub(g_solve.target, in.player);
+            const float d = Len(to);
+            const Vec2 dir = d > 1e-4f ? Mul(to, 1.f / d) : Vec2{};
+            // Per-frame step, clamped to the player's speed; MoveTo clamps again
+            // internally. Converges onto the target by the tick boundary without
+            // ever exceeding the per-tick budget.
+            moveTarget = Add(in.player, Mul(dir, std::min(d, in.speed * frameMs)));
+            const bool ok = DodgeRuntime::CallMoveTo(player, moveTarget.x, moveTarget.y);
+            if (!ok) moveFailed = true;
+            static int s_mvN = 0;
+            if ((s_mvN++ % 120) == 0)
+                DBG_FILE_LOG("[UDodge] MOVE kind=" << (int)g_solve.kind
+                    << " clr=" << g_solve.clearance << " frameMs=" << frameMs
+                    << " -> (" << moveTarget.x << "," << moveTarget.y
+                    << ") from (" << in.player.x << "," << in.player.y << ") ok=" << ok);
+        }
     } else {
         static int s_noMvN = 0;
         if ((s_noMvN++ % 120) == 0)
-            DBG_FILE_LOG("[UDodge] NO-MOVE dec=" << (int)g_out.decision
-                << " ov=" << g_out.overrideActive << " aw=" << autoWalk
-                << " |v|=" << Len(g_out.velocity)
-                << " standClr=" << g_out.standClearance
-                << " threats=" << g_out.threatCount);
+            DBG_FILE_LOG("[UDodge] NO-MOVE kind=" << (int)g_solve.kind
+                << " clr=" << g_solve.clearance);
     }
 
     if (settings.debugOverlay) {
         static DebugSnapshot d;   // large (holds the danger map) — keep off the stack
         d.active = true;
-        d.decision = g_out.decision;
+        // SolveKind → the closest legacy Decision label for the overlay header.
+        switch (g_solve.kind) {
+            case Solver::SolveKind::Hold:       d.decision = Decision::NoThreat;        break;
+            case Solver::SolveKind::Safe:       d.decision = Decision::GentleOverride;  break;
+            case Solver::SolveKind::Fallback:   d.decision = Decision::EmergencyOverride; break;
+            case Solver::SolveKind::Surrounded: d.decision = Decision::MovementLocked;  break;
+        }
         d.player = in.player;
-        d.intentDir = in.intentDir;
-        d.moveTarget = moveTarget;
-        d.overrideActive = g_out.overrideActive || autoWalk;
+        d.intentDir = goal.active ? Normalize(Sub(goal.pos, in.player)) : Vec2{};
+        d.moveTarget = g_solve.shouldMove ? g_solve.target : in.player;
+        d.overrideActive = g_solve.shouldMove;
         d.moveFailed = moveFailed;
-        d.candidate = g_out.candidate;
-        d.speedScale = g_out.speedScale;
-        d.threatCount = g_out.threatCount;
-        d.standClearance = g_out.standClearance;
+        d.candidate = kStandCandidate;
+        d.speedScale = 1.f;
+        d.threatCount = g_map.laneCount;
+        // Server-accurate clearance at the player (≤ 0 ⇒ danger covers the stand).
+        d.standClearance = Core::PointSafety(in, in.player);
         d.speed = in.speed;
         d.stepTiles = in.stepTiles;
         d.reactMargin = settings.reactMargin;
         d.tickId = g_map.tickId;
         d.tickValid = g_map.tickValid;
         d.rebuiltThisFrame = rebuilt;
-        d.fieldActive = g_out.fieldActive;
-        d.fieldTarget = g_out.fieldTarget;
-        d.flowDir = g_out.flowDir;
-        d.flowCoherence = g_out.flowCoherence;
-        d.hasLockTarget = apHasTarget;
-        d.lockTarget = apTarget;
-        // Planned route from the consumed worker plan (plain data) — drawn on the overlay.
-        // Gated by udodgeDrawPath (plan 61): when off, publish no route so the overlay
-        // (and Debug::Render's polyline) draw nothing.
-        d.drawPath = GetDrawPath();
-        if (d.drawPath) {
-            d.pathCount = std::clamp(g_lastPlan.pathCount, 0, kMaxPathPoints);
-            for (int i = 0; i < d.pathCount; ++i) d.path[i] = g_lastPlan.path[i];
-        } else {
-            d.pathCount = 0;
-        }
-        for (int i = 0; i < kCandidateCount; ++i) d.candidates[i] = g_out.candidates[i];
+        d.fieldActive = false;
+        d.fieldTarget = {};
+        d.flowDir = {};
+        d.flowCoherence = 0.f;
+        d.hasLockTarget = goal.active;
+        d.lockTarget = goal.pos;
+        // No route any more — the solver drives a single reachable target (plan 64).
+        d.drawPath = false;
+        d.pathCount = 0;
+        for (int i = 0; i < kCandidateCount; ++i) d.candidates[i] = CandidateDebug{};
         d.map = g_map;
         PublishDebug(d);
     }
