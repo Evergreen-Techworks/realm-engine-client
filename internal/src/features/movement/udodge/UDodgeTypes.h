@@ -8,52 +8,26 @@
 // escape/goal layer. Pure data + inline math. No game/IL2CPP includes.
 namespace UDodge {
 
-// ── Candidate layout ────────────────────────────────────────────────────────
-// 0 = stand, 1..32 = compass headings, 33 = intent, 34 = field escape.
+// ── Candidate layout (legacy overlay indices; the reactive engine is retired) ─
+// 0 = stand, 1..32 = compass headings, 34 = field escape. Retained only for the
+// debug overlay's candidate-fan drawing until it is simplified.
 constexpr int   kDirectionCount  = 32;
 constexpr int   kStandCandidate  = 0;
-constexpr int   kIntentCandidate = kDirectionCount + 1;   // 33
 constexpr int   kFieldCandidate  = kDirectionCount + 2;   // 34
 constexpr int   kCandidateCount  = kDirectionCount + 3;   // 35
 constexpr float kTwoPi           = 6.28318530717958647692f;
 
 // ── Map capacities (fixed buffers — zero per-frame heap allocation) ─────────
 constexpr int kMaxProjectiles = 96;
-constexpr int kMaxPathSamples = 24;
 constexpr int kMaxAoes        = 32;
 constexpr int kMaxEnemies     = 64;
-// Whole-window planner route cap (plan 60). Defined here so both the plain-data
-// Planner (UDodgePlanner.h, nested namespace) and DebugSnapshot below can see it.
+// Legacy route cap — DebugSnapshot still declares a path[] buffer of this size.
 constexpr int kMaxPathPoints  = 48;
 
-// ── Controller constants (reference-tuned; tiles) ───────────────────────────
-// Wide reaction space substitutes for the deleted time/lead dimension: the
-// dodge starts moving while a bullet is still ~0.6 tiles off its hitbox (not
-// 0.08 = essentially touching), and keeps that buffer. Relevance is raised so
-// threats are considered far enough out to position for the wider buffer.
-constexpr float kRelevanceClearance       = 2.0f;   // "could this shot matter" pad
-constexpr float kIntentSafeClearance      = 0.60f;  // safety floor for keeping/blending intent
-constexpr float kEmergencyIntentBand      = 0.30f;  // clearance we may trade for intent in emergencies
-constexpr float kUnavoidableClearanceBand = 0.05f;
-constexpr float kHysteresisScoreGain      = 0.25f;  // hold the chosen heading unless beaten by this much
-constexpr int   kCorridorNeighbors        = 3;      // half-width of the corridor-safety window
-
-// ── Smart-dodge weighted score (plan 63; baked-in, NO user sliders) ─────────
-// ScoreOf re-ranks ONLY within the already-safety-floored candidate set, so
-// these convert a straight retreat into a committed lateral sidestep without
-// ever overriding a hard-safety filter. Ratios mirror RePP (1.5 / 5.0 / 2.5)
-// with perp scaled to 3.0 because UDodge re-ranks within the floored set.
-// Change here + recompile if the feel needs tuning.
-constexpr float kUScoreClearW   = 1.5f;   // clearance reward (top end +4×1.5 = +6 dominates)
-constexpr float kUScorePerpW    = 3.0f;   // perpendicular-sidestep reward (anti-flee)
-constexpr float kUScoreIntentW  = 2.0f;   // goal/WASD alignment reward
-constexpr float kUScoreCommitW  = 2.5f;   // directional-commitment reward (anti-jitter)
-constexpr float kUScoreSoftW    = 1.0f;   // pending-zone penetration penalty
-constexpr float kUScoreDeadband = 0.4f;   // hysteresis flip deadband (score units)
-constexpr float kUScoreStyleBand = 1.5f;  // clearance headroom (tiles above reactMargin)
-                                          // over which the orbit/intent pull ramps to full;
-                                          // near the danger floor it fades so an accurate
-                                          // dodge always beats staying on the orbit line
+// Clearance headroom (tiles) over which the goal/orbit pull ramps to full; near
+// the danger floor it fades so an accurate dodge always beats staying on the
+// orbit line. Reused by the solver's headroomRamp (plan 64).
+constexpr float kUScoreStyleBand = 1.5f;
 
 // ── Per-tick safe-position solver (plan 64; baked-in, NO user sliders) ───────
 // Server-accurate hit geometry. The game's IsHit (FUN_18015be50) folds the
@@ -75,25 +49,6 @@ constexpr float kSolveMoveW        = 1.2f;  // minimal-disruption penalty (prefe
 constexpr float kSolveClearW       = 0.25f; // gentle comfort tiebreak, capped
 constexpr float kSolveClearComfort = 1.0f;  // clearance (tiles) above which comfort stops rewarding
 constexpr float kSolveStandBias    = 0.15f; // score the stand point gets so we don't twitch off a safe stand
-
-// Path-yields-to-safety (dodge authority). The path/orbit intent is a SOFT
-// macro-goal: it may STEER (be preserved, or bias candidate selection) only
-// while the path direction keeps this much clearance ABOVE the reaction floor
-// (reactMargin). The instant the path itself is threatened below that comfort
-// line, the near-dodge takes FULL authority — the intent influence drops to
-// zero and the dodge picks the safest heading regardless of the path, free to
-// move directly away from or across it, rejoining once the path clears again.
-constexpr float kUIntentPreserveBand = 1.0f;  // tiles of clearance headroom the path must
-                                              // keep (above reactMargin) to steer at all
-// Path-follow bullet-clearance floor: a machine-generated intent (orbit route)
-// is auto-walked ONLY when the step target keeps at least the reaction margin of
-// clearance from every bullet lane / active zone — path-following never advances
-// toward a cell inside or near a bullet lane (it holds instead, and the per-frame
-// near-dodge then drives the escape).
-
-// Whole-window plan freshness gate (plan 63): a plan older than this many
-// publish sequences NEVER drives movement (no wander on worker contention).
-constexpr uint32_t kUPlanMaxStaleSeq = 8;
 
 struct Vec2 {
     float x = 0.f;
@@ -172,9 +127,6 @@ struct Env {
 constexpr int   kMaxLanePoints    = 24;     // per-lane polyline cap
 constexpr float kHugeClearance    = 1.0e9f; // "no danger anywhere" sentinel
 constexpr float kServerTickSec    = 0.2f;   // planning quantum: one server tick of motion
-constexpr int   kCandProbes       = 16;     // candidate-segment probe intervals
-constexpr float kCorridorCap      = 0.75f;  // per-neighbor clearance cap in corridor sum
-constexpr float kClearBucket      = 0.1f;   // clearance bucketing for lexicographic compare
 constexpr float kTraceStepMs      = 30.f;   // sensor-internal geometry tracing step —
                                             // time never leaves the sensor
 
@@ -247,23 +199,9 @@ struct CandidateDebug {
     float blockDist = kHugeClearance;  // distance at which walls truncate the segment
 };
 
-struct CoreOutput {
-    bool  overrideActive = false;
-    Vec2  velocity{};          // tiles per ms (speed scale already applied)
-    int   candidate = kStandCandidate;
-    float speedScale = 1.f;
-    int   threatCount = 0;
-    float standClearance = kHugeClearance;  // ≤ 0 = danger covers current position
-    Decision decision = Decision::None;
-    bool  fieldActive = false;   // field candidate was generated this frame
-    Vec2  fieldTarget{};         // pocket cell (world) the field routed to
-    Vec2  flowDir{};             // aggregate threat-flow direction (plan 63; debug only)
-    float flowCoherence = 0.f;   // 0..1 flow coherence (plan 63; debug only)
-    CandidateDebug candidates[kCandidateCount]{};
-};
-
-// Cross-frame controller state (tick-locked hysteresis). Heading held while
-// the server tick is unchanged; re-decided at each NewTick sync.
+// Cross-frame solver state. Retains the last committed heading (the solver's
+// directional-continuity term). The tick-hysteresis fields are legacy no-ops
+// kept so CoreState's shape is unchanged for existing callers.
 struct CoreState {
     int      selectedCandidate = kStandCandidate;
     uint32_t selectedTick = 0;

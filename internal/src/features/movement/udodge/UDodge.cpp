@@ -44,7 +44,6 @@ std::atomic<bool>  g_drawPath{ true };     // draw the plan-60 route overlay
 // Game-update thread only.
 CoreState  g_state;
 DangerMap  g_map;
-CoreOutput g_out;
 // Per-tick safe-position solver result — game-thread-owned, cached for one
 // server tick and re-validated (or re-solved) every frame (plan 64).
 Solver::SolveResult g_solve;
