@@ -31,21 +31,19 @@
 // walk the validated path to the pocket now; only when the stand is itself a
 // durable temporal pocket do we HOLD.
 //
-// ORBIT-RING (locked boss). When a boss is LOCKED (goal.fromLock, goal.standoff
-// set) the orbit RING — the circle of radius = standoff around the boss — becomes
-// the pathfinding manifold instead of open space. The solver samples the FULL
-// 360° of the ring (kURingAngles angles × a small in/out radius band), evaluates
-// each ring point with the SAME safety machinery (Env::canOccupy, EnemyBlocked,
-// Core::PointSafety ≥ floor, and the temporal path/hold clear over the horizon),
-// finds the NEAREST safe arc by ANGULAR distance from the player's current angle
-// around the boss (shortest way round, tie-broken to keep the same orbit
-// direction — continuity/anti-jitter), and weaves ALONG the ring toward it over
-// successive ticks, clamped to the per-tick move budget. This threads the boss's
-// radial bullet pattern while staying in weapon range, rather than wandering in
-// and out. Safety STILL OVERRIDES: when no ring step is safe/reachable this tick
-// the ring layer defers and the open-space immediate/pocket/fallback layers run,
-// free to step OFF the ring to dodge — never trading a hit to stay on the ring.
-// The ring layer is ONLY the locked-boss path; unlocked behavior is unchanged.
+// IN-RANGE DISK (locked boss). When a boss is LOCKED (goal.fromLock, goal.maxRange
+// = weaponRange) the movement manifold is the FILLED DISK of radius weaponRange
+// around the boss — every spot from which the boss is still hittable. The solver
+// runs its normal open-space lookahead but CONSTRAINS the durable-pocket search
+// to that disk: it finds the NEAREST safe temporal pocket ANYWHERE inside weapon
+// range (in, out, or around the boss — it may cut across the inside of the disk
+// or drift to the far side, whatever the nearest safe spot is) and pre-positions
+// to it, threading the pattern while keeping the boss hittable. The stay-in-range
+// preference is governed by kSolveOutRangeW on the immediate reflex and the disk
+// gate on the pocket search. Safety STILL OVERRIDES: if no safe pocket exists
+// inside the disk the search is re-run UNCONSTRAINED (leave range to dodge, then
+// return once clear). This constraint applies ONLY when locked; unlocked play is
+// unchanged.
 //
 // HONEST GUARANTEE. "Numerically impossible to get hit" holds ONLY for the
 // SolveKind::Safe case: a provably-safe point existed within the move budget
@@ -62,11 +60,10 @@ struct Goal {
                             // stay in range); false = WASD/idle (game drives — the
                             // solver only overrides to dodge, never to walk a goal)
     Vec2  lockPos{};        // locked boss position (for the stay-in-range preference)
-    float maxRange = 0.f;   // keep within this distance of the boss (0 = no limit) —
-                            // dodges are biased inward so we never flee out of range
-    float standoff = 0.f;   // desired orbit-ring radius (tiles): weaponRange×0.85 or the
-                            // orbitRange override. When fromLock && standoff>0 the RING is
-                            // the pathfinding manifold — see the ORBIT-RING section below.
+    float maxRange = 0.f;   // weapon range (tiles): the max distance from the boss at which
+                            // it is still hittable. When fromLock && maxRange>0 this is the
+                            // radius of the IN-RANGE DISK the solver pathfinds within — the
+                            // durable-pocket search is constrained to it. See the header note.
 };
 
 enum class SolveKind : uint8_t {
@@ -89,13 +86,13 @@ struct SolveResult {
     bool      prePosition = false;
     float     pocketDist  = 0.f; // reach to the nearest durable pocket (0 = none, or standing in one)
     uint8_t   tempLanes   = 0;   // relevant bullets fed to the temporal test (post-cull) — diagnostics
-    // ── Orbit-ring pathfinding (locked-boss only) ────────────────────────────
-    // ringPath: this tick's decision came from the ORBIT-RING solver — the target
-    // is a point on the standoff ring around the locked boss (weaving along the
-    // ring toward the nearest safe arc), not an open-space pocket/immediate cell.
-    bool      ringPath   = false;
-    float     ringArcDeg = 0.f;  // signed angular distance (deg) around the ring to the chosen
-                                 // safe arc (+ = CCW, − = CW); 0 = holding on the current arc
+    // ── In-range-disk pathfinding (locked-boss only) ─────────────────────────
+    // inRangeDisk: this solve was constrained to the boss's weapon-range disk
+    // (goal.fromLock) — the durable-pocket search preferred spots keeping the
+    // boss hittable. Diagnostics only; the target is still an open-space pocket.
+    bool      inRangeDisk = false;
+    bool      outOfRange  = false; // true = no safe pocket existed in the disk, so the search
+                                   // left weapon range to dodge (safety override); returns when clear
 };
 
 // Solve for the best reachable position this server tick.

@@ -240,8 +240,7 @@ void Tick(void* player, float px, float py, float dt)
         // when we drift past weaponRange, and biases dodges to keep the range.
         goal.fromLock = true;
         goal.lockPos  = g_map.lockPos;
-        goal.maxRange = weaponRange;
-        goal.standoff = standoff;   // ORBIT-RING radius: the solver makes this circle the manifold
+        goal.maxRange = weaponRange;   // IN-RANGE DISK radius: the solver pathfinds anywhere within this
     }
 
     // ── Solve once per server tick ──────────────────────────────────────────
@@ -290,11 +289,15 @@ void Tick(void* player, float px, float py, float dt)
             static int s_mvN = 0;
             if ((s_mvN++ % 120) == 0)
                 DBG_FILE_LOG("[UDodge] MOVE kind=" << (int)g_solve.kind
-                    << (g_solve.ringPath
-                            ? (g_solve.prePosition ? " RING-PREPOS" : " RING")
+                    << (g_solve.inRangeDisk
+                            ? (g_solve.outOfRange
+                                   ? (g_solve.prePosition ? " DISK-OOR-PREPOS" : " DISK-OOR")
+                                   : (g_solve.prePosition ? " INRANGE-PREPOS" : " INRANGE"))
                             : (g_solve.prePosition ? " PREPOS(temporal)" : " IMMED"))
-                    << (g_solve.ringPath ? " arc=" : " ")
-                    << (g_solve.ringPath ? g_solve.ringArcDeg : 0.f)
+                    << " bossDist=" << (g_map.hasLock
+                            ? std::sqrt((g_solve.target.x - g_map.lockPos.x) * (g_solve.target.x - g_map.lockPos.x)
+                                      + (g_solve.target.y - g_map.lockPos.y) * (g_solve.target.y - g_map.lockPos.y))
+                            : 0.f)
                     << " pocketDist=" << g_solve.pocketDist
                     << " tempLanes=" << (int)g_solve.tempLanes
                     << " clr=" << g_solve.clearance << " frameMs=" << frameMs
