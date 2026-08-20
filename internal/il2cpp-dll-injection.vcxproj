@@ -62,6 +62,7 @@
     <ClCompile Include="src\features\movement\pjdodge\PJDodgeDebug.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodgeSensors.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodgeCore.cpp" />
+    <ClCompile Include="src\features\movement\udodge\UDodgeSolver.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodgeField.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodge.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodgeDebug.cpp" />
@@ -252,6 +253,7 @@
     <ClInclude Include="src\features\movement\udodge\UDodgeTypes.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeSensors.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeCore.h" />
+    <ClInclude Include="src\features\movement\udodge\UDodgeSolver.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeField.h" />
     <ClInclude Include="src\features\movement\udodge\UDodge.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeDebug.h" />
