@@ -111,9 +111,35 @@ void Render(const DebugSnapshot& snap,
             DrawWorldCircle(d, cam, z.pos, z.radius, IM_COL32(240, 150, 30, 100), 2.f);
     }
 
-    // Enemy bodies.
-    for (int i = 0; i < std::min(snap.map.enemyCount, kMaxEnemies); ++i)
-        DrawDot(d, cam, snap.map.enemies[i].pos, 4.f, IM_COL32(230, 60, 230, 150));
+    // In-range disk (locked boss): the weapon-range manifold the route is
+    // constrained to — every spot from which the boss is still hittable. Drawn
+    // first (faint) so the route and enemies read on top.
+    if (snap.inRangeRadius > 0.f && snap.map.hasLock)
+        DrawWorldCircle(d, cam, snap.map.lockPos, snap.inRangeRadius, IM_COL32(90, 200, 140, 90), 1.5f);
+
+    // Enemy bodies + their HARD exclusion circles (body radius + player half): the
+    // no-go the solver and pathfinder route around. Filled dot = center; ring = the
+    // exclusion the player edge is kept outside of, so the user SEES what the path
+    // is avoiding and why it clears a mob.
+    for (int i = 0; i < std::min(snap.map.enemyCount, kMaxEnemies); ++i) {
+        const EnemyBlocker& e = snap.map.enemies[i];
+        DrawDot(d, cam, e.pos, 4.f, IM_COL32(230, 60, 230, 150));
+        DrawWorldCircle(d, cam, e.pos, e.radius + kUPlayerHalf, IM_COL32(230, 60, 230, 130), 1.5f);
+    }
+
+    // Worker grid route: the planned path the pathfinder curves around obstacles.
+    // Colored polyline through the waypoints + a marker at the durable-safe goal.
+    if (snap.drawPath && snap.pathCount >= 2) {
+        const int np = std::min(snap.pathCount, kMaxPathPoints);
+        for (int i = 0; i + 1 < np; ++i)
+            DrawLine(d, cam, snap.path[i], snap.path[i + 1], IM_COL32(60, 230, 160, 220), 2.5f);
+        for (int i = 0; i < np; ++i)
+            DrawDot(d, cam, snap.path[i], 2.5f, IM_COL32(60, 230, 160, 200));
+    }
+    if (snap.hasRoute) {
+        DrawWorldCircle(d, cam, snap.routeGoal, 0.35f, IM_COL32(60, 230, 160, 240), 2.5f);
+        DrawDot(d, cam, snap.routeGoal, 4.f, IM_COL32(60, 230, 160, 240));
+    }
 
     // Reachable ring: the disk the solver sampled this tick (radius = one tick's
     // move budget). The chosen target always lies within it.

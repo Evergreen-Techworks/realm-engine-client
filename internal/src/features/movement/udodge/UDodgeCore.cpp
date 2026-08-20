@@ -105,4 +105,14 @@ bool PointSafe(const MapInput& in, Vec2 pos, float pad)
     return PointSafety(in, pos) >= pad;
 }
 
+bool EnemyBlocked(const MapInput& in, Vec2 pos)
+{
+    if (!in.map) return false;
+    for (int i = 0; i < in.map->enemyCount; ++i) {
+        const EnemyBlocker& e = in.map->enemies[i];
+        if (Len(Sub(pos, e.pos)) < e.radius + kUPlayerHalf) return true;
+    }
+    return false;
+}
+
 } } // namespace UDodge::Core

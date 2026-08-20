@@ -22,7 +22,16 @@ namespace UDodge { namespace Sensors {
 namespace {
 
 constexpr float kThreatCullTiles = 16.f;
-constexpr float kEnemyRadius     = 0.5f;
+// Enemy body exclusion radius (tiles). EnemyTracker::Entry carries NO per-enemy
+// size/radius/hitbox field (only id/objType/pos/hp/vel/flags/ptr), so there is no
+// real body size to read — this is a single baked default applied to every mob.
+// Raised 0.5 → 0.8 (plan: stop clipping bigger mobs): the true no-go is
+// radius + kUPlayerHalf (~1.01 tiles), which now clears typical mob bodies so the
+// solver and the grid pathfinder stop routing the player onto a mob's edge. The
+// SAME value feeds every EnemyBlocker.radius, so the immediate solver's
+// EnemyBlocked and the worker pathfinder's enemy-blocked cells stay consistent
+// (both read EnemyBlocker.radius from this one source).
+constexpr float kEnemyRadius     = 0.8f;
 constexpr float kAoeCullPad      = 16.f;
 
 // Per-tick memo for the hazard lookup: the core probes CanOccupy at hundreds of
@@ -282,6 +291,44 @@ void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& 
     }
 }
 
+// Enemy blockers + the user's boss lock, populated from the LIVE EnemyTracker
+// snapshot. Shared by BuildMap (full rebuild) and ReanchorMap (per-frame refresh)
+// so enemy bodies — a HARD no-go for both the immediate solver and the grid
+// pathfinder — are RE-ANCHORED to their CURRENT positions every frame, not only
+// once per server tick. A moving add can travel a long way between the ~5 Hz
+// ticks; keeping this frame-fresh is what lets the per-frame step re-validation
+// (UDodge::Tick) refuse to walk onto where an add has since moved. The locked
+// boss position is refreshed live too, so the orbit goal tracks it mid-tick.
+void PopulateEnemies(DangerMap& out, float playerX, float playerY)
+{
+    out.enemyCount = 0;
+    out.hasLock = false;
+    out.lockId = 0;
+    out.lockPos = {};
+
+    const float cullSq = kThreatCullTiles * kThreatCullTiles;
+    EnemyTracker::Tick();
+    const int32_t userLockId = DangerPlanner::GetEnemyLock();   // 0 = no lock
+    for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot()) {
+        if (!IsFinitePoint(e.x, e.y)) continue;
+        if (DistSq(e.x, e.y, playerX, playerY) <= cullSq) {
+            if (out.enemyCount >= kMaxEnemies) { out.limited = true; }
+            else {
+                EnemyBlocker& b = out.enemies[out.enemyCount++];
+                b.pos = { e.x, e.y };
+                b.radius = kEnemyRadius;   // single baked source — no per-enemy size field exists
+            }
+        }
+        // Lock the enemy the USER locked on (Shift+Click), only while it is ALIVE.
+        // Not range-culled, so we keep orbit range to a far locked boss. Dead
+        // (hp<=0) / despawned (absent) / unlocked (userLockId==0) ⇒ never matched
+        // ⇒ hasLock stays false ⇒ pure assist.
+        if (userLockId != 0 && e.id == userLockId && e.hp > 0 && IsFinitePoint(e.x, e.y)) {
+            out.hasLock = true; out.lockId = e.id; out.lockPos = { e.x, e.y };
+        }
+    }
+}
+
 } // namespace
 
 void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& settings)
@@ -307,29 +354,8 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
     const uint64_t nowMs = GetTickCount64();
     const int32_t localId = ProjectileTracking::GetLocalPlayerObjectId();
 
-    // Enemies → proximity blockers (scored by the core, never a hard veto),
-    // plus the user's enemy lock in the same pass. No break on `limited` —
-    // the lock scan must see all enemies.
-    EnemyTracker::Tick();
-    const int32_t userLockId = DangerPlanner::GetEnemyLock();   // 0 = no lock
-    for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot()) {
-        if (!IsFinitePoint(e.x, e.y)) continue;
-        if (DistSq(e.x, e.y, playerX, playerY) <= cullSq) {
-            if (out.enemyCount >= kMaxEnemies) { out.limited = true; }
-            else {
-                EnemyBlocker& b = out.enemies[out.enemyCount++];
-                b.pos = { e.x, e.y };
-                b.radius = kEnemyRadius;
-            }
-        }
-        // Lock the enemy the USER locked on (Shift+Click), only while it is ALIVE.
-        // Not range-culled, so we keep orbit range to a far locked boss. Dead
-        // (hp<=0) / despawned (absent) / unlocked (userLockId==0) ⇒ never matched
-        // ⇒ hasLock stays false ⇒ pure assist.
-        if (userLockId != 0 && e.id == userLockId && e.hp > 0 && IsFinitePoint(e.x, e.y)) {
-            out.hasLock = true; out.lockId = e.id; out.lockPos = { e.x, e.y };
-        }
-    }
+    // Enemies → hard-no-go blockers + the user's enemy lock (live snapshot).
+    PopulateEnemies(out, playerX, playerY);
 
     // Projectiles → danger lanes: live position (anchor) + remaining travel
     // path as pure geometry. Same filter chain as Build.
@@ -459,9 +485,13 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
     if (liveCount != map.laneCount) return false;        // a lane's shot retired
 
     // Zones: rebuilt wholesale (cheap; classification is present-tense).
-    // Enemies / lock / limited / projectileSourceUnavailable stay untouched —
-    // the layout is per-tick.
     RebuildZones(map, playerX, playerY, settings, nowMs);
+    // Enemies + lock: RE-ANCHORED every frame from the live EnemyTracker snapshot
+    // (previously left stale until the next server-tick BuildMap). Enemy bodies are
+    // a HARD no-go, so a moving add's CURRENT position must be reflected each frame
+    // — otherwise the immediate solve / step re-validation would clear a spot the
+    // add has already walked onto. Cheap: EnemyTracker::Tick() is self-throttled.
+    PopulateEnemies(map, playerX, playerY);
     return true;
 }
 

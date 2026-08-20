@@ -366,15 +366,24 @@ void Tick(void* player, float px, float py, float dt)
         // mid-tick bullet spawn still forces a structural rebuild + re-solve
         // (rebuilt), so the temporal plan is refreshed whenever the shot set
         // changes — the reflex is preserved without the spatial veto fighting it.
-        bool targetOk = g_solve.kind == Solver::SolveKind::Fallback ||
-                        g_solve.prePosition ||
-                        Core::PointSafe(in, g_solve.target, kULatencyPad);
+        // Enemy bodies are a HARD no-go for EVERY target kind — unlike the bullet
+        // spatial veto (which pre-position/fallback deliberately skip to thread a
+        // time-gap), a target may NEVER sit on a mob. Re-validate the cached target
+        // against the CURRENT (re-anchored, frame-fresh) enemy positions: a moving
+        // add can walk onto a spot the route chose a tick ago. If blocked now, drop
+        // to the immediate safe solve (which excludes enemies) so we never step onto
+        // it. Enemy bodies stay a hard no-go in every path.
+        const bool enemyClearNow = !Core::EnemyBlocked(in, g_solve.target);
+        bool targetOk = enemyClearNow &&
+                        (g_solve.kind == Solver::SolveKind::Fallback ||
+                         g_solve.prePosition ||
+                         Core::PointSafe(in, g_solve.target, kULatencyPad));
         if (!targetOk && !rebuilt) {
             Sensors::BuildMap(g_map, px, py, settings);
             g_map.tickId = tick;
             g_map.tickValid = tickOk;
             Solver::Solve(in, b, goal, routeForSolve, g_state, g_solve);
-            targetOk = g_solve.shouldMove;
+            targetOk = g_solve.shouldMove && !Core::EnemyBlocked(in, g_solve.target);
         }
         if (g_solve.shouldMove && targetOk) {
             const Vec2 to = Sub(g_solve.target, in.player);
@@ -408,6 +417,11 @@ void Tick(void* player, float px, float py, float dt)
                             : 0.f)
                     << " pocketDist=" << g_solve.pocketDist
                     << " tempLanes=" << (int)g_solve.tempLanes
+                    // Smoothing diagnostics: dot of the route step vs the previous
+                    // committed heading (1=same, -1=reversal), and whether the
+                    // anti-oscillation guard damped a hard route reversal this tick.
+                    << " stepDot=" << g_solve.routeStepDot
+                    << (g_solve.routeDamped ? " DAMPED" : "")
                     << " clr=" << g_solve.clearance << " frameMs=" << frameMs
                     << " -> (" << moveTarget.x << "," << moveTarget.y
                     << ") from (" << in.player.x << "," << in.player.y << ") ok=" << ok);
@@ -453,9 +467,23 @@ void Tick(void* player, float px, float py, float dt)
         d.flowCoherence = 0.f;
         d.hasLockTarget = goal.active;
         d.lockTarget = goal.pos;
-        // No route any more — the solver drives a single reachable target (plan 64).
-        d.drawPath = false;
-        d.pathCount = 0;
+        // Publish the worker grid route so the overlay can DRAW it (FIX: the user
+        // could not see the planned path). Route polyline → path[]; the durable-safe
+        // goal → routeGoal; the weapon-range disk radius (locked boss) → inRangeRadius,
+        // drawn around g_map.lockPos. Enemy exclusion circles come from g_map.enemies.
+        if (g_route.found && g_route.wptCount >= 2) {
+            d.hasRoute = true;
+            d.drawPath = true;
+            d.pathCount = std::min(g_route.wptCount, kMaxPathPoints);
+            for (int i = 0; i < d.pathCount; ++i) d.path[i] = g_route.wpts[i];
+            d.routeGoal = g_route.goalPos;
+        } else {
+            d.hasRoute = false;
+            d.drawPath = false;
+            d.pathCount = 0;
+            d.routeGoal = {};
+        }
+        d.inRangeRadius = goal.fromLock ? goal.maxRange : 0.f;
         for (int i = 0; i < kCandidateCount; ++i) d.candidates[i] = CandidateDebug{};
         d.map = g_map;
         PublishDebug(d);

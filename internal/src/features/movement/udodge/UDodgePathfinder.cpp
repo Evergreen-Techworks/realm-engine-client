@@ -248,6 +248,12 @@ bool RunSearch(const PlannerSnapshot& s, bool diskActive, PlanResult& out)
     out.waypoints = n;
     out.goalPos   = CellWorld(center, goal % kS, goal / kS);
 
+    // Copy the route polyline (world coords) for the debug overlay — bounded to
+    // kMaxPathPoints. Cheap plain-data; the solver never reads it.
+    out.wptCount = std::min(n, kMaxPathPoints);
+    for (int i = 0; i < out.wptCount; ++i)
+        out.wpts[i] = CellWorld(center, s_path[i] % kS, s_path[i] / kS);
+
     // Place the immediate steering target ~one budget along the route so the
     // straight per-tick drive approximates the curve. Accumulate the arc-length.
     const float b = std::max(s.moveBudget, 1e-3f);

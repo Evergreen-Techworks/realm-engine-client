@@ -61,6 +61,12 @@ struct PlanResult {
     Vec2  stepDir{};           // unit direction of the first step (player → stepTarget)
     float goalDist    = 0.f;   // grid path arc-length to the goal (tiles)
     int   waypoints   = 0;     // number of route cells (diagnostics; PATH len=<n>)
+    // Route polyline in WORLD coords for the debug overlay ([0] = player cell,
+    // [wptCount-1] = goal). Bounded copy of the reconstructed route (≤ kMaxPathPoints);
+    // plain data, safe across the worker→game handoff. Overlay only — the solver
+    // steers by stepTarget/goalPos, not this buffer.
+    int   wptCount    = 0;
+    Vec2  wpts[kMaxPathPoints]{};
     bool  startIsGoal = false; // the player cell is already durable-safe (no route needed)
     bool  expanded    = false; // the window grew beyond the base radius to find the goal
     bool  outOfRange  = false; // locked: no in-range goal, used an unconstrained (out-of-range) goal

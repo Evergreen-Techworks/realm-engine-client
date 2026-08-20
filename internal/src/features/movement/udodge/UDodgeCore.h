@@ -37,4 +37,12 @@ float PointSafety(const MapInput& in, Vec2 pos);
 // PointSafety(pos) >= pad. `pad` lets the solver require the latency margin.
 bool PointSafe(const MapInput& in, Vec2 pos, float pad);
 
+// True when `pos` sits inside ANY enemy body (+ the player half-extent). Running
+// onto a mob is never acceptable, so this is a HARD exclusion (treated like a
+// wall). Reads EnemyBlocker.radius from the danger map's enemy list — the one
+// radius source shared by the immediate solver and the grid pathfinder. Exposed
+// so the game thread can RE-VALIDATE the actual movement step against the CURRENT
+// (re-anchored) enemy positions every frame, not only at solve time.
+bool EnemyBlocked(const MapInput& in, Vec2 pos);
+
 } } // namespace UDodge::Core

@@ -53,6 +53,17 @@ constexpr float kSolveStandBias    = 0.15f; // score the stand point gets so we 
 constexpr float kSolveOutRangeW    = 1.6f;  // penalty per tile a dodge point sits OUTSIDE the boss
                                             // weapon range — prefer dodging inward, stay in shooting range
 
+// Route-step anti-oscillation (movement smoothing; baked, NO user setting). The
+// worker republishes a route each server tick and its first-step direction can
+// FLIP when it toggles between two near-equal durable-safe goal cells. Consuming
+// that raw jerks the player back and forth. When a fresh route step's direction
+// reverses the committed heading past this dot threshold (≈ >105° apart) AND
+// continuing the old heading is itself still temporally clear, the solver keeps
+// committing straight instead of reversing. Safety stays authoritative — the
+// continuation must pass the same walkable + enemy + temporal floor, so a reversal
+// that safety truly requires is never smoothed away.
+constexpr float kURouteReverseDot  = -0.25f;
+
 // ── Lookahead path planning (plan 64 extension; baked, NO user sliders) ──────
 // The per-tick candidate set only reaches one move budget (≈1–1.5 tiles). In a
 // dense shot wall no cell within that disk is safe NOW, so the greedy solver
@@ -345,9 +356,19 @@ struct DebugSnapshot {
     float flowCoherence = 0.f;   // 0..1 flow coherence (plan 63)
     bool  hasLockTarget = false;
     Vec2  lockTarget{};
-    Vec2  path[kMaxPathPoints]{};   // planned route polyline (world coords) — plan 60
+    Vec2  path[kMaxPathPoints]{};   // planned route polyline (world coords) — plan 60,
+                                    // now re-used to carry the worker grid route for the overlay
     int   pathCount = 0;
     bool  drawPath = true;          // gate the route overlay (udodgeDrawPath — plan 61)
+    // ── Worker grid-route overlay (FIX: draw the pathfinder route) ──────────────
+    // Published from the cached PlanResult each tick so the user can SEE the planned
+    // path and what it avoids. path[0..pathCount-1] is the route polyline (world);
+    // routeGoal is the durable-safe goal cell; inRangeRadius (>0 when a boss is
+    // locked) is the weapon-range disk the route is constrained to, drawn around
+    // map.lockPos. Enemy exclusion circles come from map.enemies (radius per body).
+    bool  hasRoute = false;
+    Vec2  routeGoal{};
+    float inRangeRadius = 0.f;
     CandidateDebug candidates[kCandidateCount]{};
     DangerMap map{};
 };

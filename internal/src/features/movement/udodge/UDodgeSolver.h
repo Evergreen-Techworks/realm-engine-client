@@ -104,6 +104,12 @@ struct SolveResult {
     // straight-line pocket search. These describe the route this tick's move
     // follows (diagnostics only; the immediate temporal floor can still override).
     bool      followedRoute = false; // this tick's move stepped along a multi-waypoint grid route
+    // Movement-smoothing diagnostics (plan: route→micro-dodge jerkiness). routeStepDot
+    // is dot(new route stepDir, previous committed heading) when a pre-position step
+    // was taken (1 = same heading, −1 = full reversal); routeDamped is true when the
+    // anti-oscillation guard kept the old heading instead of a hard route reversal.
+    float     routeStepDot = 1.f;
+    bool      routeDamped  = false;
     uint8_t   routeWaypoints = 0;    // number of route cells (PATH len=<n>) — 0 when no route
     bool      routeExpanded  = false;// the grid window grew past the base radius to find the goal
     uint16_t  routePops      = 0;    // cells finalized by Dijkstra (perf diagnostics)

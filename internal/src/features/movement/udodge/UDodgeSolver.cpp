@@ -172,12 +172,7 @@ int BuildCandidates(const MapInput& in, float b, const Goal& goal,
 // conflicts with staying in range.
 bool EnemyBlocked(const MapInput& in, Vec2 p)
 {
-    if (!in.map) return false;
-    for (int i = 0; i < in.map->enemyCount; ++i) {
-        const EnemyBlocker& e = in.map->enemies[i];
-        if (Len(Sub(p, e.pos)) < e.radius + kUPlayerHalf) return true;
-    }
-    return false;
+    return Core::EnemyBlocked(in, p);   // one shared radius source (solver + pathfinder + step re-validation)
 }
 
 // Evaluate occupancy + server-accurate clearance for every candidate.
@@ -321,6 +316,10 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
 
     const float b = std::max(moveBudgetTiles, 1e-3f);
 
+    // Committed heading from the last tick — the directional-continuity memory the
+    // reflex scores AND the route-step anti-oscillation guard reads (plan: smoothing).
+    const Vec2 prevDir = state.lastMoveDir;
+
     // ── Temporal lookahead: nearest pocket safe over the next N ticks ────────
     // Predict every relevant bullet's trajectory (reusing the traced polyline),
     // then find the nearest cell where the STRAIGHT walk to it — and holding
@@ -387,10 +386,33 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     // shot in TIME, reject it and fall through to the conservative spatial reflex
     // so the route never costs us a hit. Occupancy is hard (walls/enemies).
     if (route.found && !standDurable) {
-        const Vec2  to = Sub(route.stepTarget, in.player);
-        const float d = Len(to);
+        Vec2  to = Sub(route.stepTarget, in.player);
+        float d = Len(to);
         if (d > 1e-4f) {
-            const Vec2  dir = Mul(to, 1.f / d);
+            Vec2  dir = Mul(to, 1.f / d);
+            out.routeStepDot = LenSq(prevDir) > 1e-6f ? Dot(dir, prevDir) : 1.f;
+
+            // ── Anti-oscillation (movement smoothing) ────────────────────────────
+            // A worker republish can FLIP the route's first-step direction when it
+            // toggles between two near-equal durable-safe goals; consuming that raw
+            // jerks the player back and forth. If the fresh step hard-REVERSES our
+            // committed heading but continuing that heading is ITSELF still walkable,
+            // enemy-free and temporally clear, keep committing straight — smooth.
+            // Safety stays authoritative: the continuation passes the SAME hard floor
+            // as the route step, so a reversal safety truly needs is never damped.
+            if (LenSq(prevDir) > 1e-6f && Dot(dir, prevDir) < kURouteReverseDot) {
+                const Vec2 contTarget = Add(in.player, Mul(prevDir, b));
+                const bool contWalkable = !in.env.canOccupy ||
+                             in.env.canOccupy(contTarget.x, contTarget.y, in.settings.safeWalk);
+                if (contWalkable && !EnemyBlocked(in, contTarget) &&
+                    TemporalPathClear(in, ctx, contTarget)) {
+                    dir = prevDir;
+                    to  = Sub(contTarget, in.player);
+                    d   = Len(to);
+                    out.routeDamped = true;
+                }
+            }
+
             const float r = std::min(d, b);
             const Vec2  target = Add(in.player, Mul(dir, r));
             const bool  walkable = !in.env.canOccupy ||
@@ -414,7 +436,6 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     // durable and no temporal pocket is reachable this tick (or a wall blocks the
     // straight path) — never gets less safe than the pre-temporal build.
     const Vec2 flow = FlowDir(in);
-    const Vec2 prevDir = state.lastMoveDir;
     int best = -1;
     float bestScore = -kHugeClearance;
     for (int i = 0; i < n; ++i) {
