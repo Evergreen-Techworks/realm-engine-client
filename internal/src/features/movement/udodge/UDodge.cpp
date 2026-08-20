@@ -213,7 +213,7 @@ void Tick(void* player, float px, float py, float dt)
         // WASD is relative to the ROTATED camera view (W = up on screen). Rotate
         // the raw screen-space direction by the live camera yaw so movement matches
         // what the player sees when the camera is turned.
-        const float camRad = CameraTAB::GetAngle() * (kTwoPi / 360.f);
+        const float camRad = -CameraTAB::GetAngle() * (kTwoPi / 360.f);
         const float cs = std::cos(camRad), sn = std::sin(camRad);
         const Vec2 dir = Normalize(Vec2{
             steer.dirX * cs - steer.dirY * sn,
