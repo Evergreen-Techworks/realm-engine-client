@@ -29,6 +29,62 @@ struct Cand {
     bool  stand = false;
 };
 
+// Aggregate incoming-threat direction: normalized sum of (player − lane.anchor)
+// over lanes. The `perp` objective term rewards a lateral sidestep ACROSS this
+// flow (a RePP-style dodge, not a straight retreat). Zero when no lanes exist.
+Vec2 FlowDir(const MapInput& in)
+{
+    if (!in.map) return {};
+    Vec2 sum{};
+    for (int i = 0; i < in.map->laneCount; ++i) {
+        const LaneThreat& L = in.map->lanes[i];
+        if (L.pointCount <= 0) continue;
+        sum = Add(sum, Normalize(Sub(in.player, L.points[0])));
+    }
+    return Normalize(sum);
+}
+
+// Smart-direction score over the SAFE set only (safety already guaranteed for
+// every candidate scored here, so these terms only choose AMONG safe points and
+// can never trade safety away). Baked weights (kSolve*), NO user sliders.
+float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
+                Vec2 flow, Vec2 prevDir, float b)
+{
+    float score = 0.f;
+
+    // Continuity — reward continuing the last committed heading (kills jitter).
+    // The stand point (dir {}) scores 0 here.
+    if (LenSq(c.dir) > 1e-6f && LenSq(prevDir) > 1e-6f)
+        score += kSolveCommitW * std::max(0.f, Dot(c.dir, prevDir));
+
+    // Advance toward the goal, but fade the pull to zero as the point approaches
+    // the safety floor so near danger the dodge never chases the orbit line.
+    if (goal.active) {
+        const float progress = Len(Sub(player, goal.pos)) - Len(Sub(c.pos, goal.pos));
+        const float ramp = std::clamp((c.clr - kULatencyPad) / kUScoreStyleBand, 0.f, 1.f);
+        score += kSolveGoalW * progress * ramp;
+    }
+
+    // RePP-style perpendicular sidestep tiebreak (component of dir ⟂ to flow).
+    if (LenSq(flow) > 1e-6f && LenSq(c.dir) > 1e-6f) {
+        const float par = Dot(c.dir, flow);
+        const float perp = std::sqrt(std::max(0.f, 1.f - par * par));
+        score += kSolvePerpW * perp;
+    }
+
+    // Minimal disruption — prefer the nearest safe point.
+    score -= kSolveMoveW * c.moveDist / std::max(b, 1e-3f);
+
+    // Gentle comfort tiebreak, capped so it never dominates.
+    score += kSolveClearW * std::min(c.clr, kSolveClearComfort);
+
+    // Stand bias: when standing still is safe and nothing is clearly better,
+    // hold (minimal disruption) instead of twitching off a safe stand.
+    if (c.stand) score += kSolveStandBias;
+
+    return score;
+}
+
 int BuildCandidates(const MapInput& in, float b, const Goal& goal, Cand* out)
 {
     const Vec2 player = in.player;
@@ -95,17 +151,20 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     const int n = BuildCandidates(in, b, goal, cands);
     Evaluate(in, cands, n);
 
-    // ── Hard constraint: prefer a provably-safe reachable point ──────────────
-    // Safety-only objective for now: among safe candidates pick the one nearest
-    // the player (minimal disruption). The stand point (moveDist 0) therefore
-    // wins whenever standing still is safe → Hold.
+    // ── Hard constraint met: choose AMONG the safe points by smart direction ─
+    // Safety is already guaranteed for every safe candidate; the objective only
+    // ranks them (continuity + goal + sidestep + minimal-move + comfort + stand
+    // bias). argmax over the safe set → Safe (or Hold if the stand point wins).
+    const Vec2 flow = FlowDir(in);
+    const Vec2 prevDir = state.lastMoveDir;
     int best = -1;
-    float bestMove = kHugeClearance;
+    float bestScore = -kHugeClearance;
     for (int i = 0; i < n; ++i) {
         if (!cands[i].safe) continue;
-        if (best < 0 || cands[i].moveDist < bestMove) {
+        const float s = ScoreCand(cands[i], in.player, goal, flow, prevDir, b);
+        if (best < 0 || s > bestScore) {
+            bestScore = s;
             best = i;
-            bestMove = cands[i].moveDist;
         }
     }
 
