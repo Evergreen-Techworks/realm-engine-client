@@ -143,12 +143,29 @@ int BuildCandidates(const MapInput& in, float b, const Goal& goal, Cand* out)
     return n;
 }
 
+// True when p sits inside any enemy body (+ the player half-extent). Running
+// over an enemy is NEVER acceptable, so this is a HARD exclusion (treated like a
+// wall — removed from occupiable), not a soft score. Applies to the safe set AND
+// the least-bad fallback, so even when surrounded the solver never routes onto a
+// mob. The boss orbit sits at weapon range, far outside any body, so this never
+// conflicts with staying in range.
+bool EnemyBlocked(const MapInput& in, Vec2 p)
+{
+    if (!in.map) return false;
+    for (int i = 0; i < in.map->enemyCount; ++i) {
+        const EnemyBlocker& e = in.map->enemies[i];
+        if (Len(Sub(p, e.pos)) < e.radius + kUPlayerHalf) return true;
+    }
+    return false;
+}
+
 // Evaluate occupancy + server-accurate clearance for every candidate.
 void Evaluate(const MapInput& in, Cand* c, int n)
 {
     for (int i = 0; i < n; ++i) {
-        c[i].occOk = !in.env.canOccupy ||
+        const bool walkable = !in.env.canOccupy ||
                      in.env.canOccupy(c[i].pos.x, c[i].pos.y, in.settings.safeWalk);
+        c[i].occOk = walkable && !EnemyBlocked(in, c[i].pos);
         c[i].clr = Core::PointSafety(in, c[i].pos);
         c[i].safe = c[i].occOk && c[i].clr >= kULatencyPad;
     }
