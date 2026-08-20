@@ -169,6 +169,7 @@ void Tick(void* player, float px, float py, float dt)
     } _tickTimer;
 
     const Settings settings = ReadSettings();
+    const SteerInput::SteerState steer = SteerInput::Get();
 
     int32_t hp = 0, maxHp = 0;
     float spd = 0.f, tilesPerSec = 0.f;
@@ -218,9 +219,32 @@ void Tick(void* player, float px, float py, float dt)
     const float b = in.stepTiles;
 
     // ── Goal (soft preference only) ─────────────────────────────────────────
-    // Pure dodge for now (plan 64 step 3): the goal stays inactive so the solver
-    // never wanders. WASD steer / boss-lock orbit standoff are reinstated in step 5.
+    // The goal is consumed ONLY through the solver's wGoal term over the SAFE set,
+    // so it can never move the player into a shot: it is just how we rank safe
+    // options. Priority: WASD steer → user-locked enemy orbit standoff → none
+    // (pure dodge that never wanders).
     Solver::Goal goal{};
+    if (steer.active && (steer.dirX != 0.f || steer.dirY != 0.f)) {
+        const Vec2 dir = Normalize(Vec2{ steer.dirX, steer.dirY });
+        if (LenSq(dir) > 1e-6f) {
+            goal.active = true;
+            goal.pos = Add(in.player, Mul(dir, b));   // WASD intent one budget ahead
+        }
+    } else if (g_map.hasLock) {
+        // Orbit the locked enemy at a standoff = resolved weapon range × 0.85
+        // (the SetOrbitRange override feeds the standoff directly when non-zero).
+        const float weaponRange = AutoAim::IsProjRangeResolved()
+            ? AutoAim::GetProjRangeTiles() : 6.f;
+        const float standoff = settings.orbitRange > 0.f
+            ? settings.orbitRange : weaponRange * 0.85f;
+        const Vec2 fromLock = Sub(in.player, g_map.lockPos);
+        const float dist = Len(fromLock);
+        if (dist > 1e-3f) {
+            const Vec2 dir = Mul(fromLock, 1.f / dist);
+            goal.active = true;
+            goal.pos = Add(g_map.lockPos, Mul(dir, standoff));  // on the player-side ray
+        }
+    }
 
     // ── Solve once per server tick ──────────────────────────────────────────
     // A rebuild means the tick id changed or a structural projectile change forced
