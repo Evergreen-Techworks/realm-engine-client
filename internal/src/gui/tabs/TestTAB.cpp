@@ -24,6 +24,7 @@ using TestTAB::DodgeMode;
 #include <atomic>
 #include "W2S.h"
 #include "gui/CamState.h"
+#include "gui/MinimapNav.h"
 #include "game/math/MoveSpeed.h"
 #include "WorldTAB.h"
 #include "CameraTAB.h"
@@ -821,7 +822,29 @@ void TestTAB::Tick(bool menuVisible)
             const bool chordEdge = chord && !s_prevLockChord;
             s_prevLockChord = chord;
 
-            if (chordEdge && g_w2sValid && !menuVisible) {
+            // ── Minimap intercept ────────────────────────────────────────
+            // A Shift+Click that lands inside the on-screen minimap rectangle
+            // walks to the corresponding WORLD position (via MinimapNav's
+            // minimap→world transform), NOT the on-ground cursor position. This
+            // path does not require g_w2sValid — MinimapNav resolves its own
+            // basis from the minimap camera/rect. Everything below (enemy lock,
+            // player follow, on-ground walk-to) stays for clicks OUTSIDE it.
+            bool minimapConsumed = false;
+            if (chordEdge && !menuVisible
+                && MinimapNav::HitTest(g_mouseSX, g_mouseSY, cs.screenW, cs.screenH))
+            {
+                float mmWorldX = 0.f, mmWorldY = 0.f;
+                if (MinimapNav::ClickToWorld(g_mouseSX, g_mouseSY,
+                                             cs.screenW, cs.screenH,
+                                             camX, camY, CameraTAB::GetAngle(),
+                                             mmWorldX, mmWorldY))
+                {
+                    DangerPlanner::SetWalkGoal(mmWorldX, mmWorldY);
+                }
+                minimapConsumed = true;
+            }
+
+            if (chordEdge && g_w2sValid && !menuVisible && !minimapConsumed) {
                 // Dual-target click: closest enemy OR closest player
                 // wins, whichever is nearer to the cursor. Enemies get
                 // lock-follow (orbit at weapon range), players get
@@ -883,9 +906,9 @@ void TestTAB::Tick(bool menuVisible)
                     // still micro-dodging, and clears the goal on arrival / WASD.
                     // Coexistence: an on-entity Shift+Click keeps the enemy-lock /
                     // player-follow behavior above; only empty ground walks.
-                    // NOTE: minimap-click walk-to was requested but the minimap→world
-                    // transform could not be resolved to a verifiable scale (see
-                    // report) — this world-cursor path is the shipped fallback.
+                    // A Shift+Click INSIDE the minimap is handled earlier by the
+                    // MinimapNav intercept (minimap→world walk-to); this branch is
+                    // the on-ground cursor path for clicks OUTSIDE the minimap.
                     DangerPlanner::SetWalkGoal(g_mouseWorldX, g_mouseWorldY);
                 }
             }

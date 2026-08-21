@@ -32,6 +32,7 @@
     <ClCompile Include="src\core\ipc\IpcMessages.cpp" />
     <ClCompile Include="src\core\ipc\IpcTileState.cpp" />
     <ClCompile Include="src\gui\CamState.cpp" />
+    <ClCompile Include="src\gui\MinimapNav.cpp" />
     <ClCompile Include="src\gui\tabs\CameraTAB.cpp" />
     <ClCompile Include="src\gui\tabs\WorldTAB.cpp" />
     <ClCompile Include="src\gui\tabs\PlayerTAB.cpp" />
@@ -188,6 +189,7 @@
     <ClInclude Include="src\core\ipc\IpcMessages.h" />
     <ClInclude Include="src\core\ipc\IpcTileState.h" />
     <ClInclude Include="src\gui\CamState.h" />
+    <ClInclude Include="src\gui\MinimapNav.h" />
     <ClInclude Include="src\gui\tabs\CameraTAB.h" />
     <ClInclude Include="src\gui\tabs\WorldTAB.h" />
     <ClInclude Include="src\gui\tabs\PlayerTAB.h" />
