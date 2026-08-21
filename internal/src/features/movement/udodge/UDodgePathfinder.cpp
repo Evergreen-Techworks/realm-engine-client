@@ -20,12 +20,14 @@ namespace UDodge { namespace Path {
 namespace {
 
 // ── Fixed scratch (worker thread only — never re-entered) ────────────────────
-float   s_cost[kUPathMaxCells];   // best known cost to reach the cell
+// g(cell) IS THE ARRIVAL TIME (ms) along the route — the Dijkstra cost is TIME,
+// not distance (speed-aware / time-expanded search).
+float   s_cost[kUPathMaxCells];   // best known ARRIVAL TIME (ms) at the cell
 int     s_prev[kUPathMaxCells];   // predecessor cell index (path reconstruction)
 uint8_t s_done[kUPathMaxCells];   // 1 = finalized (popped) this pass
 uint8_t s_eval[kUPathMaxCells];   // 0 = unevaluated, 1 = blocked, 2 = open
 uint8_t s_goal[kUPathMaxCells];   // 1 = durable-safe goal cell (open + PointSafety ≥ margin + disk gate)
-float   s_pen[kUPathMaxCells];    // danger penalty added when ENTERING the cell
+float   s_safe[kUPathMaxCells];   // cached spatial Core::PointSafety (goal test + partial-route metric)
 int     s_path[kUPathMaxCells];   // reconstructed route (forward order: [0] = start)
 
 // Binary min-heap of (cost, cellIndex). Lazy Dijkstra: a cell may be pushed
@@ -83,6 +85,104 @@ Vec2 CellWorld(Vec2 center, int gx, int gy)
              center.y + static_cast<float>(gy - kR) * kUPathCellTiles };
 }
 
+// ── Arrival-time temporal prediction (REUSES the plan-64 solver model) ───────
+// The immediate layer (UDodgeSolver TempCtx/TemporalPathClear) predicts each
+// bullet's position over a bounded horizon from the plain lane polyline
+// (points[] + pointTimesMs[]) and checks a swept segment so a fast bullet cannot
+// tunnel between samples. The pathfinder re-implements that same model here (the
+// solver's copy lives in an anonymous namespace; the worker cannot include it and
+// must stay pure plain-data) to answer: is a cell SAFE AT ITS ARRIVAL TIME?
+constexpr int   kTSamples   = kUTemporalSteps + 1;                 // 6 samples incl. t=0
+constexpr float kTHorizonMs = kUTemporalSteps * kUTemporalStepMs;  // 500 ms bounded horizon
+
+// Culled temporal context: for each RELEVANT lane, the bullet's predicted position
+// at each march sample (0..horizon in kUTemporalStepMs steps) and its effective hit
+// half. Built ONCE per Compute; read per candidate edge. Worker-thread scratch.
+int   s_tcCount = 0;
+Vec2  s_tcPos[kMaxProjectiles][kTSamples];
+float s_tcHalf[kMaxProjectiles];
+
+// Sample one lane's bullet position at each march time by interpolating its
+// spacetime polyline (points + pointTimesMs). Beyond the traced horizon the
+// position clamps to the last traced point (conservative — never invents "safe").
+void SampleLaneOverTime(const LaneThreat& L, Vec2* outPos)
+{
+    const int cnt = L.pointCount;
+    if (cnt <= 0) { for (int k = 0; k < kTSamples; ++k) outPos[k] = Vec2{}; return; }
+    if (cnt == 1) { for (int k = 0; k < kTSamples; ++k) outPos[k] = L.points[0]; return; }
+
+    int seg = 0;
+    for (int k = 0; k < kTSamples; ++k) {
+        const float t = static_cast<float>(k) * kUTemporalStepMs;
+        while (seg + 1 < cnt - 1 && t > L.pointTimesMs[seg + 1]) ++seg;
+        const float t0 = L.pointTimesMs[seg];
+        const float t1 = L.pointTimesMs[seg + 1];
+        if (t <= t0)       outPos[k] = L.points[seg];
+        else if (t >= t1)  outPos[k] = L.points[seg + 1];     // clamp at path end
+        else {
+            const float f = (t - t0) / std::max(t1 - t0, 1e-3f);
+            outPos[k] = Add(L.points[seg], Mul(Sub(L.points[seg + 1], L.points[seg]), f));
+        }
+    }
+}
+
+// Predict every lane once and CULL lanes whose whole traced path stays outside the
+// search window (they can never intersect any reachable cell). The window reaches
+// kUPathMaxRadCells cells; a lane matters only if it passes within that extent
+// (+ margin) of the player over the horizon.
+void BuildTempCtx(const PlannerSnapshot& s)
+{
+    s_tcCount = 0;
+    const DangerMap& m = s.map;
+    const float hitScale = std::clamp(s.settings.hitScale, 0.25f, 2.5f);
+    const float cull = kUPathMaxRadCells * kUPathCellTiles + kUTemporalCullTiles;
+    for (int i = 0; i < m.laneCount && s_tcCount < kMaxProjectiles; ++i) {
+        const LaneThreat& L = m.lanes[i];
+        if (L.pointCount <= 0) continue;
+        Vec2 samples[kTSamples];
+        SampleLaneOverTime(L, samples);
+        float minD = kHugeClearance;
+        for (int k = 0; k < kTSamples; ++k)
+            minD = std::min(minD, Len(Sub(samples[k], s.player)));
+        if (minD > cull) continue;                       // far/receding — irrelevant to the window
+        const int idx = s_tcCount++;
+        for (int k = 0; k < kTSamples; ++k) s_tcPos[idx][k] = samples[k];
+        s_tcHalf[idx] = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + kUPlayerHalf;
+    }
+}
+
+// Bullet position at arbitrary time t (ms), interpolated within the fixed march
+// grid. Clamped to [0, horizon]: beyond the horizon we hold the last sample
+// (conservative — the pattern is assumed frozen where prediction runs out).
+Vec2 BulletPosAt(int li, float tMs)
+{
+    if (tMs <= 0.f)          return s_tcPos[li][0];
+    if (tMs >= kTHorizonMs)  return s_tcPos[li][kUTemporalSteps];
+    const float g = tMs / kUTemporalStepMs;
+    const int   k = static_cast<int>(g);
+    const float f = g - static_cast<float>(k);
+    return Add(s_tcPos[li][k], Mul(Sub(s_tcPos[li][k + 1], s_tcPos[li][k]), f));
+}
+
+// ARRIVAL-TIME SAFETY: the player walks A→B, leaving A at tA and arriving B at tB.
+// Over that interval each bullet sweeps from BulletPosAt(tA) to BulletPosAt(tB);
+// the swept-segment min-Chebyshev to the destination cell B (treating the player
+// as at B — conservative) must exceed the effective hit half + kUPocketMargin, or
+// a bullet is at B when the player is there. Swept (not endpoint-only) so a fast
+// bullet cannot tunnel across B between the two arrival times. Reuses the exact
+// swept test the immediate temporal layer uses.
+bool ArrivalClear(Vec2 B, float tA, float tB)
+{
+    for (int li = 0; li < s_tcCount; ++li) {
+        const float half = s_tcHalf[li] + kUPocketMargin;
+        const Vec2  b0 = BulletPosAt(li, tA);
+        const Vec2  b1 = BulletPosAt(li, tB);
+        if (MinChebOnSegment(b0.x - B.x, b0.y - B.y,
+                             b1.x - B.x, b1.y - B.y) <= half) return false;
+    }
+    return true;
+}
+
 // Occupancy from the plain rasterized grid ALONE (no Env). Blocked = wall bit, or
 // hazard bit when safeWalk is on (mirrors Sensors::CanOccupy(x,y,safeWalk) so the
 // worker route and the game-thread pre-position walkability check agree).
@@ -106,24 +206,21 @@ bool EnemyBlockedLocal(const DangerMap& m, Vec2 p)
     return false;
 }
 
-float DangerPenalty(float safety)
-{
-    if (safety >= kUPocketMargin) return 0.f;         // durable-safe — free to traverse
-    float pen = (kUPocketMargin - safety) * kUPathDangerW;
-    if (safety < 0.f) pen += kUPathHitPenalty;        // inside the server hit region — strongly avoid
-    return pen;
-}
-
 struct Ctx {
     const PlannerSnapshot* s = nullptr;
     MapInput mi{};            // .env NULL, .map aliases the plain snapshot copy — plain-data only
     bool  diskActive = false;
     Vec2  diskCenter{};
     float diskLimit = 0.f;    // weaponRange + slack
+    float timePerTile = 0.f;  // ms to cross one tile at the player's speed (edge-cost scale)
 };
 
-// Lazily classify a cell the first time Dijkstra reaches it. The whole per-cell
-// cost is CHEAP spatial PointSafety — no temporal march.
+// Lazily classify a cell the first time Dijkstra reaches it. Records occupancy,
+// the spatial PointSafety (used ONLY for the durable-goal test and the partial
+// best-safety metric — NOT as a traversal penalty; traversal is gated in TIME by
+// ArrivalClear, so a cell a bullet's forward path merely crosses is still
+// traversable if the bullet is not there when the player arrives), and whether the
+// cell is a durable-safe goal (PointSafety ≥ margin, inside the disk when locked).
 void EvalCell(const Ctx& c, int idx, int gx, int gy)
 {
     if (s_eval[idx]) return;
@@ -134,7 +231,7 @@ void EvalCell(const Ctx& c, int idx, int gx, int gy)
         return;
     }
     const float safety = Core::PointSafety(c.mi, w);
-    s_pen[idx] = DangerPenalty(safety);
+    s_safe[idx] = safety;
     bool goalOk = safety >= kUPocketMargin;
     if (goalOk && c.diskActive)
         goalOk = Len(Sub(w, c.diskCenter)) <= c.diskLimit;
@@ -145,20 +242,35 @@ void EvalCell(const Ctx& c, int idx, int gx, int gy)
 constexpr int kDx[8] = { 1, -1, 0,  0, 1,  1, -1, -1 };
 constexpr int kDy[8] = { 0,  0, 1, -1, 1, -1,  1, -1 };
 
-// One Dijkstra pass bounded to a window of `curRad` cells (Chebyshev) around the
-// center. Returns the goal cell index (or -1). Adds finalized cells to `pops`.
-int SearchPass(const Ctx& c, int curRad, int& pops)
+// Minimum spatial-safety improvement (tiles) over the start position for a cell to
+// qualify as the target of a PARTIAL route when no durable pocket is time-reachable
+// — avoids emitting a route for a negligibly-safer cell. Baked (no user setting).
+constexpr float kPartialGainTiles = 0.15f;
+
+// One TIME-EXPANDED Dijkstra pass bounded to a window of `curRad` cells (Chebyshev)
+// around the center. The cost is ARRIVAL TIME (ms): edge A→B costs
+// dist(A,B) × timePerTile, so g(cell) is when the player reaches it moving at real
+// speed. A neighbour is relaxed only if it is SAFE AT ITS ARRIVAL TIME (ArrivalClear
+// over [g(A), g(B)]) — the route can never require standing where a bullet is. The
+// search prefers the durable goal reachable SOONEST (min arrival time). It also
+// tracks the safest reachable-in-time non-goal cell (partialIdx/partialSafety) for
+// graceful degradation. Returns the goal cell index (or -1); adds pops.
+int SearchPass(const Ctx& c, int curRad, int& pops,
+               int& partialIdx, float& partialSafety, float startSafety)
 {
     for (int i = 0; i < kUPathMaxCells; ++i) {
         s_cost[i] = kHugeClearance; s_prev[i] = -1; s_done[i] = 0; s_eval[i] = 0;
     }
     HeapClear();
+    partialIdx = -1;
+    partialSafety = startSafety + kPartialGainTiles;   // only a MEANINGFULLY safer cell qualifies
 
+    const Vec2 center = c.s->grid.center;
     const int start = Idx(kR, kR);
     // The start (player cell) is always expandable, even if a wall/enemy sample
     // lands on it momentarily — treat it as open ground so the search can leave.
-    s_eval[start] = 2; s_pen[start] = 0.f; s_goal[start] = 0;
-    s_cost[start] = 0.f;
+    s_eval[start] = 2; s_safe[start] = startSafety; s_goal[start] = 0;
+    s_cost[start] = 0.f;                                // arrival time at the start = 0
     HeapPush(0.f, start);
 
     int found = -1;
@@ -172,7 +284,12 @@ int SearchPass(const Ctx& c, int curRad, int& pops)
 
         if (cur != start && s_eval[cur] == 2 && s_goal[cur]) {
             found = cur;
-            break;                                 // nearest durable-safe cell — early exit
+            break;                                 // durable-safe cell reached SOONEST — early exit
+        }
+        // Track the safest reachable-in-time cell for the graceful-degradation route.
+        if (cur != start && s_eval[cur] == 2 && s_safe[cur] > partialSafety) {
+            partialSafety = s_safe[cur];
+            partialIdx    = cur;
         }
 
         for (int k = 0; k < 8; ++k) {
@@ -195,20 +312,27 @@ int SearchPass(const Ctx& c, int curRad, int& pops)
             }
             const float stepDist = (kDx[k] != 0 && kDy[k] != 0)
                                        ? kUPathCellTiles * kUPathRoot2 : kUPathCellTiles;
-            const float nc = s_cost[cur] + stepDist + s_pen[ni];
-            if (nc < s_cost[ni]) {
-                s_cost[ni] = nc;
+            // Edge cost is TIME: how long the player takes to cross this edge.
+            const float tB = s_cost[cur] + stepDist * c.timePerTile;
+            // SPEED-AWARE GATE: only walk into B if the player, arriving at tB
+            // (having left cur at s_cost[cur]), is clear of every bullet there.
+            const Vec2 wB = CellWorld(center, nx, ny);
+            if (!ArrivalClear(wB, s_cost[cur], tB)) continue;
+            if (tB < s_cost[ni]) {
+                s_cost[ni] = tB;
                 s_prev[ni] = cur;
-                HeapPush(nc, ni);
+                HeapPush(tB, ni);
             }
         }
     }
     return found;
 }
 
-// Run the expanding search and, on success, reconstruct the route into `out`.
-// diskActive gates goal cells to the weapon-range disk.
-bool RunSearch(const PlannerSnapshot& s, bool diskActive, PlanResult& out)
+// Run the expanding time-expanded search and, on success, reconstruct the route
+// into `out`. diskActive gates GOAL cells to the weapon-range disk. When no durable
+// pocket is time-reachable, degrades to a partial route toward the safest
+// reachable-in-time cell (out.partial). `startSafety` = PointSafety at the player.
+void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, PlanResult& out)
 {
     Ctx c;
     c.s = &s;
@@ -218,13 +342,20 @@ bool RunSearch(const PlannerSnapshot& s, bool diskActive, PlanResult& out)
     c.diskActive  = diskActive;
     c.diskCenter  = s.lockPos;
     c.diskLimit   = s.weaponRangeTiles + kUInRangeSlack;
+    // PLAYER SPEED enters here: moveBudget = tiles per server tick = speed ×
+    // kServerTickSec, so tiles/ms = moveBudget / (kServerTickSec × 1000) and the
+    // time to cross one tile is its reciprocal. This is the edge-cost scale that
+    // turns the distance grid into an ARRIVAL-TIME grid.
+    c.timePerTile = kServerTickSec * 1000.f / std::max(s.moveBudget, 1e-3f);
 
     int rad = kUPathBaseRadCells;
     int goal = -1;
     int usedRad = rad;
     bool expanded = false;
+    int   partialIdx = -1;
+    float partialSafety = 0.f;
     for (;;) {
-        goal = SearchPass(c, rad, out.pops);
+        goal = SearchPass(c, rad, out.pops, partialIdx, partialSafety, startSafety);
         usedRad = rad;
         if (goal >= 0) break;
         if (rad >= kUPathMaxRadCells) break;
@@ -233,20 +364,27 @@ bool RunSearch(const PlannerSnapshot& s, bool diskActive, PlanResult& out)
     }
     out.radiusCells = usedRad;
     out.expanded    = expanded;
-    if (goal < 0) return false;
 
-    // Reconstruct the route (goal → start), then reverse into forward order.
+    // GRACEFUL DEGRADATION: no durable pocket reachable in time → head to the
+    // safest reachable-in-time cell instead (the arrays hold the last, widest pass).
+    const bool isPartial = (goal < 0);
+    const int  target    = isPartial ? partialIdx : goal;
+    if (target < 0) { out.found = false; return; }   // nothing better than standing — pure reflex
+
+    // Reconstruct the route (target → start), then reverse into forward order.
     const Vec2 center = s.grid.center;
     int n = 0;
-    for (int cc = goal; cc >= 0 && n < kUPathMaxCells; cc = s_prev[cc]) {
+    for (int cc = target; cc >= 0 && n < kUPathMaxCells; cc = s_prev[cc]) {
         s_path[n++] = cc;
         if (cc == Idx(kR, kR)) break;   // reached the start cell
     }
     for (int i = 0, j = n - 1; i < j; ++i, --j) std::swap(s_path[i], s_path[j]);
 
-    out.found     = true;
-    out.waypoints = n;
-    out.goalPos   = CellWorld(center, goal % kS, goal / kS);
+    out.found       = true;
+    out.partial     = isPartial;
+    out.goalArriveMs = s_cost[target];   // predicted arrival TIME along the route (ms)
+    out.waypoints   = n;
+    out.goalPos     = CellWorld(center, target % kS, target / kS);
 
     // Copy the route polyline (world coords) for the debug overlay — bounded to
     // kMaxPathPoints. Cheap plain-data; the solver never reads it.
@@ -277,7 +415,6 @@ bool RunSearch(const PlannerSnapshot& s, bool diskActive, PlanResult& out)
     out.stepTarget = stepTarget;
     out.stepDir    = Normalize(Sub(stepTarget, center));
     if (LenSq(out.stepDir) < 1e-6f) out.found = false;   // degenerate first step — no usable route
-    return out.found;
 }
 
 } // namespace
@@ -289,29 +426,57 @@ void Compute(const PlannerSnapshot& in, PlanResult& out)
 
     // Is the player cell itself already a durable-safe goal? (Cheap short-circuit
     // — no route needed; the game thread decides whether to hold.)
+    MapInput mi{};
+    mi.player = in.player; mi.settings = in.settings; mi.map = &in.map;
+    const float startSafety = Core::PointSafety(mi, in.player);
     {
-        MapInput mi{};
-        mi.player = in.player; mi.settings = in.settings; mi.map = &in.map;
-        const float safety = Core::PointSafety(mi, in.player);
-        bool startGoal = safety >= kUPocketMargin;
+        bool startGoal = startSafety >= kUPocketMargin;
         if (startGoal && in.hasLock && in.weaponRangeTiles > 0.f)
             startGoal = Len(Sub(in.player, in.lockPos)) <= in.weaponRangeTiles + kUInRangeSlack;
         if (startGoal) { out.startIsGoal = true; return; }
     }
 
-    // IN-RANGE DISK: locked boss gates goal cells to the weapon-range disk so the
-    // route keeps the boss hittable. Safety OVERRIDES: if no in-range safe cell
-    // exists, re-search UNCONSTRAINED (leave range to dodge, return once clear).
+    // Predict every relevant bullet's trajectory ONCE (culled to the window) so the
+    // arrival-time safety gate is cheap per candidate edge. Plain-data — reuses the
+    // lane pointTimesMs already in the snapshot's DangerMap copy; no IL2CPP.
+    BuildTempCtx(in);
+
+    // IN-RANGE DISK: locked boss gates GOAL cells to the weapon-range disk so the
+    // route keeps the boss hittable. Safety OVERRIDES range: if no in-range durable
+    // pocket is time-reachable, re-search UNCONSTRAINED (leave range to dodge,
+    // return once clear); failing that, degrade to a partial route toward safety.
     const bool disk = in.hasLock && in.weaponRangeTiles > 0.f;
-    if (RunSearch(in, disk, out)) return;
-    if (disk) {
-        PlanResult unconstrained{};
-        unconstrained.forSeq = in.seq;
-        if (RunSearch(in, false, unconstrained)) {
-            unconstrained.outOfRange = true;
-            out = unconstrained;
-        }
+
+    PlanResult primary{};
+    primary.forSeq = in.seq;
+    RunSearch(in, disk, startSafety, primary);
+    if (primary.found && !primary.partial) {          // durable in-range pocket, time-feasible
+        primary.tempLanes = s_tcCount;
+        out = primary;
+        return;
     }
+
+    if (disk) {
+        PlanResult unc{};
+        unc.forSeq = in.seq;
+        RunSearch(in, false, startSafety, unc);
+        if (unc.found && !unc.partial) {              // durable pocket only outside range
+            unc.outOfRange = true;
+            unc.tempLanes  = s_tcCount;
+            out = unc;
+            return;
+        }
+        // No durable pocket anywhere → prefer the unconstrained partial (it explores
+        // the wider manifold), else the in-range partial, else pure reflex.
+        if (unc.found)          { unc.tempLanes = s_tcCount;     out = unc;     return; }
+        if (primary.found)      { primary.tempLanes = s_tcCount; out = primary; return; }
+        out.tempLanes = s_tcCount;
+        return;
+    }
+
+    // Unlocked: primary is a durable-goal (handled above) or a partial route / nothing.
+    primary.tempLanes = s_tcCount;
+    out = primary;
 }
 
 } } // namespace UDodge::Path

@@ -1,18 +1,39 @@
 #pragma once
 #include "UDodgeTypes.h"
 
-// UDodge grid pathfinder (plan 65) — a bounded local grid Dijkstra that finds a
-// WAYPOINT ROUTE around obstacles to the nearest durable-safe area, the piece the
-// straight-line per-tick solver cannot supply. The solver picks the nearest safe
-// pocket and walks STRAIGHT at it; if bullets or a wall block that ray it settles
-// for a nearer, worse one — it can never route AROUND the obstruction. This does:
-// it lays a coarse occupancy/cost grid over a bounded window centered on the
-// player, marks walls / hazard / enemy bodies as BLOCKED and derives per-cell
-// danger from the CHEAP spatial Core::PointSafety, then runs an 8-neighbour
-// Dijkstra (no diagonal corner-cutting) to the nearest durable-safe cell
-// (PointSafety ≥ kUPocketMargin). Its first step (≈ one budget along the route)
-// is the lookahead target; over ticks the player follows the curve around the
-// obstacle. If nothing safe is near, the window EXPANDS outward and re-searches.
+// UDodge grid pathfinder (plan 65; TIME-EXPANDED per plan 64 temporal model) — a
+// bounded local grid Dijkstra that finds a WAYPOINT ROUTE around obstacles to the
+// nearest durable-safe area, the piece the straight-line per-tick solver cannot
+// supply. The solver picks the nearest safe pocket and walks STRAIGHT at it; if
+// bullets or a wall block that ray it settles for a nearer, worse one — it can
+// never route AROUND the obstruction. This does: it lays a coarse occupancy grid
+// over a bounded window centered on the player, marks walls / hazard / enemy
+// bodies as BLOCKED, then runs an 8-neighbour Dijkstra (no diagonal corner-cutting)
+// to the nearest durable-safe cell (PointSafety ≥ kUPocketMargin).
+//
+// ── SPEED-AWARE / TIME-EXPANDED (the fix) ────────────────────────────────────
+// The player moves at a FINITE speed, so a multi-tile route takes several ticks
+// to walk and a cell that is "safe now" is NOT safe at the later time the player
+// actually arrives (bullets have moved there). So the search solves path(t)
+// subject to |path'| ≤ speed and safety at each t:
+//   • The Dijkstra edge cost is TIME, not distance: moving cell A→B costs
+//     dist(A,B) / player_speed, so g(cell) is the arrival TIME along the route.
+//     player_speed derives from the snapshot moveBudget (= speed × kServerTickSec).
+//   • A cell is traversable only if it is SAFE AT ITS ARRIVAL TIME g(cell): the
+//     player position (the cell) is checked against every relevant bullet's
+//     PREDICTED position at g(cell), reusing the plan-64 temporal prediction (the
+//     lane pointTimesMs polyline + a swept-segment check over the arrival window,
+//     culled to nearby lanes). So the route is chosen only if the player, moving
+//     at real speed, is clear of bullets at every point at the time they are there.
+//   • Goal = a durable-safe cell reached by such a time-feasible route; the
+//     time-cost Dijkstra naturally prefers the one reachable SOONEST. If NO
+//     time-feasible route to a durable pocket exists, it degrades gracefully to
+//     the best partial route toward the safest reachable-in-time cell — never a
+//     route that assumes impossible speed.
+// Its first step (≈ one budget along the route) is the lookahead target; over
+// ticks the player follows the curve around the obstacle. If nothing safe is near,
+// the window EXPANDS outward and re-searches. The game-thread immediate micro-dodge
+// floor still overrides every step (unchanged) — this only improves the ROUTE.
 //
 // ── THREADING (plan 65 two-rate MPC) ─────────────────────────────────────────
 // Compute() runs on the DEDICATED WORKER THREAD (UDodge::Worker), NOT the game
@@ -70,6 +91,11 @@ struct PlanResult {
     bool  startIsGoal = false; // the player cell is already durable-safe (no route needed)
     bool  expanded    = false; // the window grew beyond the base radius to find the goal
     bool  outOfRange  = false; // locked: no in-range goal, used an unconstrained (out-of-range) goal
+    bool  partial      = false; // no durable pocket was time-reachable; the route heads to the
+                                // SAFEST reachable-in-time cell instead (best-effort lookahead bias,
+                                // still fully time-feasible — never assumes impossible speed)
+    float goalArriveMs = 0.f;   // predicted arrival TIME at the goal along the time-cost route (ms)
+    int   tempLanes    = 0;     // relevant lanes kept for the arrival-time temporal check (diagnostics)
     int   radiusCells = 0;     // final window radius used (diagnostics)
     int   pops        = 0;     // cells finalized by Dijkstra across all passes (perf diagnostics)
 };
