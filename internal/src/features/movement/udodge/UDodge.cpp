@@ -14,6 +14,7 @@
 #include "SteerInput.h"
 #include "DangerPlanner.h"
 #include "AutoAim.h"
+#include "features/combat/enemytracker/EnemyTracker.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
 #include "gui/tabs/CameraTAB.h"
@@ -39,6 +40,11 @@ std::atomic<bool>  g_fieldEscape{ true };
 std::atomic<bool>  g_debugOverlay{ true };
 std::atomic<bool>  g_lockFollow{ false };
 std::atomic<bool>  g_followLantern{ false };
+std::atomic<bool>  g_autopilot{ false };   // autopilot auto-lock (default OFF)
+// The enemy-lock id autopilot currently owns (0 = none). Distinguishes an
+// autopilot-driven lock from the user's manual Shift+Click lock so that turning
+// autopilot OFF releases only the auto-lock and never a manual lock.
+std::atomic<int32_t> g_autopilotLockId{ 0 };
 std::atomic<int>   g_standOnType{ 0 };
 std::atomic<float> g_orbitRange{ 0.f };    // boss orbit standoff (tiles); 0 = auto
 std::atomic<float> g_planRadius{ 20.f };   // planner window radius (grid cells) [8,40]
@@ -92,6 +98,7 @@ Settings ReadSettings()
     s.debugOverlay = g_debugOverlay.load(std::memory_order_relaxed);
     s.lockFollow   = g_lockFollow.load(std::memory_order_relaxed);
     s.followLantern = g_followLantern.load(std::memory_order_relaxed);
+    s.autopilot     = g_autopilot.load(std::memory_order_relaxed);
     s.standOnType   = g_standOnType.load(std::memory_order_relaxed);
     const float orbit = g_orbitRange.load(std::memory_order_relaxed);
     s.orbitRange   = orbit <= 0.f ? 0.f : Clamp(orbit, 2.f, 16.f);
@@ -145,6 +152,57 @@ void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls)
     }
 }
 
+// ── Autopilot auto-lock ──────────────────────────────────────────────────────
+// When autopilot is ON, auto-select the enemy with the highest total HP (maxHp)
+// that is a real, damageable target — has a health bar (not a wall/destructible),
+// is not invulnerable/untargetable, and is currently alive (hp>0) — and set it as
+// the enemy lock so the EXISTING orbit / in-range-disk fight engages. Re-evaluates
+// every tick, so it re-targets when the current lock dies/despawns or a bigger
+// enemy appears. SetEnemyLock only fires (and toasts) on an actual id change, so
+// calling this every tick with a stable target is a cheap no-op.
+//
+// Ownership: g_autopilotLockId tracks the id autopilot set. When autopilot is OFF
+// we release ONLY a lock autopilot owns and never touch the user's manual lock —
+// so "no manual lock + autopilot off" means no fight, and a manual Shift+Click
+// lock survives autopilot being off. Runs BEFORE BuildMap so PopulateEnemies sees
+// the fresh lock the same tick.
+void UpdateAutopilotLock(bool autopilotOn)
+{
+    const int32_t owned = g_autopilotLockId.load(std::memory_order_relaxed);
+
+    if (!autopilotOn) {
+        if (owned != 0) {
+            if (DangerPlanner::GetEnemyLock() == owned)
+                DangerPlanner::ClearEnemyLock();
+            g_autopilotLockId.store(0, std::memory_order_relaxed);
+        }
+        return;
+    }
+
+    EnemyTracker::Tick();   // self-throttled; also refreshed inside BuildMap
+    int32_t bestId = 0;
+    int32_t bestMaxHp = 0;
+    for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot()) {
+        if (!e.hasHealthBar) continue;   // walls / destructibles — not a fight target
+        if (e.isInvulnerable) continue;  // <Invincible/> — untargetable / undamageable
+        if (e.hp <= 0) continue;         // dead / despawning
+        if (e.maxHp <= 0) continue;
+        if (e.maxHp > bestMaxHp) { bestMaxHp = e.maxHp; bestId = e.id; }
+    }
+
+    if (bestId != 0) {
+        if (bestId != owned) {
+            DangerPlanner::SetEnemyLock(bestId);   // toast fires only on change
+            g_autopilotLockId.store(bestId, std::memory_order_relaxed);
+        }
+    } else if (owned != 0) {
+        // No valid target left — release the auto-lock so we don't orbit a corpse.
+        if (DangerPlanner::GetEnemyLock() == owned)
+            DangerPlanner::ClearEnemyLock();
+        g_autopilotLockId.store(0, std::memory_order_relaxed);
+    }
+}
+
 } // namespace
 
 void SetEnabled(bool enabled)
@@ -156,6 +214,8 @@ void SetEnabled(bool enabled)
     g_enabled.store(enabled, std::memory_order_relaxed);
     if (!enabled) {
         Worker::Stop();                  // JOIN the worker before releasing state it never touches
+        UpdateAutopilotLock(false);      // release any autopilot-owned enemy lock (never a manual one)
+        DangerPlanner::ClearWalkGoal();  // drop any pending walk-to spot
         g_state.Reset();
         g_solve = Solver::SolveResult{};
         g_route = Path::PlanResult{};
@@ -202,6 +262,11 @@ void Tick(void* player, float px, float py, float dt)
 
     const Settings settings = ReadSettings();
     const SteerInput::SteerState steer = SteerInput::Get();
+
+    // Autopilot auto-lock — pick the highest-maxHp targetable enemy as the enemy
+    // lock (or release the auto-lock when off). Runs BEFORE the map build so the
+    // fresh lock is reflected in g_map.hasLock/lockPos this same tick.
+    UpdateAutopilotLock(settings.autopilot);
 
     int32_t hp = 0, maxHp = 0;
     float spd = 0.f, tilesPerSec = 0.f;
@@ -253,10 +318,33 @@ void Tick(void* player, float px, float py, float dt)
     // ── Goal (soft preference only) ─────────────────────────────────────────
     // The goal is consumed ONLY through the solver's wGoal term over the SAFE set,
     // so it can never move the player into a shot: it is just how we rank safe
-    // options. Priority: WASD steer → user-locked enemy orbit standoff → none
-    // (pure dodge that never wanders).
+    // options. Priority: WASD steer → Shift+Click walk-to spot → user-locked enemy
+    // orbit standoff → none (pure dodge that never wanders). A walk-to goal
+    // OVERRIDES the orbit (the user told it to go somewhere) until cleared; when it
+    // clears, autopilot's auto-lock resumes the orbit-fight. Safety is unchanged
+    // and always authoritative — the solver only ever ranks SAFE cells.
+    const bool wasdActive = steer.active && (steer.dirX != 0.f || steer.dirY != 0.f);
+
+    // Walk-to-spot goal (Shift+Click on empty ground). Clear it when the user
+    // steers with WASD (overrides everything), or when the player has arrived
+    // within kUWalkArriveTiles. A new click overwrites it in TestTAB.
+    float walkX = 0.f, walkY = 0.f;
+    bool  walkActive = false;
+    DangerPlanner::GetWalkGoal(walkX, walkY, walkActive);
+    if (walkActive && wasdActive) {
+        DangerPlanner::ClearWalkGoal();
+        walkActive = false;
+    }
+    if (walkActive) {
+        const float dwx = walkX - px, dwy = walkY - py;
+        if (std::sqrt(dwx * dwx + dwy * dwy) <= kUWalkArriveTiles) {
+            DangerPlanner::ClearWalkGoal();
+            walkActive = false;
+        }
+    }
+
     Solver::Goal goal{};
-    if (steer.active && (steer.dirX != 0.f || steer.dirY != 0.f)) {
+    if (wasdActive) {
         // WASD is relative to the ROTATED camera view (W = up on screen). Rotate
         // the raw screen-space direction by the live camera yaw so movement matches
         // what the player sees when the camera is turned.
@@ -269,6 +357,13 @@ void Tick(void* player, float px, float py, float dt)
             goal.active = true;
             goal.pos = Add(in.player, Mul(dir, b));   // WASD intent one budget ahead
         }
+    } else if (walkActive) {
+        // Walk-to spot: the solver ACTIVELY pathfinds here (goal.walkTo) while the
+        // micro-dodge floor keeps dodging on the way. Not a lock, so the in-range
+        // disk is not engaged — the worker routes to the point unconstrained.
+        goal.active = true;
+        goal.pos = { walkX, walkY };
+        goal.walkTo = true;
     } else if (g_map.hasLock) {
         // Orbit the locked enemy at a standoff = resolved weapon range × 0.85
         // (the SetOrbitRange override feeds the standoff directly when non-zero).
@@ -518,6 +613,13 @@ void RenderSettings()
         ImGui::SetTooltip("Boss lock standoff distance. 0 = auto (resolved weapon\n"
                           "range x 0.85). Consumed only as a soft goal over safe points.");
 
+    bool autopilot = GetAutopilot();
+    if (ImGui::Checkbox("Autopilot: auto-lock highest-HP enemy##udodge", &autopilot)) SetAutopilot(autopilot);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Each tick, auto-select the highest-max-HP targetable/damageable\n"
+                          "enemy as the lock so the orbit/in-range fight engages automatically.\n"
+                          "Off = only a manual Shift+Click lock fights.");
+
     bool followLantern = GetFollowLantern();
     if (ImGui::Checkbox("Autopilot: follow stand-on object (perf cost)##udodge", &followLantern)) SetFollowLantern(followLantern);
     int standOn = GetStandOnType();
@@ -582,6 +684,8 @@ void  SetLockFollow(bool en) { g_lockFollow.store(en, std::memory_order_relaxed)
 bool  GetLockFollow() { return g_lockFollow.load(std::memory_order_relaxed); }
 void  SetFollowLantern(bool en) { g_followLantern.store(en, std::memory_order_relaxed); }
 bool  GetFollowLantern() { return g_followLantern.load(std::memory_order_relaxed); }
+void  SetAutopilot(bool en) { g_autopilot.store(en, std::memory_order_relaxed); }
+bool  GetAutopilot() { return g_autopilot.load(std::memory_order_relaxed); }
 void  SetStandOnType(int t) { g_standOnType.store(t, std::memory_order_relaxed); }
 int   GetStandOnType() { return g_standOnType.load(std::memory_order_relaxed); }
 void  SetOrbitRange(float t) { g_orbitRange.store(t <= 0.f ? 0.f : Clamp(t, 2.f, 16.f), std::memory_order_relaxed); }

@@ -74,6 +74,10 @@ constexpr float kURouteReverseDot  = -0.25f;
 // horizon LARGER than one tick for the NEAREST such pocket and steer the
 // immediate solve toward it, pre-positioning INTO the gap over 2–3 ticks
 // before the wall closes.
+// Shift+Click walk-to-spot: distance (tiles) at which the player is considered
+// to have ARRIVED at the walk target — the walk goal clears (UDodge::Tick) and
+// the solver stops actively progressing toward it (repositionToward gate).
+constexpr float kUWalkArriveTiles = 0.5f;
 constexpr float kULookaheadTiles = 6.0f;  // horizon radius for the durable-pocket search (tiles)
 constexpr float kUPocketMargin   = 0.35f; // clearance (tiles) a cell needs BEYOND the hard safety
                                           // boundary (PointSafety already folds in the bullet half +
@@ -203,6 +207,9 @@ struct Settings {
     bool  debugOverlay = true;
     bool  lockFollow  = false;   // consume DangerPlanner external goal as intent
     bool  followLantern = false; // Autopilot: stand-on object scan (perf cost)
+    bool  autopilot     = false; // Autopilot auto-lock: auto-select the highest-maxHp
+                                 // targetable enemy as the enemy lock each tick
+                                 // so the orbit/in-range fight engages automatically
     int   standOnType   = 0;     // objType to stand on (0 = off)
     float laneTiles = 12.f;  // danger-lane paint length (tiles)      [2, 16]
     float stepTiles = 0.f;   // candidate step distance; 0 = auto

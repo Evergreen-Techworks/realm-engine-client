@@ -236,6 +236,12 @@ std::atomic<float>  s_extGoalX{ 0.f };
 std::atomic<float>  s_extGoalY{ 0.f };
 std::atomic<bool>   s_extGoalActive{ false };
 
+// Walk-to-spot goal (Shift+Click empty ground). Dedicated UDodge-consumed slot,
+// independent of the external-goal (IPC) channel and the enemy lock.
+std::atomic<float>  s_walkGoalX{ 0.f };
+std::atomic<float>  s_walkGoalY{ 0.f };
+std::atomic<bool>   s_walkGoalActive{ false };
+
 // Enemy lock state.
 std::atomic<int32_t> s_lockEnemyId{ 0 };
 // Player-follow lock — Shift+click on a friendly player to follow them.
@@ -909,6 +915,22 @@ bool GetExternalGoal(float& outX, float& outY)
     if (!s_extGoalActive.load(std::memory_order_acquire)) return false;
     outX = s_extGoalX.load(std::memory_order_relaxed);
     outY = s_extGoalY.load(std::memory_order_relaxed);
+    return true;
+}
+
+void SetWalkGoal(float x, float y)
+{
+    s_walkGoalX.store(x, std::memory_order_relaxed);
+    s_walkGoalY.store(y, std::memory_order_relaxed);
+    s_walkGoalActive.store(true, std::memory_order_release);
+}
+void ClearWalkGoal() { s_walkGoalActive.store(false, std::memory_order_release); }
+bool GetWalkGoal(float& outX, float& outY, bool& outActive)
+{
+    outActive = s_walkGoalActive.load(std::memory_order_acquire);
+    if (!outActive) return false;
+    outX = s_walkGoalX.load(std::memory_order_relaxed);
+    outY = s_walkGoalY.load(std::memory_order_relaxed);
     return true;
 }
 

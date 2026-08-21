@@ -368,7 +368,15 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         bool repositionInward = false;
         if (goal.fromLock && goal.maxRange > 0.f)
             repositionInward = Len(Sub(in.player, goal.lockPos)) > goal.maxRange;
-        if (!repositionInward) {
+        // Shift+Click walk-to: keep progressing toward the commanded spot even when
+        // the stand is safe (the user told us to go somewhere). Falls through to the
+        // safe-set reflex below, which the goal-progress score (kSolveGoalW) steers
+        // toward goal.pos one budget at a time. Safety is unchanged — only SAFE
+        // candidates are considered, so this never walks into a shot.
+        bool repositionToward = false;
+        if (goal.walkTo && goal.active)
+            repositionToward = Len(Sub(in.player, goal.pos)) > kUWalkArriveTiles;
+        if (!repositionInward && !repositionToward) {
             out.kind = SolveKind::Hold;
             out.target = in.player;
             out.clearance = cands[0].clr;

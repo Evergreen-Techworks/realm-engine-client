@@ -875,6 +875,18 @@ void TestTAB::Tick(bool menuVisible)
                     const int32_t current = DangerPlanner::GetEnemyLock();
                     if (current == bestEnemyId) DangerPlanner::ClearEnemyLock();
                     else                        DangerPlanner::SetEnemyLock(bestEnemyId);
+                } else {
+                    // Shift+Click on EMPTY GROUND (no enemy or player under the
+                    // cursor) → UDodge walk-to-spot. Reuse the EXACT proven screen→
+                    // world cursor conversion the Ctrl+click teleport uses
+                    // (g_mouseWorldX/Y from S2W); UDodge::Tick pathfinds there while
+                    // still micro-dodging, and clears the goal on arrival / WASD.
+                    // Coexistence: an on-entity Shift+Click keeps the enemy-lock /
+                    // player-follow behavior above; only empty ground walks.
+                    // NOTE: minimap-click walk-to was requested but the minimap→world
+                    // transform could not be resolved to a verifiable scale (see
+                    // report) — this world-cursor path is the shipped fallback.
+                    DangerPlanner::SetWalkGoal(g_mouseWorldX, g_mouseWorldY);
                 }
             }
         }

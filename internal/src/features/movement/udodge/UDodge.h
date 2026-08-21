@@ -48,6 +48,7 @@ void  SetFieldEscape(bool en);        bool  GetFieldEscape();
 void  SetDebugOverlay(bool en);       bool  GetDebugOverlay();
 void  SetLockFollow(bool en);         bool  GetLockFollow();
 void  SetFollowLantern(bool en);      bool  GetFollowLantern();
+void  SetAutopilot(bool en);          bool  GetAutopilot();   // auto-lock highest-maxHp enemy
 void  SetStandOnType(int t);          int   GetStandOnType();
 void  SetOrbitRange(float t);         float GetOrbitRange();   // tiles; 0 = auto
 void  SetPlanRadius(float cells);     float GetPlanRadius();   // grid cells [8,40]

@@ -248,6 +248,7 @@ namespace {
             FH_INT_BOOL("udodgeDebugOverlay", UDodge::SetDebugOverlay),
             FH_INT_BOOL("udodgeLockFollow", UDodge::SetLockFollow),
             FH_INT_BOOL("udodgeFollowLantern", UDodge::SetFollowLantern),
+            FH_INT_BOOL("udodgeAutopilot", UDodge::SetAutopilot),
             FH_INT("udodgeStandOnType", UDodge::SetStandOnType),
             FH_FLOAT("udodgeOrbitRange", UDodge::SetOrbitRange),
             FH_FLOAT("udodgePlanRadius", UDodge::SetPlanRadius),

@@ -65,6 +65,10 @@ struct Goal {
                             // stay in range); false = WASD/idle (game drives — the
                             // solver only overrides to dodge, never to walk a goal)
     Vec2  lockPos{};        // locked boss position (for the stay-in-range preference)
+    bool  walkTo = false;   // true = Shift+Click walk-to-spot: the solver ACTIVELY progresses
+                            // toward goal.pos even while the current stand is safe (overriding
+                            // the durable-hold), until arrival (kUWalkArriveTiles). Distinct
+                            // from fromLock (orbit) and from a plain WASD/idle goal (bias only).
     float maxRange = 0.f;   // weapon range (tiles): the max distance from the boss at which
                             // it is still hittable. When fromLock && maxRange>0 this is the
                             // radius of the IN-RANGE DISK the solver pathfinds within — the

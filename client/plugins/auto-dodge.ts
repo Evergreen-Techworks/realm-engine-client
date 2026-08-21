@@ -306,6 +306,9 @@ export function register(ctx: PluginContext) {
   registerModeSetting('unified', 'udodgeFollowLantern',
     onOff('[UDodge][Autopilot] Follow stand-on object (lantern) — perf cost', 'off'),
     (v: string) => sendDllFeature('udodgeFollowLantern', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeAutopilot',
+    onOff('[UDodge][Autopilot] Auto-lock highest-HP enemy (auto-fight the orbit)', 'off'),
+    (v: string) => sendDllFeature('udodgeAutopilot', v === 'on' ? 1 : 0));
   registerModeSetting('unified', 'udodgeStandOnType', {
     label: '[UDodge][Autopilot] Stand-on objType (0=off; e.g. Moonlight Village lantern)',
     advanced: true,
@@ -492,7 +495,7 @@ export function register(ctx: PluginContext) {
     sendDllFeature('udodgePlanRadius', ctx.getSetting<number>('udodgePlanRadius'));
     for (const k of ['udodgeSafeWalk', 'udodgeSpeedScale',
                      'udodgeFieldEscape', 'udodgeLockFollow', 'udodgeFollowLantern',
-                     'udodgeDebugOverlay', 'udodgeDrawPath'] as const)
+                     'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     // Re-apply the 60fps cap here too. The onEnabledChange / clientConnected
     // handlers were the only places setting targetFrameRate, so if the cap
