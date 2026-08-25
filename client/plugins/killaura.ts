@@ -20,7 +20,7 @@ export function register(ctx: PluginContext) {
   // Off by default — this rewrites outbound game traffic; opt in explicitly.
   ctx.enabled = false;
 
-  const stats = { rewrites: 0 };
+  const stats = { rewrites: 0, enemyHitsSent: 0, enemyHitsBlocked: 0 };
 
   /**
    * Serialize-identity self-check. `ClientConnection` forwards a modified packet
@@ -85,8 +85,12 @@ export function register(ctx: PluginContext) {
 
   ctx.registerSetting('rangeTiles', {
     label: 'Target range (tiles)',
+    // 16 to match the DLL default (KillAura.cpp s_rangeTiles). These MUST agree:
+    // syncControlState() sends killauraRangeTiles on every enable/settings change,
+    // so a stale 8 here would silently override the DLL's 16 on every connect and
+    // re-create the short-range target flapping this default was raised to fix.
     type: 'number',
-    value: 8,
+    value: 16,
     min: 1,
     max: 30,
     step: 0.5,
@@ -148,6 +152,24 @@ export function register(ctx: PluginContext) {
     syncControlState();
   });
 
+  // DIAGNOSTIC — is the client claiming hits at all?
+  //
+  // Symptom being chased: bullets visibly reach the enemy but nothing takes
+  // damage. Damage in RotMG is client-claimed (ENEMYHIT, client->server), so
+  // there are exactly two worlds and this counter separates them:
+  //   sent > 0  -> the client IS claiming hits; the SERVER is rejecting them
+  //   sent == 0 -> the client never registered a collision, so moving the
+  //                bullet's rendered position did not move the game's own hit
+  //                test (it likely derives position from the projectile's
+  //                internal start+angle+elapsed rather than the rendered one).
+  // `blocked` counts hits some other plugin suppressed (o3-helper does this
+  // inside the O3 Sanctuary) so a suppressed hit can never be mistaken for a
+  // hit that was never claimed.
+  ctx.hookPacket('ENEMYHIT', (_client, packet) => {
+    if (packet.send === false) stats.enemyHitsBlocked++;
+    else stats.enemyHitsSent++;
+  });
+
   // ── PLAYERSHOOT origin rewrite ──────────────────────────────────────────
 
   // Registered WITHOUT `prepend` on purpose. Proxy.firePacketHooks runs handlers
@@ -204,6 +226,8 @@ export function register(ctx: PluginContext) {
       armed: armState === 'armed',
       targetId: aim?.targetId ?? 0,
       rewrites: stats.rewrites,
+      enemyHitsSent: stats.enemyHitsSent,
+      enemyHitsBlocked: stats.enemyHitsBlocked,
       refused: armState === 'refused',
       aimAgeMs: getDllAimAgeMs(),
     };
