@@ -103,6 +103,16 @@ std::vector<WorldAoe>        s_aoes;
 // Lane tracing helpers. Times here are LOCAL variables only — they trace the
 // curve shape and are discarded; nothing time-valued is stored in the lane.
 
+// Should the trace stop here? The lane must reach BOTH the user's paint length
+// (laneCap tiles — so the slider is never silently ignored) AND kLaneCoverMs of
+// TIME (so the temporal lookahead is never blind inside its own horizon). The old
+// rule was distance ONLY, which made time coverage a function of bullet speed and
+// under-stated danger for fast shots — see kLaneCoverMs in UDodgeTypes.h.
+inline bool LaneTraceDone(float pathLen, float laneCap, float tMs)
+{
+    return pathLen >= laneCap && tMs >= kLaneCoverMs;
+}
+
 // Lane from the projectile's cached path, rebased onto its live position
 // (adapted from AddCachedPath). Returns false (caller falls back to a fresh
 // ComputePosAt trace).
@@ -123,18 +133,32 @@ bool LaneFromCachedPath(LaneThreat& lane, const WorldProjectile& p, float elapse
     lane.pointCount = 0;
     lane.pointTimesMs[lane.pointCount] = 0.f;
     lane.points[lane.pointCount++] = { p.x, p.y };   // live position = anchor
+    lane.tailAtShotEnd = false;
     float pathLen = 0.f;
+    int   lastIdx = anchor;
     for (int i = anchor + 1; i < count && lane.pointCount < kMaxLanePoints; ++i) {
         if (!IsFinitePoint(p.pathX[i], p.pathY[i])) continue;
         const float sMs = p.pathSampleTimesMs[i];
         if (!IsFinite(sMs)) break;
-        if (IsFinite(p.lifetime) && p.lifetime > 0.f && sMs > p.lifetime) break;
+        if (IsFinite(p.lifetime) && p.lifetime > 0.f && sMs > p.lifetime) {
+            lane.tailAtShotEnd = true;   // stopped because the SHOT ends, not the trace
+            break;
+        }
         const Vec2 pt = { p.x + (p.pathX[i] - ax), p.y + (p.pathY[i] - ay) };
         pathLen += Len(Sub(pt, lane.points[lane.pointCount - 1]));
         lane.pointTimesMs[lane.pointCount] = std::max(0.f, sMs - tAnchor);
         lane.points[lane.pointCount++] = pt;
-        if (pathLen >= laneCap) break;
+        lastIdx = i;
+        if (LaneTraceDone(pathLen, laneCap, lane.pointTimesMs[lane.pointCount - 1])) break;
     }
+    // A COMPLETE cache spans the whole lifetime (ProjectileTrajectory::CachePath
+    // samples [0, lifetime] into kWorldProjectilePathSampleCap points), so consuming
+    // its final sample means we traced the shot to its death. A cache that was cut
+    // short by a failed positionAt read ends early — that tail is genuinely unknown.
+    if (lastIdx == count - 1 && IsFinite(p.lifetime) && p.lifetime > 0.f &&
+        IsFinite(p.pathSampleTimesMs[count - 1]) &&
+        p.pathSampleTimesMs[count - 1] >= p.lifetime - 1.f)
+        lane.tailAtShotEnd = true;
     return lane.pointCount >= 2;
 }
 
@@ -151,18 +175,29 @@ bool LaneFromFreshTrace(LaneThreat& lane, const WorldProjectile& p, float elapse
     lane.pointCount = 0;
     lane.pointTimesMs[lane.pointCount] = 0.f;
     lane.points[lane.pointCount++] = { p.x, p.y };   // live position = anchor
+    lane.tailAtShotEnd = false;
     float pathLen = 0.f;
+    // FINDING I: the loop used to run at most kMaxLanePoints−1 steps of
+    // kTraceStepMs — 690 ms with the old 24-point budget, SHORTER than the 800 ms
+    // temporal horizon no matter how slow the bullet was, so every fresh-traced
+    // lane froze 110 ms early. kMaxLanePoints is now sized so (points−1) × step
+    // reaches kLaneCoverMs (static_assert in UDodgeTypes.h), and the break below is
+    // by time+distance rather than distance alone.
     for (int k = 1; lane.pointCount < kMaxLanePoints; ++k) {
-        const float tMs = elapsedMs + static_cast<float>(k) * kTraceStepMs;
-        if (p.lifetime > 0.f && tMs > p.lifetime) break;
+        const float relMs = static_cast<float>(k) * kTraceStepMs;   // time from NOW
+        const float tMs = elapsedMs + relMs;
+        if (p.lifetime > 0.f && tMs > p.lifetime) {
+            lane.tailAtShotEnd = true;   // stopped because the SHOT ends, not the trace
+            break;
+        }
         float x = 0.f, y = 0.f;
-        if (!TryPredict(p, tMs, x, y)) break;
+        if (!TryPredict(p, tMs, x, y)) break;   // prediction died → tail genuinely unknown
         const Vec2 pt = { x + offX, y + offY };
         pathLen += Len(Sub(pt, lane.points[lane.pointCount - 1]));
         // Time from NOW: k uniform kTraceStepMs steps ahead of the live anchor.
-        lane.pointTimesMs[lane.pointCount] = static_cast<float>(k) * kTraceStepMs;
+        lane.pointTimesMs[lane.pointCount] = relMs;
         lane.points[lane.pointCount++] = pt;
-        if (pathLen >= laneCap) break;
+        if (LaneTraceDone(pathLen, laneCap, relMs)) break;
     }
     return lane.pointCount >= 2;
 }
@@ -188,30 +223,54 @@ bool LaneFromStraightExtrapolation(LaneThreat& lane, const WorldProjectile& p, f
     float stepDist = tilesPerMs * kTraceStepMs;
     if (!IsFinite(stepDist) || stepDist <= 1e-3f) stepDist = 0.5f;   // ~0.5 tile/step fallback
 
-    // Cap the lane by the bullet's REMAINING travel: a bullet 15 ms from expiring
-    // moves ~0 tiles, so extrapolating the full laneCap paints phantom danger where
-    // it will never be. effCap = min(laneCap, tilesPerMs × remainingLifetime).
-    float effCap = laneCap;
+    // HARD cap by the bullet's REMAINING travel: a bullet 15 ms from expiring moves
+    // ~0 tiles, so extrapolating further paints phantom danger where it will never
+    // be. This is a lifetime fact, so it outranks the time/distance coverage rule
+    // below (and reaching it means the tail IS the shot's end, not a lost trace).
+    float remTilesCap = kHugeClearance;
     if (IsFinite(p.lifetime) && p.lifetime > 0.f && IsFinite(elapsedMs) && tilesPerMs > 0.f) {
         const float remMs = p.lifetime - elapsedMs;
         if (!(remMs > 0.f)) return false;                        // already dead — no lane at all
         const float remTiles = tilesPerMs * remMs;
-        if (IsFinite(remTiles) && remTiles > 0.f) effCap = std::min(laneCap, remTiles);
+        if (IsFinite(remTiles) && remTiles > 0.f) remTilesCap = remTiles;
     }
 
     lane.pointCount = 0;
     lane.pointTimesMs[lane.pointCount] = 0.f;
     lane.points[lane.pointCount++] = { p.x, p.y };   // live position = anchor
+    lane.tailAtShotEnd = false;
     float pathLen = 0.f;
     while (lane.pointCount < kMaxLanePoints) {
         pathLen += stepDist;
         // stepDist == tilesPerMs × kTraceStepMs when speed is known, so each
         // spatial step is one kTraceStepMs of travel time (proxy when unknown).
-        lane.pointTimesMs[lane.pointCount] = static_cast<float>(lane.pointCount) * kTraceStepMs;
+        const float relMs = static_cast<float>(lane.pointCount) * kTraceStepMs;
+        lane.pointTimesMs[lane.pointCount] = relMs;
         lane.points[lane.pointCount++] = { p.x + dx * pathLen, p.y + dy * pathLen };
-        if (pathLen >= effCap) break;
+        if (pathLen >= remTilesCap) { lane.tailAtShotEnd = true; break; }
+        if (LaneTraceDone(pathLen, laneCap, relMs)) break;
     }
     return lane.pointCount >= 2;
+}
+
+// Sane SPAN bound (tiles from the live anchor) for a legitimate lane point. The
+// trace is TIME-capped now, so the old "laneCap + 4" bound would chop off exactly
+// the tail the temporal horizon needs on any bullet faster than laneCap/kLaneCoverMs.
+// Bound by how far this bullet can actually travel in kLaneCoverMs instead —
+// speed comes from the same field LaneFromStraightExtrapolation uses. A sanity
+// ceiling covers an unreadable/absurd speed: a real ghost sample lands hundreds of
+// tiles out (or non-finite), so it is still caught either way.
+constexpr float kLaneSpanCeilTiles = 32.f;   // 2× the kThreatCullTiles projectile cull
+
+float LaneSpanBound(const WorldProjectile& p, float laneCap)
+{
+    const float speedMul = (IsFinite(p.speedMul) && p.speedMul > 0.f) ? p.speedMul : 1.f;
+    float travel = kLaneSpanCeilTiles;   // speed unknown → trust only the ceiling
+    if (IsFinite(p.speed) && p.speed > 0.f) {
+        travel = (p.speed / 10000.f) * speedMul * kLaneCoverMs;
+        if (!IsFinite(travel) || travel < 0.f) travel = kLaneSpanCeilTiles;
+    }
+    return std::clamp(std::max(laneCap, travel), laneCap, kLaneSpanCeilTiles);
 }
 
 // Anti-ghost clamp: a lane point must never sit far from the live bullet (points[0])
@@ -219,20 +278,47 @@ bool LaneFromStraightExtrapolation(LaneThreat& lane, const WorldProjectile& p, f
 // the lane span the whole map and paint danger where there is no shot. The pathLen
 // cap only checks AFTER appending, so one huge jump slips through; truncate the lane
 // at the first point beyond a sane bound of the anchor.
-bool ClampLaneToAnchor(LaneThreat& lane, float laneCap)
+bool ClampLaneToAnchor(LaneThreat& lane, float spanBound)
 {
     if (lane.pointCount < 2) return false;
-    const float maxD = laneCap + 4.f;      // legit points stay within laneCap of the anchor
+    const float maxD = spanBound + 4.f;    // legit points stay within spanBound of the anchor
     const float maxD2 = maxD * maxD;
     const Vec2 a = lane.points[0];
     for (int i = 1; i < lane.pointCount; ++i) {
         const float dx = lane.points[i].x - a.x, dy = lane.points[i].y - a.y;
         if (!std::isfinite(dx) || !std::isfinite(dy) || dx * dx + dy * dy > maxD2) {
             lane.pointCount = i;           // drop the garbage tail (keep the good near portion)
+            lane.tailAtShotEnd = false;    // whatever the tail meant, it is gone — treat as unknown
             return true;                   // a ghost point was caught
         }
     }
     return false;
+}
+
+// Resolve the PAINT span: how many leading polyline points the present-tense
+// tests (and the overlay) treat as dangerous right now. This is the user's
+// "Danger lane length (tiles)" slider, and it reproduces the OLD truncation
+// semantics exactly — the point that CROSSES laneCap is included, like the old
+// append-then-break loop did. Everything past instantCount exists purely so the
+// temporal lookahead has samples out to its horizon.
+void SetInstantSpan(LaneThreat& lane, float laneCap)
+{
+    if (lane.pointCount <= 0) { lane.instantCount = 0; return; }
+    lane.instantCount = 1;
+    // A legitimate paint point is at most laneCap of ARC from the anchor, so it is
+    // always within laneCap straight-line distance too. Enforcing that here keeps
+    // the instantaneous field's anti-ghost exposure exactly what it was before the
+    // trace was lengthened: ClampLaneToAnchor's span bound had to widen (it now
+    // bounds a full kLaneCoverMs of travel), and without this a surviving garbage
+    // sample could be painted as a map-crossing wall of danger RIGHT NOW.
+    const float maxAnchorD = laneCap + 4.f;
+    float len = 0.f;
+    for (int i = 1; i < lane.pointCount; ++i) {
+        if (Len(Sub(lane.points[i], lane.points[0])) > maxAnchorD) break;
+        len += Len(Sub(lane.points[i], lane.points[i - 1]));
+        lane.instantCount = i + 1;
+        if (len >= laneCap) break;
+    }
 }
 
 // Trace one lane: cached path preferred, fresh trace fallback, then a straight
@@ -242,9 +328,11 @@ void TraceLane(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, floa
 {
     const char* src = nullptr;
     bool clamped = false;
-    if (LaneFromCachedPath(lane, p, elapsedMs, laneCap))            { clamped = ClampLaneToAnchor(lane, laneCap); src = "cache"; }
-    else if (LaneFromFreshTrace(lane, p, elapsedMs, laneCap))       { clamped = ClampLaneToAnchor(lane, laneCap); src = "fresh"; }
-    else if (LaneFromStraightExtrapolation(lane, p, elapsedMs, laneCap)) { clamped = ClampLaneToAnchor(lane, laneCap); src = "straight"; }
+    const float span = LaneSpanBound(p, laneCap);
+    if (LaneFromCachedPath(lane, p, elapsedMs, laneCap))            { clamped = ClampLaneToAnchor(lane, span); src = "cache"; }
+    else if (LaneFromFreshTrace(lane, p, elapsedMs, laneCap))       { clamped = ClampLaneToAnchor(lane, span); src = "fresh"; }
+    else if (LaneFromStraightExtrapolation(lane, p, elapsedMs, laneCap)) { clamped = ClampLaneToAnchor(lane, span); src = "straight"; }
+    if (src) SetInstantSpan(lane, laneCap);
     if (src) {
         if (clamped) {
             static int s_ghostN = 0;
@@ -261,6 +349,10 @@ void TraceLane(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, floa
         return;
     }
     lane.pointCount = 1;
+    lane.instantCount = 1;
+    lane.tailAtShotEnd = false;   // no trajectory at all — the tail is unknown from t=0, and the
+                                  // unknown-tail floor then reduces to "static disc at the live
+                                  // position", which is exactly the old conservative treatment.
     lane.points[0] = { p.x, p.y };
     lane.pointTimesMs[0] = 0.f;   // trajectory unknown → temporal test treats it as static (conservative)
 }
@@ -571,9 +663,9 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
         // Straight shots keep the cheap exact rigid shift below.
         const bool curved = p.wavy || p.parametric || p.boomerang || p.isTurning ||
                             p.isTurningDelayed || p.isCircleTurnDelayed || p.isAccelerating;
+        const float laneCap = std::clamp(settings.laneTiles, 2.f, 16.f);
         if (curved) {
             const float elapsedMs = static_cast<float>(nowMs > p.spawnTick ? nowMs - p.spawnTick : 0u);
-            const float laneCap = std::clamp(settings.laneTiles, 2.f, 16.f);
             TraceLane(lane, p, elapsedMs, laneCap);   // identity + hitHalf preserved (TraceLane only sets the polyline)
         } else {
             // Re-anchor: rebase the polyline so the nearest lane point becomes the
@@ -596,6 +688,14 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
                 ++outCount;
             }
             lane.pointCount = outCount;   // nearest == last ⇒ single live point
+            // The polyline lost its leading points, so the PAINT span has to be
+            // re-measured from the new anchor (it is a distance along the polyline,
+            // not a point count). tailAtShotEnd survives untouched: a rigid shift
+            // keeps the same LAST point, so what that point meant is unchanged.
+            // Coverage from NOW does shrink by the elapsed intra-tick time — that is
+            // what kLaneCoverPadMs pads for; past the pad the unknown-tail floor in
+            // Core::Temporal takes over rather than the freeze silently under-counting.
+            SetInstantSpan(lane, laneCap);
         }
     }
     if (liveCount != map.laneCount) return false;        // a lane's shot retired

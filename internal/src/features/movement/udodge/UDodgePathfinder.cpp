@@ -146,6 +146,34 @@ bool EnemyBlockedLocal(const DangerMap& m, Vec2 p)
     return false;
 }
 
+// A cell sits inside an ACTIVE AoE disc — a HARD no-go of the same class as a
+// wall. The traversal gate (ArrivalClear) is LANE-ONLY: Core::Temporal::Ctx has no
+// zone storage, and s_safe (which does subtract active zones) feeds only the
+// durable-goal test and the partial-route metric — never edge relaxation. So
+// without this the route happily walks the player straight through a live blast
+// disc and the comment on EvalCell claiming traversal is "gated in TIME" was
+// simply not true for zones.
+//
+// EXCEPT a disc the PLAYER IS ALREADY STANDING IN. Blocking those would wall the
+// player inside the blast — every neighbour of the start cell blocked, no route
+// out at all — which is the same starvation Core::ZonePathClear's escape hatch
+// exists to avoid, so the rule matches it: escape is allowed, entry is not.
+//
+// Free: called once per cell, memoized behind s_eval, and zoneCount is 0 in most
+// rooms (bounded by kMaxAoes).
+bool ZoneBlockedLocal(const DangerMap& m, Vec2 player, Vec2 p)
+{
+    for (int i = 0; i < m.zoneCount; ++i) {
+        const ZoneThreat& z = m.zones[i];
+        if (!z.active) continue;                                          // pending = cost-only
+        const float r = z.radius + kUPlayerHalf;
+        if (Len(Sub(p, z.pos)) >= r) continue;                            // cell outside this disc
+        if (Len(Sub(player, z.pos)) < r) continue;                        // we are IN it — escaping
+        return true;
+    }
+    return false;
+}
+
 struct Ctx {
     const PlannerSnapshot* s = nullptr;
     MapInput mi{};            // .env NULL, .map aliases the plain snapshot copy — plain-data only
@@ -160,16 +188,20 @@ struct Ctx {
 
 // Lazily classify a cell the first time Dijkstra reaches it. Records occupancy,
 // the spatial PointSafety (used ONLY for the durable-goal test and the partial
-// best-safety metric — NOT as a traversal penalty; traversal is gated in TIME by
-// ArrivalClear, so a cell a bullet's forward path merely crosses is still
+// best-safety metric — NOT as a traversal penalty; BULLET traversal is gated in
+// TIME by ArrivalClear, so a cell a bullet's forward path merely crosses is still
 // traversable if the bullet is not there when the player arrives), and whether the
 // cell is a durable-safe goal (PointSafety ≥ margin, inside the disk when locked).
+// ACTIVE AoE discs are the exception to the time gate: they do not move, so there
+// is nothing to thread and ArrivalClear cannot see them anyway — they are blocked
+// here, alongside walls and enemy bodies (see ZoneBlockedLocal).
 void EvalCell(const Ctx& c, int idx, int gx, int gy)
 {
     if (s_eval[idx]) return;
     const Vec2 w = CellWorld(c.s->grid.center, gx, gy);
     if (GridBlocked(c.s->grid, c.s->settings.safeWalk, gx, gy) ||
-        EnemyBlockedLocal(c.s->map, w)) {
+        EnemyBlockedLocal(c.s->map, w) ||
+        ZoneBlockedLocal(c.s->map, c.mi.player, w)) {
         s_eval[idx] = 1;
         return;
     }

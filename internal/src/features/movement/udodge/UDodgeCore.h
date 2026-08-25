@@ -33,11 +33,21 @@ float PointClearance(const MapInput& in, Vec2 pos);
 // "safe" is ~0.21 tiles too optimistic).
 float PointSafety(const MapInput& in, Vec2 pos);
 
-// True when `pos` is outside every ACTIVE AoE disc (endpoint test, player half
-// folded in). Core::Temporal is lane-only and cannot see zones, so any admission
-// path gated on Temporal::PathClear MUST also clear this or it will happily
-// thread a live blast. See the comment on the definition for why endpoint-only.
+// True when `pos` is outside every ACTIVE AoE disc (POINT test, player half folded
+// in). Core::Temporal is lane-only and cannot see zones, so any admission path
+// gated on Temporal::PathClear MUST also clear a zone test or it will happily
+// thread a live blast. For a MOVE that test is ZonePathClear below (this one only
+// checks where you end up, not what you cross); this point form is the primitive
+// it is built from, and the right test for a position with no motion attached.
 bool ZoneClear(const MapInput& in, Vec2 pos);
+
+// SWEPT variant for a MOVE: true when the straight step `from`→`to` never enters
+// an active disc. A solver step is up to ~1.9 tiles and can cross a 1-tile disc
+// with both endpoints clear, and Temporal::PathClear is zone-blind, so any
+// temporal admission of a MOVE must use this rather than the endpoint ZoneClear.
+// Falls back to the endpoint rule when `from` is already inside a disc — see the
+// definition for why that escape hatch has to stay.
+bool ZonePathClear(const MapInput& in, Vec2 from, Vec2 to);
 
 // Hard safety predicate used by the solver: occupancy-clear AND
 // PointSafety(pos) >= pad. `pad` lets the solver require the latency margin.
@@ -89,6 +99,15 @@ struct Ctx {
     // of one chord. Only valid where sub[i]; slow lanes never read it.
     Vec2  mid[kMaxProjectiles][kUTemporalSteps];
     bool  sub[kMaxProjectiles];             // this lane needs the half-step samples
+    // TRUSTED PREFIX (the honest freeze). `trust[i]` is the last march index whose
+    // sample is a real prediction; kUTemporalSteps means the lane is traced all the
+    // way to the horizon (or to the shot's death) and needs no special handling —
+    // the overwhelmingly common case, and the only one the hot loops pay for (one
+    // int compare per lane). A SHORT trace leaves SampleLaneTimes clamping to the
+    // last traced point, which would read as "a parked bullet in a known-safe
+    // place"; past trust[i] the queries fall back to the present-tense floor
+    // instead. See the UNKNOWN TAIL comment in UDodgeCore.cpp.
+    int   trust[kMaxProjectiles];
 };
 
 // Sample one lane's spacetime polyline at each march time (clamp past the traced

@@ -386,7 +386,13 @@ struct Settings {
                                  // targetable enemy as the enemy lock each tick
                                  // so the orbit/in-range fight engages automatically
     int   standOnType   = 0;     // objType to stand on (0 = off)
-    float laneTiles = 12.f;  // danger-lane paint length (tiles)      [2, 16]
+    float laneTiles = 12.f;  // danger-lane PAINT length (tiles)      [2, 16]
+                             // How far along a bullet's traced path counts as dangerous
+                             // RIGHT NOW (LaneThreat::instantCount) — the overlay length
+                             // and the instantaneous safety/cost field. It no longer caps
+                             // the trace itself: the polyline is traced by TIME
+                             // (kLaneCoverMs) so the temporal lookahead is never blind
+                             // past this slider. Bigger = more timid instantaneously.
     float stepTiles = 0.f;   // candidate step distance; 0 = auto
                              // (tilesPerSec × kServerTickSec)        [0 | 0.4, 3]
     float reactMargin = 0.60f;  // reaction clearance floor (tiles) [0.05, 2.0]
@@ -417,18 +423,58 @@ struct Env {
 // thread TIME-gaps (stand where a bullet only WILL be, or has already passed).
 // Zones are discs classified active (hard) / pending (soft).
 
-constexpr int   kMaxLanePoints    = 24;     // per-lane polyline cap
-constexpr float kHugeClearance    = 1.0e9f; // "no danger anywhere" sentinel
-constexpr float kServerTickSec    = 0.2f;   // planning quantum: one server tick of motion
+// ── Lane trace budget: TIME-capped, not distance-capped ─────────────────────
+// A lane is the bullet's spacetime polyline, and the temporal lookahead can only
+// see as far as the polyline reaches. Truncating it by DISTANCE (the old
+// `pathLen >= laneTiles` break) made a lane's TIME coverage a function of bullet
+// speed: at 25 tiles/s the default 12-tile lane covered only 480 ms, so
+// SampleLaneTimes froze the bullet at 480 ms and every cell it swept over
+// [480, 800] ms read CLEAR. That silently BROKE the conservative-freeze
+// invariant (UDodgeCore.cpp) for exactly the fast shots it mattered for.
+//
+// The trace is now capped by TIME: every lane covers at least kLaneCoverMs.
+// `laneTiles` survives as the PAINT span (LaneThreat::instantCount) — how far
+// along the polyline the PRESENT-TENSE tests and the overlay treat as dangerous
+// right now — so the user slider still does exactly what its label says while the
+// temporal layer always has samples out to its horizon.
+//
+// kLaneCoverMs = the temporal horizon + one server tick of pad. The pad is what
+// ReanchorMap eats: between server-tick BuildMaps a straight lane is re-anchored
+// by dropping its leading points, which shortens its coverage from NOW by up to
+// one tick. Without the pad every re-anchored lane would fall short of the
+// horizon and trip the unknown-tail floor below.
+constexpr float kLaneCoverPadMs   = 250.f;  // ≥ one server tick (kServerTickSec) of re-anchor decay
+constexpr float kLaneCoverMs      = kUTemporalSteps * kUTemporalStepMs + kLaneCoverPadMs;   // 1050 ms
 constexpr float kTraceStepMs      = 30.f;   // sensor-internal geometry tracing step —
                                             // time never leaves the sensor
+// 36 points × 30 ms = 1050 ms of coverage at the SAME 30 ms resolution as before
+// (raising the step instead would have chorded wavy/turning shots more coarsely).
+// Memory: 12 B/point (Vec2 + float) × kMaxProjectiles(96) = 1.15 KB per extra
+// point, so 24 → 36 costs ~13.8 KB per DangerMap (29.6 → 43.4 KB). There are a
+// handful of DangerMaps (g_map, two PlannerSnapshots, the debug slot) and they
+// are all statics/globals, so this is ~70 KB of BSS, not stack.
+constexpr int   kMaxLanePoints    = 36;     // per-lane polyline cap
+static_assert(static_cast<float>(kMaxLanePoints - 1) * kTraceStepMs >= kLaneCoverMs,
+              "lane point budget must reach kLaneCoverMs at kTraceStepMs resolution");
+constexpr float kHugeClearance    = 1.0e9f; // "no danger anywhere" sentinel
+constexpr float kServerTickSec    = 0.2f;   // planning quantum: one server tick of motion
 
 struct LaneThreat {
     int32_t  bulletId      = 0;   // identity for mid-tick re-anchoring...
     int32_t  attackerObjId = 0;   // ...(bulletId alone is not globally unique)
     uint32_t ownerObjId    = 0;
     float    hitHalf       = 0.5f; // game IsHit Chebyshev half (same rule as before)
-    int      pointCount    = 0;
+    int      pointCount    = 0;    // FULL spacetime polyline (time-capped: covers kLaneCoverMs
+                                   // or the shot's death, whichever comes first). TEMPORAL only.
+    int      instantCount  = 0;    // leading points within the user's laneTiles PAINT span —
+                                   // what every PRESENT-TENSE test (PointSafety / SegmentSafety /
+                                   // PointClear) and the overlay read. Always <= pointCount.
+                                   // Keeping these separate is what stops the longer trace from
+                                   // silently widening the instantaneous danger field (and with it
+                                   // the pathfinder's per-cell cost) behind the user's slider.
+    bool     tailAtShotEnd = false;// the last point is where the SHOT ENDS (lifetime reached), so
+                                   // freezing the bullet there is a FACT. False means the trace
+                                   // merely ran out — see the unknown-tail floor in UDodgeCore.
     Vec2     points[kMaxLanePoints]{};   // points[0] = live position (anchor)
     float    pointTimesMs[kMaxLanePoints]{}; // time (ms from NOW) the bullet reaches points[i]; [0]=0 (live).
                                              // The temporal lookahead interpolates bullet-position-at-time from

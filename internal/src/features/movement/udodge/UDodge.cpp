@@ -824,11 +824,12 @@ void Tick(void* player, float px, float py, float dt)
             Core::Temporal::Ctx ctx;
             Core::Temporal::Build(*in.map, in.settings.hitScale, in.player,
                                   kUTemporalCullTiles, ctx);
-            // ZoneClear first: Temporal is lane-only, so a bomb that armed since the
+            // Zone floor first: Temporal is lane-only, so a bomb that armed since the
             // solve would not invalidate the target on its own. This is the per-frame
             // "is my committed target still good?" check — exactly where a newly
-            // active blast disc must cancel a walk that is heading into it.
-            targetOk = Core::ZoneClear(in, g_solve.target) &&
+            // active blast disc must cancel a walk that is heading into it, or
+            // THROUGH it (swept, same as the solver's admission).
+            targetOk = Core::ZonePathClear(in, in.player, g_solve.target) &&
                        Core::Temporal::PathClear(ctx, in.player, in.speed, g_solve.target);
         } else {
             // Plain reflex target: must still be spatially safe on the re-anchored lanes.

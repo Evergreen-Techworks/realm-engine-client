@@ -17,10 +17,11 @@ namespace {
 // measures against.
 float LaneDistCheb(const LaneThreat& L, Vec2 p)
 {
-    if (L.pointCount <= 0) return kHugeClearance;
-    if (L.pointCount == 1) return Cheb(L.points[0].x - p.x, L.points[0].y - p.y);
+    const int n = L.instantCount;   // PAINT span (laneTiles), not the full traced polyline
+    if (n <= 0) return kHugeClearance;
+    if (n == 1) return Cheb(L.points[0].x - p.x, L.points[0].y - p.y);
     float best = kHugeClearance;
-    for (int j = 0; j + 1 < L.pointCount; ++j) {
+    for (int j = 0; j + 1 < n; ++j) {
         const Vec2 a = L.points[j];
         const Vec2 b = L.points[j + 1];
         best = std::min(best, MinChebOnSegment(a.x - p.x, a.y - p.y,
@@ -106,7 +107,7 @@ float PointClearance(const MapInput& in, Vec2 pos)
     float best = kHugeClearance;
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
-        if (L.pointCount <= 0) continue;
+        if (L.instantCount <= 0) continue;
         const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale;
         best = std::min(best, LaneDistCheb(L, pos) - half);
     }
@@ -148,6 +149,34 @@ bool ZoneClear(const MapInput& in, Vec2 pos)
     return true;
 }
 
+// SWEPT zone floor for a temporal-admission MOVE. Same job as ZoneClear, but for
+// the straight player move `from`→`to` rather than a single point: a solver step
+// is up to ~1.9 tiles, which comfortably crosses a 1-tile blast disc with BOTH
+// endpoints clear. Endpoint-only there is a real hole — Temporal::PathClear cannot
+// see it either (Ctx is lane-only), so nothing else would catch it.
+//
+// The endpoint-only rationale above is preserved, not discarded — it is exactly
+// right for ONE case and now applies only to that case: when `from` is ALREADY
+// inside an active disc, every move out of it necessarily sweeps the disc, so a
+// swept test would veto every candidate precisely when escape matters most.
+// There we keep the endpoint rule, which still refuses a step that ENDS inside a
+// disc while admitting the ones that leave. Everywhere else the sweep applies.
+//
+// Cost: the same shape as SegmentSafety's zone term (zoneCount <= kMaxAoes, one
+// point-segment distance each) and typically zero work — zoneCount is 0 in most
+// rooms, and the loop does not run at all then.
+bool ZonePathClear(const MapInput& in, Vec2 from, Vec2 to)
+{
+    if (!in.map) return true;
+    if (!ZoneClear(in, from)) return ZoneClear(in, to);   // escaping a disc: endpoint rule
+    for (int i = 0; i < in.map->zoneCount; ++i) {
+        const ZoneThreat& z = in.map->zones[i];
+        if (!z.active) continue;                          // pending zones stay cost-only
+        if (PointSegDistEuclid(z.pos, from, to) - (z.radius + kUPlayerHalf) < 0.f) return false;
+    }
+    return true;
+}
+
 float PointSafety(const MapInput& in, Vec2 pos)
 {
     if (!in.map) return 0.f;
@@ -155,7 +184,7 @@ float PointSafety(const MapInput& in, Vec2 pos)
     float best = kHugeClearance;
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
-        if (L.pointCount <= 0) continue;
+        if (L.instantCount <= 0) continue;
         const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + kUPlayerHalf;
         best = std::min(best, LaneDistCheb(L, pos) - half);
     }
@@ -187,16 +216,17 @@ float SegmentSafety(const MapInput& in, Vec2 a, Vec2 b)
     float best = kHugeClearance;
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
-        if (L.pointCount <= 0) continue;
+        const int n = L.instantCount;   // PAINT span, same as LaneDistCheb
+        if (n <= 0) continue;
         const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + kUPlayerHalf;
         float dCheb;
-        if (L.pointCount == 1) {
+        if (n == 1) {
             // Point lane: min Cheb from the single bullet point to the swept segment.
             dCheb = MinChebOnSegment(L.points[0].x - a.x, L.points[0].y - a.y,
                                      L.points[0].x - b.x, L.points[0].y - b.y);
         } else {
             dCheb = kHugeClearance;
-            for (int j = 0; j + 1 < L.pointCount; ++j)
+            for (int j = 0; j + 1 < n; ++j)
                 dCheb = std::min(dCheb, SegSegCheb(a, b, L.points[j], L.points[j + 1]));
         }
         best = std::min(best, dCheb - half);
@@ -231,10 +261,19 @@ namespace Temporal {
 // clamps to the last traced point — the CONSERVATIVE-FREEZE contract: a bullet
 // whose trace runs out before the sample time is assumed frozen where prediction
 // ends, never extrapolated forward (extrapolating a curved shot past its trace is
-// how ghost lanes appear — see ClampLaneToAnchor, UDodgeSensors.cpp). Freezing
-// only UNDER-counts a still-closing wall OUTSIDE the horizon; the fix for that
-// under-count is the longer horizon (kUTemporalSteps, plan 95), not extrapolation.
-// This is safety-positive: it can only report equal-or-more danger, never less.
+// how ghost lanes appear — see ClampLaneToAnchor, UDodgeSensors.cpp).
+//
+// That clamp is only safety-positive where the freeze point is a FACT — i.e. the
+// lane was traced to the shot's death. It is NOT safety-positive where the trace
+// merely ran out mid-flight: the frozen sample then reads as "a parked bullet in a
+// known-safe place" and every cell the shot really sweeps afterwards reads CLEAR.
+// That is exactly what the distance-capped lane trace used to produce (a 12-tile
+// lane on a 25 tiles/s shot covered 480 ms of an 800 ms horizon), so the invariant
+// this comment used to assert was false for precisely the fast shots it mattered
+// for. Two things now hold it up: lanes are traced by TIME (kLaneCoverMs,
+// UDodgeTypes.h) so the clamp normally never fires inside the horizon, and where a
+// trace still falls short, Ctx::trust marks the prefix and the queries stop
+// trusting the frozen tail (see UNKNOWN TAIL below).
 // Sample a lane's spacetime polyline at `count` times starting at `firstMs`,
 // spaced kUTemporalStepMs apart. Used for both the march grid (firstMs = 0) and
 // the fast-lane half-step refinement (firstMs = ½·step).
@@ -296,7 +335,50 @@ void Build(const DangerMap& map, float hitScale, Vec2 cullCenter,
         out.sub[idx] = (maxSweep > kUTemporalMaxSweepTiles);
         if (out.sub[idx])
             SampleLaneTimes(L, kUTemporalStepMs * 0.5f, kUTemporalSteps, out.mid[idx]);
+        // TRUSTED PREFIX. Samples past the polyline's last point are the clamp, not
+        // a prediction. They are still a FACT when that point is where the shot
+        // ENDS (tailAtShotEnd) — a dead bullet genuinely stops. Otherwise trust only
+        // the marched steps the trace actually reached; the queries fall back to the
+        // present-tense floor past that. Note this also catches COVERAGE DECAY: a
+        // lane traced at the last server tick loses time-from-now on every mid-tick
+        // re-anchor, which no per-trace flag would ever see.
+        const float tracedMs = L.pointTimesMs[L.pointCount - 1];
+        if (L.tailAtShotEnd || !(tracedMs < kHorizonMs)) {
+            out.trust[idx] = kUTemporalSteps;
+        } else {
+            const int t = static_cast<int>(std::floor(tracedMs / kUTemporalStepMs));
+            out.trust[idx] = std::clamp(t, 0, kUTemporalSteps);
+        }
     }
+}
+
+// ── UNKNOWN TAIL floor (the honest freeze) ──────────────────────────────────
+// For a lane whose trace stopped short while the shot was still alive, the samples
+// past c.trust[li] are the clamp holding the last traced point still. Reading that
+// as a parked bullet is the silent UNDER-count; extrapolating instead is how ghost
+// lanes appear. The honest third option is to drop back to the PRESENT-TENSE model
+// for that lane past its trusted end: the bullet is somewhere on the path we DID
+// trace, so treat that whole traced prefix as dangerous — which is precisely what
+// the instantaneous floor (PointSafety over the lane polyline) already asserts.
+//
+// CHOSEN over "hard-block the lane past tEnd" because it cannot starve admission:
+// it only forbids positions on/near a polyline that PointSafety forbids anyway, so
+// it never removes a candidate the conservative floor would have kept. It only
+// stops the temporal layer LIFTING that floor on a lane it can no longer see.
+//
+// Cost is bounded and paid by truncated lanes only: (kUTemporalSteps − trust)
+// query steps × trust traced segments ≤ 16 SegSegCheb per lane per query, and a
+// fully-traced lane pays a single int compare.
+static bool TracedPathClear(const Ctx& c, int li, Vec2 a, Vec2 b, float half)
+{
+    const int n = c.trust[li];
+    if (n <= 0) {   // nothing traced at all (single-point lane): the live disc
+        return MinChebOnSegment(c.pos[li][0].x - a.x, c.pos[li][0].y - a.y,
+                                c.pos[li][0].x - b.x, c.pos[li][0].y - b.y) > half;
+    }
+    for (int j = 0; j < n; ++j)
+        if (SegSegCheb(a, b, c.pos[li][j], c.pos[li][j + 1]) <= half) return false;
+    return true;
 }
 
 // Bullet position at arbitrary time t (ms), interpolated within the fixed march
@@ -393,8 +475,10 @@ bool PathClear(const Ctx& c, Vec2 player, float speed, Vec2 P, float dwellMs)
     };
 
     for (int li = 0; li < c.count; ++li) {
-        const float half = c.half[li] + kUArrivalMargin;
+        const float half  = c.half[li] + kUArrivalMargin;
+        const int   trust = c.trust[li];
         for (int k = 0; k < kUTemporalSteps; ++k) {
+            if (k >= trust) break;                   // untrusted tail — handled below
             const float t0 = static_cast<float>(k) * kUTemporalStepMs;
             if (t0 >= tCheckEnd) break;              // past the dwell window — next lane
             const float t1 = t0 + kUTemporalStepMs;
@@ -426,9 +510,24 @@ bool PathClear(const Ctx& c, Vec2 player, float speed, Vec2 P, float dwellMs)
                 pPrev = pCur; bPrev = bCur;
             }
         }
+        if (trust < kUTemporalSteps) {
+            // UNKNOWN TAIL: past the trusted end this lane is judged against its
+            // whole traced path, not against a frozen point. The player's path over
+            // [tTrust, tCheckEnd] is walk-then-hold, so split it at the arrival kink.
+            const float tTrust = static_cast<float>(trust) * kUTemporalStepMs;
+            if (tCheckEnd > tTrust) {
+                Vec2 pa = playerAt(tTrust);
+                if (tArrive > tTrust && tArrive < tCheckEnd) {
+                    const Vec2 pk = playerAt(tArrive);
+                    if (!TracedPathClear(c, li, pa, pk, half)) return false;
+                    pa = pk;
+                }
+                if (!TracedPathClear(c, li, pa, playerAt(tCheckEnd), half)) return false;
+            }
+        }
         // Final sample (t = horizon): player is holding at P by now. Only meaningful
         // if the dwell window actually reaches the end of the horizon.
-        if (kHorizonMs <= tCheckEnd) {
+        else if (kHorizonMs <= tCheckEnd) {
             const Vec2 ppEnd = playerAt(kHorizonMs);
             const Vec2 bEnd  = c.pos[li][kUTemporalSteps];
             if (Cheb(bEnd.x - ppEnd.x, bEnd.y - ppEnd.y) <= half) return false;
@@ -458,6 +557,14 @@ bool ArrivalClear(const Ctx& c, Vec2 B, float tA, float tB)
 {
     for (int li = 0; li < c.count; ++li) {
         const float half = c.half[li] + kUArrivalMargin;
+        // UNKNOWN TAIL: this edge's window runs past what the lane's trace covers,
+        // so past that point the lane is judged against its whole traced path
+        // (see TracedPathClear). One test covers the entire untrusted remainder —
+        // B is a fixed point here, so there is no player path to split.
+        if (c.trust[li] < kUTemporalSteps) {
+            const float tTrust = static_cast<float>(c.trust[li]) * kUTemporalStepMs;
+            if (tB > tTrust && !TracedPathClear(c, li, B, B, half)) return false;
+        }
         if (!c.sub[li]) {
             const Vec2 b0 = BulletPosAt(c, li, tA);
             const Vec2 b1 = BulletPosAt(c, li, tB);

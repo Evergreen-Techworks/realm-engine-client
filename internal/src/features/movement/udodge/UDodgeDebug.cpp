@@ -235,12 +235,18 @@ void Render(const DebugSnapshot& snap,
                         static_cast<float>(kUPathMaxRadCells) * kUPathCellTiles,
                         IM_COL32(90, 180, 255, 150), 2.f);
 
-    // Danger lanes: live anchor + remaining-path polyline.
+    // Danger lanes: live anchor + remaining-path polyline. The bright section is the
+    // PAINT span (the "Danger lane length" slider) — what counts as dangerous RIGHT
+    // NOW. The faint continuation is the rest of the traced spacetime polyline,
+    // which exists so the temporal lookahead can see to its horizon; it is NOT
+    // instantaneous danger, so it is drawn as the lookahead it is.
     for (int i = 0; i < std::min(snap.map.laneCount, kMaxProjectiles); ++i) {
         const LaneThreat& t = snap.map.lanes[i];
-        const int n = std::min(t.pointCount, kMaxLanePoints);
+        const int n  = std::min(t.pointCount, kMaxLanePoints);
+        const int ni = std::min(t.instantCount, n);
         for (int j = 0; j + 1 < n; ++j)
-            DrawLine(d, cam, t.points[j], t.points[j + 1], IM_COL32(235, 80, 80, 110), 1.5f);
+            DrawLine(d, cam, t.points[j], t.points[j + 1],
+                     (j + 1 < ni) ? IM_COL32(235, 80, 80, 110) : IM_COL32(235, 80, 80, 40), 1.5f);
         if (n > 0) DrawDot(d, cam, t.points[0], 3.f, IM_COL32(255, 90, 90, 220));
     }
 

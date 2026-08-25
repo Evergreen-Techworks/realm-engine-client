@@ -243,8 +243,10 @@ bool IsDurablePocketTemporal(const MapInput& in, const Core::Temporal::Ctx& ctx,
     // A durable pocket must be clear of ACTIVE AoE discs. The isStand floor above
     // already covers this for a STAND (PointSafety subtracts active zones), but a
     // non-stand pocket goal would otherwise be validated by the zone-blind
-    // Temporal alone and could sit inside a live blast.
-    if (!Core::ZoneClear(in, p)) return false;
+    // Temporal alone and could sit inside a live blast. SWEPT along the same
+    // straight walk PathClear models below — the endpoint test let a ~1.9-tile step
+    // cross a 1-tile disc with both ends clear.
+    if (!Core::ZonePathClear(in, in.player, p)) return false;
     // DWELL HORIZON: a STAND is the one query where "the player is still standing
     // there later" is literally true and worth knowing — judging it over the FULL
     // horizon is how a slow-closing wall gets us pre-positioning early (plan 95).
@@ -406,7 +408,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
                     const bool contWalkable = !in.env.canOccupy ||
                                  in.env.canOccupy(contTarget.x, contTarget.y, in.settings.safeWalk);
                     if (contWalkable && !EnemyBlocked(in, contTarget) &&
-                        Core::ZoneClear(in, contTarget) &&   // never hold a heading INTO a live blast
+                        Core::ZonePathClear(in, in.player, contTarget) &&   // never hold a heading INTO or THROUGH a live blast
                         Core::Temporal::PathClear(ctx, in.player, in.speed, contTarget)) {
                         dir = prevDir;
                         to  = Sub(contTarget, in.player);
@@ -421,7 +423,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             const bool  walkable = !in.env.canOccupy ||
                          in.env.canOccupy(target.x, target.y, in.settings.safeWalk);
             if (walkable && !EnemyBlocked(in, target) &&
-                Core::ZoneClear(in, target) &&                                    // active-zone hard floor (Temporal is lane-only)
+                Core::ZonePathClear(in, in.player, target) &&                     // active-zone hard floor, SWEPT (Temporal is lane-only)
                 Core::Temporal::PathClear(ctx, in.player, in.speed, target)) {   // immediate-step temporal floor
                 out.kind = SolveKind::Safe;
                 out.target = target;
@@ -460,17 +462,18 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         //     reckless.
         const bool instSafe = cands[i].safe &&
                               Core::SegmentSafety(in, in.player, cands[i].pos) >= kULatencyPad;
-        // Core::ZoneClear is a HARD FLOOR here, not a refinement. Temporal models
+        // Core::ZonePathClear is a HARD FLOOR here, not a refinement. Temporal models
         // BULLET LANES ONLY (Ctx has no zone storage), so PathClear happily returns
-        // true for a cell dead-centre in a live blast disc. Threading a moving
-        // bullet is the intended behaviour; "threading" a static AoE disc is not a
-        // thing — it is just standing in the bomb. Without this, an active zone
+        // true for a cell dead-centre in a live blast disc — or for a step that
+        // crosses one. Threading a moving bullet is the intended behaviour;
+        // "threading" a static AoE disc is not a thing — it is just walking through
+        // the bomb. Hence the SWEPT form. Without this floor, an active zone
         // makes instSafe false for EVERY candidate (SegmentSafety starts at the
         // player, who is inside the disc), admission falls entirely onto the
         // zone-blind path, the clr clamp below erases the negative penetration, and
         // the weave reward makes standing still the winning move.
         const bool tempSafe = !instSafe &&
-                              Core::ZoneClear(in, cands[i].pos) &&
+                              Core::ZonePathClear(in, in.player, cands[i].pos) &&
                               Core::Temporal::PathClear(ctx, in.player, in.speed, cands[i].pos);
         if (!instSafe && !tempSafe) continue;
         // Score: an instantaneously-safe spot keeps its real (high) clearance, so an
