@@ -219,6 +219,7 @@ export function register(ctx: PluginContext) {
     syncControlState();
   });
 
+  let lastDiagKey = '';
   const scheduler = new RuntimeScheduler();
   scheduler.scheduleRepeating(1000, () => {
     const aim = getDllAim();
@@ -233,6 +234,28 @@ export function register(ctx: PluginContext) {
     };
     ctx.setData('killaura', diag);
     ctx.broadcastData('killaura', diag);
+
+    // Also mirror to the proxy log on CHANGE. broadcastData only reaches the
+    // dashboard UI, which means these counters could not be read after the fact
+    // or from outside the running app — and the whole point of them is to settle
+    // "is the client claiming hits, or is the server refusing them?" from
+    // evidence rather than argument. Change-keyed, so a steady state costs one
+    // string compare per second and an idle session logs nothing.
+    //
+    //   GREP THE PROXY LOG FOR:  [Killaura] diag
+    //   (%TEMP%\\realm-engine-proxy.log)
+    const key = `${diag.armed}|${diag.refused}|${diag.targetId}|${diag.rewrites}`
+              + `|${diag.enemyHitsSent}|${diag.enemyHitsBlocked}`;
+    if (key !== lastDiagKey) {
+      lastDiagKey = key;
+      ctx.log(`diag armed=${diag.armed} refused=${diag.refused}`
+        + ` target=${diag.targetId} rewrites=${diag.rewrites}`
+        + ` enemyHitsSent=${diag.enemyHitsSent} enemyHitsBlocked=${diag.enemyHitsBlocked}`
+        + ` aimAgeMs=${diag.aimAgeMs}`
+        + (diag.rewrites > 0 && diag.enemyHitsSent === 0
+            ? '  <-- bullets moved but the client NEVER claimed a hit'
+            : ''));
+    }
   });
 
   ctx.registerCleanup(() => {
