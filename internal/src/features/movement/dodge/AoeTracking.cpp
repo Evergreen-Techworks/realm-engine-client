@@ -74,22 +74,34 @@ static constexpr float kDedupTolSq = 0.01f;  // (0.1 tile)^2
 // than chip the player.
 static constexpr float kDefaultAoeRadiusTiles = 3.5f;
 
-// HJMBOMEHGDJ::CGBILOJJPEI — ShowEffect packet handler (RVA 0x180B33560).
+// COEFCBBIBMC::JEFJDICFNBA — the ShowEffect PACKET's own Read(PacketReader)
+// override (RVA 0x004B6F60), overriding OODFCLBKDJJ::JEFJDICFNBA.
 // Catches THROW(4), NOVA(5), CIRCLE_TELEGRAPH(23), AoE(39) effect types.
-// x64 ABI: rcx=this (HJMBOMEHGDJ*), rdx=COEFCBBIBMC* msg, r8=MethodInfo*
-static constexpr const char* kShowEffectClass      = "HJMBOMEHGDJ";
-static constexpr const char* kShowEffectMethod     = "CGBILOJJPEI";
-static constexpr int         kShowEffectParamCount = 1;  // (COEFCBBIBMC* msg)
+//
+// This used to hook the WorldManager-side handler HJMBOMEHGDJ::CGBILOJJPEI, which
+// went dead on a game patch: HJMBOMEHGDJ still resolves (it is WorldManager) but
+// CGBILOJJPEI no longer exists in the build — BeeByte re-rolled 71 of that class's
+// method names and this was one of them, so the hook silently never installed
+// ("hooks: 3/4 ... showEffect=0") and Throw/Nova/CircleTelegraph/AoE were never
+// recorded at all. The new name is not recoverable: 66 sibling methods share the
+// signature and RVA order does not survive the rebuild.
+//
+// The packet class is the stable target instead — COEFCBBIBMC and all five of its
+// methods kept their names across the patch, and it is already a BootGate anchor
+// with a RuntimeOffsets block. `self` IS the packet here (no separate msg param),
+// and its fields only populate once Read returns, so the detour must call the
+// original FIRST.
+//
+// x64 ABI: rcx=this (COEFCBBIBMC*), rdx=BHFDLBOGHIB* reader, r8=MethodInfo*
+static constexpr const char* kShowEffectClass      = "COEFCBBIBMC";
+static constexpr const char* kShowEffectMethod     = "JEFJDICFNBA";
+static constexpr int         kShowEffectParamCount = 1;  // (BHFDLBOGHIB* reader)
 
 // COEFCBBIBMC ShowEffect packet field offsets — resolved at runtime via RuntimeOffsets.
 
-// ShowEffect effectType values we care about
-
-// ShowEffect effectType values we care about (game protocol constants — not class field offsets)
-static constexpr int32_t kSfxType_Throw           =  4;  // throw arc visual (pos1=src, pos2=dest)
-static constexpr int32_t kSfxType_Nova            =  5;  // expanding ring at pos1
-static constexpr int32_t kSfxType_CircleTelegraph = 23;  // ground warning circle at pos1
-static constexpr int32_t kSfxType_AoE             = 39;  // Exalt-specific AoE at pos1
+// ShowEffect effectType values (kSfxType_*) live in WorldTAB.h next to
+// WorldAoe::sfxEffectType — the dodge sensors need the same constants to decide
+// which SFX effects are armed on capture, so there is one definition, not two.
 
 // #region agent log
 // Hypotheses: H1=IL2CPP klass/method resolve fails, H2=MinHook init/create/enable fails,
@@ -276,17 +288,32 @@ static int32_t TryReadObjectId(void* base)
     return Game::Entity(base).ObjId();
 }
 
+// COEFCBBIBMC's two positions are POINTERS to FFLIAABAAFP (WorldPos), a reference
+// type whose x/y live inside the pointed-to object — NOT inline Vector2s on the
+// packet. Deref, then read x/y at the shape-resolved Sfx_Wpos* offsets.
+// Returns false for a null / unreadable / non-finite position; pos2 is legitimately
+// null for every effect except THROW, so the caller decides whether that matters.
+static bool TryReadWorldPos(void* msg, uint32_t ptrOff, float& outX, float& outY)
+{
+    void* wp = Mem::ReadPtr(msg, ptrOff);
+    if (!Mem::AddrOk(wp))                                     return false;
+    if (!Mem::TryRead(wp, RuntimeOffsets::Sfx_WposX, outX))    return false;
+    if (!Mem::TryRead(wp, RuntimeOffsets::Sfx_WposY, outY))    return false;
+    return std::isfinite(outX) && std::isfinite(outY);
+}
+
 // SEH-safe reader for COEFCBBIBMC (ShowEffect packet) fields.
+// pos1 (the effect's source / centre) is required; pos2 is optional and
+// outHasP2 says whether it was present.
 static bool TryReadShowEffectFields(void* msg, int32_t& outType, int32_t& outObjId,
-    float& outP1X, float& outP1Y, float& outP2X, float& outP2Y, float& outDur)
+    float& outP1X, float& outP1Y, float& outP2X, float& outP2Y, bool& outHasP2,
+    float& outDur)
 {
     if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_EffectType,  outType))  return false;
     if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_TargetObjId, outObjId)) return false;
-    if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_Pos1X,       outP1X))   return false;
-    if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_Pos1Y,       outP1Y))   return false;
-    if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_Pos2X,       outP2X))   return false;
-    if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_Pos2Y,       outP2Y))   return false;
     if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_Duration,    outDur))   return false;
+    if (!TryReadWorldPos(msg, RuntimeOffsets::Sfx_Pos1Ptr, outP1X, outP1Y)) return false;
+    outHasP2 = TryReadWorldPos(msg, RuntimeOffsets::Sfx_Pos2Ptr, outP2X, outP2Y);
     return true;
 }
 
@@ -596,31 +623,38 @@ static void __fastcall ExplSpawnDetour(void* self, void* anchor, void* ep, float
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HJMBOMEHGDJ::CGBILOJJPEI hook  (ShowEffect packet handler)
+// COEFCBBIBMC::JEFJDICFNBA hook  (ShowEffect packet Read)
 //
-// Catches server-sent ShowEffect packets before game processes them.
+// Catches server-sent ShowEffect packets as they are deserialized, before the
+// game's own handler runs.
 // Filters to: THROW(4)=throw arc, NOVA(5)=ring, CIRCLE_TELEGRAPH(23)=ground warn, AoE(39).
 // targetObjectId is the source entity — used for direct ID-based isEnemy lookup.
 // THROW entries are deduped against existing GJJ/FHOH AOE entries by destination.
 //
-// x64 ABI: rcx=this (HJMBOMEHGDJ*), rdx=COEFCBBIBMC* msg, r8=MethodInfo*
+// `self` IS the packet, and its fields are only populated once Read returns, so
+// the original MUST run first.
+//
+// x64 ABI: rcx=this (COEFCBBIBMC*), rdx=BHFDLBOGHIB* reader, r8=MethodInfo*
 // ─────────────────────────────────────────────────────────────────────────────
-using ShowEffectFn = void (__fastcall*)(void* self, void* msg, void* method);
+using ShowEffectFn = void (__fastcall*)(void* self, void* reader, void* method);
 static ShowEffectFn g_OrigShowEffect = nullptr;
 static void*        g_SfxTarget      = nullptr;
 
 static std::atomic<uint32_t> g_DbgSfxLogs{ 0 };
 
-static void __fastcall ShowEffectDetour(void* self, void* msg, void* method)
+static void __fastcall ShowEffectDetour(void* self, void* reader, void* method)
 {
+    // Fields populate inside the original — read only after it returns.
     if (g_OrigShowEffect)
-        g_OrigShowEffect(self, msg, method);
+        g_OrigShowEffect(self, reader, method);
 
+    void* msg = self;
     if (!Mem::AddrOk(msg)) return;
 
     int32_t effectType = 0, targetObjId = 0;
     float p1x = 0.f, p1y = 0.f, p2x = 0.f, p2y = 0.f, dur = 0.f;
-    if (!TryReadShowEffectFields(msg, effectType, targetObjId, p1x, p1y, p2x, p2y, dur))
+    bool  hasP2 = false;
+    if (!TryReadShowEffectFields(msg, effectType, targetObjId, p1x, p1y, p2x, p2y, hasP2, dur))
         return;
 
     if (effectType != kSfxType_Throw &&
@@ -640,7 +674,9 @@ static void __fastcall ShowEffectDetour(void* self, void* msg, void* method)
 
     float originX, originY, destX, destY;
     if (effectType == kSfxType_Throw) {
-        // THROW: pos1=source position, pos2=landing spot
+        // THROW: pos1=source position, pos2=landing spot. Without a readable pos2
+        // there is no landing spot to stamp — drop rather than stamp the thrower.
+        if (!hasP2) return;
         originX = p1x; originY = p1y;
         destX   = p2x; destY   = p2y;
         // Skip if GJJ/FHOH already recorded this same throwable
@@ -683,6 +719,7 @@ static void __fastcall ShowEffectDetour(void* self, void* msg, void* method)
         d << "{\"type\":" << effectType << ",\"objId\":" << targetObjId
           << ",\"p1x\":" << p1x << ",\"p1y\":" << p1y
           << ",\"p2x\":" << p2x << ",\"p2y\":" << p2y
+          << ",\"hasP2\":" << (hasP2 ? 1 : 0)
           << ",\"dur\":" << dur << ",\"lifeMs\":" << lifeMs
           << ",\"isEnemy\":" << (isEnemy ? 1 : 0)
           << ",\"checked\":" << (isEnemyChecked ? 1 : 0) << "}";
@@ -694,11 +731,40 @@ static void __fastcall ShowEffectDetour(void* self, void* msg, void* method)
 static bool HookShowEffectPath()
 {
     if (g_SfxTarget) return true;
+
+    // FAIL CLOSED. An ACTIVE AoE disc is now an untraversable block for the
+    // pathfinder and a swept veto in the solver, so a hook that reads the wrong
+    // bytes does not merely mis-score — it writes garbage walls into the router.
+    // The packet's positions are FFLIAABAAFP* pointers whose x/y offsets are
+    // resolved by shape; if that scan has not confirmed the layout, do not install.
+    if (!RuntimeOffsets::Sfx_WposResolved) {
+        static std::atomic<uint32_t> s_wposLog{ 0 };
+        const uint32_t n = s_wposLog.fetch_add(1, std::memory_order_relaxed);
+        if (n == 0u || (n % 240u) == 0u)
+            DBG_FILE_LOG("[AoeTracking] ShowEffect hook NOT installed — FFLIAABAAFP "
+                "(WorldPos) x/y layout unconfirmed; refusing to stamp AoE discs "
+                "from unverified position fields");
+        AgentLogAoe("H1", "AoeTracking.cpp:HookShowEffectPath", "wpos_unresolved",
+            "{\"class\":\"FFLIAABAAFP\"}");
+        return false;
+    }
+
+    // loose=true so this finds the SAME class RuntimeOffsets resolved the Sfx_*
+    // offsets from (its table uses FindClassLoose). A name-only match is safe for
+    // an 11-char BeeByte identifier, and it removes the chance of the offsets
+    // resolving while the hook silently does not.
     const MethodInfo* mi = Il2CppHook::ResolveMethodCached(
-        kShowEffectClass, kShowEffectMethod, kShowEffectParamCount, false, "");
+        kShowEffectClass, kShowEffectMethod, kShowEffectParamCount, true, "");
     if (!mi) {
+        static std::atomic<uint32_t> s_resolveLog{ 0 };
+        const uint32_t n = s_resolveLog.fetch_add(1, std::memory_order_relaxed);
+        if (n == 0u || (n % 240u) == 0u)
+            DBG_FILE_LOG("[AoeTracking] ShowEffect hook NOT installed — "
+                << kShowEffectClass << "::" << kShowEffectMethod
+                << " (" << kShowEffectParamCount << " params) did not resolve; "
+                "Throw/Nova/CircleTelegraph/AoE will not be recorded");
         AgentLogAoe("H1", "AoeTracking.cpp:HookShowEffectPath", "no_resolve",
-            "{\"class\":\"HJMBOMEHGDJ\"}");
+            "{\"class\":\"COEFCBBIBMC\",\"method\":\"JEFJDICFNBA\"}");
         return false;
     }
 

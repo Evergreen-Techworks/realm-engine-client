@@ -421,13 +421,25 @@ namespace RuntimeOffsets {
 
     // ── COEFCBBIBMC ShowEffect packet (OODFCLBKDJJ base — no ACTK shift) ────
     // Used by AoeTracking::ShowEffectDetour to decode effect type, positions, duration.
-    extern uint32_t Sfx_EffectType;  // "MIDADCIKEBD" enum/int  fallback 0x10
-    extern uint32_t Sfx_TargetObjId; // "HNOKKCFIJHJ" int       fallback 0x14
-    extern uint32_t Sfx_Pos1X;       // "KMAIENKMNFA".x float   fallback 0x18
-    extern uint32_t Sfx_Pos1Y;       // "KMAIENKMNFA".y float   fallback 0x1C (= Pos1X+4)
-    extern uint32_t Sfx_Pos2X;       // "AEPOCACMOHI".x float   fallback 0x20
-    extern uint32_t Sfx_Pos2Y;       // "AEPOCACMOHI".y float   fallback 0x24 (= Pos2X+4)
-    extern uint32_t Sfx_Duration;    // "KPKIICOBBIM" float     fallback 0x2C
+    //
+    // The two positions are REFERENCE-TYPE POINTERS to FFLIAABAAFP (WorldPos), not
+    // inline Vector2s — reading floats at Sfx_Pos1Ptr/Sfx_Pos2Ptr reads the halves
+    // of a pointer. Deref, then read x/y at Sfx_WposX / Sfx_WposY.
+    extern uint32_t Sfx_EffectType;  // "MIDADCIKEBD" enum/int   fallback 0x10
+    extern uint32_t Sfx_TargetObjId; // "HNOKKCFIJHJ" int        fallback 0x14
+    extern uint32_t Sfx_Pos1Ptr;     // "KMAIENKMNFA" FFLIAABAAFP* fallback 0x18
+    extern uint32_t Sfx_Pos2Ptr;     // "AEPOCACMOHI" FFLIAABAAFP* fallback 0x20 (null unless THROW)
+    extern uint32_t Sfx_Duration;    // "KPKIICOBBIM" float      fallback 0x2C
+
+    // ── FFLIAABAAFP WorldPos (reference type) ────────────────────────────────
+    // x/y are auto-property backing fields whose obfuscated names re-roll every
+    // build, so they are located by SHAPE (exactly two adjacent instance floats)
+    // rather than by name. Sfx_WposResolved says whether that scan succeeded —
+    // consumers that would write world data from an unverified layout must fail
+    // closed on it, NOT trust the fallback.
+    extern uint32_t Sfx_WposX;        // x backing field         fallback 0x20
+    extern uint32_t Sfx_WposY;        // y backing field         fallback 0x24 (= WposX+4)
+    extern bool     Sfx_WposResolved; // false until the float pair is confirmed
 
     // ── CustomExplosionEntrance (real XML field names, no shift) ─────────────
     extern uint32_t Cee_Distance;    // "distance" float         fallback 0x38

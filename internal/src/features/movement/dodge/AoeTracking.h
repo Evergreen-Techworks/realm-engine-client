@@ -22,11 +22,18 @@
 //     Only fires for damaging throwables that detonate. Provides authoritative blast radius
 //     from CustomExplosionEntrance+0x38 (~3.0 tiles). isEnemy from anchor (thrower character).
 //
-//   HJMBOMEHGDJ::CGBILOJJPEI  (1 param: COEFCBBIBMC* msg)  RVA 0x180B33560
-//     ShowEffect packet handler. Catches effect types 4=THROW, 5=NOVA, 23=CIRCLE_TELEGRAPH,
-//     39=AoE. THROW entries are deduped against GJJ/FHOH by dest position. isEnemy resolved
-//     via targetObjectId→dict key lookup (FindEntityIsEnemyById). Falls back to deferred
-//     position-match in CopyActiveForDraw if not yet in dict at hook time.
+//   COEFCBBIBMC::JEFJDICFNBA  (1 param: BHFDLBOGHIB* reader)  RVA 0x004B6F60
+//     ShowEffect packet's own Read(PacketReader) override — `self` IS the packet, so the
+//     detour calls the original FIRST (fields only populate after Read returns). Catches
+//     effect types 4=THROW, 5=NOVA, 23=CIRCLE_TELEGRAPH, 39=AoE. THROW entries are deduped
+//     against GJJ/FHOH by dest position. isEnemy resolved via targetObjectId→dict key lookup
+//     (FindEntityIsEnemyById). Falls back to deferred position-match in CopyActiveForDraw if
+//     not yet in dict at hook time.
+//     Replaces the WorldManager-side handler HJMBOMEHGDJ::CGBILOJJPEI, which a game patch
+//     renamed out of existence — the class still resolved, so the hook failed silently and
+//     no Throw/Nova/CircleTelegraph/AoE was ever recorded. The packet class kept its names.
+//     The two packet positions are FFLIAABAAFP* (WorldPos) POINTERS, not inline Vector2s;
+//     the hook refuses to install unless that class's x/y layout is structurally confirmed.
 // ─────────────────────────────────────────────────────────────────────────────
 namespace AoeTracking {
 

@@ -191,14 +191,24 @@ struct WorldProjectile
 static constexpr uint8_t kAoeSrcGjj  = 0;  // GJJCEFJMNMK::KOBMINBDOBD  (throwable entity init)
 static constexpr uint8_t kAoeSrcFhoh = 1;  // FHOHCELBPDO::KOBMINBDOBD  (visual fallback)
 static constexpr uint8_t kAoeSrcExpl = 2;  // FGOFPGIIEPC::KOBMINBDOBD  (explosion controller)
-static constexpr uint8_t kAoeSrcSfx  = 3;  // HJMBOMEHGDJ::CGBILOJJPEI  (ShowEffect packet)
+static constexpr uint8_t kAoeSrcSfx  = 3;  // COEFCBBIBMC::JEFJDICFNBA  (ShowEffect packet Read)
+
+// ShowEffect effectType values we care about (PEHBMICMEDO game protocol enum —
+// these are packet payload constants, NOT class field offsets, so they are the
+// same for every build). Lives here next to WorldAoe::sfxEffectType so both the
+// producer (AoeTracking) and the consumers (udodge sensors, overlays) read one
+// definition.
+static constexpr int32_t kSfxType_Throw           =  4;  // throw arc visual (pos1=src, pos2=dest)
+static constexpr int32_t kSfxType_Nova            =  5;  // expanding ring at pos1
+static constexpr int32_t kSfxType_CircleTelegraph = 23;  // ground warning circle at pos1
+static constexpr int32_t kSfxType_AoE             = 39;  // Exalt-specific AoE at pos1
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WorldAoe — ground-target AOE zone captured from four hook paths:
 //   GJJ  (kAoeSrcGjj):  GJJCEFJMNMK throwable entity. ownerObjId = throwable's objectId.
 //   FHOH (kAoeSrcFhoh): FHOHCELBPDO visual fallback.  ownerObjId = visual object's objectId.
 //   EXPL (kAoeSrcExpl): FGOFPGIIEPC explosion ring.   ownerObjId = anchor (thrower) entity objectId.
-//   SFX  (kAoeSrcSfx):  ShowEffect packet handler.    ownerObjId = packet targetObjectId (source entity).
+//   SFX  (kAoeSrcSfx):  ShowEffect packet Read.       ownerObjId = packet targetObjectId (source entity).
 //
 // ownerObjId meaning by source:
 //   GJJ/FHOH → objectId of the throwable/visual entity (NOT the thrower — isEnemy deferred via pos-match)
@@ -206,16 +216,21 @@ static constexpr uint8_t kAoeSrcSfx  = 3;  // HJMBOMEHGDJ::CGBILOJJPEI  (ShowEff
 // ─────────────────────────────────────────────────────────────────────────────
 struct WorldAoe
 {
-    float    x           = 0.f;    // throw origin world X  (GJJCEFJMNMK+0x368 / SFX pos1.x)
-    float    y           = 0.f;    // throw origin world Y  (GJJCEFJMNMK+0x36C / SFX pos1.y)
-    float    destX       = 0.f;    // landing spot X        (GJJCEFJMNMK+0x370 / SFX pos2.x for THROW)
-    float    destY       = 0.f;    // landing spot Y        (GJJCEFJMNMK+0x374 / SFX pos2.y for THROW)
+    float    x           = 0.f;    // throw origin world X  (GJJCEFJMNMK+0x368 / SFX *pos1 .x)
+    float    y           = 0.f;    // throw origin world Y  (GJJCEFJMNMK+0x36C / SFX *pos1 .y)
+    float    destX       = 0.f;    // landing spot X        (GJJCEFJMNMK+0x370 / SFX *pos2 .x for THROW)
+    float    destY       = 0.f;    // landing spot Y        (GJJCEFJMNMK+0x374 / SFX *pos2 .y for THROW)
     float    radius      = 0.f;    // GJJ/FHOH/SFX: kDefaultAoeRadiusTiles (2.0); EXPL: CustomExplosionEntrance+0x38
     float    innerR      = 0.f;    // inner radius if annular, 0 = filled disk
     float    lifetime    = 3000.f; // total duration ms
     float    arcMs       = 0.f;    // arc flight duration (distance/speed × 1000) when known from
                                    // CustomExplosionEntrance; 0 = use heuristic. Planner uses this
                                    // as the arming window so severity ramps during arc, peaks at blast.
+                                   // CAVEAT for kAoeSrcExpl: FGOFPGIIEPC fires AT detonation, so its
+                                   // arcMs is travel time ALREADY SPENT, not a landing delay — the
+                                   // blast is live from elapsed=0. udodge (UDodgeSensors::
+                                   // ZoneArmedOnCapture) accounts for this; pjdodge and autonexus
+                                   // still read it as a delay.
     uint64_t spawnTick   = 0;      // GetTickCount64() at capture time
     bool     valid       = false;
     bool     isDamaging      = false;  // true = throwable / explosion AOE

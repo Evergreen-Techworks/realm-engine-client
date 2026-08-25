@@ -10,6 +10,7 @@
 #include "DangerPlanner.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
 #include "features/movement/sensors/TileSensor.h"
+#include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
 
 #include <algorithm>
@@ -33,10 +34,40 @@ constexpr float kThreatCullTiles = 16.f;
 // (both read EnemyBlocker.radius from this one source).
 constexpr float kEnemyRadius     = 0.8f;
 constexpr float kAoeCullPad      = 16.f;
-// A bomb still in the air becomes HARD danger once it is within this long before
-// detonation — enough time (~4 ticks) to walk clear of the blast radius. Larger =
-// avoid earlier (safer, more disruptive); smaller = cut it closer.
-constexpr float kAoeArmWindowMs  = 900.f;
+
+// ── AoE arm window ──────────────────────────────────────────────────────────
+// How long BEFORE a telegraphed blast lands it becomes HARD danger. This used to
+// be a flat 900 ms "enough time (~4 ticks) to walk clear", but the time actually
+// needed is the WALK-OUT time — (radius + kUPlayerHalf) / speed — and radius runs
+// over the [0.2, 12] clamp below. Escaping the centre of a 12-tile blast at
+// 5 tiles/s needs ~2.45 s; a 3.5-tile one needs ~0.75 s. 900 was right only near
+// the default radius at a typical speed: it under-warned on big bombs and, now
+// that an ACTIVE zone is an untraversable block for the pathfinder and a swept
+// veto in the solver (not a soft cost), it over-blocked on small ones.
+//
+//   armWindow = clamp((radius + kUPlayerHalf) / speed + kAoeArmReactionMs, lo, hi)
+//
+// speed is the player's REAL tiles/ms — the same TestTAB::ReadDodgePlayerStats
+// source the solver's in.speed comes from, so the window and the motion it is
+// budgeting for agree.
+//
+// Reaction pad: 2 server ticks — one of input/ack latency plus one for the route
+// to be replanned around the newly-armed disc. It also calibrates the formula to
+// the value it replaces: at the 3.5-tile default radius and a typical ~7.7
+// tiles/s (SPD 50), (3.5 + 0.21)/0.0077 + 400 ≈ 880 ms ≈ the old 900.
+constexpr float kAoeArmReactionMs   = 2.f * kServerTickSec * 1000.f;   // 400 ms
+// Floor: below ~1.5 server ticks the bot cannot act on the warning at all, so a
+// shorter window is just a zone that flickers active for one frame before it lands.
+constexpr float kAoeArmWindowMinMs  = 1.5f * kServerTickSec * 1000.f;  // 300 ms
+// Ceiling: an armed disc HARD-BLOCKS routing, so this bounds how long one bomb may
+// wall off its radius before it even lands. 8 server ticks covers a ~7.8-tile blast
+// at SPD-50 speed outright (and more for a faster character, since the walk-out term
+// scales with speed); a rarer 12-tile blast gets a truncated — not absent — warning
+// rather than fencing off half the room for 2.5 s.
+constexpr float kAoeArmWindowMaxMs  = 8.f * kServerTickSec * 1000.f;   // 1600 ms
+// Speed unreadable (pre-first-NEWTICK, between worlds): fall back to the flat value
+// this formula replaced rather than guessing a speed.
+constexpr float kAoeArmWindowFallbackMs = 900.f;
 
 // Per-tick memo for the hazard lookup: the core probes CanOccupy at hundreds of
 // points per frame, so each distinct tile is queried at most once per tick.
@@ -357,6 +388,49 @@ void TraceLane(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, floa
     lane.pointTimesMs[0] = 0.f;   // trajectory unknown → temporal test treats it as static (conservative)
 }
 
+// Is this zone dangerous from the MOMENT it was captured, or does it have a
+// flight / telegraph phase to wait out first? Per-SOURCE, because the four
+// capture paths mean genuinely different things (see WorldTAB.h kAoeSrc*):
+//
+//   kAoeSrcExpl  — FGOFPGIIEPC is the explosion CONTROLLER; it empirically fires
+//                  AT detonation, so the blast is full strength from elapsed=0
+//                  and ends when `lifetime` runs out. Its `arcMs` is the bomb's
+//                  already-completed travel time, NOT a landing delay: reading it
+//                  as one (the old code did) modelled up to 2.1 s of live,
+//                  full-strength blast as inert. ARMED ON CAPTURE.
+//   kAoeSrcSfx   — ShowEffect packet; depends on the effect:
+//                    NOVA(5) / AoE(39)          — go off at the announced spot as
+//                                                 announced. ARMED ON CAPTURE.
+//                    THROW(4)                   — an arc from pos1 to pos2; the
+//                                                 disc at pos2 is the LANDING spot.
+//                    CIRCLE_TELEGRAPH(23)       — a ground warning that resolves at
+//                                                 the END of its duration.
+//                                                 Both: telegraphed, arm window.
+//   kAoeSrcGjj / kAoeSrcFhoh — the throwable entity and its landing-circle visual.
+//                  The disc is where the throwable WILL land and `lifetime` is the
+//                  flight time, so danger is at the end. The detonation itself
+//                  arrives separately as a kAoeSrcExpl entry. Arm window.
+bool ZoneArmedOnCapture(const WorldAoe& a)
+{
+    if (a.source == kAoeSrcExpl) return true;
+    if (a.source == kAoeSrcSfx)
+        return a.sfxEffectType == kSfxType_Nova || a.sfxEffectType == kSfxType_AoE;
+    return false;
+}
+
+// Per-zone arm window (ms before landing at which a telegraphed zone becomes hard
+// danger). See the kAoeArmWindow* block above for the formula and its bounds.
+// One divide per zone. `speedTilesPerMs` <= 0 means "player speed unreadable".
+float ZoneArmWindowMs(float radius, float speedTilesPerMs)
+{
+    if (!IsFinite(speedTilesPerMs) || speedTilesPerMs <= 1e-5f)
+        return kAoeArmWindowFallbackMs;
+    const float walkOutMs = (radius + kUPlayerHalf) / speedTilesPerMs;
+    if (!IsFinite(walkOutMs)) return kAoeArmWindowFallbackMs;
+    return std::clamp(walkOutMs + kAoeArmReactionMs,
+                      kAoeArmWindowMinMs, kAoeArmWindowMaxMs);
+}
+
 // Zone pass — present-tense classification only: every not-yet-expired zone
 // within the distance cull becomes a ZoneThreat, active iff it has landed.
 // Shared by BuildMap (full rebuild) and ReanchorMap (mid-tick refresh).
@@ -366,6 +440,23 @@ void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& 
     AoeTracking::EnsureInstalled();
     s_aoes.clear();
     AoeTracking::CopyActiveForDraw(s_aoes);
+
+    // Player speed for the arm window, resolved AT MOST ONCE per rebuild and only
+    // when a zone actually needs it (the common case is no zones at all, and
+    // ReadDodgePlayerStats calls into the game to get the live move multiplier).
+    // Same source and same tiles/ms conversion as the solver's in.speed.
+    float speedTilesPerMs = -1.f;
+    const auto playerSpeedTilesPerMs = [&]() -> float {
+        if (speedTilesPerMs < 0.f) {
+            int32_t hp = 0, maxHp = 0;
+            float   spd = 0.f, tilesPerSec = 0.f;
+            TestTAB::ReadDodgePlayerStats(hp, maxHp, spd, tilesPerSec);
+            speedTilesPerMs = (IsFinite(tilesPerSec) && tilesPerSec > 0.f)
+                ? tilesPerSec / 1000.f : 0.f;
+        }
+        return speedTilesPerMs;
+    };
+
     for (const WorldAoe& a : s_aoes) {
         if (!a.valid || !a.isDamaging) continue;
         if (a.isEnemyChecked && !a.isEnemy) continue;
@@ -373,7 +464,12 @@ void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& 
 
         const float elapsedMs = static_cast<float>(nowMs > a.spawnTick ? nowMs - a.spawnTick : 0u);
         const float lifeMs = IsFinite(a.lifetime) && a.lifetime > 0.f ? a.lifetime : 2000.f;
-        const float landAtMs = (IsFinite(a.arcMs) && a.arcMs > 0.f) ? a.arcMs : lifeMs;
+        // Armed-on-capture sources are live from elapsed=0; telegraphed ones land
+        // at the end of their flight (a.arcMs when a source ever carries one,
+        // otherwise the full lifetime).
+        const float landAtMs = ZoneArmedOnCapture(a)
+            ? 0.f
+            : ((IsFinite(a.arcMs) && a.arcMs > 0.f) ? a.arcMs : lifeMs);
         const bool hasLanded = elapsedMs >= landAtMs;
         if (elapsedMs >= lifeMs + 25.f) continue;                  // fully expired
         if (hasLanded && lifeMs - elapsedMs <= 25.f) continue;     // effectively expired
@@ -390,7 +486,8 @@ void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& 
         // 9999-damage threat; udodge previously only avoided it AFTER it landed —
         // too late to escape the blast. That is why bombs were killing us.)
         const float landingMs = landAtMs - elapsedMs;             // >0 = still in the air
-        const bool armingSoon = !hasLanded && landingMs <= kAoeArmWindowMs;
+        const bool armingSoon = !hasLanded
+            && landingMs <= ZoneArmWindowMs(radius, playerSpeedTilesPerMs());
 
         ZoneThreat& z = out.zones[out.zoneCount++];
         z.pos = { a.destX, a.destY };

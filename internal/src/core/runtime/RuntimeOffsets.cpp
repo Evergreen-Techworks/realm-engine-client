@@ -221,13 +221,27 @@ uint32_t Fhoh_DestY      = 0x158; // PBHMINMBFOM.y (= DestX+4)
 
 // ── COEFCBBIBMC ShowEffect packet ────────────────────────────────────────
 // OODFCLBKDJJ base (network packets have no ACTK shift).
+//
+// The two positions are NOT inline Vector2s — they are POINTERS to FFLIAABAAFP
+// (the WorldPos reference type), so reading floats at these offsets reads the
+// halves of a pointer. Deref first, then read x/y at Sfx_WposX / Sfx_WposY.
 uint32_t Sfx_EffectType  = 0x10;  // MIDADCIKEBD
 uint32_t Sfx_TargetObjId = 0x14;  // HNOKKCFIJHJ
-uint32_t Sfx_Pos1X       = 0x18;  // KMAIENKMNFA.x
-uint32_t Sfx_Pos1Y       = 0x1C;  // KMAIENKMNFA.y (= Pos1X+4)
-uint32_t Sfx_Pos2X       = 0x20;  // AEPOCACMOHI.x
-uint32_t Sfx_Pos2Y       = 0x24;  // AEPOCACMOHI.y (= Pos2X+4)
+uint32_t Sfx_Pos1Ptr     = 0x18;  // KMAIENKMNFA — FFLIAABAAFP* (source / centre)
+uint32_t Sfx_Pos2Ptr     = 0x20;  // AEPOCACMOHI — FFLIAABAAFP* (destination; null for non-THROW)
 uint32_t Sfx_Duration    = 0x2C;  // KPKIICOBBIM
+
+// ── FFLIAABAAFP WorldPos (reference type) ────────────────────────────────
+// class FFLIAABAAFP : DCBCCBKEIHN { float <x>k__BackingField; float <y>k__BackingField; }
+// x/y are auto-property backing fields, whose metadata names ("<XXXX>k__BackingField")
+// carry an obfuscated inner name that BeeByte re-rolls every build — the same reason
+// GameState.cpp resolves AppMgr_WorldMgr by type instead of by name. So these are
+// located STRUCTURALLY (see ResolveWorldPosLayout): the class carries exactly two
+// adjacent instance floats, x first. Fallback is the current build's layout
+// (object header 0x10 + the 0x10-byte DCBCCBKEIHN base).
+uint32_t Sfx_WposX       = 0x20;
+uint32_t Sfx_WposY       = 0x24;  // = Sfx_WposX + 4
+bool     Sfx_WposResolved = false;  // true once the float pair was located structurally
 
 // ── CustomExplosionEntrance ───────────────────────────────────────────────
 uint32_t Cee_Distance    = 0x38;  // "distance" (XML data class, no ACTK)
@@ -252,6 +266,73 @@ static FieldInfo* FindFieldOnHierarchy(Il2CppClass* klass, const char* name)
         if (f) return f;
     }
     return nullptr;
+}
+
+// ── FFLIAABAAFP (WorldPos) x/y — resolved by SHAPE, not by name ────────────
+// Its x/y are auto-property backing fields, so their metadata names embed an
+// obfuscated inner name ("<CHOGDNLDCMD>k__BackingField") that BeeByte re-rolls
+// every build; name resolution would silently fall back forever. The SHAPE is
+// stable and unambiguous instead: the class declares exactly two instance
+// floats, adjacent, x first. Anything else and we leave Sfx_WposResolved false
+// so callers (AoeTracking's ShowEffect hook) fail closed rather than stamping
+// garbage AoE discs into a system that now hard-blocks routing.
+// Called once per frame from EnsureAll. Latches as soon as the class is seen
+// (match or not) so a shape mismatch cannot spam the log, and gives up on the
+// class lookup itself after a bounded number of frames so a renamed class does
+// not cost a full metadata scan every frame forever.
+static bool s_wposSettled = false;
+static void ResolveWorldPosLayout()
+{
+    if (s_wposSettled) return;
+
+    static int s_wposTries = 0;
+    constexpr int kWposMaxTries = 600;   // ~10 s at 60 fps, matching the table's give-up spirit
+    if (++s_wposTries > kWposMaxTries) {
+        s_wposSettled = true;
+        DBG_FILE_LOG("[RuntimeOffsets] FFLIAABAAFP (WorldPos) never appeared — ShowEffect "
+            "positions stay UNTRUSTED (AoE ShowEffect hook will not install)");
+        return;
+    }
+
+    Il2CppClass* klass = Resolver::FindClassLoose("FFLIAABAAFP");
+    if (!klass) return;
+    s_wposSettled = true;   // class found: this pass decides, match or not
+
+    constexpr int kFieldAttrStatic = 0x0010;
+    uint32_t offs[4] = {};
+    int      n       = 0;
+    void*      iter = nullptr;
+    FieldInfo* f    = nullptr;
+    while ((f = il2cpp_class_get_fields(klass, &iter)) != nullptr) {
+        if (il2cpp_field_is_literal(f)) continue;
+        if (il2cpp_field_get_flags(f) & kFieldAttrStatic) continue;
+        const Il2CppType* ft = il2cpp_field_get_type(f);
+        if (!ft || il2cpp_type_get_type(ft) != IL2CPP_TYPE_R4) continue;
+        if (n < 4) offs[n] = static_cast<uint32_t>(il2cpp_field_get_offset(f));
+        ++n;
+    }
+
+    // Exactly one adjacent float pair, or we do not know which fields these are.
+    if (n != 2) {
+        DBG_FILE_LOG("[RuntimeOffsets] FFLIAABAAFP WorldPos: expected 2 instance floats, saw "
+            << n << " — keeping fallback 0x" << std::hex << Sfx_WposX << std::dec
+            << " and leaving ShowEffect positions UNTRUSTED");
+        return;
+    }
+    const uint32_t lo = offs[0] < offs[1] ? offs[0] : offs[1];
+    const uint32_t hi = offs[0] < offs[1] ? offs[1] : offs[0];
+    if (hi != lo + 4) {
+        DBG_FILE_LOG("[RuntimeOffsets] FFLIAABAAFP WorldPos: floats not adjacent (0x"
+            << std::hex << lo << ", 0x" << hi << std::dec
+            << ") — leaving ShowEffect positions UNTRUSTED");
+        return;
+    }
+
+    Sfx_WposX        = lo;
+    Sfx_WposY        = lo + 4;
+    Sfx_WposResolved = true;
+    DBG_FILE_LOG("[RuntimeOffsets] FFLIAABAAFP WorldPos x/y resolved -> 0x"
+        << std::hex << Sfx_WposX << "/0x" << Sfx_WposY << std::dec);
 }
 
 // ── Resolution table ─────────────────────────────────────────────────────
@@ -498,8 +579,8 @@ static Entry s_entries[] = {
     // ── COEFCBBIBMC ShowEffect packet (OODFCLBKDJJ base, no ACTK shift) ─────────
     { "COEFCBBIBMC", { "MIDADCIKEBD" },                                           1, 0, &Sfx_EffectType, false },
     { "COEFCBBIBMC", { "HNOKKCFIJHJ" },                                           1, 0, &Sfx_TargetObjId,false },
-    { "COEFCBBIBMC", { "KMAIENKMNFA" },                                           1, 0, &Sfx_Pos1X,     false },
-    { "COEFCBBIBMC", { "AEPOCACMOHI" },                                           1, 0, &Sfx_Pos2X,     false },
+    { "COEFCBBIBMC", { "KMAIENKMNFA" },                                           1, 0, &Sfx_Pos1Ptr,   false },
+    { "COEFCBBIBMC", { "AEPOCACMOHI" },                                           1, 0, &Sfx_Pos2Ptr,   false },
     { "COEFCBBIBMC", { "KPKIICOBBIM" },                                           1, 0, &Sfx_Duration,  false },
 
     // ── CustomExplosionEntrance (real XML field names, no shift) ─────────────────
@@ -635,12 +716,15 @@ void SanityCheckProjDamage(int32_t sampledDamage)
 
 void EnsureAll()
 {
+    // FFLIAABAAFP x/y is resolved by shape, not through the entry table, so it
+    // runs ahead of the s_allDone short-circuit (it self-latches once resolved).
+    ResolveWorldPosLayout();
+    Sfx_WposY = Sfx_WposX + 4;
+
     if (s_allDone) {
         Gjj_OriginY = Gjj_OriginX + 4;
         Gjj_DestY   = Gjj_DestX   + 4;
         Fhoh_DestY  = Fhoh_DestX  + 4;
-        Sfx_Pos1Y   = Sfx_Pos1X   + 4;
-        Sfx_Pos2Y   = Sfx_Pos2X   + 4;
         return;
     }
 
@@ -766,8 +850,6 @@ void EnsureAll()
     Gjj_OriginY = Gjj_OriginX + 4;
     Gjj_DestY   = Gjj_DestX   + 4;
     Fhoh_DestY  = Fhoh_DestX  + 4;
-    Sfx_Pos1Y   = Sfx_Pos1X   + 4;
-    Sfx_Pos2Y   = Sfx_Pos2X   + 4;
 }
 
 // ── MapObject status conditions (COHCKAPOLCA UInt32[] — offset_map.md) ─────
