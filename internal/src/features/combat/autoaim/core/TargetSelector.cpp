@@ -206,4 +206,12 @@ Result SelectKillAura(bool atMouse, float rangeTiles,
     return r;
 }
 
+int KillAuraTierRank(int32_t objType)
+{
+    // SelectKillAura pins prioritizeBosses=false and shootInvulnerable=false,
+    // so the quest and invuln tiers are unreachable from that path: only the
+    // normal (0) and fallback (1) tiers can ever win there.
+    return IsFallbackType(objType) ? 1 : 0;
+}
+
 } // namespace TargetSelector

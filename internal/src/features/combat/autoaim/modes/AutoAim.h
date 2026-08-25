@@ -26,6 +26,28 @@ TargetSelector::Mode GetAimMode();
 // Pass -1 or call SetAimMode to clear the lock.
 void SetLockTarget(int32_t enemyId);
 
+// ── KillAura aim handoff ──────────────────────────────────────────────────────
+// KillAura publishes its committed target here so the SHOT ANGLE points at it —
+// ordinary aiming, no displaced origin, so the server's own simulation of the
+// shot agrees with the client's damage claim.
+//
+// PRECEDENCE (implemented in AimHooks, which owns the two slots):
+//   while killaura is ARMED its pick WINS over AutoAim's own target, and it
+//   wins even when AutoAim's master toggle is off. Killaura has already made a
+//   committed choice — its own selection stickiness and retention hysteresis
+//   ran — so there is nothing left for AutoAim to arbitrate, and letting the
+//   two alternate at ~125 Hz is precisely the flip-flop that stickiness exists
+//   to prevent.
+//
+// Nothing is parked or restored on disarm: the slots are independent and
+// AutoAim keeps writing its own every tick, so clearing the override falls
+// straight back to AutoAim's LIVE pick (or to no redirect at all when AutoAim
+// has no target). A stale target cannot survive a disarm.
+//
+// AutoAim is the aim coordinator and the only module that talks to AimHooks;
+// KillAura::Tick is the only caller of this.
+void SetKillAuraAimOverride(bool active, float x, float y, int32_t enemyId);
+
 // ── Targeting filters ─────────────────────────────────────────────────────────
 void SetShootInvulnerable(bool on);
 bool IsShootInvulnerable();

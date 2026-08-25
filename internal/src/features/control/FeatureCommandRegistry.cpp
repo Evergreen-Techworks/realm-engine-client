@@ -112,6 +112,7 @@ namespace {
             FH_FLOAT("killauraStandoffTiles",  KillAura::SetStandoffTiles),
             FH_FLOAT("killauraMaxOffsetTiles", KillAura::SetMaxOffsetTiles),
             FH_BOOL ("killauraOverlayEnabled", KillAura::SetOverlayEnabled),
+            FH_BOOL ("killauraDriveAimEnabled", KillAura::SetDriveAimAngle),
             FH_BOOL("autoFireEnabled", AutoFire::SetEnabled),
             FH("autoFireHotkey",       AutoFire::SetHotkeyVk(ResolveHotkeyVkInternal(f.value))),
             FH_BOOL ("autoBreakWallsEnabled",    AutoBreakWalls::SetEnabled),

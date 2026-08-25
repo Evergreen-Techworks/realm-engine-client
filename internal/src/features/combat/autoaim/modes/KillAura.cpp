@@ -1,6 +1,7 @@
 #include "pch-il2cpp.h"
 
 #include "features/combat/autoaim/modes/KillAura.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
 #include "features/combat/autoaim/core/TargetSelector.h"
 #include "features/combat/autoaim/core/WeaponProfile.h"
@@ -32,6 +33,7 @@ static std::atomic<float>   s_standoffTiles{ 0.35f };
 static std::atomic<float>   s_maxOffsetTiles{ 12.f };
 static std::atomic<int32_t> s_forcedTargetId{ 0 };
 static std::atomic<bool>    s_overlayEnabled{ true };   // default ON — see KillAura.h
+static std::atomic<bool>    s_driveAimAngle{ true };   // default ON — see KillAura.h
 
 // ── Target-retention hysteresis ──────────────────────────────────────────────
 // Tick() refreshes at up to ~125 Hz. A SINGLE refresh where the selector comes
@@ -55,6 +57,37 @@ static constexpr ULONGLONG kKaRetainMs = 250ULL;
 // dodge is walking the player around — cannot flap in and out of the lock.
 static constexpr float kKaRetainRangeMarginTiles = 2.0f;
 
+// ── Selection stickiness (incumbent bias) ────────────────────────────────────
+// Retention above only bridges selector MISSES. It does nothing about the other
+// flip-flop: two similarly-ranked enemies, the selector nominating first one
+// then the other, and the lock following it every ~200 ms. Each of those swaps
+// moves the shot origin mid-burst, so the shots split between two enemies and
+// neither dies. So a HELD target is not given up merely because someone else
+// edged ahead — the challenger has to be clearly better.
+//
+// "Clearly better" is measured on the selector's own ranking metric: tier
+// first (TargetSelector::KillAuraTierRank — a categorical priority, so a
+// better tier switches with no margin at all), then distance from the same
+// reference point Select() uses. The margin is therefore in TILES of that
+// distance.
+//
+// 1.5 tiles: an enemy pack is dense enough that two targets within ~1 tile of
+// equal distance are interchangeable, and with both sides moving, the frame-to-
+// frame distance delta at ~125 Hz is on the order of 0.05 tiles — pure noise
+// that must never cost a burst. 1.5 tiles is roughly one enemy-body step and
+// ~9% of the default 16-tile radius: big enough that only a real improvement
+// pays for abandoning a burst, small enough that an enemy walking into melee
+// range still takes the lock. Same commitment/anti-flip-flop spirit as the
+// dodge solver's kSolveReflexHystEps / kUReturnRangeSlack.
+static constexpr float kKaSwitchMarginTiles = 1.5f;
+// A suppressed switch is a STEADY condition, not an event: KaRefresh runs at up
+// to ~125 Hz, so the unguarded log would be one line per refresh. One line when
+// the (keep, challenger) pair changes and at most one per second while the same
+// pair keeps losing — with a hard floor so an alternating challenger can never
+// turn the pair-change term into a per-refresh log.
+static constexpr ULONGLONG kKaSuppressLogEveryMs = 1000ULL;
+static constexpr ULONGLONG kKaSuppressLogFloorMs = 250ULL;
+
 // ── Published state (read lock-free from the projectile-spawn detour) ────────
 static std::atomic<bool>     s_armed{ false };
 static std::atomic<int32_t>  s_targetId{ 0 };
@@ -77,6 +110,9 @@ static unsigned  s_noListenerLogN      = 0;
 static int32_t   s_heldTargetId        = 0;   // current lock (0 = none), retention subject
 static ULONGLONG s_retainSinceMs       = 0;   // wall clock of the first miss in this run
 static unsigned  s_retainMisses        = 0;   // consecutive selector misses bridged so far
+static int32_t   s_supprKeepId        = 0;   // last logged suppressed-switch pair (incumbent)
+static int32_t   s_supprCandId        = 0;   // last logged suppressed-switch pair (challenger)
+static ULONGLONG s_supprLogMs         = 0;   // wall clock of the last suppressed-switch line
 
 static float ClampF(float v, float lo, float hi, float fallback)
 {
@@ -138,6 +174,21 @@ static void ApplyState(bool armed, int32_t targetId,
     // ApplyState(false, ...) may leave a stale target behind for retention.
     if (!armed) { s_heldTargetId = 0; s_retainMisses = 0; }
 
+    // ── Aim-angle handoff ────────────────────────────────────────────────────
+    // Push the committed pick at the shot-angle redirect, so the bullet is
+    // AIMED at the target instead of only being spawned next to it. This is the
+    // single commit point for the lock, so it is also the single place the
+    // override is armed and cleared — no route out of Tick() can leave a stale
+    // target driving the angle. Precedence vs AutoAim's own target is documented
+    // on AutoAim::SetKillAuraAimOverride.
+    //
+    // The setting is re-read every call, so turning it off releases the angle
+    // back to AutoAim on the very next tick even while killaura stays armed.
+    if (s_driveAimAngle.load(std::memory_order_relaxed))
+        AutoAim::SetKillAuraAimOverride(armed, tx, ty, armed ? targetId : 0);
+    else
+        AutoAim::SetKillAuraAimOverride(false, 0.f, 0.f, 0);
+
     if (armed || edge)
         PublishNow(armed, armed ? targetId : 0, tx, ty, px, py, stamp);
 
@@ -181,6 +232,77 @@ static bool RetainedTargetStillValid(int32_t id, float rx, float ry, float range
         return dx * dx + dy * dy <= dropR * dropR;
     }
     return false;   // absent from the snapshot — gone
+}
+
+// The selector's ranking values for one id, read out of the CURRENT snapshot:
+// tier rank (lower wins) and distance in tiles from the reference point. Select()
+// ranks on the enemy's live position, not on the lead-predicted aim point, so
+// this reads the same positions it does. False when the id is not selectable.
+static bool CandidateScore(int32_t id, float rx, float ry, int& rank, float& distT)
+{
+    if (id == 0) return false;
+    for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot()) {
+        if (e.id != id) continue;
+        if (!std::isfinite(e.x) || !std::isfinite(e.y)) return false;
+        const float dx = e.x - rx, dy = e.y - ry;
+        rank  = TargetSelector::KillAuraTierRank(e.objType);
+        distT = std::sqrt(dx * dx + dy * dy);
+        return true;
+    }
+    return false;
+}
+
+// Transition-keyed + rate-limited: see kKaSuppressLogEveryMs.
+static void LogSuppressedSwitch(int32_t keepId, int32_t candId, float delta)
+{
+    const ULONGLONG now = GetTickCount64();
+    if (now - s_supprLogMs < kKaSuppressLogFloorMs) return;
+    const bool newPair = (keepId != s_supprKeepId || candId != s_supprCandId);
+    if (!newPair && now - s_supprLogMs < kKaSuppressLogEveryMs) return;
+    s_supprKeepId = keepId; s_supprCandId = candId; s_supprLogMs = now;
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.2f < margin=%.2f", delta, kKaSwitchMarginTiles);
+    DBG_FILE_LOG("[KillAura] switch suppressed: keeping " << keepId
+                 << " over " << candId << " (delta=" << buf << " tiles)");
+}
+
+// Incumbent bias. Called only when the selector nominated a DIFFERENT enemy
+// than the one currently held. Returns true to KEEP the incumbent (aim point
+// re-resolved into outAimX/Y), false to take the selector's pick.
+//
+// Every early false is deliberate: stickiness may delay a switch, but it must
+// never keep a target the selector would have been right to drop.
+static bool KeepIncumbentOverPick(int32_t heldId, const TargetSelector::Result& pick,
+                                  bool atMouse, float px, float py, float rangeT,
+                                  float& outAimX, float& outAimY)
+{
+    float rx = px, ry = py;
+    RefPoint(atMouse, px, py, rx, ry);
+
+    // Dead / gone / no longer damageable / past range+margin — the same
+    // invariant retention enforces, reused rather than re-stated.
+    if (!RetainedTargetStillValid(heldId, rx, ry, rangeT)) return false;
+
+    int   heldRank = 0,   candRank = 0;
+    float heldDist = 0.f, candDist = 0.f;
+    if (!CandidateScore(heldId, rx, ry, heldRank, heldDist)) return false;
+    if (!CandidateScore(pick.enemyId, rx, ry, candRank, candDist)) return false;
+
+    // A better TIER is a categorical priority in Select(), not a distance
+    // difference — it outranks the incumbent with no margin to clear.
+    if (candRank < heldRank) return false;
+    const float delta = heldDist - candDist;   // how much closer the challenger is
+    if (candRank == heldRank && delta > kKaSwitchMarginTiles) return false;
+
+    // Keeping it: re-resolve the held id through the selector's forced path so
+    // the aim point keeps its live lead prediction instead of freezing.
+    const TargetSelector::Result h = TargetSelector::SelectKillAura(
+        atMouse, rangeT, px, py, heldId, WeaponCalibrator::GetProfile());
+    if (!h.found) return false;
+
+    outAimX = h.aimX; outAimY = h.aimY;
+    LogSuppressedSwitch(heldId, pick.enemyId, delta);
+    return true;
 }
 
 // ── Lock-overlay drawing helpers (render thread, draw-only) ──────────────────
@@ -311,17 +433,28 @@ void Tick()
                          << s_modeInt.load(std::memory_order_relaxed)
                          << " range=" << rangeT);
         }
+        // Stickiness runs BEFORE the pick is committed: a held target is only
+        // traded for a clearly better one. A FORCED target is excluded — that
+        // id is auto-break-walls' choice, not the selector's, so there is
+        // nothing to bias.
+        int32_t pickId = r.enemyId;
+        float   aimX   = r.aimX, aimY = r.aimY;
+        if (forced == 0 && s_heldTargetId != 0 && r.enemyId != s_heldTargetId
+            && KeepIncumbentOverPick(s_heldTargetId, r, atMouse, px, py, rangeT, aimX, aimY)) {
+            pickId = s_heldTargetId;
+        }
+
         // Transition-only: closes a bridged run, so the log shows how much of a
         // gap retention actually covered. Never fires on a clean refresh.
         if (s_retainMisses > 0) {
-            DBG_FILE_LOG("[KillAura] retained-lock recovered targetId=" << r.enemyId
+            DBG_FILE_LOG("[KillAura] retained-lock recovered targetId=" << pickId
                          << " heldId=" << s_heldTargetId
                          << " bridgedMisses=" << s_retainMisses
                          << " bridgedMs=" << (wall - s_retainSinceMs));
             s_retainMisses = 0;
         }
-        s_heldTargetId = r.enemyId;
-        ApplyState(true, r.enemyId, r.aimX, r.aimY, px, py, nullptr);
+        s_heldTargetId = pickId;
+        ApplyState(true, pickId, aimX, aimY, px, py, nullptr);
         return;
     }
 
@@ -388,6 +521,11 @@ float GetMaxOffsetTiles()         { return s_maxOffsetTiles.load(std::memory_ord
 
 void SetOverlayEnabled(bool on) { s_overlayEnabled.store(on, std::memory_order_relaxed); }
 bool IsOverlayEnabled()         { return s_overlayEnabled.load(std::memory_order_relaxed); }
+
+// Only stores the flag: the handoff itself is re-evaluated in ApplyState on the
+// next tick, so this is safe to call from the IPC thread.
+void SetDriveAimAngle(bool on)  { s_driveAimAngle.store(on, std::memory_order_relaxed); }
+bool IsDriveAimAngle()          { return s_driveAimAngle.load(std::memory_order_relaxed); }
 
 void    SetForcedTargetId(int32_t id) { s_forcedTargetId.store(id, std::memory_order_relaxed); }
 int32_t GetForcedTargetId()           { return s_forcedTargetId.load(std::memory_order_relaxed); }
@@ -476,6 +614,18 @@ void RenderSettings()
         ImGui::SetTooltip("Hard cap: an origin further than this from the player is refused\nand the shot is left alone.");
 
     ImGui::PopItemWidth();
+
+    bool driveAim = IsDriveAimAngle();
+    if (ImGui::Checkbox("Drive aim angle##kaDriveAim", &driveAim))
+        SetDriveAimAngle(driveAim);
+    ImGui::SameLine(); ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Also points the SHOT ANGLE at the locked target, on top of moving\n"
+                          "the shot origin. The bullet still leaves your real position, so\n"
+                          "the server's own simulation of the shot agrees it hit — which a\n"
+                          "displaced origin does not.\n\n"
+                          "While killaura is armed this overrides auto-aim's own target.\n"
+                          "Off = killaura is origin-only, as it was before.");
 
     bool overlay = IsOverlayEnabled();
     if (ImGui::Checkbox("Lock overlay##kaOverlay", &overlay))

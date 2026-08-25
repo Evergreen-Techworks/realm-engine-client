@@ -442,7 +442,10 @@ namespace RuntimeOffsets {
     inline constexpr uint32_t Char_ProjLifetimeMul = 0x18C; // player proj-lifetime mult (WeaponProfile RE)
     inline constexpr uint32_t Char_RangeMul        = 0x6B8; // player range mult (WeaponProfile RE)
     inline constexpr uint32_t PP_ProjId            = 0x15C; // ProjectileProperties projectile id (WeaponProfile RE)
-    inline constexpr uint32_t Shot_Angle           = 0x1C;  // SHOOT packet struct angle (AimHooks RE)
+    // Shot_Angle (0x1C) DELETED — docs/plans/108. It was ServerPlayerShoot.angle,
+    // but its one consumer (AimHooks' SendShotPacketDetour) held a 0x18-byte
+    // UniqueDataContainer, so the write was 4 bytes out of bounds. The redirect
+    // is angle-only now and needs no shot-packet offset at all.
     inline constexpr uint32_t Player_CondRaw       = 0x440; // raw [this+0x440] HasConditionEffect reads (.lst)
     // WorldManager diagnostic words (WorldTAB World-tab display only):
     inline constexpr uint32_t WM_DiagE0  = 0xE0;  // uint32

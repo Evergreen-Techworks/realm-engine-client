@@ -21,6 +21,15 @@ void  SetRangeTiles(float t);         float GetRangeTiles();       // clamp [1, 
 void  SetStandoffTiles(float t);      float GetStandoffTiles();    // clamp [0.05, 1.5], default 0.35
 void  SetMaxOffsetTiles(float t);     float GetMaxOffsetTiles();   // clamp [1, 40], default 12
 
+// Drive the SHOT ANGLE at the selected target, not just the shot origin.
+// Defaults ON — it is the only half of this feature the server can be made to
+// agree with (the origin displacement makes the server's own simulation of the
+// shot disagree with the client's damage claim; an angle change does not,
+// because the bullet still leaves the player's real position). Turning it off
+// leaves killaura origin-only, which is what it was before.
+// See AutoAim::SetKillAuraAimOverride for the killaura-vs-AutoAim precedence.
+void  SetDriveAimAngle(bool on);      bool  IsDriveAimAngle();
+
 // In-world lock overlay: the locked target's marker plus the selection-range
 // ring around the reference point, so a target about to fall out of range is
 // visible BEFORE the lock drops. Defaults ON — visibility is the whole point.

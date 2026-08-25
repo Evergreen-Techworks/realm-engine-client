@@ -57,4 +57,12 @@ Result SelectKillAura(bool atMouse, float rangeTiles,
                       int32_t forcedEnemyId,
                       const WeaponProfile& weapon);
 
+// Read-only view of the priority tier Select() would file `objType` under on
+// the killaura path — LOWER rank wins, matching the quest > normal > fallback
+// > invuln resolution order. Exposed so a caller weighing two candidates ranks
+// them exactly the way the selector does instead of re-deriving the type
+// tables. Pure function of objType; changes nothing about what Select()
+// returns for any caller.
+int KillAuraTierRank(int32_t objType);
+
 } // namespace TargetSelector

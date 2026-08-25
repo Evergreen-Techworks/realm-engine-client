@@ -118,7 +118,7 @@ export const DLL_ONLY_FEATURE_KEYS = [
   'autoDodgeHitboxPadding', 'autoDodgeHorizonMs', 'autoDodgeWallAvoid',
   'autoFireEnabled', 'autoFireHotkey',
   'dodgeHitAversion', 'dodgeIdleMinGain', 'dodgeReplanOnSpawn', 'dodgeStickiness',
-  'killauraOverlayEnabled',
+  'killauraDriveAimEnabled', 'killauraOverlayEnabled',
   'dodgeStrategicBias', 'dodgeStrategicNearWaypoint', 'dodgeTightLeash',
   'dodgeWasdLookahead',
   'overlayEnabled', 'pluginToggleHotkeys',
