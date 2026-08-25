@@ -4,8 +4,8 @@
 #include "AoeTracking.h"
 #include "ProjectileTracking.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
+#include "features/movement/sensors/TileSensor.h"
 #include "gui/tabs/WorldTAB.h"
-#include "gui/tabs/TestTAB.h"
 
 #include <algorithm>
 #include <cmath>
@@ -23,60 +23,14 @@ constexpr float kPathPadMs       = 300.f;   // sample past the horizon so the le
 
 // Per-tick memo for the hazard lookup: the core probes CanOccupy at hundreds of
 // points per frame, so each distinct tile is queried at most once per tick.
-// Fixed-size open-addressing hash table — no per-frame heap allocation.
-// Single game-update-thread consumer; cleared at the top of Build.
-constexpr uint32_t kMemoSlots    = 512;      // power of 2
-constexpr uint32_t kMemoMask     = kMemoSlots - 1;
-constexpr uint32_t kMemoEmpty    = 0xFFFFFFFFu;
+// OUR OWN instance of the shared open-addressed table (Movement::TileSensor) —
+// no per-frame heap allocation. Single game-update-thread consumer; cleared at
+// the top of Build.
+Movement::TileSensor::HazardMemo s_hazardMemo;
 
-struct MemoEntry { uint32_t key; uint8_t value; };
-MemoEntry s_hazardMemo[kMemoSlots];
-
-void MemoClear()
-{
-    for (uint32_t i = 0; i < kMemoSlots; ++i)
-        s_hazardMemo[i].key = kMemoEmpty;
-}
-
-bool MemoFind(uint32_t key, uint8_t& outValue)
-{
-    uint32_t idx = key & kMemoMask;
-    for (uint32_t probe = 0; probe < kMemoSlots; ++probe) {
-        const MemoEntry& e = s_hazardMemo[idx];
-        if (e.key == key) { outValue = e.value; return true; }
-        if (e.key == kMemoEmpty) return false;
-        idx = (idx + 1) & kMemoMask;
-    }
-    return false;
-}
-
-void MemoInsert(uint32_t key, uint8_t value)
-{
-    uint32_t idx = key & kMemoMask;
-    for (uint32_t probe = 0; probe < kMemoSlots; ++probe) {
-        MemoEntry& e = s_hazardMemo[idx];
-        if (e.key == kMemoEmpty || e.key == key) {
-            e.key = key; e.value = value;
-            return;
-        }
-        idx = (idx + 1) & kMemoMask;
-    }
-}
-
-uint32_t TileKey(int tx, int ty)
-{
-    return (static_cast<uint32_t>(static_cast<uint16_t>(tx)) << 16) |
-            static_cast<uint32_t>(static_cast<uint16_t>(ty));
-}
-
-bool IsFinite(float v) { return std::isfinite(v); }
-bool IsFinitePoint(float x, float y) { return IsFinite(x) && IsFinite(y); }
-
-float DistSq(float ax, float ay, float bx, float by)
-{
-    const float dx = ax - bx, dy = ay - by;
-    return dx * dx + dy * dy;
-}
+using Movement::TileSensor::IsFinite;
+using Movement::TileSensor::IsFinitePoint;
+using Movement::TileSensor::DistSq;
 
 void AddSample(ProjectileThreat& t, float x, float y, float tMs)
 {
@@ -205,7 +159,7 @@ void Build(Snapshot& out, float playerX, float playerY, const Settings& settings
     out.enemyCount = 0;
     out.projectileSourceUnavailable = false;
     out.limited = false;
-    MemoClear();
+    s_hazardMemo.Clear();
 
     if (!ProjectileTracking::IsInstalled()) {
         out.projectileSourceUnavailable = true;
@@ -310,23 +264,12 @@ void Build(Snapshot& out, float playerX, float playerY, const Settings& settings
 
 bool IsHazardAt(float worldX, float worldY)
 {
-    if (!IsFinitePoint(worldX, worldY)) return false;
-    const int tx = static_cast<int>(std::floor(worldX));
-    const int ty = static_cast<int>(std::floor(worldY));
-    const uint32_t key = TileKey(tx, ty);
-    uint8_t cached = 0;
-    if (MemoFind(key, cached)) return cached != 0;
-    const bool hz = WorldTAB::IsTileDamagingLive(tx, ty);
-    MemoInsert(key, hz ? 1 : 0);
-    return hz;
+    return Movement::TileSensor::IsHazardAt(s_hazardMemo, worldX, worldY);
 }
 
 bool CanOccupy(float worldX, float worldY, bool safeWalk)
 {
-    if (!IsFinitePoint(worldX, worldY)) return false;   // unknown → treat as blocked
-    if (TestTAB::IsWalkPositionBlocked(worldX, worldY)) return false;
-    if (safeWalk && IsHazardAt(worldX, worldY)) return false;
-    return true;
+    return Movement::TileSensor::CanOccupy(s_hazardMemo, worldX, worldY, safeWalk);
 }
 
 } } // namespace PJDodge::Sensors

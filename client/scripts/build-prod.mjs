@@ -4,7 +4,7 @@
  * Pipeline:
  *   1. Clean dist/
  *   2. Build C++ DLL via MSBuild (Release|x64)
- *   3. Copy the built DLL → assets/version.dll (plain — open source, no encryption)
+ *   3. Copy the built DLL → assets/realm-engine.dll (plain — open source, no encryption)
  *   4. Bundle core app with esbuild
  *   5. Bundle each plugin individually (plugins/*.ts -> dist/plugins/*.js)
  *   6. Stage dist/public + inject __ADMIN_BUILD__ flag
@@ -37,14 +37,15 @@ function findInternalDir() {
 }
 const INTERNAL_DIR = findInternalDir();
 const DLL_SLN = join(INTERNAL_DIR, 'il2cpp-dll-injection.sln');
-const DLL_DEST = join(ROOT, 'assets', 'version.dll');
-// The .vcxproj OutDir now writes version.dll straight into client/assets/
-// (= DLL_DEST). Older project configs emitted it under internal/x64/Release/
-// instead, so accept either — assets first (that's where a current build lands),
-// legacy path as a fallback. Only copy when the build didn't already land it.
+const DLL_DEST = join(ROOT, 'assets', 'realm-engine.dll');
+// The .vcxproj OutDir (TargetName=realm-engine) writes realm-engine.dll straight
+// into client/assets/ (= DLL_DEST). Older project configs emitted it under
+// internal/x64/Release/ instead, so accept either — assets first (that's where a
+// current build lands), legacy path as a fallback. Only copy when the build
+// didn't already land it.
 const DLL_BUILD_CANDIDATES = [
   DLL_DEST,
-  join(INTERNAL_DIR, 'x64', 'Release', 'version.dll'),
+  join(INTERNAL_DIR, 'x64', 'Release', 'realm-engine.dll'),
 ];
 const PACKET_DEFINITIONS_JSON = readFileSync(join(DATA_DIR, 'packet-definitions.json'), 'utf8');
 const STAT_TYPES_JSON = readFileSync(join(DATA_DIR, 'stat-types.json'), 'utf8');
@@ -158,16 +159,16 @@ log(`DLL built: ${fileSize(dllBuilt)}`);
 
 // ── Step 4: Ship DLL (plain — open source) ───────────────────────────────────
 
-// Open source: the DLL is shipped unencrypted as assets/version.dll. The
-// runtime deploy path (index.ts) already prefers assets/version.dll, so no
+// Open source: the DLL is shipped unencrypted as assets/realm-engine.dll. The
+// runtime deploy path (index.ts) resolves assets/realm-engine.dll, so no
 // decryption step or embedded key is needed. When the .vcxproj already emits
 // into assets/ the "copy" is a no-op (self-copy would throw), so skip it.
 mkdirSync(join(ROOT, 'assets'), { recursive: true });
 if (resolve(dllBuilt) !== resolve(DLL_DEST)) {
   copyFileSync(dllBuilt, DLL_DEST);
-  log(`DLL copied → assets/version.dll (${fileSize(DLL_DEST)})`);
+  log(`DLL copied → assets/realm-engine.dll (${fileSize(DLL_DEST)})`);
 } else {
-  log(`DLL already in assets/version.dll (${fileSize(DLL_DEST)})`);
+  log(`DLL already in assets/realm-engine.dll (${fileSize(DLL_DEST)})`);
 }
 
 // ── Step 5: Bundle core ──────────────────────────────────────────────────────
@@ -306,6 +307,6 @@ log('');
 log('Output:');
 log(`  Core:      dist/app.cjs (${fileSize(join(DIST, 'app.cjs'))})`);
 log(`  Plugins:   dist/plugins/ (${pluginEntries.length} files)`);
-log(`  DLL:       assets/version.dll (${fileSize(DLL_DEST)})`);
+log(`  DLL:       assets/realm-engine.dll (${fileSize(DLL_DEST)})`);
 log('');
 log('Run "npm run dist" to package with electron-builder.');

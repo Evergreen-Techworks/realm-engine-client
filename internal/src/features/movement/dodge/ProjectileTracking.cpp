@@ -5,21 +5,21 @@
 #include "../../projectiles/ProjectileRuntimeReader.h"
 #include "../../projectiles/ProjectileStore.h"
 #include "../../projectiles/ProjectileTrajectory.h"
-#include "AutoAim.h"
-#include "FeatMagnetAim.h"
+#include "features/projectiles/ShotOrigin.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
 #include "gui/tabs/WorldTAB.h"
-#include "helpers.h"
 #include "BootGate.h"
 #include "Il2CppResolver.h"
 #include "DbgFileLog.h"
-#include "BeebyteName.h"
+#include "game/symbols/GameClasses.h"
+#include "game/objects/GameObjects.h"
 #include "RuntimeOffsets.h"
 #include "MemRead.h"
 #include "Il2CppHook.h"
 
 #include <windows.h>
-#include "minhook/MinHook.h"
 #include <atomic>
+#include <unordered_set>
 #include <cmath>
 #include <cstring>
 #include <unordered_map>
@@ -28,52 +28,21 @@
 // UI scale on native per-projectile mult (IL2CPP field KDAJOMOFMJB on HBEAKBIHANL).
 static std::atomic<float> g_flashSpeedMulAtomic{1.f};
 
-// Muzzle offset along aim (tiles). Default 0.3 = vanilla; hook skips trig when <= kMuzzleVanillaEps.
+// Muzzle offset along aim (tiles). Default 0.3 = vanilla. The slider's clamp
+// lives here; the decision of whether it applies to a given shot belongs to
+// ShotOrigin::Resolve (features/projectiles/ShotOrigin.cpp).
 static std::atomic<float> g_localMuzzleOffsetTiles{0.3f};
 static constexpr float kMuzzleMinTiles    = 0.3f;
 static constexpr float kMuzzleMaxTiles    = 2.225f;
-static constexpr float kMuzzleVanillaEps  = 0.00051f; // treat as disabled vs 0.3
 
 namespace {
 static const char* kProjClassName   = "HBEAKBIHANL";
-static const char* kHbeakSpeedMulFieldName = "KDAJOMOFMJB"; // Flash speedMul_ equivalent (types.cs)
 static const char* kSpawnMethodName = "KOBMINBDOBD";
 static const int   kSpawnParamCount = 12;
 
-// Projectile's BeeByte-obfuscated class changes per build; resolve it from
-// readable metadata first, then fall back to the older hardcoded name.
-__declspec(noinline) static Il2CppClass* ResolveProjClass()
-{
-    static Il2CppClass* s_cached = nullptr;
-    if (s_cached) return s_cached;
-
-    const char* resolvedVia = nullptr;
-    for (const auto& kv : Beebyte::GetMap()) {
-        if (kv.second == "Projectile") {
-            Il2CppClass* k = Resolver::GetClass("", kv.first.c_str());
-            if (!k) k = Resolver::FindClassLoose(kv.first.c_str());
-            if (k) { s_cached = k; resolvedVia = kv.first.c_str(); break; }
-        }
-    }
-    if (!s_cached) {
-        Il2CppClass* k = Resolver::GetClass("", kProjClassName);
-        if (!k) k = Resolver::FindClassLoose(kProjClassName);
-        if (k) { s_cached = k; resolvedVia = kProjClassName; }
-    }
-
-    static bool s_logged = false;
-    if (!s_logged) {
-        s_logged = true;
-        if (s_cached)
-            DBG_FILE_LOG("[ProjectileTracking] ResolveProjClass: resolved 'Projectile' via '"
-                << (resolvedVia ? resolvedVia : "?")
-                << "' (hardcoded was '" << kProjClassName << "')");
-        else
-            DBG_FILE_LOG("[ProjectileTracking] ResolveProjClass: FAILED — no 'Projectile' "
-                "in Beebyte map and hardcoded '" << kProjClassName << "' unresolved");
-    }
-    return s_cached;
-}
+// Projectile's BeeByte-obfuscated class changes per build; GameClasses::Projectile()
+// owns that policy (alias map first, kProjClassName as the fallback literal,
+// cached, logged once) — see game/symbols/GameClasses.h.
 using SpawnProjectileFn = void* (__fastcall*)(
     void*    projInstance,
     void*    objProps,
@@ -98,30 +67,32 @@ std::unordered_map<int32_t, std::pair<float, float>> g_EntityPos;
 bool                      g_Installed = false;
 bool                      g_EntCsInit = false;
 
-std::atomic<uint32_t>     g_hbeakSpeedMulFieldOff{ 0 }; // 0 = unresolved
-
-static void EnsureHbeakSpeedMulFieldOffset()
+// Transition-only witness: a stale/unresolved speed-mul offset silently degrades
+// prediction (per-shot speed multiplier ignored). Log only on a state change so
+// steady state is a single integer compare with no per-frame disk writes.
+static int g_speedMulOffLogged = -1;   // -1 unknown, 0 unresolved, 1 resolved
+static void WitnessSpeedMulOffset(uint32_t off)
 {
-    uint32_t cur = g_hbeakSpeedMulFieldOff.load(std::memory_order_relaxed);
-    if (cur != 0) return;
-    Il2CppClass* klass = ResolveProjClass();
-    if (!klass) return;
-    FieldInfo* fi = il2cpp_class_get_field_from_name(klass, kHbeakSpeedMulFieldName);
-    if (!fi) return;
-    const size_t off = il2cpp_field_get_offset(fi);
-    if (off > 0u && off < 0x10000u)
-        g_hbeakSpeedMulFieldOff.store(static_cast<uint32_t>(off), std::memory_order_relaxed);
+    const int now = (off != 0u) ? 1 : 0;
+    if (now == g_speedMulOffLogged) return;
+    g_speedMulOffLogged = now;
+    if (now)
+        DBG_FILE_LOG("[ProjectileTracking] speed-mul offset KDAJOMOFMJB resolved -> 0x"
+            << std::hex << off << std::dec);
+    else
+        DBG_FILE_LOG("[ProjectileTracking] speed-mul offset KDAJOMOFMJB UNRESOLVED "
+            "— using flashTune only (per-shot speed multiplier ignored)");
 }
 
 static float ComputeEffectiveSpeedMulFromInstance(void* hbeakInstance)
 {
-    EnsureHbeakSpeedMulFieldOffset();
     float flashTune = ProjectileTracking::GetFlashSpeedMultiplier();
     if (!(flashTune > 0.01f) || flashTune > 50.f)
         flashTune = 1.f;
 
     float inst = 1.f;
-    const uint32_t off = g_hbeakSpeedMulFieldOff.load(std::memory_order_relaxed);
+    const uint32_t off = RuntimeOffsets::Hbeak_SpeedMul;   // 0 until registry resolves it
+    WitnessSpeedMulOffset(off);                            // transition-only log
     float v;
     if (off != 0u && Mem::TryRead(hbeakInstance, off, v)) {
         if (std::isfinite(v) && v > 1e-6f && v < 100.f)
@@ -138,8 +109,7 @@ static bool TryReadLivePos(void* projInst, float& outX, float& outY)
 {
     outX = 0.f;
     outY = 0.f;
-    if (!Mem::TryRead(projInst, RuntimeOffsets::PosX, outX)) return false;
-    if (!Mem::TryRead(projInst, RuntimeOffsets::PosY, outY)) return false;
+    if (!Game::Entity(projInst).TryPos(outX, outY)) return false;
     return true;
 }
 
@@ -161,6 +131,23 @@ static void LookupShooterOrigin(int32_t attackerObjId, uint32_t ownerObjId, floa
         return;
     }
     LeaveCriticalSection(&g_EntCs);
+}
+
+// Transition-only witness: which provider decided the local spawn offset. Logged
+// only on a change, so steady state is one byte compare per shot with no disk I/O.
+static ShotOrigin::Source g_lastShotOriginLogged = static_cast<ShotOrigin::Source>(0xFF);
+static void WitnessShotOrigin(ShotOrigin::Source src)
+{
+    if (src == g_lastShotOriginLogged) return;
+    g_lastShotOriginLogged = src;
+    const char* name = "?";
+    switch (src) {
+        case ShotOrigin::Source::Vanilla:  name = "VANILLA";  break;
+        case ShotOrigin::Source::Muzzle:   name = "MUZZLE";   break;
+        case ShotOrigin::Source::Magnet:   name = "MAGNET";   break;
+        case ShotOrigin::Source::KillAura: name = "KILLAURA"; break;
+    }
+    DBG_FILE_LOG("[ProjectileTracking] local shot origin -> " << name);
 }
 
 static bool TryReadObjectPropertiesIsEnemy(void* objProps, bool& outIsEnemy)
@@ -191,45 +178,22 @@ void* __fastcall SpawnProjectileDetour(
     float spawnY = startY;
     const int32_t dk = g_LocalDictKey.load(std::memory_order_relaxed);
     const bool isLocalShot = dk != 0 && (attackerObjId == dk || static_cast<int32_t>(ownerObjId) == dk);
-    if (isLocalShot && CombatTAB::FeatMagnetAim::IsEnabled()) {
-        const float magnetTiles = CombatTAB::FeatMagnetAim::GetVisualOffsetTiles();
-        bool useTarget = false;
-        if (AutoAim::HasTarget()) {
-            float targetX = 0.f, targetY = 0.f;
-            AutoAim::GetAimTarget(targetX, targetY);
 
-            float entityX = 0.f, entityY = 0.f;
-            LookupShooterOrigin(attackerObjId, ownerObjId, entityX, entityY);
-            if (fabsf(entityX) > 0.5f || fabsf(entityY) > 0.5f) {
-                const float dx = targetX - entityX;
-                const float dy = targetY - entityY;
-                const float lenSq = dx * dx + dy * dy;
-                if (lenSq > 1e-6f) {
-                    const float invLen = 1.f / sqrtf(lenSq);
-                    spawnX = dx * invLen * magnetTiles;
-                    spawnY = dy * invLen * magnetTiles;
-                    useTarget = true;
-                }
-            }
-        }
-        if (!useTarget) {
-            spawnX = cosf(angle) * magnetTiles;
-            spawnY = sinf(angle) * magnetTiles;
-        }
-    } else {
-        const float muzzleTiles = g_localMuzzleOffsetTiles.load(std::memory_order_relaxed);
-        if (muzzleTiles > kMuzzleMinTiles + kMuzzleVanillaEps && isLocalShot) {
-            // startX/startY are shooter-relative; vanilla length ~0.3 tiles. Scale to keep direction.
-            const float scale = muzzleTiles / kMuzzleMinTiles;
-            if (fabsf(startX) > 1e-5f || fabsf(startY) > 1e-5f) {
-                spawnX = startX * scale;
-                spawnY = startY * scale;
-            } else {
-                spawnX = cosf(angle) * muzzleTiles;
-                spawnY = sinf(angle) * muzzleTiles;
-            }
-        }
+    ShotOrigin::Request req;
+    req.isLocalShot = isLocalShot;
+    req.angle       = angle;
+    req.startX      = startX;
+    req.startY      = startY;
+    req.muzzleTiles = g_localMuzzleOffsetTiles.load(std::memory_order_relaxed);
+    if (isLocalShot) {
+        float ex = 0.f, ey = 0.f;
+        LookupShooterOrigin(attackerObjId, ownerObjId, ex, ey);
+        req.haveShooter = (fabsf(ex) > 0.5f || fabsf(ey) > 0.5f);
+        req.shooterX = ex;
+        req.shooterY = ey;
     }
+    const ShotOrigin::Source src = ShotOrigin::Resolve(req, spawnX, spawnY);
+    WitnessShotOrigin(src);
 
     AutoAim::OnLocalPlayerProjectileSpawn(projProps, isAbility, attackerObjId, ownerObjId);
 
@@ -323,8 +287,7 @@ void* __fastcall SpawnProjectileDetour(
     p.speedMul = ComputeEffectiveSpeedMulFromInstance(ret);
 
     float livePosX, livePosY;
-    if (Mem::TryRead(ret, RuntimeOffsets::PosX, livePosX) &&
-        Mem::TryRead(ret, RuntimeOffsets::PosY, livePosY)) {
+    if (Game::Entity(ret).TryPos(livePosX, livePosY)) {
         p.x = livePosX;
         p.y = livePosY;
     } else {
@@ -386,7 +349,7 @@ void Install()
         g_EntCsInit = true;
     }
 
-    Il2CppClass* klass = ResolveProjClass();
+    Il2CppClass* klass = GameClasses::Projectile();
     if (!klass) {
         static int s_n = 0;
         if ((s_n++ % 240) == 0)
@@ -411,12 +374,7 @@ void Install()
     g_spawnTarget = reinterpret_cast<void*>(mi->methodPointer);
     g_OriginalSpawn = reinterpret_cast<SpawnProjectileFn>(g_spawnTarget);
 
-    static bool s_mhInit = false;
-    if (!s_mhInit) {
-        MH_STATUS st = MH_Initialize();
-        if (st != MH_OK && st != MH_ERROR_ALREADY_INITIALIZED) return;
-        s_mhInit = true;
-    }
+    if (!Il2CppHook::EnsureRuntime("ProjectileTracking")) return;
 
     if (!Il2CppHook::InstallMinHook(g_spawnTarget,
             reinterpret_cast<void*>(&SpawnProjectileDetour),
@@ -424,7 +382,6 @@ void Install()
             "ProjectileTracking"))
         return;
 
-    EnsureHbeakSpeedMulFieldOffset();
     g_Installed = true;
     DBG_FILE_LOG("[ProjectileTracking] Install: spawn hook INSTALLED — bullets now captured");
 }
@@ -437,12 +394,8 @@ bool IsInstalled()
 void Uninstall()
 {
     if (g_Installed) {
-        if (g_spawnTarget) {
-            MH_DisableHook(g_spawnTarget);
-            MH_RemoveHook(g_spawnTarget);
-        }
+        Il2CppHook::UninstallMinHook(g_spawnTarget, "ProjectileTracking");
         g_OriginalSpawn = nullptr;
-        g_spawnTarget = nullptr;
         g_Installed = false;
     }
     ProjectileStore::Shutdown();
@@ -536,6 +489,19 @@ bool RetireProjectile(const WorldProjectile& proj)
     return ProjectileStore::RetireProjectile(proj);
 }
 
+void ReconcileWithLivePool()
+{
+    static std::unordered_set<uintptr_t> s_live;   // reused to avoid a per-call alloc
+    // If the pool read fails (WorldManager unreadable), CollectLiveProjectilePtrs
+    // returns false and we prune NOTHING — a lingering lane is safe, a wrongly-pruned
+    // LIVE shot (missed → death) is not.
+    if (!WorldTAB::CollectLiveProjectilePtrs(s_live)) return;
+    const int retired = ProjectileStore::RetireNotInLiveSet(s_live, /*minAgeMs=*/150.f);
+    if (retired > 0)
+        DBG_FILE_LOG("[ProjTrack] reconcile: live=" << s_live.size()
+            << " retired(early-deleted)=" << retired);
+}
+
 void ComputePosAt(const WorldProjectile& proj, float tMs, float& outX, float& outY)
 {
     const float fallbackX = outX;
@@ -587,10 +553,25 @@ float NormalizeAccelDelayMs(float rawFromProps)
     return ProjectileTrajectory::NormalizeAccelDelayMs(rawFromProps);
 }
 
+static int g_projRadiusTrustLogged = -1;   // -1 unknown, 0 not-trusted, 1 trusted
+
 bool TryReadProjRadiusFromInstance(void* hbeakInstance, float& outRadius)
 {
     outRadius = 0.f;
     if (!hbeakInstance) return false;
+    {
+        // Transition-only witness: reports whether projRadius resolved from live
+        // metadata (read-only state query — not a write gate). Observability only;
+        // the read path and its range gate below are unchanged.
+        const bool trusted = RuntimeOffsets::IsFieldWriteTrusted(&RuntimeOffsets::Hbeak_ProjRadius);
+        const int now = trusted ? 1 : 0;
+        if (now != g_projRadiusTrustLogged) {
+            g_projRadiusTrustLogged = now;
+            if (!trusted)
+                DBG_FILE_LOG("[ProjectileTracking] projRadius HHFDCMIIIHF offset NOT metadata-resolved "
+                    "— hitbox radius may be stale for this build");
+        }
+    }
     return Mem::TryRead(hbeakInstance, RuntimeOffsets::Hbeak_ProjRadius, outRadius);
 }
 

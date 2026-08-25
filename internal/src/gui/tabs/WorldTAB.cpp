@@ -16,6 +16,8 @@
 #include "LocalPlayer.h"
 #include "helpers.h"
 #include "BeebyteName.h"
+#include "game/symbols/GameClasses.h"
+#include "game/objects/GameObjects.h"
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
 #include <vector>
@@ -99,6 +101,7 @@ static std::vector<WorldProjectile>  g_projectiles;
 static std::unordered_map<uint32_t, bool>  s_blockedMap;    // present = movement blocked (NoWalk / OccupySquare / FullOccupy)
 static std::unordered_map<uint32_t, bool>  s_fullOccupyMap; // present = tile has FullOccupy entity (for sub-tile neighbour check)
 static std::unordered_map<uint32_t, bool>  s_damagingMap;  // present = tile deals damage (minDmg/maxDmg > 0)
+static std::unordered_map<uint32_t, bool>  s_sinkMap;      // present = sink/sinking ground (water / lava-visual) — nav routes AROUND it
 static std::unordered_map<uint32_t, int>   s_tileMaxDmgMap; // value = tile maxDmg (damaging tiles only)
 static std::unordered_map<uint32_t, float> s_tileSpeedMap; // value = XML speed multiplier (non-zero tiles only)
 static std::mutex s_tileMapMutex;
@@ -114,12 +117,14 @@ static void RebuildBlockedMap()
     std::unordered_map<uint32_t, bool> blockedMap;
     std::unordered_map<uint32_t, bool> fullOccupyMap;
     std::unordered_map<uint32_t, bool> damagingMap;
+    std::unordered_map<uint32_t, bool> sinkMap;
     std::unordered_map<uint32_t, int>  tileMaxDmgMap;
     std::unordered_map<uint32_t, float> tileSpeedMap;
 
     blockedMap.reserve(g_tiles.size() + g_entities.size());
     fullOccupyMap.reserve(g_entities.size());
     damagingMap.reserve(g_tiles.size());
+    sinkMap.reserve(g_tiles.size());
     tileMaxDmgMap.reserve(g_tiles.size());
     tileSpeedMap.reserve(g_tiles.size());
 
@@ -148,6 +153,12 @@ static void RebuildBlockedMap()
             damagingMap[k] = true;
             tileMaxDmgMap[k] = (t.maxDmg > 0) ? t.maxDmg : t.damageCached;
         }
+        // Sink / sinking ground = water and lava-style tiles. Physically walkable
+        // on the server but bad to path across (you sink / it's lava) — the nav A*
+        // routes AROUND it (hug the coast) via the hazard fold in CopyBoxBlocked.
+        // Not added to blockedMap (the dodge may still cross it to avoid a shot).
+        if (t.conds & (TCOND_SINK | TCOND_SINKING))
+            sinkMap[k] = true;
         // Store speed modifier for any tile that has one (0 = no modifier)
         if (t.speed != 0.f)
             tileSpeedMap[k] = t.speed;
@@ -179,6 +190,7 @@ static void RebuildBlockedMap()
     s_blockedMap.swap(blockedMap);
     s_fullOccupyMap.swap(fullOccupyMap);
     s_damagingMap.swap(damagingMap);
+    s_sinkMap.swap(sinkMap);
     s_tileMaxDmgMap.swap(tileMaxDmgMap);
     s_tileSpeedMap.swap(tileSpeedMap);
 }
@@ -258,15 +270,12 @@ static float Distance(float ax, float ay, float bx, float by)
     return sqrtf(dx * dx + dy * dy);
 }
 
-// HBEAKBIHANL (runtime projectile) — klass cached here; FOMOIBCKIFP offset via RuntimeOffsets.
-static Il2CppClass* s_hbeakKlass = nullptr;
-
-static Il2CppClass* GetHbeakProjectileClass()
-{
-    if (!s_hbeakKlass)
-        s_hbeakKlass = Resolver::FindClassLoose("HBEAKBIHANL");
-    return s_hbeakKlass;
-}
+// Projectile class (HBEAKBIHANL) — resolved through GameClasses so this matches
+// ProjectileTracking's policy exactly (BeeByte alias first, obfuscated literal
+// as fallback) and shares its cache. Before plan 101 this site used a bare
+// FindClassLoose on the obfuscated literal alone and would go blank on a rename
+// while dodging kept working. FOMOIBCKIFP offset still comes via RuntimeOffsets.
+static Il2CppClass* GetHbeakProjectileClass() { return GameClasses::Projectile(); }
 
 // If `elem` is HBEAKBIHANL (or subclass), append to `out`. DIA4A: HBEAKBIHANL : KJMONHENJEN.
 static void TryAppendHbeakFromElem(
@@ -296,8 +305,7 @@ static void TryAppendHbeakFromElem(
     wp.speed = 5000.f;
     wp.damage = 0;
     wp.bulletId = 0;
-    Mem::TryRead(elem, RuntimeOffsets::PosX, wp.x);
-    Mem::TryRead(elem, RuntimeOffsets::PosY, wp.y);
+    (void)Game::Entity(elem).TryPos(wp.x, wp.y);
     wp.angle = Mem::ReadOr<float>(elem, RuntimeOffsets::Hbeak_Angle, 0.f);
 
     void* projProps = nullptr;
@@ -530,8 +538,7 @@ static void DoRefresh()
     void* localPtr = GameState::GetLocalPtr();
     if (localPtr && Mem::AddrOk(localPtr)) {
         g_localPtr = localPtr;
-        Mem::TryRead(localPtr, RuntimeOffsets::PosX, g_localX);
-        Mem::TryRead(localPtr, RuntimeOffsets::PosY, g_localY);
+        (void)Game::Entity(localPtr).TryPos(g_localX, g_localY);
     }
 
     // ── Scan entity dict (DFALIKKKGLI @ 0xB0) ───────────────────────────────
@@ -548,10 +555,8 @@ static void DoRefresh()
         ent.objectId = key;
         ent.ptr      = value;
 
-        Mem::TryRead(value, RuntimeOffsets::PosX,  ent.x);
-        Mem::TryRead(value, RuntimeOffsets::PosY,  ent.y);
-        Mem::TryRead(value, RuntimeOffsets::HP,     ent.hp);
-        Mem::TryRead(value, RuntimeOffsets::MaxHP, ent.maxHp);
+        (void)Game::Entity(value).TryPos(ent.x, ent.y);
+        (void)Game::Character(value).TryHp(ent.hp, ent.maxHp);
 
         RuntimeOffsets::TryReadMapObjectConditions(value, &ent.condLo, &ent.condHi);
 
@@ -614,8 +619,7 @@ static void DoRefresh()
 
         if (localPtr && value == localPtr) {
             ent.isLocal = true;
-            Mem::TryRead(value, RuntimeOffsets::PosX, g_localX);
-            Mem::TryRead(value, RuntimeOffsets::PosY, g_localY);
+            (void)Game::Entity(value).TryPos(g_localX, g_localY);
             ProjectileTracking::SetLocalPlayerObjectId(key);
         }
 
@@ -2127,7 +2131,7 @@ namespace WorldTAB {
             if (e.objectId != objectId) continue;
             if (!Mem::AddrOk(e.ptr)) return false;
             float lx = 0.f, ly = 0.f;
-            bool ok = Mem::TryRead(e.ptr, RuntimeOffsets::PosX, lx) && Mem::TryRead(e.ptr, RuntimeOffsets::PosY, ly);
+            const bool ok = Game::Entity(e.ptr).TryPos(lx, ly);
             if (ok) { outX = lx; outY = ly; return true; }
             return false;
         }
@@ -2202,6 +2206,19 @@ namespace WorldTAB {
         return g_projectiles;
     }
 
+    bool CollectLiveProjectilePtrs(std::unordered_set<uintptr_t>& out)
+    {
+        out.clear();
+        void* worldMgr = GameState::GetWorldMgr();
+        if (!Mem::AddrOk(worldMgr)) return false;
+        // Walk the live pools with an EMPTY seed so `out` ends up as exactly the set
+        // of live projectile instance pointers. The discarded WorldProjectile list is
+        // the price of reusing the existing, battle-tested pool walk.
+        std::vector<WorldProjectile> discard;
+        MergeProjectilePoolsFromWorldManager(worldMgr, discard, out);
+        return true;
+    }
+
     bool IsTileBlocked(int tx, int ty)
     {
         std::lock_guard<std::mutex> lock(s_tileMapMutex);
@@ -2212,6 +2229,44 @@ namespace WorldTAB {
     {
         std::lock_guard<std::mutex> lock(s_tileMapMutex);
         return s_fullOccupyMap.count(BlockedKey(tx, ty)) != 0;
+    }
+
+    // Bulk player-box occupancy reader — see the header comment. ONE tile-mutex
+    // acquisition rasterizes the whole grid: for each cell we floor the player-box
+    // footprint (center +/- playerHalfEdge) on each axis and mark the cell blocked
+    // if any tile in that small box is in s_blockedMap (or s_damagingMap when
+    // foldHazard). This is IsPositionBlocked's box logic hoisted out of the per-cell
+    // path. Noclip is deliberately not consulted (conservative — never unsafe).
+    void CopyBoxBlocked(float originX, float originY, int side, float cellTiles,
+                        float playerHalfEdge, bool foldHazard, unsigned char* out)
+    {
+        if (!out || side <= 0) return;
+        std::lock_guard<std::mutex> lock(s_tileMapMutex);
+        for (int gy = 0; gy < side; ++gy) {
+            for (int gx = 0; gx < side; ++gx) {
+                const float cx = originX + static_cast<float>(gx) * cellTiles;
+                const float cy = originY + static_cast<float>(gy) * cellTiles;
+                const int x0 = static_cast<int>(std::floor(cx - playerHalfEdge));
+                const int x1 = static_cast<int>(std::floor(cx + playerHalfEdge));
+                const int y0 = static_cast<int>(std::floor(cy - playerHalfEdge));
+                const int y1 = static_cast<int>(std::floor(cy + playerHalfEdge));
+                // bit0 = hard wall (impassable). bit1 = hazard (damaging/sink/water)
+                // when foldHazard — a SOFT avoid: the nav A* routes around it but can
+                // still traverse it when boxed in (a lava/water-floored arena must not
+                // wall the planner in). A true wall always sets bit0 regardless.
+                unsigned char f = 0;
+                for (int tx = x0; tx <= x1; ++tx) {
+                    for (int ty = y0; ty <= y1; ++ty) {
+                        const uint32_t k = BlockedKey(tx, ty);
+                        if (s_blockedMap.count(k) != 0) { f |= 0x1; }
+                        else if (foldHazard && (s_damagingMap.count(k) != 0 ||
+                                                s_sinkMap.count(k) != 0)) { f |= 0x2; }
+                    }
+                    if (f & 0x1) break;   // a wall dominates; no need to keep scanning
+                }
+                out[gy * side + gx] = f;
+            }
+        }
     }
 
     bool IsDamagingTile(int tx, int ty)
@@ -2274,7 +2329,7 @@ namespace WorldTAB {
 
         const MethodInfo* getSquare = nullptr;
         Resolver::Protection::safe_call([&]() {
-            Il2CppClass* wm = Resolver::FindClassLoose(kWorldMgrClassName);
+            Il2CppClass* wm = GameClasses::WorldManager();
             if (!wm) return;
             getSquare = FindGetSquareMethod(wm);
             if (!getSquare) return;
@@ -2282,7 +2337,7 @@ namespace WorldTAB {
             Il2CppClass* sq = nullptr;
             if (const Il2CppType* ret = il2cpp_method_get_return_type(getSquare))
                 sq = il2cpp_class_from_il2cpp_type(ret);
-            if (!sq) sq = Resolver::FindClassLoose(kSquareClassName);
+            if (!sq) sq = GameClasses::Square();
         });
 
         if (!getSquare) {

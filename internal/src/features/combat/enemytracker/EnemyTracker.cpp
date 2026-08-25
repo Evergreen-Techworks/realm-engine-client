@@ -163,7 +163,15 @@ static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t loc
 
         const int32_t objType = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::ObjType);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (!IsWhitelistedType(objType)) {
-            if (maxHp == 200)
+            // maxHp == 200 is the DECOY heuristic. Decoys carry a health bar;
+            // walls/destructibles do not (noHB above, deliberately kept as
+            // metadata rather than a hard reject). Without the !noHB guard this
+            // also silently swallowed every breakable wall that happens to sit
+            // at exactly 200 max HP — those walls then never reached the
+            // snapshot, so udodge's blocker set and auto-break could not see
+            // them at all. Real enemies (health bar present) are unaffected, so
+            // AutoAim's target pool is unchanged.
+            if (maxHp == 200 && !noHB)
                 return false;
             if (IsIgnoredType(objType))
                 return false;
@@ -284,6 +292,27 @@ void Enumerate(Callback cb, void* user)
 int32_t GetLocalPlayerObjectId()
 {
     return s_localPlayerObjectId.load(std::memory_order_relaxed);
+}
+
+bool ResolveObjectPos(int32_t id, float& outX, float& outY)
+{
+    if (id == 0) return false;
+    void* wm = GameState::GetWorldMgr();
+    if (!Mem::AddrOk(wm)) return false;
+    void* allDict = Mem::ReadPtr(wm, RuntimeOffsets::WM_AllDict);
+    if (!Mem::AddrOk(allDict)) return false;
+
+    bool  found = false;
+    float fx = 0.f, fy = 0.f;
+    Il2CppC::WalkDict(allDict, /*maxEntries*/4096, [&](int32_t key, void* entity) {
+        if (found || key != id || !Mem::AddrOk(entity)) return;
+        float ex = 0.f, ey = 0.f;
+        if (Game::Entity(entity).TryPosFinite(ex, ey) && !(ex == 0.f && ey == 0.f)) {
+            fx = ex; fy = ey; found = true;
+        }
+    });
+    if (found) { outX = fx; outY = fy; }
+    return found;
 }
 
 } // namespace EnemyTracker

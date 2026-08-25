@@ -125,7 +125,17 @@ uint32_t OP_NoCover       = 0x98;
 uint32_t OP_InvincibleElem= 0x460;
 uint32_t OP_NoWallRpt     = 0x210;
 uint32_t OP_OccupySq      = 0x69A;
-uint32_t OP_FullOcc       = 0x6D1;
+// CORRECTED 2026-08-24: was 0x6D1 — byte-identical to OP_IsEnemy below, which is
+// impossible: `fullOccupy` and `isEnemy` are distinct bools. Verified against the
+// published build 6.13.0.1.0 dump (builds.him.is), where `isEnemy` = 0x6E1 and
+// `fullOccupy` = 0x6E9 — 8 bytes apart (bool + padding). That group sits 0x10
+// higher in 6.13 than in our build (the same shift seen on
+// collisionRadiusMultiplier 0x788 -> 0x798), and our OP_IsEnemy = 0x6D1 is
+// confirmed working against the live client, so fullOccupy = 0x6D1 + 8 = 0x6D9.
+// LATENT, not active: both rows resolve by UNOBFUSCATED name on ObjectProperties
+// (a class BeeByte does not rotate), so live metadata overwrites this every frame
+// and the wrong value only bites if resolution ever fails.
+uint32_t OP_FullOcc       = 0x6D9;
 uint32_t OP_EnemyOcc      = 0x6D2;
 // isEnemy verified at 0x6D1 against the live client (upstream offset update);
 // our il2cpp-types.h dump still shows 0x6C9 — dump is stale for this region.
@@ -139,7 +149,7 @@ uint32_t OP_ProtSink      = 0x6DD;
 uint32_t OP_Flying        = 0x6E4;
 uint32_t OP_ConnectT      = 0x754;
 uint32_t OP_Projectiles   = 0x1C0;
-uint32_t OP_CollRadiusMult= 0x780;   // "collisionRadiusMultiplier"
+uint32_t OP_CollRadiusMult= 0x798;   // "collisionRadiusMultiplier" (boxed; current build per builds.him.is dump; 0x780 was questBarYOffset)
 
 uint32_t PP_Lifetime        = 0x158;
 uint32_t PP_Speed           = 0x160;
@@ -181,6 +191,7 @@ uint32_t Hbeak_SpawnAgeMs         = 0x16C;  // GLEGBLDBOJF — spawn-age ms (pat
 // NPMECLDKGEF — bool noclip guard. Fallback 0 = unresolved: ProjNoclip must NOT
 // install its hook until this resolves non-zero (no reliable static fallback).
 uint32_t Hbeak_NoclipGuard        = 0;
+uint32_t Hbeak_SpeedMul           = 0;      // KDAJOMOFMJB — 0 = unresolved (speed-mul 1.0)
 uint32_t PP_CustomHitbox          = 0x148;  // "CustomHitbox" — ProjectileCustomHitbox* reference
 uint32_t PP_IsArmorPiercing       = 0x138;  // "IsArmorPiercing"
 uint32_t CH_OffsetX               = 0x10;   // "offsetX" — custom hitbox X offset Single
@@ -450,6 +461,7 @@ static Entry s_entries[] = {
     { "HBEAKBIHANL", { "FFFFKPDHEFP" },                                           1, 0, &Hbeak_Angle,           false },
     { "HBEAKBIHANL", { "DBNNDLKNECM" },                                           1, 0, &Hbeak_InstanceDamage,  false },
     { "HBEAKBIHANL", { "GLEGBLDBOJF" },                                           1, 0, &Hbeak_SpawnAgeMs,      false },
+    { "HBEAKBIHANL", { "KDAJOMOFMJB" },                                           1, 0, &Hbeak_SpeedMul,        false },
 
     // ── HBEAKBIHANL noclip guard (no shift) ──────────────────────────────────
     // Fallback 0 = unresolved: ProjNoclip refuses to install its hook until this
@@ -588,6 +600,19 @@ void MarkSuspect(const uint32_t* offsetVar)
 {
     for (int i = 0; i < kEntryCount; ++i)
         if (s_entries[i].outPtr == offsetVar) { s_entryState[i] = OffsetState::Suspect; return; }
+}
+
+OffsetState GetOffsetStateFor(const uint32_t* offsetVar)
+{
+    for (int i = 0; i < kEntryCount; ++i)
+        if (s_entries[i].outPtr == offsetVar) return s_entryState[i];
+    return OffsetState::Pending;
+}
+
+bool IsFieldWriteTrusted(const uint32_t* offsetVar)
+{
+    const OffsetState st = GetOffsetStateFor(offsetVar);
+    return st == OffsetState::ResolvedMatch || st == OffsetState::ResolvedShifted;
 }
 
 // Conservative bounds — only values a CORRECT offset can never produce, so a

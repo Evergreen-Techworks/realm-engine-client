@@ -17,8 +17,6 @@ namespace BootGate {
 
     // Drive the loop one frame. Returns the (possibly advanced) current state.
     State Tick();
-    // Current state without advancing (UI / gate reads).
-    State Current();
     // Force a re-audit on the next Tick (e.g. after a world/character reload).
     void  RequestRecheck();
 
@@ -28,22 +26,8 @@ namespace BootGate {
     // feature Install(). An unregistered feature name is never gated (returns true).
     bool FeatureAllowed(const char* feature);
 
-    // ── Progress surface ─────────────────────────────────────────────────────
-    // Critical anchors confirmed healthy / total critical anchors.
-    void        GetProgress(int& healthy, int& total);
+    // ── Health surface ───────────────────────────────────────────────────────
     // True once the audit has run at least once and a critical dep is stale.
-    bool        Degraded();
-    // Human-readable current step ("Resolving offsets…", "Ready", …).
-    const char* StatusLine();
-
-    // Per-anchor view for diagnostics (DiagBridge). Fills up to maxRows rows;
-    // returns the total anchor count.
-    struct AnchorView { const char* klass; const char* role; bool critical; bool stale; };
-    int GetAnchorReport(AnchorView* out, int maxRows);
-
-    // Per-feature view: which features are blocked because a critical anchor
-    // they need is stale. `blocked` = any needed anchor stale.
-    struct FeatureView { const char* feature; const char* label; bool blocked; };
-    int GetFeatureReport(FeatureView* out, int maxRows);
+    bool Degraded();
 
 } // namespace BootGate

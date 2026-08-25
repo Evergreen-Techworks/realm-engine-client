@@ -43,11 +43,4 @@ namespace AoeTracking {
 
     // How many native spawn hooks are active (effect paths + explosion path).
     int  CountHooks();
-
-    // Live GJJ throwable field-offset probe. The KOBMINBDOBD hook receives the
-    // true origin/dest as PARAMS, so it matches them against the instance's float
-    // pairs to recover the (possibly BeeByte-renamed) origin/dest field offsets and
-    // self-heals RuntimeOffsets::Gjj_*. `resolved` is true once a throwable has been
-    // seen and matched (trigger one — e.g. a Medusa cast). Surfaced via DiagBridge.
-    void GetGjjProbe(bool& resolved, uint32_t& originOff, uint32_t& destOff);
 }

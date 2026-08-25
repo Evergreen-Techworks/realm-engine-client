@@ -16,7 +16,7 @@ if /I "%~1"=="release" set "BUILD_CONFIG=Release"
 echo [dev] Build configuration: !BUILD_CONFIG!^|x64
 
 REM ── Env defaults ────────────────────────────────────────────────────────────────
-if "!WSL_DISTRO!"==""   set "WSL_DISTRO=Debian"
+if "!WSL_DISTRO!"==""   set "WSL_DISTRO=Debian-OLD"
 if "!WSL_USER!"=="" (
     for /f "delims=" %%I in ('wsl -d !WSL_DISTRO! whoami 2^>nul') do set "WSL_USER=%%I"
     if "!WSL_USER!"=="" set "WSL_USER=%USERNAME%"
@@ -80,6 +80,22 @@ if "!WSL_BASE!"=="" (
     )
 )
 
+REM ── Sync client from WSL (source only; NOT assets — the DLL builds into ──────
+REM    client\assets below, so a /MIR that included assets would delete it) ─────
+if not "!WSL_BASE!"=="" (
+    if exist "!WSL_BASE!\client" (
+        echo [dev] Syncing client from WSL...
+        robocopy "!WSL_BASE!\client" "!WIN_BASE!\client" ^
+            /MIR /R:3 /W:2 /NFL /NDL /NP /NJH /NJS ^
+            /XD node_modules dist release .git .vs assets "electron\native\build"
+        if !ERRORLEVEL! GEQ 8 (
+            echo [dev] ERROR: client sync failed ^(code !ERRORLEVEL!^).
+            pause
+            exit /b 1
+        )
+    )
+)
+
 REM ── Ensure game is closed so we can overwrite realm-engine.dll ──────────────
 tasklist /FI "IMAGENAME eq RotMG Exalt.exe" | find /I "RotMG Exalt.exe" >nul
 if !ERRORLEVEL! EQU 0 (
@@ -130,8 +146,8 @@ if !ERRORLEVEL! NEQ 0 (
     exit /b !ERRORLEVEL!
 )
 
-REM The vcxproj's OutDir is $(SolutionDir)..\client\assets\ — the DLL and injector
-REM build there (that's also where the client resolves them from for injection).
+REM The vcxproj's OutDir is $(SolutionDir)..\client\assets\ — the DLL builds
+REM there (that's also where the client resolves it from for injection).
 set "BUILT_DLL=!WIN_BASE!\client\assets\realm-engine.dll"
 set "BUILT_PDB=!WIN_BASE!\client\assets\realm-engine.pdb"
 if not exist "!BUILT_DLL!" (
@@ -139,6 +155,63 @@ if not exist "!BUILT_DLL!" (
     echo [dev]        That is the vcxproj OutDir client\assets\ -- did the build actually succeed?
     pause
     exit /b 1
+)
+
+REM ── Build injector.exe ──────────────────────────────────────────────────────
+REM injector.cpp is NOT in the .sln, so nothing else compiles it. Without
+REM injector.exe in client\assets\, the client logs "Injector not found... DLL
+REM injection unavailable" and realm-engine.dll never loads into the game
+REM (dodge/aim/etc silently do nothing). Compile it standalone with cl.exe.
+set "INJECTOR_SRC=!WIN_BASE!\!INTERNAL_DIR!\tools\injector"
+set "INJECTOR_EXE=!WIN_BASE!\client\assets\injector.exe"
+if exist "!INJECTOR_SRC!\injector.cpp" (
+    set "VCVARS="
+    for /f "delims=" %%I in ('"!VSWHERE!" -latest -prerelease -property installationPath 2^>nul') do (
+        if exist "%%I\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS=%%I\VC\Auxiliary\Build\vcvars64.bat"
+    )
+    if defined VCVARS (
+        echo [dev] Compiling injector.exe...
+        pushd "!INJECTOR_SRC!"
+        call "!VCVARS!" >nul 2>&1
+        cl /EHsc /O2 /nologo /DUNICODE /D_UNICODE injector.cpp /Fe:"!INJECTOR_EXE!" /Fo:"%TEMP%\injector.obj" /link Advapi32.lib >nul
+        if !ERRORLEVEL! NEQ 0 (
+            echo [dev] ERROR: injector.exe compile failed.
+            popd
+            pause
+            exit /b 1
+        )
+        popd
+        echo [dev] injector.exe -^> client\assets\injector.exe
+    ) else (
+        echo [dev] WARNING: vcvars64.bat not found -- injector.exe NOT built. Injection will be unavailable.
+    )
+)
+
+REM ── Rebuild the client TypeScript (regenerates dist/, incl. dist\plugins) ───
+if exist "!WIN_BASE!\client\package.json" (
+    pushd "!WIN_BASE!\client"
+    if exist "node_modules\.bin\tsc.cmd" (
+        echo [dev] Client deps present - skipping npm install.
+    ) else (
+        echo [dev] Installing client dependencies ^(first run^)...
+        call npm install
+        if !ERRORLEVEL! NEQ 0 (
+            echo [dev] ERROR: npm install failed ^(code !ERRORLEVEL!^).
+            popd
+            pause
+            exit /b !ERRORLEVEL!
+        )
+    )
+    echo [dev] Building client ^(npm run build^)...
+    call npm run build
+    if !ERRORLEVEL! NEQ 0 (
+        echo [dev] ERROR: client build failed ^(code !ERRORLEVEL!^).
+        popd
+        pause
+        exit /b !ERRORLEVEL!
+    )
+    popd
+    echo [dev] Client rebuilt - dist\ regenerated.
 )
 
 echo.

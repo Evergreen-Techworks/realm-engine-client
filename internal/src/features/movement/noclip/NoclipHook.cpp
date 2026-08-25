@@ -4,7 +4,6 @@
 #include "Il2CppResolver.h"
 #include "Il2CppHook.h"
 #include "MemRead.h"
-#include "minhook/MinHook.h"
 
 #include <Windows.h>
 #include <array>
@@ -87,9 +86,10 @@ static void ResolveTargets()
         return;
 
     // Resolve every predicate through the sanctioned resolver. ResolveMethod uses
-    // FindClassLoose (BeeByte-rename proof) then the argc-2 method pointer, so a
-    // renamed Map class still resolves. One resolved predicate is enough to start
-    // hooking; the rest retry on the next 1 Hz pass.
+    // FindClassLoose — a namespace-ignoring exact-name scan, NOT rename proof —
+    // then the argc-2 method pointer, so a renamed Map class does NOT resolve
+    // here. One resolved predicate is enough to start hooking; the rest retry on
+    // the next 1 Hz pass.
     int found = 0;
     for (int i = 0; i < kCount; ++i) {
         void* p = Il2CppHook::ResolveMethod("HJMBOMEHGDJ", kTargets[i].name, 2, /*loose*/true);
@@ -101,20 +101,6 @@ static void ResolveTargets()
     s_resolved = found > 0;
 }
 
-static bool EnsureMinHook()
-{
-    static bool mhInitialized = false;
-    if (mhInitialized)
-        return true;
-
-    const MH_STATUS st = MH_Initialize();
-    if (st != MH_OK && st != MH_ERROR_ALREADY_INITIALIZED)
-        return false;
-
-    mhInitialized = true;
-    return true;
-}
-
 // Per-entry install: one predicate failing to hook must not sink the others.
 static void TryInstall()
 {
@@ -122,7 +108,7 @@ static void TryInstall()
         return;
 
     ResolveTargets();
-    if (!s_resolved || !EnsureMinHook())
+    if (!s_resolved || !Il2CppHook::EnsureRuntime("NoclipHook"))
         return;
 
     // Per-entry install through the sanctioned helper: one predicate failing to
@@ -158,10 +144,8 @@ void Uninstall()
     for (int i = kCount - 1; i >= 0; --i) {
         if (!s_hooked[i])
             continue;
-        MH_DisableHook(s_target[i]);
-        MH_RemoveHook(s_target[i]);
+        Il2CppHook::UninstallMinHook(s_target[i], "NoclipHook");
         s_hooked[i] = false;
-        s_target[i] = nullptr;
         s_orig[i]   = nullptr;
     }
     s_installed = false;

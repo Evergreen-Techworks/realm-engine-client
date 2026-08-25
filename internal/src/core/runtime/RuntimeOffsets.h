@@ -63,6 +63,18 @@ namespace RuntimeOffsets {
     // Flag a specific offset variable SUSPECT from a live sanity check.
     void MarkSuspect(const uint32_t* offsetVar);
 
+    // Health state for a specific offset variable (reverse lookup by address).
+    // Returns OffsetState::Pending if the variable is not a table entry.
+    OffsetState GetOffsetStateFor(const uint32_t* offsetVar);
+
+    // Fail-closed gate for FLOAT WRITES that fail OPEN (a wrong float offset writes
+    // successfully onto another valid, writable float — silent corruption). Returns
+    // true ONLY when the offset was resolved from live IL2CPP metadata this session
+    // (ResolvedMatch or ResolvedShifted). Fallback / Suspect / Pending -> false ->
+    // the caller MUST refuse the write. Reads may still use the fallback; this gate
+    // is specifically for writes.
+    bool IsFieldWriteTrusted(const uint32_t* offsetVar);
+
     // Live sanity checks: validate the critical offsets against plausible ranges
     // and MarkSuspect any that read CLEAR garbage (a stale offset usually reads a
     // wildly out-of-range int). The caller passes the live values it already has,
@@ -323,7 +335,7 @@ namespace RuntimeOffsets {
     // to derive weapon range without waiting for the player's first
     // shot. Same no-shift path as the other OP fields.
     extern uint32_t OP_Projectiles; // "Projectiles"              fallback 0x1C0
-    extern uint32_t OP_CollRadiusMult; // "collisionRadiusMultiplier"  fallback 0x780
+    extern uint32_t OP_CollRadiusMult; // "collisionRadiusMultiplier"  fallback 0x798
 
     // ── ProjectileProperties (real field names, no shift) ────────────────────
     extern uint32_t PP_Lifetime;        // "Lifetime"          fallback 0x158
@@ -369,6 +381,11 @@ namespace RuntimeOffsets {
     extern uint32_t Hbeak_SpawnAgeMs;      // GLEGBLDBOJF  fallback 0x16C  (spawn-age ms; path anchoring / expiry)
     extern uint32_t Hbeak_NoclipGuard;     // NPMECLDKGEF  fallback 0     (bool; 0 = unresolved — ProjNoclip
                                            // MUST NOT install until this is non-zero, preserving today's gate)
+
+    // HBEAKBIHANL — KDAJOMOFMJB (Flash speedMul_ per-shot projectile speed multiplier).
+    // Resolved via IL2CPP; fallback 0 = unresolved (consumer treats as speed-mul 1.0,
+    // exactly like the old private resolver and like Hbeak_NoclipGuard).
+    extern uint32_t Hbeak_SpeedMul;   // KDAJOMOFMJB  fallback 0
 
     // ── ProjectileProperties continued ───────────────────────────────────────
     extern uint32_t PP_CustomHitbox;       // "CustomHitbox"  fallback 0x148  (ProjectileCustomHitbox* reference)

@@ -1,7 +1,14 @@
 learnings/
 /.code-health
 /.ik-jscpd
-/docs
+# NOTE: this must exclude the CONTENTS (/docs/*), not the directory (/docs).
+# git never descends into an excluded directory, so a `!` negation inside one
+# is silently dead — which is why /docs/plans stayed untracked.
+/docs/*
+# …but keep the implementation plans: they are the design record for the
+# refactors (plans 70+), referenced by commit messages and by the agents that
+# execute them. Without this the entire rationale for a change lives on one machine.
+!/docs/plans/
 
 # ── Build artifacts stripped for distribution (regenerate — see SETUP.md) ──
 # il2cpp dump (Il2CppInspectorPro output) — ~94 MB, regenerate per game version.

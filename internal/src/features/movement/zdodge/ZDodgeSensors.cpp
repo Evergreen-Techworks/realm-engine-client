@@ -2,8 +2,9 @@
 #include "ZDodgeSensors.h"
 
 #include "AoeTracking.h"
-#include "AutoAim.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
+#include "features/movement/sensors/TileSensor.h"
 #include "ProjectileTracking.h"
 #include "gui/tabs/WorldTAB.h"
 #include "gui/tabs/TestTAB.h"
@@ -21,40 +22,20 @@ constexpr float kObstacleRadius = 0.5f;
 constexpr int kObstacleGridRadius = 6;
 constexpr float kObstacleStep = 1.f;
 
-bool IsFinite(float v)
-{
-    return std::isfinite(v);
-}
+using Movement::TileSensor::IsFinite;
+using Movement::TileSensor::IsFinitePoint;
+using Movement::TileSensor::DistSq;
 
-bool IsFinitePoint(float x, float y)
-{
-    return IsFinite(x) && IsFinite(y);
-}
-
-float SafeRadius(float value, float fallback)
-{
-    if (!IsFinite(value) || value <= 0.f) return fallback;
-    return std::clamp(value, 0.02f, 5.f);
-}
-
-float SafeReactWindowMs(float value)
-{
-    if (!IsFinite(value) || value <= 0.f) return Settings{}.reactWindowMs;
-    return std::clamp(value, 100.f, 2500.f);
-}
+// SafeRadius / SafeReactWindowMs already live in this module's own header
+// (Detail::) — this file used to define a second, identical pair.
+using Detail::SafeRadius;
+using Detail::SafeReactWindowMs;
 
 float ProjectileRadius(const WorldProjectile& projectile, float fallback)
 {
     if (IsFinite(projectile.projHalfSize) && projectile.projHalfSize > 0.005f && projectile.projHalfSize < 2.f)
         return SafeRadius(projectile.projHalfSize, fallback);
     return fallback;
-}
-
-float DistSq(float ax, float ay, float bx, float by)
-{
-    const float dx = ax - bx;
-    const float dy = ay - by;
-    return dx * dx + dy * dy;
 }
 
 void AddThreatSample(Threat& threat, float x, float y, float tMs)

@@ -30,10 +30,15 @@ int BuildUnresolvedClasses(char* buf, int bufSize, const char* classes);
 int BuildPlayer(char* buf, int bufSize);
 int BuildHotkeyEvent(char* buf, int bufSize, const char* pluginId, const char* action, bool value);
 int BuildThreats(char* buf, int bufSize, const char* threats);
+int BuildAim(char* buf, int bufSize, const char* payload);
 
 // The ONE home that serializes threat objects to the compact wire string
 // (see THREAT_SCHEMA_VERSION above). Returns bytes written, or -1 on failure.
 int EncodeThreats(char* out, int outSize, const IpcThreat* threats, int count,
                   const IpcGround& ground, bool truncated);
+
+// The ONE home that serializes the killaura aim state to its compact wire
+// string (see AIM_SCHEMA_VERSION in IpcBridge.h). Returns bytes written, or -1.
+int EncodeAim(char* out, int outSize, const IpcAim& aim);
 
 } // namespace IpcMessages

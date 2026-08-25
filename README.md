@@ -34,9 +34,6 @@
   - **Autoloot** — rules for tiers, gear categories, and consumables
   - **TypeScript SDK** — write your own hacks against a typed API
 
-  ### Developer tooling
-  - **RotMG MCP server** — an [MCP](https://modelcontextprotocol.io) server (`internal/tools/re-mcp`) that lets an MCP client (e.g. Claude) **runtime-test the live DLL**: read BootGate / offset-recovery state, resolve IL2CPP classes & field offsets on demand, and watch the dodge engine's decisions. Opt-in: toggle the diagnostics bridge in the in-game **Test** tab, then approve the bundled `.mcp.json`. See [`internal/tools/re-mcp/README.md`](./internal/tools/re-mcp/README.md).
-
   ---
 
   ## 🧱 Repository layout

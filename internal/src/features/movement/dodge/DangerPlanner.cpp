@@ -17,17 +17,16 @@
 #include "Il2CppResolver.h"
 #include "RuntimeOffsets.h"
 #include "MemRead.h"
+#include "game/objects/GameObjects.h"
 #include "Il2CppHook.h"
 #include "BootGate.h"
 #include "helpers.h"
-#include "AutoAim.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
 #include "ChatToast.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
 
 #include <cstdio>
-
-#include "minhook/MinHook.h"
 
 #include <algorithm>
 #include <atomic>
@@ -64,9 +63,7 @@ bool ReadLivePlayerPosition(void* player, float& outX, float& outY)
     outX = 0.f;
     outY = 0.f;
     if (!player) return false;
-    if (!Mem::TryRead(player, RuntimeOffsets::PosX, outX)) return false;
-    if (!Mem::TryRead(player, RuntimeOffsets::PosY, outY)) return false;
-    return std::isfinite(outX) && std::isfinite(outY);
+    return Game::Entity(player).TryPosFinite(outX, outY);
 }
 
 // ── Dodge hit-scale (shared with MovementCorrector) ──────────────────────
@@ -836,15 +833,8 @@ void TryInstall()
         return;
     }
 
-    static bool s_mhInit = false;
-    if (!s_mhInit) {
-        const MH_STATUS st = MH_Initialize();
-        if (st != MH_OK && st != MH_ERROR_ALREADY_INITIALIZED) {
-            DBG_FILE_LOG("[DangerPlanner] TryInstall: MH_Initialize failed st=" << (int)st);
-            return;
-        }
-        s_mhInit = true;
-    }
+    if (!Il2CppHook::EnsureRuntime("DangerPlanner")) return;
+
     if (!Il2CppHook::InstallMinHook(target,
                                     reinterpret_cast<void*>(&Detour_AppEngineUpdate),
                                     reinterpret_cast<void**>(&s_origUpdate),
@@ -874,9 +864,7 @@ void Uninstall()
     s_execTargetValid.store(false, std::memory_order_release);
     ProjectileTracking::ClearHazardSpawnCallback();
     if (s_hookInstalled && s_hookTarget) {
-        MH_DisableHook(s_hookTarget);
-        MH_RemoveHook(s_hookTarget);
-        s_hookTarget    = nullptr;
+        Il2CppHook::UninstallMinHook(s_hookTarget, "DangerPlanner");
         s_origUpdate    = nullptr;
         s_hookInstalled = false;
     }

@@ -26,6 +26,10 @@
       "direction": "client"
     },
     {
+      "name": "BuyItemMessage",
+      "direction": "client"
+    },
+    {
       "name": "BuyItemsMessage",
       "direction": "client"
     },
@@ -326,6 +330,10 @@
       "direction": "server"
     },
     {
+      "name": "MissionProgressUpdate",
+      "direction": "server"
+    },
+    {
       "name": "MultipleMissionsProgressUpdate",
       "direction": "server"
     },
@@ -344,6 +352,10 @@
     },
     {
       "name": "PartyActionResult",
+      "direction": "server"
+    },
+    {
+      "name": "PartyJoinResponse",
       "direction": "server"
     },
     {

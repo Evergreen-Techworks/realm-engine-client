@@ -16,7 +16,7 @@ namespace IpcMessages {
 
 int BuildHello(char* buf, int bufSize)
 {
-    return snprintf(buf, bufSize, "{\"type\":\"hello\",\"version\":3,\"protocol\":\"bridge-v3\",\"features\":[\"autoDodge\",\"autoAim\",\"tileMap\"]}");
+    return snprintf(buf, bufSize, "{\"type\":\"hello\",\"version\":3,\"protocol\":\"bridge-v3\",\"features\":[\"autoDodge\",\"autoAim\"]}");
 }
 
 int BuildHeartbeat(char* buf, int bufSize)     { return snprintf(buf, bufSize, "{\"type\":\"heartbeat\"}"); }
@@ -48,6 +48,12 @@ int BuildThreats(char* buf, int bufSize, const char* threats)
 {
     // Envelope only — the compact payload string is produced by EncodeThreats.
     return snprintf(buf, bufSize, "{\"type\":\"threats\",\"threats\":\"%s\"}", threats);
+}
+
+int BuildAim(char* buf, int bufSize, const char* payload)
+{
+    // Envelope only — the compact payload string is produced by EncodeAim.
+    return snprintf(buf, bufSize, "{\"type\":\"aim\",\"aim\":\"%s\"}", payload);
 }
 
 // Serializes the threat/ground objects to the compact versioned wire string
@@ -111,6 +117,21 @@ int EncodeThreats(char* out, int outSize, const IpcThreat* threats, int count,
     out[used]   = '\0';
 
     return used;
+}
+
+// "1;<armed>;<mode>;<targetId>;<tx>;<ty>;<px>;<py>;<standoff>;<maxOffset>;<stamp>"
+// EXACTLY 11 ';'-separated tokens. This is the ONLY encoder; the ONLY decoder is
+// decodeAimPayload in client/src/bridge/DllAimBus.ts. Field order is
+// authoritative here and there.
+int EncodeAim(char* out, int outSize, const IpcAim& a)
+{
+    if (!out || outSize <= 0) return -1;
+    const int wrote = snprintf(out, static_cast<size_t>(outSize),
+        "%d;%d;%d;%d;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%u",
+        AIM_SCHEMA_VERSION, (int)a.armed, (int)a.mode, a.targetId,
+        (double)a.tx, (double)a.ty, (double)a.px, (double)a.py,
+        (double)a.standoffTiles, (double)a.maxOffsetTiles, a.stampMs);
+    return (wrote <= 0 || wrote >= outSize) ? -1 : wrote;
 }
 
 } // namespace IpcMessages

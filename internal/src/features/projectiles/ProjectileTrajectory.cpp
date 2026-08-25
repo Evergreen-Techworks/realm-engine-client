@@ -3,8 +3,9 @@
 #include "ProjectileTrajectory.h"
 #include "gui/tabs/WorldTAB.h"
 #include "Il2CppResolver.h"
-#include "BeebyteName.h"
+#include "game/symbols/GameClasses.h"
 #include "core/runtime/MemRead.h"
+#include "core/logging/DbgFileLog.h"
 
 #include <cmath>
 
@@ -14,8 +15,8 @@ namespace {
 // app::HBEAKBIHANL_GIBLKPDHLBG is null in the current build (stub never set by
 // IL2CPP init). The vtable struct field is unsafe to use directly because the
 // generated offsets may not match the runtime layout. Instead, find the method
-// once via IL2CPP metadata — same pattern as ResolveProjClass() in
-// ProjectileTracking.cpp — and cache the native pointer.
+// once via IL2CPP metadata on the class GameClasses::Projectile() resolves —
+// the same class ProjectileTracking hooks — and cache the native pointer.
 using PositionAtFn = app::Vector2(__fastcall*)(app::HBEAKBIHANL*, float, float*, float*, MethodInfo*);
 
 struct PosAtMethod {
@@ -37,16 +38,7 @@ static const PosAtMethod& GetPosAtMethod()
         return s_posAt;
     }
 
-    Il2CppClass* klass = nullptr;
-    for (const auto& kv : Beebyte::GetMap()) {
-        if (kv.second == "Projectile") {
-            klass = Resolver::GetClass("", kv.first.c_str());
-            if (!klass) klass = Resolver::FindClassLoose(kv.first.c_str());
-            if (klass) break;
-        }
-    }
-    if (!klass) klass = Resolver::GetClass("", "HBEAKBIHANL");
-    if (!klass) klass = Resolver::FindClassLoose("HBEAKBIHANL");
+    Il2CppClass* klass = GameClasses::Projectile();
     if (!klass) return s_posAt;
 
     void* iter = nullptr;
@@ -60,6 +52,9 @@ static const PosAtMethod& GetPosAtMethod()
         s_posAt.ok = true;
         break;
     }
+    DBG_FILE_LOG("[ProjTraj] positionAt resolve: ok=" << (s_posAt.ok ? 1 : 0)
+        << " klass=" << (klass ? 1 : 0) << " name=GIBLKPDHLBG"
+        << (s_posAt.ok ? "" : "  <-- NOT FOUND: curved shots (wavy/arc/turning) are being predicted as STRAIGHT LINES"));
     return s_posAt;
 }
 

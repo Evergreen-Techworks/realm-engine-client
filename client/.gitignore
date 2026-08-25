@@ -169,6 +169,9 @@ winhttp-proxy/*.obj
 
 # Excluded from remote (per project policy)
 README.md
+# ...but the bare rule above matches at any depth. data/README.md documents the
+# canonical packet data and its generator, and must ship (plan 107).
+!/data/README.md
 native/
 assets/internal.bin
 assets/internal.dll

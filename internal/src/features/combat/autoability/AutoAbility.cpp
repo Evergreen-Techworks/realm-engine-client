@@ -1,6 +1,6 @@
 #include "pch-il2cpp.h"
 #include "AutoAbility.h"
-#include "AutoAim.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
 #include "LocalPlayer.h"
 #include "game/actions/ItemUse.h"
 

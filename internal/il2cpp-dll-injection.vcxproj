@@ -30,7 +30,6 @@
     <ClCompile Include="src\core\ipc\IpcFraming.cpp" />
     <ClCompile Include="src\core\ipc\IpcJson.cpp" />
     <ClCompile Include="src\core\ipc\IpcMessages.cpp" />
-    <ClCompile Include="src\core\ipc\IpcTileState.cpp" />
     <ClCompile Include="src\gui\CamState.cpp" />
     <ClCompile Include="src\gui\MinimapNav.cpp" />
     <ClCompile Include="src\gui\tabs\CameraTAB.cpp" />
@@ -68,9 +67,10 @@
     <ClCompile Include="src\features\movement\udodge\UDodgeWorker.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodge.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodgeDebug.cpp" />
+    <ClCompile Include="src\features\movement\sensors\TileSensor.cpp" />
     <ClCompile Include="src\gui\tabs\CombatTab\CombatTAB.cpp" />
-    <ClCompile Include="src\features\combat\autoaim\FeatAutoAim.cpp" />
-    <ClCompile Include="src\features\combat\autoaim\FeatMagnetAim.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\ui\FeatAutoAim.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\ui\FeatMagnetAim.cpp" />
     <ClCompile Include="src\features\loot\BagLooter.cpp" />
     <ClCompile Include="src\features\combat\autonexus\AutoNexus.cpp" />
     <ClCompile Include="src\features\combat\ghostHit\GhostHit.cpp" />
@@ -82,23 +82,29 @@
     <ClCompile Include="src\features\projectiles\ProjectileRuntimeReader.cpp" />
     <ClCompile Include="src\features\projectiles\ProjectileStore.cpp" />
     <ClCompile Include="src\features\projectiles\ProjectileTrajectory.cpp" />
+    <ClCompile Include="src\features\projectiles\ShotOrigin.cpp" />
     <ClCompile Include="src\features\account\HwidCapture.cpp" />
     <ClCompile Include="src\features\account\CharSelect.cpp" />
     <ClCompile Include="src\features\account\CredentialCapture.cpp" />
-    <ClCompile Include="src\features\combat\autoaim\AutoAim.cpp" />
-    <ClCompile Include="src\features\combat\autoaim\AimMath.cpp" />
-    <ClCompile Include="src\features\combat\autoaim\WeaponProfile.cpp" />
-    <ClCompile Include="src\features\combat\autoaim\TargetSelector.cpp" />
-    <ClCompile Include="src\features\combat\autoaim\AimHooks.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\modes\AutoAim.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\core\AimMath.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\core\WeaponProfile.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\core\TargetSelector.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\shoot\AimHooks.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\shoot\ShootRuntime.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\modes\KillAura.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\modes\AutoFire.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\modes\AutoBreakWalls.cpp" />
     <ClCompile Include="src\features\combat\enemytracker\EnemyTracker.cpp" />
     <ClCompile Include="src\features\combat\autoability\AutoAbility.cpp" />
     <ClCompile Include="src\game\actions\ItemUse.cpp" />
+    <ClCompile Include="src\game\symbols\GameClasses.cpp" />
     <ClCompile Include="src\features\movement\dodge\AoeTracking.cpp" />
     <ClCompile Include="src\features\visuals\skins\character\SkinChanger.cpp" />
     <ClCompile Include="src\features\visuals\skins\SkinDatabase.cpp" />
     <ClCompile Include="src\features\movement\speedhack\SpeedHack.cpp" />
     <ClCompile Include="src\features\misc\FpsSetter.cpp" />
-    <ClCompile Include="src\features\combat\autoaim\ProjNoclip.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\shoot\ProjNoclip.cpp" />
     <ClCompile Include="src\features\movement\noclip\Noclip.cpp" />
     <ClCompile Include="src\features\movement\noclip\NoclipHook.cpp" />
     <ClCompile Include="src\features\movement\collider\PlayerCollider.cpp" />
@@ -126,7 +132,6 @@
     <ClCompile Include="src\core\runtime\Il2CppResolver.cpp" />
     <ClCompile Include="src\core\runtime\RuntimeOffsets.cpp" />
     <ClCompile Include="src\core\runtime\BootGate.cpp" />
-    <ClCompile Include="src\core\runtime\DiagBridge.cpp" />
     <ClCompile Include="src\core\runtime\GameState.cpp" />
     <ClCompile Include="src\core\runtime\LocalPlayer.cpp" />
     <ClCompile Include="vendor\detours\detours.cpp">
@@ -176,6 +181,8 @@
     <ClInclude Include="src\game\generated\il2cpp-types-ptr.h" />
     <ClInclude Include="src\game\generated\il2cpp-types.h" />
     <ClInclude Include="src\core\logging\helpers.h" />
+    <ClInclude Include="src\core\logging\CrashProbe.h" />
+    <ClInclude Include="src\core\logging\DbgFileLog.h" />
     <ClInclude Include="src\core\il2cpp\il2cpp-appdata.h" />
     <ClInclude Include="src\core\il2cpp\il2cpp-init.h" />
     <ClInclude Include="src\core\il2cpp\Il2CppContainers.h" />
@@ -187,7 +194,6 @@
     <ClInclude Include="src\core\ipc\IpcFraming.h" />
     <ClInclude Include="src\core\ipc\IpcJson.h" />
     <ClInclude Include="src\core\ipc\IpcMessages.h" />
-    <ClInclude Include="src\core\ipc\IpcTileState.h" />
     <ClInclude Include="src\gui\CamState.h" />
     <ClInclude Include="src\gui\MinimapNav.h" />
     <ClInclude Include="src\gui\tabs\CameraTAB.h" />
@@ -205,14 +211,19 @@
     <ClInclude Include="src\features\projectiles\ProjectileRuntimeReader.h" />
     <ClInclude Include="src\features\projectiles\ProjectileStore.h" />
     <ClInclude Include="src\features\projectiles\ProjectileTrajectory.h" />
+    <ClInclude Include="src\features\projectiles\ShotOrigin.h" />
     <ClInclude Include="src\features\account\HwidCapture.h" />
     <ClInclude Include="src\features\account\CharSelect.h" />
     <ClInclude Include="src\features\account\CredentialCapture.h" />
-    <ClInclude Include="src\features\combat\autoaim\AutoAim.h" />
-    <ClInclude Include="src\features\combat\autoaim\AimMath.h" />
-    <ClInclude Include="src\features\combat\autoaim\WeaponProfile.h" />
-    <ClInclude Include="src\features\combat\autoaim\TargetSelector.h" />
-    <ClInclude Include="src\features\combat\autoaim\AimHooks.h" />
+    <ClInclude Include="src\features\combat\autoaim\modes\AutoAim.h" />
+    <ClInclude Include="src\features\combat\autoaim\core\AimMath.h" />
+    <ClInclude Include="src\features\combat\autoaim\core\WeaponProfile.h" />
+    <ClInclude Include="src\features\combat\autoaim\core\TargetSelector.h" />
+    <ClInclude Include="src\features\combat\autoaim\shoot\AimHooks.h" />
+    <ClInclude Include="src\features\combat\autoaim\shoot\ShootRuntime.h" />
+    <ClInclude Include="src\features\combat\autoaim\modes\KillAura.h" />
+    <ClInclude Include="src\features\combat\autoaim\modes\AutoFire.h" />
+    <ClInclude Include="src\features\combat\autoaim\modes\AutoBreakWalls.h" />
     <ClInclude Include="src\features\combat\enemytracker\EnemyTracker.h" />
     <ClInclude Include="src\features\combat\autoability\AutoAbility.h" />
     <ClInclude Include="src\features\movement\dodge\AoeTracking.h" />
@@ -233,6 +244,7 @@
     <ClInclude Include="src\features\movement\dodge\MovementRuntime.h" />
     <ClInclude Include="src\features\movement\dodge\ProjectileCatalog.h" />
     <ClInclude Include="src\features\movement\dodge\SteerInput.h" />
+    <ClInclude Include="src\features\movement\dodge\Mangled.h" />
     <ClInclude Include="src\features\movement\zdodge\ZDodge.h" />
     <ClInclude Include="src\features\movement\zdodge\ZDodgeTypes.h" />
     <ClInclude Include="src\features\movement\zdodge\ZDodgePlanner.h" />
@@ -259,21 +271,21 @@
     <ClInclude Include="src\features\movement\udodge\UDodgeWorker.h" />
     <ClInclude Include="src\features\movement\udodge\UDodge.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeDebug.h" />
+    <ClInclude Include="src\features\movement\sensors\TileSensor.h" />
     <ClInclude Include="vendor\minhook\MinHook.h" />
     <ClInclude Include="src\core\config\keybinds.h" />
     <ClInclude Include="src\core\runtime\Il2CppResolver.h" />
+    <ClInclude Include="src\core\runtime\MemRead.h" />
     <ClInclude Include="src\core\runtime\RuntimeOffsets.h" />
     <ClInclude Include="src\core\runtime\BootGate.h" />
-    <ClInclude Include="src\core\runtime\DiagBridge.h" />
     <ClInclude Include="src\core\runtime\GameState.h" />
     <ClInclude Include="src\core\runtime\LocalPlayer.h" />
-    <ClInclude Include="src\features\combat\autoaim\FeatAutoAim.h" />
-    <ClInclude Include="src\features\combat\autoaim\FeatMagnetAim.h" />
+    <ClInclude Include="src\features\combat\autoaim\ui\FeatAutoAim.h" />
+    <ClInclude Include="src\features\combat\autoaim\ui\FeatMagnetAim.h" />
     <ClInclude Include="src\features\loot\BagLooter.h" />
-    <ClInclude Include="src\features\loot\LootData.h" />
     <ClInclude Include="src\features\combat\autonexus\AutoNexus.h" />
     <ClInclude Include="src\features\combat\ghostHit\GhostHit.h" />
-    <ClInclude Include="src\features\combat\autoaim\ProjNoclip.h" />
+    <ClInclude Include="src\features\combat\autoaim\shoot\ProjNoclip.h" />
     <ClInclude Include="src\features\movement\noclip\Noclip.h" />
     <ClInclude Include="src\features\movement\noclip\NoclipHook.h" />
     <ClInclude Include="src\features\movement\collider\PlayerCollider.h" />
@@ -282,6 +294,7 @@
     <ClInclude Include="src\features\visuals\FloatingTextService.h" />
     <ClInclude Include="src\features\runtime\FeatureRuntime.h" />
     <ClInclude Include="src\game\symbols\BeebyteName.h" />
+    <ClInclude Include="src\game\symbols\GameClasses.h" />
     <ClInclude Include="vendor\detours\detours.h" />
     <ClInclude Include="vendor\imgui\imconfig.h" />
     <ClInclude Include="vendor\imgui\imgui.h" />
@@ -353,7 +366,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch-il2cpp.h</PrecompiledHeaderFile>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)src\bootstrap;$(ProjectDir)src\core\config;$(ProjectDir)src\core\il2cpp;$(ProjectDir)src\core\logging;$(ProjectDir)src\core\runtime;$(ProjectDir)src\core\ipc;$(ProjectDir)src\core\security;$(ProjectDir)src\features\control;$(ProjectDir)src\features\runtime;$(ProjectDir)src\platform\dx11;$(ProjectDir)src\platform\hooks;$(ProjectDir)src\game\generated;$(ProjectDir)src\game\symbols;$(ProjectDir)src\game\math;$(ProjectDir)src\features\combat\autoaim;$(ProjectDir)src\features\combat\autoability;$(ProjectDir)src\features\combat\autonexus;$(ProjectDir)src\features\combat\ghostHit;$(ProjectDir)src\features\movement\dodge;$(ProjectDir)src\features\movement\zdodge;$(ProjectDir)src\features\movement\repp;$(ProjectDir)src\features\movement\pjdodge;$(ProjectDir)src\features\movement\speedhack;$(ProjectDir)src\features\misc;$(ProjectDir)src\features\movement\noclip;$(ProjectDir)src\features\movement\collider;$(ProjectDir)src\features\visuals;$(ProjectDir)src\features\visuals\skins\character;$(ProjectDir)src\features\visuals\skins\pet;$(ProjectDir)src\features\visuals\skins;$(ProjectDir)src\features\account;$(ProjectDir)src\features\loot;$(ProjectDir)src\ui;$(ProjectDir)vendor;$(ProjectDir)vendor\imgui;$(ProjectDir)vendor\minhook;$(ProjectDir)vendor\detours;$(ProjectDir)defs</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)src\bootstrap;$(ProjectDir)src\core\config;$(ProjectDir)src\core\il2cpp;$(ProjectDir)src\core\logging;$(ProjectDir)src\core\runtime;$(ProjectDir)src\core\ipc;$(ProjectDir)src\core\security;$(ProjectDir)src\features\control;$(ProjectDir)src\features\runtime;$(ProjectDir)src\platform\dx11;$(ProjectDir)src\platform\hooks;$(ProjectDir)src\game\generated;$(ProjectDir)src\game\symbols;$(ProjectDir)src\game\math;$(ProjectDir)src\features\combat\autoability;$(ProjectDir)src\features\combat\autonexus;$(ProjectDir)src\features\combat\ghostHit;$(ProjectDir)src\features\movement\dodge;$(ProjectDir)src\features\movement\zdodge;$(ProjectDir)src\features\movement\repp;$(ProjectDir)src\features\movement\pjdodge;$(ProjectDir)src\features\movement\speedhack;$(ProjectDir)src\features\misc;$(ProjectDir)src\features\movement\noclip;$(ProjectDir)src\features\movement\collider;$(ProjectDir)src\features\visuals;$(ProjectDir)src\features\visuals\skins\character;$(ProjectDir)src\features\visuals\skins\pet;$(ProjectDir)src\features\visuals\skins;$(ProjectDir)src\features\account;$(ProjectDir)src\features\loot;$(ProjectDir)src\ui;$(ProjectDir)vendor;$(ProjectDir)vendor\imgui;$(ProjectDir)vendor\minhook;$(ProjectDir)vendor\detours;$(ProjectDir)defs</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
     </ClCompile>
@@ -380,7 +393,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch-il2cpp.h</PrecompiledHeaderFile>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)src\bootstrap;$(ProjectDir)src\core\config;$(ProjectDir)src\core\il2cpp;$(ProjectDir)src\core\logging;$(ProjectDir)src\core\runtime;$(ProjectDir)src\core\ipc;$(ProjectDir)src\core\security;$(ProjectDir)src\features\control;$(ProjectDir)src\features\runtime;$(ProjectDir)src\platform\dx11;$(ProjectDir)src\platform\hooks;$(ProjectDir)src\game\generated;$(ProjectDir)src\game\symbols;$(ProjectDir)src\game\math;$(ProjectDir)src\features\combat\autoaim;$(ProjectDir)src\features\combat\autoability;$(ProjectDir)src\features\combat\autonexus;$(ProjectDir)src\features\combat\ghostHit;$(ProjectDir)src\features\movement\dodge;$(ProjectDir)src\features\movement\zdodge;$(ProjectDir)src\features\movement\repp;$(ProjectDir)src\features\movement\pjdodge;$(ProjectDir)src\features\movement\speedhack;$(ProjectDir)src\features\misc;$(ProjectDir)src\features\movement\noclip;$(ProjectDir)src\features\movement\collider;$(ProjectDir)src\features\visuals;$(ProjectDir)src\features\visuals\skins\character;$(ProjectDir)src\features\visuals\skins\pet;$(ProjectDir)src\features\visuals\skins;$(ProjectDir)src\features\account;$(ProjectDir)src\features\loot;$(ProjectDir)src\ui;$(ProjectDir)vendor;$(ProjectDir)vendor\imgui;$(ProjectDir)vendor\minhook;$(ProjectDir)vendor\detours;$(ProjectDir)defs</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)src\bootstrap;$(ProjectDir)src\core\config;$(ProjectDir)src\core\il2cpp;$(ProjectDir)src\core\logging;$(ProjectDir)src\core\runtime;$(ProjectDir)src\core\ipc;$(ProjectDir)src\core\security;$(ProjectDir)src\features\control;$(ProjectDir)src\features\runtime;$(ProjectDir)src\platform\dx11;$(ProjectDir)src\platform\hooks;$(ProjectDir)src\game\generated;$(ProjectDir)src\game\symbols;$(ProjectDir)src\game\math;$(ProjectDir)src\features\combat\autoability;$(ProjectDir)src\features\combat\autonexus;$(ProjectDir)src\features\combat\ghostHit;$(ProjectDir)src\features\movement\dodge;$(ProjectDir)src\features\movement\zdodge;$(ProjectDir)src\features\movement\repp;$(ProjectDir)src\features\movement\pjdodge;$(ProjectDir)src\features\movement\speedhack;$(ProjectDir)src\features\misc;$(ProjectDir)src\features\movement\noclip;$(ProjectDir)src\features\movement\collider;$(ProjectDir)src\features\visuals;$(ProjectDir)src\features\visuals\skins\character;$(ProjectDir)src\features\visuals\skins\pet;$(ProjectDir)src\features\visuals\skins;$(ProjectDir)src\features\account;$(ProjectDir)src\features\loot;$(ProjectDir)src\ui;$(ProjectDir)vendor;$(ProjectDir)vendor\imgui;$(ProjectDir)vendor\minhook;$(ProjectDir)vendor\detours;$(ProjectDir)defs</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
     </ClCompile>

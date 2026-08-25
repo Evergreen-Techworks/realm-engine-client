@@ -3,9 +3,8 @@
 
 // Helpful notes:
 // - IpcBridgeThread runs the pipe client loop and owns IPC session lifetime.
-// - Tile APIs expose the latest tileUpdate/noWalkInit state from the client.
 // - Feature state is owned by FeatureState; IpcBridge owns only overlay,
-//   shutdown, tile, threat, and auth state.
+//   shutdown, threat, and auth state.
 
 #pragma once
 #include <Windows.h>
@@ -53,18 +52,23 @@ constexpr int kIpcMaxThreats = 32;
 // payload's trailing flag by EncodeThreats.
 void IpcBridge_PublishThreats(const IpcThreat* threats, int count, const IpcGround& ground, bool truncated);
 
-// Tile walkability from tileUpdate / noWalkInit packets. Unknown means walkable.
-bool IpcBridge_IsTileWalkable(float worldX, float worldY);
+// ── Killaura aim state ───────────────────────────────────────────────────
+// Wire schema v1 (encoder: IpcMessages::EncodeAim, decoder: client
+// src/bridge/DllAimBus.ts). Keep the two in lockstep.
+constexpr int AIM_SCHEMA_VERSION = 1;
 
-// Tile diagnostics.
-void IpcBridge_GetTileStats(int* outTileCount, int* outNoWalkTypeCount);
-
-struct IpcTileTypeEntry {
-    uint16_t typeId;
-    int      count;
-    bool     noWalk;
+struct IpcAim {
+    uint8_t  armed    = 0;    // 0/1
+    uint8_t  mode     = 0;    // 0 = at-target, 1 = at-mouse
+    int32_t  targetId = 0;
+    float    tx = 0.f, ty = 0.f;
+    float    px = 0.f, py = 0.f;
+    float    standoffTiles  = 0.f;
+    float    maxOffsetTiles = 0.f;
+    uint32_t stampMs = 0;
 };
-int IpcBridge_CopyUniqueTypeEntries(IpcTileTypeEntry* buf, int maxCount);
+
+void IpcBridge_PublishAim(const IpcAim& aim);
 
 // Auth/session state.
 const char* IpcBridge_GetUserId();

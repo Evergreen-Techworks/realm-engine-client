@@ -9,8 +9,22 @@
 # open-coded offset read, a private dict-layout constant, a bare MH_CreateHook,
 # an offset ALIAS that hides a raw read from check 2 (check 5), an inline
 # copy of the AddrOk ceiling bound (check 6), a method-resolution call in
-# gui/ (check 9), a private per-field resolution (check 10), or a raw
-# hex-offset pointer cast (check 11). Any hit exits nonzero.
+# gui/ (check 9), a private per-field resolution (check 10), a raw
+# hex-offset pointer cast (check 11), a hand-rolled MinHook lifecycle call
+# — MH_Initialize / MH_DisableHook / MH_RemoveHook / … — outside
+# Il2CppHook::EnsureRuntime / UninstallMinHook (check 15), a private
+# BeeByte alias-map scan that re-implements class resolution instead of
+# calling GameClasses::Resolve (check 16), a private tile-memo / tile-key
+# copy under features/movement instead of Movement::TileSensor (check 17), or
+# a hand-written RuntimeOffsets::PosX/PosY read instead of the typed
+# Game::Entity::TryPos / TryPosFinite accessor (check 18), or a bare-name
+# include of an autoaim header / a resurrected killaura|autofire|autobreak
+# sibling directory (check 19). The bare-name form only ever resolved because
+# $(ProjectDir)src\features\combat\autoaim used to sit in
+# <AdditionalIncludeDirectories>; docs/plans/106 deleted that entry and it must
+# NOT be reintroduced — every autoaim header is included by its full subpath,
+# features/combat/autoaim/<core|shoot|modes|ui>/<Header>.h.
+# Any hit exits nonzero.
 #
 # Sanctioned homes (these are WHERE the primitives live, so they are NOT in
 # scope below): core/runtime/MemRead.h, core/il2cpp/Il2CppContainers.*,
@@ -24,6 +38,14 @@
 # LINE (checks 5 and 6 honor the same same-line marker). There is deliberately
 # no whole-file exemption: every kept raw read must carry its own marker so a
 # NEW un-marked read is still caught.
+#
+# SOLE IMPLEMENTATION. This file carries all 18 checks and there is no Windows
+# mirror: the former PowerShell copy that used to sit beside it had drifted to
+# 6 of them and was deleted in docs/plans/104. On Windows, build-and-test.bat
+# shells into WSL (`wsl bash -c "... bash tools/check-raw-access.sh"`) to run
+# THIS file, and prints a loud GUARDRAIL SKIPPED if wsl.exe is unavailable. Add
+# new checks here only — do not start a second implementation in another
+# language.
 #
 # Usage:  internal/tools/check-raw-access.sh   (exit 0 = clean, 1 = violation)
 set -u
@@ -106,14 +128,10 @@ fi
 
 # 10. Direct il2cpp_class_get_field_from_name in features/+gui/ (use
 #     RuntimeOffsets:: table entries, or Mem:: primitives once you have the
-#     offset). The concurrent dodge program (docs/plans/30-35) owns
-#     features/movement/{repp,pjdodge,dodge,zdodge,udodge}/ and is excluded
-#     here — same hard boundary as the adoption-sweep wave's scope
-#     exclusions (docs/plans/36-adoption-overview.md). A hit inside those
-#     directories is the dodge program's concern, not this ratchet's.
+#     offset). Forbidden across all of features/ + gui/; a same-line
+#     raw-access-ok marker exempts a justified case.
 hits10="$(grep -rnF 'il2cpp_class_get_field_from_name' "${scope_feat[@]}" 2>/dev/null \
-  | grep -v 'raw-access-ok' \
-  | grep -vE '/movement/(repp|pjdodge|dodge|zdodge|udodge)/')"
+  | grep -v 'raw-access-ok')"
 if [ -n "$hits10" ]; then
   echo "FORBIDDEN [private field resolution]:"
   echo "$hits10"
@@ -133,6 +151,100 @@ if [ -n "$hits11" ]; then
   echo "FORBIDDEN [raw hex pointer cast]:"
   echo "$hits11"
   fail=1
+fi
+
+# 12. Direct il2cpp_field_get_offset in features/ (resolve offsets through the
+#     RuntimeOffsets table, not a private per-feature resolver). This is the
+#     primitive a parallel offset resolver uses; keeping it out of features/
+#     forces all field-offset resolution through the self-healing registry.
+#     A same-line raw-access-ok marker exempts a justified case.
+hits12="$(grep -rnF 'il2cpp_field_get_offset' "$root/features" 2>/dev/null | grep -v 'raw-access-ok')"
+if [ -n "$hits12" ]; then
+  echo "FORBIDDEN [private field-offset resolution]:"
+  echo "$hits12"
+  fail=1
+fi
+
+# 13. Shoot/aim method tokens outside their sanctioned homes. AimHooks HOOKS
+#     these; ShootRuntime CALLS them. A third site means someone re-bound the
+#     shoot path privately instead of routing through those two.
+hits13="$(grep -rnE 'ELCBJAFBLJG|EHGHCACPAGH|PMIANFBMMNN' "${scope_feat[@]}" 2>/dev/null \
+  | grep -v 'autoaim/shoot/AimHooks.cpp' | grep -v 'autoaim/shoot/ShootRuntime.cpp' \
+  | grep -v 'raw-access-ok')"
+if [ -n "$hits13" ]; then
+  echo "FORBIDDEN [private shoot-method binding]:"; echo "$hits13"; fail=1
+fi
+
+# 14. KillAura's forced-target override has exactly ONE owner (auto-break-walls).
+#     A second caller would silently fight it for the target.
+hits14="$(grep -rn 'KillAura::SetForcedTargetId' "${scope_feat[@]}" 2>/dev/null \
+  | grep -v 'autoaim/modes/AutoBreakWalls.cpp' | grep -v 'raw-access-ok')"
+if [ -n "$hits14" ]; then
+  echo "FORBIDDEN [second forced-target owner]:"; echo "$hits14"; fail=1
+fi
+
+# 15. Bare MinHook lifecycle calls in features/ + gui/. Check 4 already bans
+#     MH_CreateHook; this closes the other two thirds of the same concern.
+#     Use Il2CppHook::EnsureRuntime / InstallMinHook / UninstallMinHook. The
+#     process-wide teardown (MH_DisableHook(MH_ALL_HOOKS) + MH_Uninitialize)
+#     lives in platform/hooks/InitHooks.cpp and is out of scope by
+#     construction. A same-line raw-access-ok marker exempts a justified case.
+hits15="$(grep -rnE '\bMH_(Initialize|Uninitialize|EnableHook|DisableHook|RemoveHook|ApplyQueued|QueueEnableHook|QueueDisableHook)\b' "${scope_feat[@]}" 2>/dev/null | grep -v 'raw-access-ok')"
+if [ -n "$hits15" ]; then
+  echo "FORBIDDEN [bare MinHook lifecycle]:"; echo "$hits15"; fail=1
+fi
+
+# 16. Private BeeByte alias-map scans in features/ + gui/. Resolving a class
+#     by scanning Beebyte::GetMap() is GameClasses::Resolve's job — a private
+#     copy is how WorldTAB and ProjectileTracking ended up resolving the SAME
+#     class with different robustness. Reading the map for DISPLAY
+#     (Beebyte::Deobf in the inspector UI) is fine and not matched here.
+hits16="$(grep -rnF 'Beebyte::GetMap' "${scope_feat[@]}" 2>/dev/null | grep -v 'raw-access-ok')"
+if [ -n "$hits16" ]; then
+  echo "FORBIDDEN [private BeeByte alias scan]:"; echo "$hits16"; fail=1
+fi
+
+# 17. Private tile-memo / tile-key copies under features/movement. The hazard
+#     memo and the tile-key packing live in
+#     features/movement/sensors/TileSensor.h; before that they were duplicated
+#     byte-for-byte across four sensor modules (one of which used a different
+#     container). A same-line raw-access-ok marker exempts a justified case.
+hits17="$(grep -rnE 'kMemoSlots|kMemoEmpty|\bMemoFind\(|\bMemoInsert\(|uint32_t TileKey\(int' "$root/features/movement" 2>/dev/null \
+  | grep -v 'sensors/TileSensor' | grep -v 'raw-access-ok')"
+if [ -n "$hits17" ]; then
+  echo "FORBIDDEN [private tile memo/key]:"; echo "$hits17"; fail=1
+fi
+
+# 18. Hand-written entity-position reads in features/ + gui/. PosX/PosY have
+#     a typed accessor (Game::Entity::TryPos / TryPosFinite in
+#     game/objects/GameObjects.h); pairing a raw void* with the two offset
+#     keys is what this program removed. The documented hot-loop __try sweeps
+#     keep their same-line raw-access-ok markers and are exempt. TestTAB.cpp's
+#     PosX/PosY uses are teleport WRITES (Mem::TryWrite), gated by plan 105's
+#     TeleportOffsetsTrusted() — they carry their own same-line markers now, so
+#     the temporary whole-file exclusion this check used to carry is gone.
+hits18="$(grep -rnE 'RuntimeOffsets::Pos[XY]' "${scope_feat[@]}" 2>/dev/null \
+  | grep -v 'raw-access-ok')"
+if [ -n "$hits18" ]; then
+  echo "FORBIDDEN [hand-written entity position read]:"; echo "$hits18"; fail=1
+fi
+
+# 19. The aim/shoot family is ONE directory: features/combat/autoaim, grouped
+#     into core/ shoot/ modes/ ui/ (docs/plans/106). Two things creep back:
+#     (a) a bare-name include of an autoaim header, which only ever worked
+#         because features\combat\autoaim used to be on the include path;
+#     (b) a new sibling directory (killaura/, autofire/, autobreak/) or a stale
+#         path to one.
+hits19a="$(grep -rnE '#include "(AutoAim|AimHooks|AimMath|TargetSelector|WeaponProfile|ShootRuntime|ProjNoclip|FeatAutoAim|FeatMagnetAim|KillAura|AutoFire|AutoBreakWalls)\.h"' \
+  "${scope_feat[@]}" "$root/platform" 2>/dev/null | grep -v 'raw-access-ok')"
+if [ -n "$hits19a" ]; then
+  echo "FORBIDDEN [bare-name autoaim include — use features/combat/autoaim/<group>/X.h]:"
+  echo "$hits19a"; fail=1
+fi
+hits19b="$(grep -rnE 'features/combat/(killaura|autofire|autobreak)/' "$root" 2>/dev/null)"
+if [ -n "$hits19b" ]; then
+  echo "FORBIDDEN [retired autoaim sibling directory]:"
+  echo "$hits19b"; fail=1
 fi
 
 exit $fail

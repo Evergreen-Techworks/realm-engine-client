@@ -59,3 +59,24 @@ describe('decodeThreatPayload', () => {
     expect(truncated).toBe(false);
   });
 });
+
+// EncodeThreats (IpcMessages.cpp:76-99) always writes a LEADING ground
+// summary segment "<rawDamage>:<tHitMs>" before the per-event "|d:t" list,
+// and decodeThreatPayload deliberately SKIPS index 0 (DllThreatBus.ts:118
+// starts the loop at i = 1). This fixture pins that asymmetry: it is the
+// single easiest place for the two sides to silently disagree.
+describe('EncodeThreats ground-segment layout', () => {
+  it('ignores the leading summary segment and reads events from index 1', () => {
+    // ground.rawDamage = 500, ground.tHitMs = 250.0, one event {300, 180.0}
+    const r = decodeThreatPayload('1;500:250.0|300:180.0;;0');
+    expect(r.ground.events).toEqual([{ rawDamage: 300, tHitMs: 180 }]);
+    expect(r.ground.rawDamage).toBe(300);   // taken from the FIRST EVENT
+    expect(r.ground.tHitMs).toBe(180);
+    expect(r.threats).toEqual([]);
+    expect(r.truncated).toBe(false);
+  });
+
+  it('reports truncated from the trailing flag', () => {
+    expect(decodeThreatPayload('1;0:-1.0;;1').truncated).toBe(true);
+  });
+});

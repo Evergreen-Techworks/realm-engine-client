@@ -13,8 +13,11 @@
 #include "IpcBridge.h"
 #include "main.h"
 #include "DbgFileLog.h"
-#include "AutoAim.h"
-#include "ProjNoclip.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
+#include "features/combat/autoaim/modes/KillAura.h"
+#include "features/combat/autoaim/modes/AutoFire.h"
+#include "features/combat/autoaim/modes/AutoBreakWalls.h"
+#include "features/combat/autoaim/shoot/ProjNoclip.h"
 #include "PlayerCollider.h"
 #include "FpsSetter.h"
 #include "GhostHit.h"
@@ -102,6 +105,17 @@ namespace {
             FH_INT("autoAimMode", FeatureState::SetAutoAimMode),
             FH_BOOL("autoAimPrioritizeBosses", AutoAim::SetPrioritizeBosses),
             FH_BOOL("autoAimIgnoreWalls", AutoAim::SetIgnoreWalls),
+            FH("killauraEnabled",        KillAura::SetEnabled(f.Bool())),
+            FH("killauraMode",           KillAura::SetMode(f.Int() == 1 ? KillAura::Mode::AtMouse
+                                                                        : KillAura::Mode::AtTarget)),
+            FH_FLOAT("killauraRangeTiles",     KillAura::SetRangeTiles),
+            FH_FLOAT("killauraStandoffTiles",  KillAura::SetStandoffTiles),
+            FH_FLOAT("killauraMaxOffsetTiles", KillAura::SetMaxOffsetTiles),
+            FH_BOOL("autoFireEnabled", AutoFire::SetEnabled),
+            FH("autoFireHotkey",       AutoFire::SetHotkeyVk(ResolveHotkeyVkInternal(f.value))),
+            FH_BOOL ("autoBreakWallsEnabled",    AutoBreakWalls::SetEnabled),
+            FH_FLOAT("autoBreakWallsProbeTiles", AutoBreakWalls::SetProbeTiles),
+            FH_INT  ("autoBreakWallsTimeoutMs",  AutoBreakWalls::SetTimeoutMs),
             FH("projectileNoclipEnabled", {
                 const bool on = f.Bool();
                 FeatureState::SetProjectileNoclipEnabled(on);

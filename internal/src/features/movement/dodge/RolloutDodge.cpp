@@ -7,7 +7,7 @@
 #include "DodgeSpeed.h"
 #include "DangerPlanner.h"
 #include "ProjectileTracking.h"
-#include "AutoAim.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
 #include "DbgFileLog.h"

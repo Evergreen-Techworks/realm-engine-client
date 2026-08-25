@@ -7,16 +7,23 @@ name: CI
 #     anti-patterns that regressed after PR #31 was merged, so the next
 #     non-English-locale user does not have to file the same bug again.
 #     See PR #40 for the story.
+#   * TypeScript typecheck of `client/` (`tsc --noEmit -p tsconfig.json`) and the
+#     DLL<->client wire-format round-trip tests (`npm test` in `client/`) — the
+#     round-trip tests pin the compact `aim` and `threats` wire strings that the
+#     DLL hand-encodes and the client hand-decodes.
+#     NOTE: the typecheck only passes once `npm run build:sdk` has run.
+#     `@realmengine/sdk` is a `file:packages/sdk` dep whose `types` field points
+#     at `packages/sdk/dist/types/`, and that `dist/` is gitignored — so on a
+#     fresh checkout ~136 `Cannot find module '@realmengine/sdk'` errors appear
+#     until the SDK is built. That is the real story behind the old
+#     "~135 pre-existing errors" note, which blamed an unfixable SDK-resolution
+#     issue; it is a build-ordering requirement, not a broken codebase.
 #
 # What this does NOT (yet) cover:
 #   * Building the C++ DLL — needs game-installed IL2CPP headers (see SETUP.md),
 #     not something a public runner can produce.
 #   * Building the Electron installer — needs Windows tooling + code-signing
 #     infra that only makes sense on the release machine.
-#   * TypeScript typechecks — the client currently has ~135 pre-existing errors
-#     in `src/scripts/bridge/*` from an SDK-resolution issue (documented in
-#     PR #31). Once those are cleared, add `tsc --noEmit` jobs here (sdk/ →
-#     client/packages/protocol → client/).
 #   * npm audit — main currently has 5 high/critical CVEs in runtime deps
 #     (`electron-updater`, `ws`, `sharp`, `fast-xml-parser`, `js-yaml`). Once
 #     those are bumped, add an `npm audit --omit=dev --audit-level=high` job
@@ -87,4 +94,43 @@ jobs:
             exit 1
           fi
           echo "Locale-guard OK."
+
+  client-checks:
+    name: Client typecheck + bridge wire-format tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Bridge feature-key contract
+        # Zero-dependency text check of the DLL feature-key registry against
+        # contract.ts, so it runs before the install. `npm test` runs it again;
+        # having it here means drift is reported even if the install breaks.
+        working-directory: client
+        run: node scripts/check-bridge-contract.mjs
+      - name: Packet definition drift check
+        # Zero-dependency check that every derived packet artifact still
+        # regenerates from client/data/packet-definitions.json (the canonical
+        # protocol description for both stacks). Like the bridge contract above,
+        # it runs before the install so drift is reported even if the install
+        # breaks. `npm test` runs it again.
+        working-directory: client
+        run: node scripts/check-packet-drift.mjs
+      - name: Install client deps
+        working-directory: client
+        run: npm ci --ignore-scripts
+      - name: Build SDK types
+        # `@realmengine/sdk` is a `file:packages/sdk` dep whose `types` field
+        # points at `packages/sdk/dist/types/`, and that `dist/` is gitignored.
+        # Without this step the typecheck below fails with ~136
+        # "Cannot find module '@realmengine/sdk'" errors on a fresh checkout.
+        working-directory: client
+        run: npm run build:sdk
+      - name: Typecheck
+        working-directory: client
+        run: npx tsc --noEmit -p tsconfig.json
+      - name: Bridge wire-format tests
+        working-directory: client
+        run: npm test
 

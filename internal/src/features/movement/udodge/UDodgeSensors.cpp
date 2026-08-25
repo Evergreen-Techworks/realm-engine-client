@@ -9,8 +9,8 @@
 #include "DbgFileLog.h"
 #include "DangerPlanner.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
+#include "features/movement/sensors/TileSensor.h"
 #include "gui/tabs/WorldTAB.h"
-#include "gui/tabs/TestTAB.h"
 
 #include <algorithm>
 #include <cmath>
@@ -33,63 +33,21 @@ constexpr float kThreatCullTiles = 16.f;
 // (both read EnemyBlocker.radius from this one source).
 constexpr float kEnemyRadius     = 0.8f;
 constexpr float kAoeCullPad      = 16.f;
+// A bomb still in the air becomes HARD danger once it is within this long before
+// detonation — enough time (~4 ticks) to walk clear of the blast radius. Larger =
+// avoid earlier (safer, more disruptive); smaller = cut it closer.
+constexpr float kAoeArmWindowMs  = 900.f;
 
 // Per-tick memo for the hazard lookup: the core probes CanOccupy at hundreds of
 // points per frame, so each distinct tile is queried at most once per tick.
-// Fixed-size open-addressing hash table — no per-frame heap allocation.
-// Single game-update-thread consumer; cleared at the top of BuildMap/ReanchorMap.
-constexpr uint32_t kMemoSlots    = 512;      // power of 2
-constexpr uint32_t kMemoMask     = kMemoSlots - 1;
-constexpr uint32_t kMemoEmpty    = 0xFFFFFFFFu;
+// OUR OWN instance of the shared open-addressed table (Movement::TileSensor) —
+// no per-frame heap allocation. Single game-update-thread consumer; cleared at
+// the top of BuildMap/ReanchorMap.
+Movement::TileSensor::HazardMemo s_hazardMemo;
 
-struct MemoEntry { uint32_t key; uint8_t value; };
-MemoEntry s_hazardMemo[kMemoSlots];
-
-void MemoClear()
-{
-    for (uint32_t i = 0; i < kMemoSlots; ++i)
-        s_hazardMemo[i].key = kMemoEmpty;
-}
-
-bool MemoFind(uint32_t key, uint8_t& outValue)
-{
-    uint32_t idx = key & kMemoMask;
-    for (uint32_t probe = 0; probe < kMemoSlots; ++probe) {
-        const MemoEntry& e = s_hazardMemo[idx];
-        if (e.key == key) { outValue = e.value; return true; }
-        if (e.key == kMemoEmpty) return false;
-        idx = (idx + 1) & kMemoMask;
-    }
-    return false;
-}
-
-void MemoInsert(uint32_t key, uint8_t value)
-{
-    uint32_t idx = key & kMemoMask;
-    for (uint32_t probe = 0; probe < kMemoSlots; ++probe) {
-        MemoEntry& e = s_hazardMemo[idx];
-        if (e.key == kMemoEmpty || e.key == key) {
-            e.key = key; e.value = value;
-            return;
-        }
-        idx = (idx + 1) & kMemoMask;
-    }
-}
-
-uint32_t TileKey(int tx, int ty)
-{
-    return (static_cast<uint32_t>(static_cast<uint16_t>(tx)) << 16) |
-            static_cast<uint32_t>(static_cast<uint16_t>(ty));
-}
-
-bool IsFinite(float v) { return std::isfinite(v); }
-bool IsFinitePoint(float x, float y) { return IsFinite(x) && IsFinite(y); }
-
-float DistSq(float ax, float ay, float bx, float by)
-{
-    const float dx = ax - bx, dy = ay - by;
-    return dx * dx + dy * dy;
-}
+using Movement::TileSensor::IsFinite;
+using Movement::TileSensor::IsFinitePoint;
+using Movement::TileSensor::DistSq;
 
 // SEH-guarded prediction. (0,0) is GetPositionAtTime's failure sentinel — no
 // real in-dungeon projectile sits at the world origin, so reject it.
@@ -214,7 +172,7 @@ bool LaneFromFreshTrace(LaneThreat& lane, const WorldProjectile& p, float elapse
 // at the bullet head (which starves the relevance gate). A straight ray is the
 // correct present-tense danger for a shot whose curve model is unavailable.
 // Steps spatially by kTraceStepMs-equivalent increments up to laneCap tiles.
-bool LaneFromStraightExtrapolation(LaneThreat& lane, const WorldProjectile& p, float laneCap)
+bool LaneFromStraightExtrapolation(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, float laneCap)
 {
     if (!IsFinitePoint(p.x, p.y)) return false;
     if (!IsFinite(p.angle)) return false;
@@ -230,6 +188,17 @@ bool LaneFromStraightExtrapolation(LaneThreat& lane, const WorldProjectile& p, f
     float stepDist = tilesPerMs * kTraceStepMs;
     if (!IsFinite(stepDist) || stepDist <= 1e-3f) stepDist = 0.5f;   // ~0.5 tile/step fallback
 
+    // Cap the lane by the bullet's REMAINING travel: a bullet 15 ms from expiring
+    // moves ~0 tiles, so extrapolating the full laneCap paints phantom danger where
+    // it will never be. effCap = min(laneCap, tilesPerMs × remainingLifetime).
+    float effCap = laneCap;
+    if (IsFinite(p.lifetime) && p.lifetime > 0.f && IsFinite(elapsedMs) && tilesPerMs > 0.f) {
+        const float remMs = p.lifetime - elapsedMs;
+        if (!(remMs > 0.f)) return false;                        // already dead — no lane at all
+        const float remTiles = tilesPerMs * remMs;
+        if (IsFinite(remTiles) && remTiles > 0.f) effCap = std::min(laneCap, remTiles);
+    }
+
     lane.pointCount = 0;
     lane.pointTimesMs[lane.pointCount] = 0.f;
     lane.points[lane.pointCount++] = { p.x, p.y };   // live position = anchor
@@ -240,9 +209,30 @@ bool LaneFromStraightExtrapolation(LaneThreat& lane, const WorldProjectile& p, f
         // spatial step is one kTraceStepMs of travel time (proxy when unknown).
         lane.pointTimesMs[lane.pointCount] = static_cast<float>(lane.pointCount) * kTraceStepMs;
         lane.points[lane.pointCount++] = { p.x + dx * pathLen, p.y + dy * pathLen };
-        if (pathLen >= laneCap) break;
+        if (pathLen >= effCap) break;
     }
     return lane.pointCount >= 2;
+}
+
+// Anti-ghost clamp: a lane point must never sit far from the live bullet (points[0])
+// — a single garbage predicted sample (bad positionAt / bad cache entry) would make
+// the lane span the whole map and paint danger where there is no shot. The pathLen
+// cap only checks AFTER appending, so one huge jump slips through; truncate the lane
+// at the first point beyond a sane bound of the anchor.
+bool ClampLaneToAnchor(LaneThreat& lane, float laneCap)
+{
+    if (lane.pointCount < 2) return false;
+    const float maxD = laneCap + 4.f;      // legit points stay within laneCap of the anchor
+    const float maxD2 = maxD * maxD;
+    const Vec2 a = lane.points[0];
+    for (int i = 1; i < lane.pointCount; ++i) {
+        const float dx = lane.points[i].x - a.x, dy = lane.points[i].y - a.y;
+        if (!std::isfinite(dx) || !std::isfinite(dy) || dx * dx + dy * dy > maxD2) {
+            lane.pointCount = i;           // drop the garbage tail (keep the good near portion)
+            return true;                   // a ghost point was caught
+        }
+    }
+    return false;
 }
 
 // Trace one lane: cached path preferred, fresh trace fallback, then a straight
@@ -250,9 +240,26 @@ bool LaneFromStraightExtrapolation(LaneThreat& lane, const WorldProjectile& p, f
 // to a single-point threat (the live disc still blocks).
 void TraceLane(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, float laneCap)
 {
-    if (LaneFromCachedPath(lane, p, elapsedMs, laneCap)) return;
-    if (LaneFromFreshTrace(lane, p, elapsedMs, laneCap)) return;
-    if (LaneFromStraightExtrapolation(lane, p, laneCap)) return;
+    const char* src = nullptr;
+    bool clamped = false;
+    if (LaneFromCachedPath(lane, p, elapsedMs, laneCap))            { clamped = ClampLaneToAnchor(lane, laneCap); src = "cache"; }
+    else if (LaneFromFreshTrace(lane, p, elapsedMs, laneCap))       { clamped = ClampLaneToAnchor(lane, laneCap); src = "fresh"; }
+    else if (LaneFromStraightExtrapolation(lane, p, elapsedMs, laneCap)) { clamped = ClampLaneToAnchor(lane, laneCap); src = "straight"; }
+    if (src) {
+        if (clamped) {
+            static int s_ghostN = 0;
+            if ((s_ghostN++ % 8) == 0)
+                DBG_FILE_LOG("[UDodge] GHOST lane clamped src=" << src
+                    << " bulletId=" << p.bulletId << " owner=" << p.ownerObjId
+                    << " pos=(" << p.x << "," << p.y << ")"
+                    << " elapsed=" << elapsedMs << " life=" << p.lifetime
+                    << " wavy=" << (int)p.wavy << " param=" << (int)p.parametric
+                    << " boomer=" << (int)p.boomerang << " turn=" << (int)p.isTurning
+                    << " turnDel=" << (int)p.isTurningDelayed << " circDel=" << (int)p.isCircleTurnDelayed
+                    << " accel=" << (int)p.isAccelerating);
+        }
+        return;
+    }
     lane.pointCount = 1;
     lane.points[0] = { p.x, p.y };
     lane.pointTimesMs[0] = 0.f;   // trajectory unknown → temporal test treats it as static (conservative)
@@ -284,10 +291,41 @@ void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& 
         if (DistSq(a.destX, a.destY, playerX, playerY) > cull * cull) continue;
         if (out.zoneCount >= kMaxAoes) { out.limited = true; break; }
 
+        // HARD-avoid a bomb that has landed OR is about to land within the arm
+        // window — you must be OUT of the blast radius by detonation, so the
+        // dodge needs to treat the landing zone as danger NOW (not soft cost) while
+        // there's still time to move clear. (zdodge treats enemy AOE as a hard
+        // 9999-damage threat; udodge previously only avoided it AFTER it landed —
+        // too late to escape the blast. That is why bombs were killing us.)
+        const float landingMs = landAtMs - elapsedMs;             // >0 = still in the air
+        const bool armingSoon = !hasLanded && landingMs <= kAoeArmWindowMs;
+
         ZoneThreat& z = out.zones[out.zoneCount++];
         z.pos = { a.destX, a.destY };
         z.radius = radius;
-        z.active = hasLanded;
+        z.active = hasLanded || armingSoon;
+    }
+
+    // TRANSITION-ONLY witness on "does AoE data reach the dodge at all?". The
+    // AoE path has three places it can die silently — the game hooks never
+    // install, the hooks install but record nothing, or zones are built but
+    // never marked active — and until now NONE of them said anything in a
+    // Release build, so "no AoE dodging" was indistinguishable between them.
+    // Keyed on (zoneCount, activeCount) so a steady state is two int compares.
+    //
+    //   GREP THE TRACE LOG FOR:  [UDodge] zones:
+    {
+        int activeCount = 0;
+        for (int i = 0; i < out.zoneCount; ++i) if (out.zones[i].active) ++activeCount;
+        static int s_lastZoneCount = -1;
+        static int s_lastActive    = -1;
+        if (out.zoneCount != s_lastZoneCount || activeCount != s_lastActive) {
+            s_lastZoneCount = out.zoneCount;
+            s_lastActive    = activeCount;
+            DBG_FILE_LOG("[UDodge] zones: " << out.zoneCount << " tracked, "
+                << activeCount << " ACTIVE (hard-avoid)"
+                << (out.zoneCount == 0 ? "  <-- no AoE reaching the dodge (check [AoeTracking] hooks:)" : ""));
+        }
     }
 }
 
@@ -309,14 +347,47 @@ void PopulateEnemies(DangerMap& out, float playerX, float playerY)
     const float cullSq = kThreatCullTiles * kThreatCullTiles;
     EnemyTracker::Tick();
     const int32_t userLockId = DangerPlanner::GetEnemyLock();   // 0 = no lock
+
+    // NEAREST-N, not FIRST-N. The snapshot is in arbitrary order, so filling the
+    // array first-come and dropping the overflow kept an ARBITRARY subset: a
+    // distant enemy that happened to appear earlier held a slot while a breakable
+    // wall one tile ahead was dropped. Dropped blockers are invisible to
+    // EnemyBlockedLocal (UDodgePathfinder.cpp) — that is how A* ended up routing
+    // straight through walls. Evicting the farthest kept blocker instead
+    // guarantees the retained set is the N NEAREST, which are the ones that
+    // actually gate both the immediate solver and the near-field route.
+    // `farthest*` is only meaningful once the array is full.
+    int   farthestIdx    = -1;
+    float farthestDistSq = -1.f;
+    const auto refreshFarthest = [&]() {
+        farthestIdx = 0;
+        farthestDistSq = -1.f;
+        for (int i = 0; i < out.enemyCount; ++i) {
+            const float di = DistSq(out.enemies[i].pos.x, out.enemies[i].pos.y, playerX, playerY);
+            if (di > farthestDistSq) { farthestDistSq = di; farthestIdx = i; }
+        }
+    };
+
     for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot()) {
         if (!IsFinitePoint(e.x, e.y)) continue;
-        if (DistSq(e.x, e.y, playerX, playerY) <= cullSq) {
-            if (out.enemyCount >= kMaxEnemies) { out.limited = true; }
-            else {
+        const float dSq = DistSq(e.x, e.y, playerX, playerY);
+        if (dSq <= cullSq) {
+            if (out.enemyCount < kMaxEnemies) {
                 EnemyBlocker& b = out.enemies[out.enemyCount++];
                 b.pos = { e.x, e.y };
                 b.radius = kEnemyRadius;   // single baked source — no per-enemy size field exists
+                if (out.enemyCount == kMaxEnemies) refreshFarthest();   // just filled
+            } else {
+                // Full: the snapshot exceeded capacity (still reported via
+                // `limited`), but keep the NEARER of the two rather than the
+                // one that merely arrived first.
+                out.limited = true;
+                if (dSq < farthestDistSq) {
+                    EnemyBlocker& b = out.enemies[farthestIdx];
+                    b.pos = { e.x, e.y };
+                    b.radius = kEnemyRadius;
+                    refreshFarthest();
+                }
             }
         }
         // Lock the enemy the USER locked on (Shift+Click), only while it is ALIVE.
@@ -341,7 +412,7 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
     out.hasLock = false;
     out.lockId = 0;
     out.lockPos = {};
-    MemoClear();
+    s_hazardMemo.Clear();
     // tickId/tickValid deliberately untouched — the caller owns the stamp.
 
     if (!ProjectileTracking::IsInstalled()) {
@@ -356,6 +427,19 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
 
     // Enemies → hard-no-go blockers + the user's enemy lock (live snapshot).
     PopulateEnemies(out, playerX, playerY);
+
+    // Prune shots the game deleted early (wall/enemy/player hit) BEFORE reading the
+    // tracked list, so their lanes vanish immediately instead of lingering to their
+    // full lifetime. Throttled (~10 Hz) — reading the live pool is IL2CPP work — and
+    // safe (never prunes on a failed read). Game-thread only (BuildMap runs there).
+    {
+        static ULONGLONG s_lastReconcileMs = 0;
+        const ULONGLONG nowRec = GetTickCount64();
+        if (nowRec - s_lastReconcileMs >= 100ULL) {
+            s_lastReconcileMs = nowRec;
+            ProjectileTracking::ReconcileWithLivePool();
+        }
+    }
 
     // Projectiles → danger lanes: live position (anchor) + remaining travel
     // path as pure geometry. Same filter chain as Build.
@@ -377,6 +461,23 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
         if (!p.canHitPlayer && p.attackerObjId == 0 && static_cast<int32_t>(p.ownerObjId) == 0) continue;
         if (!IsFinitePoint(p.x, p.y)) continue;
         if (DistSq(p.x, p.y, playerX, playerY) > cullSq) continue;
+
+        // WALL-HIT RETIREMENT (reliable, hook-free): a shot whose CENTER is inside a
+        // wall tile has hit that wall — the game deletes it there — so retire it (the
+        // lane vanishes immediately, and AutoNexus stops seeing it too) and skip.
+        // Safe: a shot flying through open space or a 1-tile gap is never centered in
+        // a wall tile, so this can NEVER drop a live shot. The age guard avoids a shot
+        // that spawned right next to a wall being culled on its very first frames.
+        {
+            const float ageMs = static_cast<float>(nowMs > p.spawnTick ? nowMs - p.spawnTick : 0u);
+            if (ageMs > 80.f &&
+                WorldTAB::IsTileBlocked(static_cast<int>(std::floor(p.x)),
+                                        static_cast<int>(std::floor(p.y)))) {
+                ProjectileTracking::RetireProjectile(p);
+                continue;
+            }
+        }
+
         if (out.laneCount >= kMaxProjectiles) { out.limited = true; break; }
 
         LaneThreat& lane = out.lanes[out.laneCount];
@@ -419,7 +520,7 @@ bool ReadWorldTick(uint32_t& outTickId)
 bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& settings)
 {
     if (!ProjectileTracking::IsInstalled()) return false;
-    MemoClear();   // per-frame hazard memo reset (same contract as Build)
+    s_hazardMemo.Clear();   // per-frame hazard memo reset (same contract as Build)
 
     const float cullSq = kThreatCullTiles * kThreatCullTiles;
     const uint64_t nowMs = GetTickCount64();
@@ -460,27 +561,42 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
         // projectile's LIVE position (mid-tick frames ride the game's own
         // interpolation — nothing is extrapolated by our clock).
         LaneThreat& lane = map.lanes[laneIdx];
-        int   nearest = 0;
-        float bestDistSq = 3.402823466e+38f;
-        for (int i = 0; i < lane.pointCount; ++i) {
-            const float d = DistSq(lane.points[i].x, lane.points[i].y, p.x, p.y);
-            if (d < bestDistSq) { bestDistSq = d; nearest = i; }
+
+        // CURVED / non-linear shots (wavy, parametric, boomerang, turning,
+        // accelerating) must NOT be re-anchored by a rigid nearest-point shift:
+        // matching the "nearest point" on an oscillating/curving polyline can lock
+        // onto the WRONG crest and translate the whole lane off the real bullet —
+        // painting danger where there is no shot (and hiding real danger). Re-TRACE
+        // them from the accurate cached positionAt path, anchored at the live time.
+        // Straight shots keep the cheap exact rigid shift below.
+        const bool curved = p.wavy || p.parametric || p.boomerang || p.isTurning ||
+                            p.isTurningDelayed || p.isCircleTurnDelayed || p.isAccelerating;
+        if (curved) {
+            const float elapsedMs = static_cast<float>(nowMs > p.spawnTick ? nowMs - p.spawnTick : 0u);
+            const float laneCap = std::clamp(settings.laneTiles, 2.f, 16.f);
+            TraceLane(lane, p, elapsedMs, laneCap);   // identity + hitHalf preserved (TraceLane only sets the polyline)
+        } else {
+            // Re-anchor: rebase the polyline so the nearest lane point becomes the
+            // projectile's LIVE position (exact for a straight line).
+            int   nearest = 0;
+            float bestDistSq = 3.402823466e+38f;
+            for (int i = 0; i < lane.pointCount; ++i) {
+                const float d = DistSq(lane.points[i].x, lane.points[i].y, p.x, p.y);
+                if (d < bestDistSq) { bestDistSq = d; nearest = i; }
+            }
+            const Vec2 live  = { p.x, p.y };
+            const Vec2 shift = Sub(live, lane.points[nearest]);
+            const float tBase = lane.pointTimesMs[nearest];
+            lane.points[0] = live;
+            lane.pointTimesMs[0] = 0.f;
+            int outCount = 1;
+            for (int i = nearest + 1; i < lane.pointCount; ++i) {
+                lane.pointTimesMs[outCount] = std::max(0.f, lane.pointTimesMs[i] - tBase);
+                lane.points[outCount] = Add(lane.points[i], shift);
+                ++outCount;
+            }
+            lane.pointCount = outCount;   // nearest == last ⇒ single live point
         }
-        const Vec2 live  = { p.x, p.y };
-        const Vec2 shift = Sub(live, lane.points[nearest]);
-        // Rebase the time axis too: the new live anchor is t 0, and the surviving
-        // forward points keep their remaining travel time (times are monotonic,
-        // outCount ≤ i so the in-place shift never clobbers an unread entry).
-        const float tBase = lane.pointTimesMs[nearest];
-        lane.points[0] = live;
-        lane.pointTimesMs[0] = 0.f;
-        int outCount = 1;
-        for (int i = nearest + 1; i < lane.pointCount; ++i) {
-            lane.pointTimesMs[outCount] = std::max(0.f, lane.pointTimesMs[i] - tBase);
-            lane.points[outCount] = Add(lane.points[i], shift);
-            ++outCount;
-        }
-        lane.pointCount = outCount;   // nearest == last ⇒ single live point
     }
     if (liveCount != map.laneCount) return false;        // a lane's shot retired
 
@@ -497,23 +613,12 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
 
 bool IsHazardAt(float worldX, float worldY)
 {
-    if (!IsFinitePoint(worldX, worldY)) return false;
-    const int tx = static_cast<int>(std::floor(worldX));
-    const int ty = static_cast<int>(std::floor(worldY));
-    const uint32_t key = TileKey(tx, ty);
-    uint8_t cached = 0;
-    if (MemoFind(key, cached)) return cached != 0;
-    const bool hz = WorldTAB::IsTileDamagingLive(tx, ty);
-    MemoInsert(key, hz ? 1 : 0);
-    return hz;
+    return Movement::TileSensor::IsHazardAt(s_hazardMemo, worldX, worldY);
 }
 
 bool CanOccupy(float worldX, float worldY, bool safeWalk)
 {
-    if (!IsFinitePoint(worldX, worldY)) return false;   // unknown → treat as blocked
-    if (TestTAB::IsWalkPositionBlocked(worldX, worldY)) return false;
-    if (safeWalk && IsHazardAt(worldX, worldY)) return false;
-    return true;
+    return Movement::TileSensor::CanOccupy(s_hazardMemo, worldX, worldY, safeWalk);
 }
 
 } } // namespace UDodge::Sensors

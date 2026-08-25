@@ -20,21 +20,4 @@ void  SetDebugOverlay(bool en);     bool  GetDebugOverlay();    // default true
 void  SetFollowLantern(bool en);    bool  GetFollowLantern();   // Autopilot stand-on scan (default OFF, perf)
 void  SetStandOnType(int t);        int   GetStandOnType();     // Autopilot stand-on objType (0=off)
 
-// ── Live diagnostics view (DiagBridge / external runtime tests) ──────────────
-// Flat snapshot of the current dodge frame — plain scalars only, so the diag
-// egress can serialize it without pulling in ReppTypes. Thread-safe (locks the
-// same mutex PublishDebug uses).
-struct DiagView {
-    int   status;             // FrameStatus: 0=Disabled,2=NoThreats,…,9=SensorLimited
-    bool  enabled;
-    float playerX, playerY;
-    bool  hasSelectedTarget;  float selX, selY;   // aim target
-    bool  hasLockTarget;      float lockX, lockY; // Autopilot boss lock
-    int   candidateCount;
-    int   threatCount;        // projectiles/AoE the sensor saw this frame
-    int   blockerCount;       // wall/enemy blockers
-    float tileSpeedAtPlayer;
-};
-DiagView GetDiagView();
-
 } // namespace RePP

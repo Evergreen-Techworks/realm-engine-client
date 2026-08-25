@@ -3,6 +3,7 @@
 #include "gui/MinimapNav.h"
 #include "Il2CppResolver.h"
 #include "Il2CppHook.h"
+#include "game/symbols/GameClasses.h"
 #include "core/runtime/MemRead.h"
 #include "DbgFileLog.h"
 
@@ -61,6 +62,7 @@ static Il2CppObject* s_mmInstance    = nullptr;
 
 static const MethodInfo* s_getTransform     = nullptr;  // Component.get_transform()
 static const MethodInfo* s_getWorldCorners  = nullptr;  // RectTransform.GetWorldCorners(Vector3[])
+static const MethodInfo* s_getPosition      = nullptr;  // Transform.get_position() → world Vector3
 static Il2CppClass*      s_vec3Class        = nullptr;  // UnityEngine.Vector3
 
 namespace {
@@ -103,23 +105,41 @@ MMFields ReadFields()
     return f;
 }
 
-// Static zoom multipliers (MiniMapManager static fields). Logged for calibration.
+// Zoom multipliers — INSTANCE fields (BaseZoomMult @0x68, ZoomInMult @0x6C per
+// the readable dump). The generated header mislabeled them as static, which read
+// garbage (4e-45 / 2e12) and made the scale ~12x too large. Read from the live
+// instance via the sanctioned SEH Mem:: reader.
+// raw-access-ok: fixed minimap struct layout, deobfuscated offsets, SEH-guarded.
 bool ReadZoomMults(float& outBase, float& outZoomIn)
 {
-    bool ok = false;
-    Resolver::Protection::safe_call([&]() {
-        app::MiniMapManager__StaticFields* sf = nullptr;
-        if (s_mmClass && s_mmClass->static_fields)
-            sf = reinterpret_cast<app::MiniMapManager__StaticFields*>(s_mmClass->static_fields);
-        else if (app::MiniMapManager__TypeInfo && *app::MiniMapManager__TypeInfo)
-            sf = (*app::MiniMapManager__TypeInfo)->static_fields;
-        if (sf) {
-            outBase   = sf->BaseZoomMult;
-            outZoomIn = sf->ZoomInMult;
-            ok = true;
-        }
-    });
-    return ok;
+    if (!Mem::AddrOk(s_mmInstance)) return false;
+    const bool a = Mem::TryRead(s_mmInstance, 0x68u, outBase);
+    const bool b = Mem::TryRead(s_mmInstance, 0x6Cu, outZoomIn);
+    return a && b;
+}
+
+// The minimap camera's WORLD position (its transform.position). This is the true
+// center of the minimap view — at full zoom-out the camera CLAMPS to the map edges
+// instead of staying on the player, so the player-centered assumption is wrong
+// there (and one zoom-in re-centers it). Reads x,y like CameraTAB does for the main
+// camera (RotMG maps the world plane to Vector3.x / Vector3.y). False if unresolved.
+bool ReadCameraWorldPos(Il2CppObject* cam, float& outX, float& outY)
+{
+    if (!Mem::AddrOk(cam) || !s_getTransform || !s_getPosition) return false;
+    Il2CppObject* xf = Resolver::Protection::SafeRuntimeInvoke(s_getTransform, cam, nullptr);
+    if (!Mem::AddrOk(xf)) return false;
+    Il2CppObject* posObj = Resolver::Protection::SafeRuntimeInvoke(s_getPosition, xf, nullptr);
+    if (!posObj) return false;
+    void* ub = il2cpp_object_unbox(posObj);
+    if (!ub) return false;
+    const float* v = reinterpret_cast<const float*>(ub);
+    if (!std::isfinite(v[0]) || !std::isfinite(v[1])) return false;
+    // The minimap camera stores position as (worldX, -worldY) — its Y axis is
+    // flipped relative to the game world (verified live: camera Y == -player Y when
+    // the camera is centered on the player). Negate Y so the center matches world
+    // coords; without this every walk goal landed at a negative (off-map) Y.
+    outX = v[0]; outY = -v[1];
+    return true;
 }
 
 // Live orthographicSize off the minimap camera. Returns false if unresolved.
@@ -217,8 +237,11 @@ void MinimapNav::EnsureResolved()
 {
     // (Re)resolve the instance if the cache is stale.
     if (!InstanceValid()) {
+        // Not obfuscated in this build, so the readable name doubles as the
+        // fallback literal. s_mmClass stays as the hoisted pointer: InstanceValid()
+        // compares against it every frame and must not take GameClasses' mutex.
         if (!s_mmClass)
-            s_mmClass = Resolver::FindClassLoose("MiniMapManager");
+            s_mmClass = GameClasses::Resolve("MiniMapManager", "MiniMapManager");
         s_mmInstance = nullptr;
         if (s_mmClass) {
             auto insts = Resolver::FindObjectsByType(s_mmClass);
@@ -233,6 +256,9 @@ void MinimapNav::EnsureResolved()
         if (!s_getWorldCorners)
             s_getWorldCorners = Il2CppHook::ResolveMethodCached(
                 "RectTransform", "GetWorldCorners", 1, false, "UnityEngine");
+        if (!s_getPosition)
+            s_getPosition = Il2CppHook::ResolveMethodCached(
+                "Transform", "get_position", 0, true, "UnityEngine");
         if (!s_vec3Class)
             s_vec3Class = Resolver::FindClass("UnityEngine", "Vector3");
 
@@ -328,11 +354,16 @@ bool MinimapNav::ClickToWorld(float clientMouseX, float clientMouseY,
     float zBase = 0.f, zIn = 0.f;
     const bool zoomOk = ReadZoomMults(zBase, zIn);
 
+    // The minimap camera's orthographicSize ALREADY encodes the zoom (live log:
+    // 1200 zoomed out, 37 zoomed in), so the visible world height is exactly
+    // 2·ortho and tpp = 2·ortho / rectHeightPx — no separate zoom multiplier.
+    // (0x68 is NOT BaseZoomMult; it reads garbage. zBase/zIn are logged only.)
+    const float zoomMult = kMinimapZoomMultUsed;   // = 1.0
     float tpp;
     if (kMinimapTilesPerPixelOverride > 0.f) {
         tpp = kMinimapTilesPerPixelOverride;
     } else if (orthoOk && rh > 1.f) {
-        tpp = (2.0f * ortho * kMinimapZoomMultUsed) / rh;
+        tpp = (2.0f * ortho * zoomMult) / rh;
     } else {
         tpp = kMinimapTilesPerPixelFallback;
     }
@@ -355,8 +386,17 @@ bool MinimapNav::ClickToWorld(float clientMouseX, float clientMouseY,
 
     const float worldDX = rxr * tpp * kMinimapSignEast;
     const float worldDY = ryr * tpp * kMinimapSignNorth;
-    outWorldX = playerWorldX + worldDX;
-    outWorldY = playerWorldY + worldDY;
+
+    // Center reference = the minimap CAMERA's world position, not the player. When
+    // fully zoomed out the camera clamps to the map edges (player off-center), which
+    // broke placement; using the camera center fixes that. Falls back to the player
+    // position (they coincide while the camera follows the player, i.e. zoomed in).
+    float camWX = 0.f, camWY = 0.f;
+    const bool camPosOk = f.ok && ReadCameraWorldPos(f.camera, camWX, camWY);
+    const float centerWX = camPosOk ? camWX : playerWorldX;
+    const float centerWY = camPosOk ? camWY : playerWorldY;
+    outWorldX = centerWX + worldDX;
+    outWorldY = centerWY + worldDY;
 
     const bool okFinite = std::isfinite(outWorldX) && std::isfinite(outWorldY);
 
@@ -368,7 +408,7 @@ bool MinimapNav::ClickToWorld(float clientMouseX, float clientMouseY,
         << " orthoOk=" << (orthoOk ? 1 : 0) << " ortho=" << ortho
         << " zoomMults=" << (zoomOk ? 1 : 0)
         << " BaseZoomMult=" << zBase << " ZoomInMult=" << zIn
-        << " zoomMultUsed=" << kMinimapZoomMultUsed
+        << " zoomMultUsed=" << zoomMult
         << " tpp=" << tpp
         << " rotationActive=" << (f.rotationActive ? 1 : 0)
         << " doRot=" << (doRot ? 1 : 0)
@@ -377,6 +417,8 @@ bool MinimapNav::ClickToWorld(float clientMouseX, float clientMouseY,
         << " rotPx=(" << rxr << "," << ryr << ")"
         << " signEast=" << kMinimapSignEast << " signNorth=" << kMinimapSignNorth
         << " player=(" << playerWorldX << "," << playerWorldY << ")"
+        << " camPosOk=" << (camPosOk ? 1 : 0)
+        << " camCenter=(" << centerWX << "," << centerWY << ")"
         << " target=(" << outWorldX << "," << outWorldY << ")"
         << " finite=" << (okFinite ? 1 : 0));
 

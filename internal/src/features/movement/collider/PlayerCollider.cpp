@@ -3,8 +3,10 @@
 #include "Il2CppResolver.h"
 #include "RuntimeOffsets.h"
 #include "MemRead.h"
+#include "core/logging/DbgFileLog.h"
 
 #include <cstring>
+#include <cstdint>
 
 namespace PlayerCollider {
 namespace {
@@ -21,6 +23,11 @@ struct TrackedProperty {
 };
 
 bool g_enabled = false;
+
+uint64_t g_lastTickMs = 0;
+int      g_lastArmedLog = -1;     // -1 unknown, 0 disarmed, 1 armed
+int      g_lastPathLog  = -1;     // -1 unknown, 0 fallback/untrusted, 1 trusted
+int      g_lastTargetsZero = -1;  // -1 unknown, 0 had-targets, 1 zero-targets
 
 float g_multiplier = 1.0f;
 void* g_lastPlayer = nullptr;
@@ -77,6 +84,27 @@ bool ReadCollisionMultiplier(void* properties, float& out)
 bool WriteCollisionMultiplier(void* properties, float value)
 {
     return Mem::TryWrite(properties, RuntimeOffsets::OP_CollRadiusMult, value);
+}
+
+// Fail-closed gate: only true when the collision-multiplier offset was resolved
+// from live metadata (registry-trusted), never from a stale fallback.
+bool CollisionOffsetTrusted()
+{
+    return RuntimeOffsets::IsFieldWriteTrusted(&RuntimeOffsets::OP_CollRadiusMult);
+}
+
+// Transition-only witness of the offset path, called once per armed Tick.
+void LogOffsetPathTransition(bool trusted)
+{
+    const int now = trusted ? 1 : 0;
+    if (now == g_lastPathLog) return;
+    g_lastPathLog = now;
+    if (trusted)
+        DBG_FILE_LOG("[PlayerCollider] offset path: via FieldInfo (0x"
+            << std::hex << RuntimeOffsets::OP_CollRadiusMult << std::dec << ") — writes ARMED");
+    else
+        DBG_FILE_LOG("[PlayerCollider] offset path: FALLBACK/STALE (state not metadata-resolved) "
+            "— REFUSING writes to collisionRadiusMultiplier");
 }
 
 // Carry over a previously-captured original for an object we still track, so
@@ -196,6 +224,10 @@ bool ApplyEntityMultiplierTargets(void* entityPtr,
 
 void Tick(void* player)
 {
+    // Liveness stamp: measures "the driver still calls me", not "I did work".
+    // Stamped before any early-out so a deleted Tick call is visible.
+    g_lastTickMs = GetTickCount64();
+
     // Feature off: undo anything we applied (once), then stay out of the game's
     // way. This is what makes the collider behave when autododge is disabled.
     if (!g_enabled) {
@@ -230,8 +262,26 @@ void Tick(void* player)
             AddObjectPropertiesTarget(properties, propertyCount, entityProperties[i]);
     }
 
-    if (propertyCount == 0)
+    if (propertyCount == 0) {
+        if (g_lastTargetsZero != 1) {
+            g_lastTargetsZero = 1;
+            DBG_FILE_LOG("[PlayerCollider] targets found=0 (nothing to write to)");
+        }
+        g_lastPlayer = player;
         return;
+    }
+    if (g_lastTargetsZero != 0) g_lastTargetsZero = 0;
+
+    // Fail-closed: only touch the game's collisionRadiusMultiplier when the offset
+    // was resolved from live metadata. An untrusted (fallback/stale) offset could
+    // point at an unrelated float, so refuse to read/capture/write — leave
+    // g_tracked untouched so a later trusted frame can still restore it.
+    const bool trusted = CollisionOffsetTrusted();
+    LogOffsetPathTransition(trusted);
+    if (!trusted) {
+        g_lastPlayer = player;
+        return;
+    }
 
     // Rebuild the tracking set: keep the captured original for objects we already
     // track, capture a fresh one for newcomers, then force each collider to the
@@ -271,6 +321,11 @@ void Tick(void* player)
 
 void SetEnabled(bool enabled)
 {
+    if (g_lastArmedLog != (enabled ? 1 : 0)) {
+        g_lastArmedLog = enabled ? 1 : 0;
+        DBG_FILE_LOG("[PlayerCollider] " << (enabled ? "ARMED (toggle reached DLL)"
+                                                     : "DISARMED"));
+    }
     g_enabled = enabled;
 }
 
@@ -292,6 +347,16 @@ float GetMultiplier()
     return g_multiplier;
 }
 
+uint64_t LastTickMs()
+{
+    return g_lastTickMs;
+}
+
+bool OffsetTrusted()
+{
+    return CollisionOffsetTrusted();
+}
+
 void ResetScene()
 {
     g_lastPlayer = nullptr;
@@ -303,6 +368,9 @@ void ResetStateForTest()
     g_enabled = false;
     g_multiplier = 1.0f;
     g_lastPlayer = nullptr;
+    g_lastArmedLog = -1;
+    g_lastPathLog = -1;
+    g_lastTargetsZero = -1;
     ForgetTrackedColliders();
 }
 

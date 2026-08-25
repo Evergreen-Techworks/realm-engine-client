@@ -9,6 +9,7 @@
 #include "W2S.h"
 #include "Il2CppResolver.h"
 #include "Il2CppHook.h"
+#include "game/symbols/GameClasses.h"
 #include "RuntimeOffsets.h"
 #include "core/runtime/MemRead.h"
 #include "DirectX.h"
@@ -221,8 +222,11 @@ static void DoRefresh()
     };
 
     if (!ValidateCamMgr()) {
+        // Not obfuscated in this build, so the readable name doubles as the
+        // fallback literal. s_camMgrClass stays as the hoisted pointer:
+        // ValidateCamMgr() compares against it and must not take GameClasses' mutex.
         if (!s_camMgrClass)
-            s_camMgrClass = Resolver::FindClassLoose("CameraManager");
+            s_camMgrClass = GameClasses::Resolve("CameraManager", "CameraManager");
         if (!s_camMgrClass) {
             g_status  = "ERROR: CameraManager class not found.";
             g_statusOk = false;

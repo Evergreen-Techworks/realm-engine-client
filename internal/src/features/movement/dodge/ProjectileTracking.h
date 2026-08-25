@@ -31,6 +31,12 @@ namespace ProjectileTracking {
 
     bool RetireProjectile(const WorldProjectile& proj);
 
+    // Prune tracked shots the game has already deleted early (hit a wall/enemy/
+    // player) by cross-referencing the game's LIVE projectile pool, so their danger
+    // lanes disappear immediately instead of lingering to their full lifetime. Safe:
+    // never prunes when the pool read fails/returns empty. Call periodically.
+    void ReconcileWithLivePool();
+
     // Game-authored world position at tMs after spawn. Compatibility wrapper around HBEAKBIHANL.GIBLKPDHLBG.
     void ComputePosAt(const WorldProjectile& proj, float tMs, float& outX, float& outY);
 
@@ -46,7 +52,7 @@ namespace ProjectileTracking {
     void  SetLocalPlayerMuzzleOffsetTiles(float tiles);
     float GetLocalPlayerMuzzleOffsetTiles();
 
-    // HBEAKBIHANL instance: reads KDAJOMOFMJB via il2cpp_field_get_offset, × GetFlashSpeedMultiplier().
+    // HBEAKBIHANL instance: reads KDAJOMOFMJB (offset from RuntimeOffsets::Hbeak_SpeedMul), × GetFlashSpeedMultiplier().
     float EffectiveSpeedMulFromProjectile(void* hbeakInstance);
 
     // ProjectileProperties.Lifetime is usually seconds in XML; values already in ms are typically >= ~250.

@@ -1,7 +1,11 @@
 #include "pch-il2cpp.h"
 #include "CombatTAB.h"
-#include "FeatAutoAim.h"
-#include "FeatMagnetAim.h"
+#include "features/combat/autoaim/ui/FeatAutoAim.h"
+#include "features/combat/autoaim/ui/FeatMagnetAim.h"
+#include "features/combat/autoaim/modes/KillAura.h"
+#include "features/combat/autoaim/modes/AutoFire.h"
+#include "features/combat/autoaim/modes/AutoBreakWalls.h"
+#include "features/projectiles/ShotOrigin.h"
 #include "AutoNexus.h"
 #include "LocalPlayer.h"
 #include "ProjectileTracking.h"
@@ -20,6 +24,9 @@ void Tick(bool menuVisible)
 {
     FeatAutoAim::Tick(menuVisible);
     FeatMagnetAim::Tick(menuVisible);
+    KillAura::Tick();
+    AutoFire::Tick(menuVisible);
+    AutoBreakWalls::Tick();
 
     const bool nexusOn = FeatAutoNexus::ConsumesLocalPlayer();
 
@@ -76,7 +83,17 @@ void Render()
     ImGui::EndDisabled();
     if (magnetAimOn)
         ImGui::TextDisabled("Manual spawn offset is overridden while Magnet Aim is enabled.");
+    ImGui::TextDisabled("Killaura outranks both while it is armed.");
     ImGui::TextDisabled("Vanilla ~0.3; at 0.3 the hook skips retargeting (no extra trig).");
+
+    const char* originName = "?";
+    switch (ShotOrigin::LastSource()) {
+        case ShotOrigin::Source::Vanilla:  originName = "VANILLA";  break;
+        case ShotOrigin::Source::Muzzle:   originName = "MUZZLE";   break;
+        case ShotOrigin::Source::Magnet:   originName = "MAGNET";   break;
+        case ShotOrigin::Source::KillAura: originName = "KILLAURA"; break;
+    }
+    ImGui::TextDisabled("Local spawn origin: %s", originName);
     ImGui::Checkbox("Debug: weapon range ring + last spawn dot##muzzleDbg", &g_muzzleWeaponRangeDebug);
     ImGui::TextDisabled("Uses AutoAim range + last local SpawnProjectile world position.");
 
@@ -85,6 +102,24 @@ void Render()
     ImGui::Spacing();
 
     FeatAutoNexus::Render();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    KillAura::RenderSettings();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    AutoFire::RenderSettings();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    AutoBreakWalls::RenderSettings();
 }
 
 } // namespace CombatTAB

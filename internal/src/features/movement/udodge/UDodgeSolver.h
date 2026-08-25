@@ -73,6 +73,11 @@ struct Goal {
                             // it is still hittable. When fromLock && maxRange>0 this is the
                             // radius of the IN-RANGE DISK the solver pathfinds within — the
                             // durable-pocket search is constrained to it. See the header note.
+    float innerStandoff = 0.f; // min distance from lockPos to HOLD (annulus inner radius). The
+                            // in-range manifold is the ANNULUS [innerStandoff, maxRange] so the
+                            // planner never fights point-blank. 0 = no inner gate (unlocked /
+                            // disabled). A goal/score exclusion only — never a traversal veto,
+                            // so a player who starts inside can always move outward.
 };
 
 enum class SolveKind : uint8_t {

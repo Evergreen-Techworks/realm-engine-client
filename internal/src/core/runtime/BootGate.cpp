@@ -36,12 +36,17 @@ constexpr Anchor kAnchors[] = {
 };
 constexpr int kAnchorCount = static_cast<int>(sizeof(kAnchors) / sizeof(kAnchors[0]));
 
+// EVERY row here must have a FeatureAllowed() caller. A row without one is a
+// gate that does not exist: it never blocks anything. The "AutoNexus" and
+// "SafeWalk" rows were exactly that and were deleted (plan 105, decisions
+// D3/D4) rather than given an enforcement point — auto-nexus is a survival
+// feature that must keep running on a degraded build, and "SafeWalk" is a
+// setting on four dodge modes, not a module with one natural gate.
 struct FeatureNeeds { const char* feature; const char* label; const char* needs[4]; int count; };
 constexpr FeatureNeeds kFeatures[] = {
     { "ProjectileTracking", "Bullet dodging",        { "HBEAKBIHANL", "KJMONHENJEN" },               2 },
     { "AoeTracking",        "AoE / ground dodging",  { "GJJCEFJMNMK", "FHOHCELBPDO" },               2 },
-    { "AutoNexus",          "Auto-nexus (survival)", { "LKHPPBEGNOM", "HBEAKBIHANL" },               2 },
-    { "SafeWalk",           "Safe-walk (hazards)",   { "CMFPKCJHKKB", "BGAIOPJMHLO", "KJMONHENJEN" }, 3 },
+    { "AutoFire",           "Auto-fire / hold-to-shoot", { "FKALGHJIADI", "LKHPPBEGNOM" },           2 },
 };
 constexpr int kFeatureCount = static_cast<int>(sizeof(kFeatures) / sizeof(kFeatures[0]));
 
@@ -50,15 +55,13 @@ State s_state = State::WaitingForMetadata;
 bool  s_anchorStale[kAnchorCount] = {};
 bool  s_audited      = false;
 bool  s_liveAudited  = false;
-char  s_status[128]  = "Initializing\xE2\x80\xA6";
 
-void SetStatus(const char* s) { std::snprintf(s_status, sizeof(s_status), "%s", s); }
-
+// `status` is the human-readable name of the step being entered; it exists for
+// the log line only.
 void EnterState(State next, const char* status) {
     if (next != s_state)
         DBG_FILE_LOG("[BootGate] state -> " << status);
     s_state = next;
-    SetStatus(status);
 }
 
 bool PlayerLoaded() {
@@ -131,7 +134,6 @@ State Tick() {
 
     switch (s_state) {
     case State::WaitingForMetadata:
-        SetStatus("Resolving offsets\xE2\x80\xA6");
         if (RuntimeOffsets::AllResolved())
             EnterState(State::Auditing, "Checking for game changes\xE2\x80\xA6");
         break;
@@ -153,8 +155,6 @@ State Tick() {
     return s_state;
 }
 
-State Current() { return s_state; }
-
 void RequestRecheck() {
     s_liveAudited = false;
     EnterState(State::Resolving, "Re-checking offsets\xE2\x80\xA6");
@@ -168,46 +168,20 @@ bool FeatureAllowed(const char* feature) {
             if (AnchorStale(kFeatures[i].needs[n])) return false;
         return true;
     }
+    // Unregistered feature name -> not gated. This is deliberate (a feature
+    // with no anchor dependencies should not be blocked) but it also means a
+    // TYPO silently disables the gate, so name it once. Pointer comparison is
+    // intentional: every caller passes a string literal, so this logs once per
+    // distinct call site without a string compare on a hot path.
+    static const char* s_warnedUnknown = nullptr;
+    if (s_warnedUnknown != feature) {
+        s_warnedUnknown = feature;
+        DBG_FILE_LOG("[BootGate] FeatureAllowed('" << (feature ? feature : "?")
+                     << "') — no kFeatures row, NOT gated");
+    }
     return true;
 }
 
-void GetProgress(int& healthy, int& total) {
-    int crit = 0, ok = 0;
-    for (int i = 0; i < kAnchorCount; ++i) {
-        if (!kAnchors[i].critical) continue;
-        ++crit;
-        if (s_audited && !s_anchorStale[i]) ++ok;
-    }
-    healthy = ok;
-    total   = crit;
-}
-
 bool Degraded() { return s_audited && AnyCriticalStale(); }
-
-const char* StatusLine() { return s_status; }
-
-int GetAnchorReport(AnchorView* out, int maxRows) {
-    int n = 0;
-    for (int i = 0; i < kAnchorCount && n < maxRows; ++i, ++n) {
-        out[n].klass    = kAnchors[i].klass;
-        out[n].role     = kAnchors[i].role;
-        out[n].critical = kAnchors[i].critical;
-        out[n].stale    = s_anchorStale[i];
-    }
-    return kAnchorCount;
-}
-
-int GetFeatureReport(FeatureView* out, int maxRows) {
-    int n = 0;
-    for (int i = 0; i < kFeatureCount && n < maxRows; ++i, ++n) {
-        out[n].feature = kFeatures[i].feature;
-        out[n].label   = kFeatures[i].label;
-        bool blocked = false;
-        for (int k = 0; k < kFeatures[i].count; ++k)
-            if (AnchorStale(kFeatures[i].needs[k])) { blocked = true; break; }
-        out[n].blocked = blocked;
-    }
-    return kFeatureCount;
-}
 
 } // namespace BootGate

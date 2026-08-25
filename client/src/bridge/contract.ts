@@ -28,9 +28,9 @@ export const BRIDGE = {
 /**
  * Message `type` strings exchanged with the DLL — all plaintext, no `seq`/`mac`.
  * Incoming (DLL→client): Hello, Heartbeat, HeartbeatResp, Player, HotkeyEvent,
- * UnresolvedClasses, Threats.
- * Outgoing (client→DLL): SetFeature, ClearTiles, NoWalkInit, TileUpdate
- * (plus Heartbeat/HeartbeatResp). Each must match a builder in IpcMessages.cpp.
+ * UnresolvedClasses, Threats, Aim.
+ * Outgoing (client→DLL): SetFeature (plus Heartbeat/HeartbeatResp).
+ * Each must match a builder in IpcMessages.cpp.
  */
 export const DllMessageType = {
   Hello: 'hello',
@@ -40,19 +40,20 @@ export const DllMessageType = {
   HotkeyEvent: 'hotkeyEvent',
   UnresolvedClasses: 'unresolvedClasses',
   Threats: 'threats',
+  Aim: 'aim',
   SetFeature: 'setFeature',
-  ClearTiles: 'clearTiles',
-  NoWalkInit: 'noWalkInit',
-  TileUpdate: 'tileUpdate',
 } as const;
 export type DllMessageType = typeof DllMessageType[keyof typeof DllMessageType];
 
 /**
- * The full set of `sendDllFeature` feature keys, sorted. Exhaustive — the union
- * below drives sendDllFeature's parameter type, so a typo is a compile error.
- * Every key here is consumed by the DLL's FeatureCommandRegistry.cpp (via its
- * FH_* handler tables / FeatureCommand::Is). Keep this list in sync with that
- * file after any game patch.
+ * Feature keys `sendDllFeature` accepts, sorted. This union drives
+ * sendDllFeature's parameter type, so a typo is a compile error — but it is
+ * NOT the full set the DLL handles: see DLL_ONLY_FEATURE_KEYS below.
+ *
+ * The DLL swallows unknown keys by design (FeatureCommandRegistry.cpp:9-10),
+ * so a key added here without a matching handler fails SILENTLY. Run
+ * `node scripts/check-bridge-contract.mjs` (part of `npm test`) after any
+ * change to either side.
  */
 export const DLL_FEATURE_KEYS = [
   'autoAbilityEnabled', 'autoAbilityMpPct', 'autoAbilityWizardMode', 'autoAimEnabled',
@@ -62,7 +63,9 @@ export const DLL_FEATURE_KEYS = [
   'cameraAngleActive', 'cameraAngleValue', 'cameraCentered', 'cameraCenteringActive',
   'cameraZoomActive', 'cameraZoomValue', 'clientClassType', 'clientDefense',
   'clientSpeed', 'colliderEnabled', 'colliderMultiplier', 'dodgeHitScale',
-  'followEntityActive', 'followEntityName', 'internalUnloadDll', 'pjdodgeDebugOverlay',
+  'followEntityActive', 'followEntityName', 'internalUnloadDll',
+  'killauraEnabled', 'killauraMaxOffsetTiles', 'killauraMode',
+  'killauraRangeTiles', 'killauraStandoffTiles', 'pjdodgeDebugOverlay',
   'pjdodgeHitScale', 'pjdodgeHorizonMs', 'pjdodgeLeadMs', 'pjdodgeLockFollow',
   'pjdodgePredictionAccuracy', 'pjdodgeSafeWalk', 'pjdodgeSpeedScale', 'playerColliderSceneReset',
   'playerNoclipActive', 'playerNoclipEnabled', 'playerNoclipHotkey', 'projectileNoclipEnabled',
@@ -90,3 +93,50 @@ export const DLL_FEATURE_KEYS = [
   'zdodgeProjectileHitScale', 'zdodgeProjectileRadiusFallback', 'zdodgeReactWindowMs', 'zdodgeSampleStepMs',
 ] as const;
 export type DllFeatureKey = typeof DLL_FEATURE_KEYS[number];
+
+/**
+ * Feature keys the DLL's FeatureCommandRegistry.cpp handles but that NOTHING in
+ * the client sends today. Listed here so `scripts/check-bridge-contract.mjs`
+ * can tell "intentionally DLL-side only" apart from "someone forgot to add a
+ * key" — the latter is a silent bug, because the DLL swallows unknown keys by
+ * design (FeatureCommandRegistry.cpp:9-10).
+ *
+ * Three sub-groups, kept in one list because the checker only needs the set:
+ *   - in-game-UI only  : the ImGui Combat/Test tab owns them, there is no
+ *                        dashboard control (autoFire*, autoBreakWalls*,
+ *                        overlayEnabled, walkTarget*)
+ *   - untyped sender   : sent via InternalBridge.setFeature (not sendDllFeature),
+ *                        so it deliberately bypasses DllFeatureKey
+ *                        (pluginToggleHotkeys — DevServer.ts:2897)
+ *   - legacy dodge     : honoured by the DLL, no live sender anywhere
+ *
+ * Adding a dashboard control for one of these means MOVING it into
+ * DLL_FEATURE_KEYS, not duplicating it.
+ */
+export const DLL_ONLY_FEATURE_KEYS = [
+  'autoBreakWallsEnabled', 'autoBreakWallsProbeTiles', 'autoBreakWallsTimeoutMs',
+  'autoDodgeHitboxPadding', 'autoDodgeHorizonMs', 'autoDodgeWallAvoid',
+  'autoFireEnabled', 'autoFireHotkey',
+  'dodgeHitAversion', 'dodgeIdleMinGain', 'dodgeReplanOnSpawn', 'dodgeStickiness',
+  'dodgeStrategicBias', 'dodgeStrategicNearWaypoint', 'dodgeTightLeash',
+  'dodgeWasdLookahead',
+  'overlayEnabled', 'pluginToggleHotkeys',
+  'walkTargetActive', 'walkTargetX', 'walkTargetY',
+  'xdodgeNotifyHit', 'xdodgeSearchRadius',
+] as const;
+
+/**
+ * Keys `sendDllFeature` accepts that the DLL does NOT currently handle. Every
+ * entry here is a live bug: the send succeeds, the DLL swallows it silently
+ * (FeatureCommandRegistry.cpp:9-10), and the feature does nothing.
+ *
+ * KNOWN-BROKEN (do not add to without an owner):
+ *   followEntityActive / followEntityName — client/plugins/auto-follow.ts sends
+ *   both; there is no handler in FeatureCommandRegistry.cpp and no caller of
+ *   DangerPlanner::SetExternalGoal outside TestTAB. The Auto Follow plugin is a
+ *   no-op. Fix = either implement the DLL handler or delete the plugin; that is
+ *   a product decision, tracked separately.
+ */
+export const KNOWN_UNHANDLED_FEATURE_KEYS = [
+  'followEntityActive', 'followEntityName',
+] as const;

@@ -10,23 +10,38 @@
 // where PJDodge was blind.
 namespace UDodge {
 
-struct DiagView {
-    bool  enabled = false;
-    int   decision = 0;
-    float playerX = 0.f, playerY = 0.f;
-    bool  overrideActive = false;
-    float velXPerSec = 0.f, velYPerSec = 0.f;
-    int   candidate = 0;
-    float speedScale = 1.f;
-    int   threatCount = 0;
-    float standClearanceTiles = 0.f;   // ≤ 0 = danger covers current position; -1 sentinel unused
-    int   lanes = 0, zones = 0, enemies = 0;
-    uint32_t tickId = 0;               // NewTick stamp of the current map
-    bool  tickValid = false;           // false = tick source unreadable (rebuild-every-frame mode)
-    bool  fieldActive = false;
-    bool  hasLockTarget = false;
-    float lockX = 0.f, lockY = 0.f;
+// Last-resort signal for AutoNexus (plan 77). Reflects the most recent solve on
+// the game thread. "Exposed" = udodge could NOT place the player fully safe this
+// tick: the stand is covered (clearance <= latency pad) AND the solve did not find
+// a safe reachable cell (kind is Fallback or Surrounded). When enabled and NOT
+// exposed, udodge is handling it — AutoNexus should defer and suppress its own
+// projectile firing. Thread: written on the game thread at the end of each Tick,
+// read from AutoNexus's poll thread; a plain atomic snapshot (no lock — consumed
+// conservatively as a hint). `tickId` advances once per Tick so the consumer can
+// detect a stalled/hitched game thread and fall back to the predictive nexus.
+struct SafetyState {
+    bool     enabled        = false;   // udodge active
+    bool     exposed        = false;   // udodge failed to fully cover the player this tick
+    float    standClearance = 1e9f;    // server-accurate clearance at the player (tiles)
+    uint32_t tickId         = 0;       // freshness / staleness guard for the consumer
+    float    moveVx         = 0.f;     // udodge's committed next-move velocity (tiles/ms);
+    float    moveVy         = 0.f;     // 0 = holding. AutoNexus predicts the player along this.
 };
+SafetyState GetSafetyState();
+
+// Nav wedge signal (plan 89). Published from the walk-to stuck detector inside
+// Tick(): `wedged` latches true when the nav goal has seen no progress for
+// >1.5 s and clears on the next real progress step or when walk-to ends. Written
+// on the game thread at the end of each Tick, read by auto-break-walls on the
+// render thread — a plain atomic snapshot, consumed as a hint (never a lock).
+struct NavWedge {
+    bool     walkActive = false;
+    bool     wedged     = false;
+    float    goalX = 0.f, goalY = 0.f;
+    float    playerX = 0.f, playerY = 0.f;
+    uint32_t stampMs = 0;    // GetTickCount64() low 32 bits, updated every Tick
+};
+NavWedge GetNavWedge();
 
 void SetEnabled(bool enabled);
 bool IsEnabled();
@@ -34,7 +49,6 @@ void OnEnter();
 void Tick(void* player, float px, float py, float dt);   // game-update thread
 void RenderSettings();                                    // render thread (Test tab)
 void RenderDebugOverlay(float camX, float camY, float angle, float zoom, float cx, float cy);
-DiagView GetDiagView();
 
 // Knobs (atomics; IPC + GUI). Clamps: laneTiles [2,16], stepTiles
 // {0 | [0.4,3]}, hitScale [0.25,2.5], standOnType any int, mode {0,1}.
@@ -46,6 +60,8 @@ void  SetSafeWalk(bool en);           bool  GetSafeWalk();
 void  SetSpeedScale(bool en);         bool  GetSpeedScale();
 void  SetFieldEscape(bool en);        bool  GetFieldEscape();
 void  SetDebugOverlay(bool en);       bool  GetDebugOverlay();
+void  SetDebugWeights(bool en);       bool  GetDebugWeights();
+void  SetDiagTiming(bool en);         bool  GetDiagTiming();   // per-phase perf timing (diag, default OFF)
 void  SetLockFollow(bool en);         bool  GetLockFollow();
 void  SetFollowLantern(bool en);      bool  GetFollowLantern();
 void  SetAutopilot(bool en);          bool  GetAutopilot();   // auto-lock highest-maxHp enemy

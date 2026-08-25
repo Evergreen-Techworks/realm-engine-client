@@ -54,15 +54,15 @@ src/
 ├── core/                Cross-cutting infrastructure — no game-feature logic here
 │   ├── config/          Persistent settings (settings.h/.cpp) and keybinds (keybinds.h/.cpp)
 │   ├── il2cpp/          PCH (pch-il2cpp.h) + IL2CPP API resolver (il2cpp-init.cpp)
-│   ├── ipc/             Bridge to the Electron client (handshake, framing, JSON, tile state)
+│   ├── ipc/             Bridge to the Electron client (handshake, framing, JSON, threats, aim)
 │   ├── logging/         DBG_FILE_LOG macro + Debug console helpers
-│   ├── runtime/         BootGate, DiagBridge, GameState, LocalPlayer,
+│   ├── runtime/         BootGate, GameState, LocalPlayer,
 │   │                    RuntimeOffsets, Il2CppResolver
 │   └── security/        xorstr for compile-time string hiding
 │
 ├── features/            Feature families — one folder per family
 │   ├── account/         Char select + credential/HWID capture surface
-│   ├── combat/          autoability, autoaim, autonexus, enemytracker, ghostHit
+│   ├── combat/          autoability, autoaim (core/shoot/modes/ui — see its README), autonexus, enemytracker, ghostHit
 │   ├── control/         Input-side control logic
 │   ├── loot/            Autoloot rules and inventory automation
 │   ├── misc/            One-offs that don't warrant their own family
@@ -98,10 +98,10 @@ offset read), walk .NET containers through `Il2CppC::`
 re-introduce a local `AddrOk`/`AddrValid` copy, an open-coded
 `reinterpret_cast<…>(ptr + RuntimeOffsets::…)` read, a private dict/array
 layout constant, or a bare `MH_CreateHook` in feature/GUI code — those belong
-only to the sanctioned homes above. `internal/tools/check-raw-access.sh`
-(and its `.ps1` mirror, run by `build-and-test.bat`) is the ratchet that
-enforces this; a genuinely necessary hot-loop raw read may stay only with a
-same-line `raw-access-ok` comment explaining why.
+only to the sanctioned homes above. `internal/tools/check-raw-access.sh` is
+the ratchet that enforces this; `build-and-test.bat` invokes it through WSL.
+A genuinely necessary hot-loop raw read may stay only with a same-line
+`raw-access-ok` comment explaining why.
 
 ## Startup flow
 

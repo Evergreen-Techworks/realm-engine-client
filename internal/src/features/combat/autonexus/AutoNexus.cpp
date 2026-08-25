@@ -14,6 +14,7 @@
 #include "core/runtime/MemRead.h"
 #include "game/objects/GameObjects.h"
 #include "game/actions/ItemUse.h"
+#include "features/movement/udodge/UDodge.h"   // defer prediction to the active dodge system
 #include <algorithm>
 #include <cstdio>
 #include <cstdint>
@@ -34,6 +35,12 @@ static bool  g_debugDraw     = false;
 static ULONGLONG s_lastAutoNexusTick = 0;
 
 static constexpr ULONGLONG kAutoNexusPollMs = 16ULL;
+
+// Staleness budget for udodge's last-resort signal (plan 77). AutoNexus polls
+// every ~16 ms; if udodge's SafetyState.tickId has not advanced within this
+// window the game thread has stalled/hitched, so we stop trusting udodge to be
+// handling the shots and let the predictive nexus run as the backstop.
+static constexpr ULONGLONG kUdStaleBudgetMs = 100ULL;
 
 // ── Scan geometry ────────────────────────────────────────────────────────
 static constexpr float kBroadStepMs = 50.f;
@@ -496,6 +503,15 @@ static void RunAutoNexus()
     const float fieldVx = pm.vx, fieldVy = pm.vy;
     ObserveVelocity(pm.x, pm.y, pm.vx, pm.vy);
 
+    // AutoNexus is a NEVER-DIE backstop — it must catch every lethal shot on track
+    // to where the player ACTUALLY is. Do NOT bias the prediction by udodge's
+    // INTENDED dodge: if udodge is told to move out of the way but FAILS to, a shot
+    // aimed at the player's real position would be predicted to "miss" and never
+    // published as a threat → the client never nexuses → death. The prediction stays
+    // on the player's own observed motion (the working FourOfSpades behavior); the
+    // client only fires when the summed threat damage would actually be lethal, so
+    // this over-reports threats but never under-reports the one that kills you.
+
     g_gvNowX = pm.x;  g_gvNowY = pm.y;
     g_gvVx   = pm.vx; g_gvVy   = pm.vy;
     g_gvEndX = pm.x + pm.vx * horizon;
@@ -538,6 +554,24 @@ static void RunAutoNexus()
             if (alreadyElapsed < 0.f || alreadyElapsed > proj.lifetime + 50.f)
                 continue;
 
+            // Cheap distance cull (perf): a bullet can travel at most speed×horizon
+            // over the prediction window; if its CURRENT position is farther than
+            // that (plus a generous hit/player/error margin) it provably cannot reach
+            // the player this window, so skip the expensive FindHitMsUntil sweep.
+            // Conservative — the margin is wide, so a real threat is never culled.
+            {
+                // Cull only when the speed is RELIABLY known (>0). A misread speed
+                // of 0 would compute a tiny maxReach and skip a real fast shot →
+                // missed threat → death. When speed is unknown, DON'T cull (scan it).
+                const float spd = (proj.speed / 10000.f) * (proj.speedMul > 0.f ? proj.speedMul : 1.f);
+                if (std::isfinite(spd) && spd > 1e-5f) {
+                    const float maxReach = spd * horizon + 4.0f;
+                    const float pdx = proj.x - pm.x, pdy = proj.y - pm.y;
+                    if (pdx * pdx + pdy * pdy > maxReach * maxReach)
+                        continue;
+                }
+            }
+
             if (retroMs > 0.f &&
                 CrossedPlayerInPast(proj, alreadyElapsed, retroMs, prevPx, prevPy, pm.x, pm.y)) {
                 ProjectileTracking::RetireProjectile(proj);
@@ -561,6 +595,58 @@ static void RunAutoNexus()
                   [](const Threat& a, const Threat& b) { return a.tHitMs < b.tHitMs; });
     }
 
+    // ── AOE bombs (never-die backstop) ────────────────────────────────────────
+    // AutoNexus previously ignored AOE entirely, so a bomb landing on you was
+    // never a threat → no nexus → death. Predict every enemy damaging AOE: if the
+    // player's predicted position AT DETONATION is inside the blast (and detonation
+    // is within the horizon) report it as a conservatively-lethal threat so the
+    // client nexuses. The dodge now avoids bombs, so this only fires when the dodge
+    // FAILED to clear the blast — exactly a last-resort. Not gated by any toggle.
+    {
+        static std::vector<WorldAoe> s_naoes;
+        s_naoes.clear();
+        AoeTracking::EnsureInstalled();
+        AoeTracking::CopyActiveForDraw(s_naoes);
+        const ULONGLONG nowA = GetTickCount64();
+        int aoeIdx = 0;
+        bool added = false;
+        for (const WorldAoe& a : s_naoes) {
+            if (!a.valid || !a.isDamaging) continue;
+            if (a.isEnemyChecked && !a.isEnemy) continue;
+            if (!std::isfinite(a.destX) || !std::isfinite(a.destY)) continue;
+
+            const float radius   = (std::isfinite(a.radius) && a.radius > 0.f) ? std::min(a.radius, 12.f) : 1.5f;
+            const float elapsed  = static_cast<float>(nowA > a.spawnTick ? nowA - a.spawnTick : 0ULL);
+            const float lifeMs   = (std::isfinite(a.lifetime) && a.lifetime > 0.f) ? a.lifetime : 2000.f;
+            const float landAtMs = (std::isfinite(a.arcMs) && a.arcMs > 0.f) ? a.arcMs : lifeMs;
+            const float detonMs  = landAtMs - elapsed;          // ms until blast (≤0 = already blasting)
+            if (elapsed >= lifeMs + 50.f) continue;             // expired
+            if (detonMs > horizon) continue;                    // too far out — re-check next poll
+
+            const float t   = std::max(0.f, detonMs);
+            const float plx = pm.x + pm.vx * t;
+            const float ply = pm.y + pm.vy * t;                 // predicted player pos at detonation
+            const float dx  = plx - a.destX, dy = ply - a.destY;
+            const float rr  = radius + DodgeHit::kPlayerHalf + kNexusHitPadTiles;
+            if (dx * dx + dy * dy > rr * rr) continue;          // player clears the blast — no threat
+
+            Threat th{};
+            th.attackerObjId = static_cast<int32_t>(a.ownerObjId);
+            th.bulletId      = 20000 + (aoeIdx++);
+            th.tHitMs        = t;
+            th.rawDamage     = 9999;                            // conservatively lethal (dodge already failed to clear it)
+            th.armorPiercing = false;
+            threats.push_back(th);
+            added = true;
+        }
+        if (added)
+            std::sort(threats.begin(), threats.end(),
+                      [](const Threat& a, const Threat& b) { return a.tHitMs < b.tHitMs; });
+    }
+
+    // Ground damage is a distinct hazard udodge's safeWalk may or may not avoid —
+    // it is NEVER gated by the projectile suppression above. Always predict and
+    // publish it (with an empty projectile list when suppressed).
     const GroundThreat ground = PredictGroundDamage(lp, pm, horizon);
 
     PublishThreats(threats, ground);

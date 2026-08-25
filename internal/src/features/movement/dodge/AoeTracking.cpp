@@ -9,7 +9,6 @@
 #include "Il2CppHook.h"
 #include "DbgFileLog.h"
 #include "BootGate.h"
-#include "minhook/MinHook.h"
 #include <windows.h>
 #include <atomic>
 #include <chrono>
@@ -40,7 +39,7 @@
 //
 // FGOFPGIIEPC (: EGOGOKPFFIP) — throwable explosion controller. KOBMINBDOBD has
 //   3 params: void(LKHPPBEGNOM* anchor, CustomExplosionEntrance* data, float dur)
-//   anchor.x/y (via RuntimeOffsets::PosX/PosY) = throw origin.
+//   anchor.x/y (via Game::Entity::TryPos) = throw origin.
 //   CustomExplosionEntrance.distance (+0x38) = spread/ring radius.
 // ─────────────────────────────────────────────────────────────────────────────
 static constexpr const char* kThrowableClass   = "GJJCEFJMNMK";
@@ -56,7 +55,7 @@ static constexpr int         kExplParamCount   = 3;  // (LKHPPBEGNOM*, CustomExp
 // Assembly-confirmed: [rbx+368h] origin, [rbx+370h] dest, [rbx+388h] durationMs.
 
 // FHOHCELBPDO field offsets — resolved at runtime via RuntimeOffsets.
-// Origin fields are the inherited BMO world position (RuntimeOffsets::PosX/PosY).
+// Origin fields are the inherited BMO world position (Game::Entity::TryPos).
 // Pure visual landing-zone circle — ObjectProperties is NEVER populated.
 
 // Deduplication tolerance: skip FHOH entry if a GJJ entry exists at same dest (within this dist)
@@ -149,8 +148,7 @@ static std::atomic<uint32_t> g_DbgExplLogs{ 0 };
 static bool TryReadAnchorXY(void* anchor, float& outX, float& outY)
 {
     float x, y;
-    if (!Mem::TryRead(anchor, RuntimeOffsets::PosX, x)) return false;
-    if (!Mem::TryRead(anchor, RuntimeOffsets::PosY, y)) return false;
+    if (!Game::Entity(anchor).TryPos(x, y)) return false;
     if (x != x || y != y) return false;
     outX = x;
     outY = y;
@@ -179,12 +177,11 @@ static bool TryReadGjjFromSelf(void* self, float& ox, float& oy, float& dx, floa
 }
 
 // FHOH field reader.
-// Origin (ox/oy) comes from the inherited BMO world position (RuntimeOffsets::PosX/PosY).
+// Origin (ox/oy) comes from the inherited BMO world position (Game::Entity::TryPos).
 static bool TryReadFhohFromSelf(void* self, float& ox, float& oy, float& dx, float& dy,
     int32_t& durMs)
 {
-    if (!Mem::TryRead(self, RuntimeOffsets::PosX,            ox))    return false;
-    if (!Mem::TryRead(self, RuntimeOffsets::PosY,            oy))    return false;
+    if (!Game::Entity(self).TryPos(ox, oy))                          return false;
     if (!Mem::TryRead(self, RuntimeOffsets::Fhoh_DestX,      dx))    return false;
     if (!Mem::TryRead(self, RuntimeOffsets::Fhoh_DestY,      dy))    return false;
     if (!Mem::TryRead(self, RuntimeOffsets::Fhoh_DurationMs, durMs)) return false;
@@ -356,8 +353,6 @@ static void*    g_GjjTarget   = nullptr;
 // value against the instance's float pairs. Runs until resolved; one throwable
 // (e.g. a Medusa cast in the Godlands) is enough.
 static std::atomic<bool> g_gjjFieldsResolved{ false };
-static uint32_t          g_gjjResolvedOriginOff = 0;
-static uint32_t          g_gjjResolvedDestOff   = 0;
 
 // Scan `self` for the Vector2 field (two consecutive floats) equal to (vx,vy).
 // SEH-guarded, POD-only (no C++ unwinding in the __try) — a read past the object
@@ -404,8 +399,6 @@ static void* __fastcall GjjKobDetour(void* self, int64_t origin, int64_t dest,
                 uint32_t dOff = (std::isfinite(pdx) && std::isfinite(pdy))
                                 ? FindVec2FieldOffset(self, pdx, pdy) : 0u;
                 if (dOff) { RuntimeOffsets::Gjj_DestX = dOff; RuntimeOffsets::Gjj_DestY = dOff + 4u; }
-                g_gjjResolvedOriginOff = oOff;
-                g_gjjResolvedDestOff   = dOff;
                 g_gjjFieldsResolved.store(true, std::memory_order_relaxed);
                 DBG_FILE_LOG("[AoeTracking] GJJ fields self-healed via param-match: origin=0x"
                     << std::hex << oOff << " dest=0x" << dOff << std::dec
@@ -725,29 +718,15 @@ static bool HookShowEffectPath()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-static bool s_mhInit = false;
-
-static void TryInitInfrastructure()
+// Returns whether MinHook is up — EnsureInstalled gates the hook installs on it
+// the same way the old file-scope minhook-init latch did.
+static bool TryInitInfrastructure()
 {
     if (!g_CsInit) {
         InitializeCriticalSection(&g_Cs);
         g_CsInit = true;
     }
-    if (!s_mhInit) {
-        MH_STATUS st = MH_Initialize();
-        if (st != MH_OK && st != MH_ERROR_ALREADY_INITIALIZED) {
-            // #region agent log
-            static std::atomic<uint32_t> s_mhFailLog{ 0 };
-            if (s_mhFailLog.fetch_add(1, std::memory_order_relaxed) < 4u) {
-                std::ostringstream d;
-                d << "{\"status\":" << static_cast<int>(st) << "}";
-                AgentLogAoe("H2", "AoeTracking.cpp:TryInitInfrastructure", "mh_init_fail", d.str());
-            }
-            // #endregion
-            return;
-        }
-        s_mhInit = true;
-    }
+    return Il2CppHook::EnsureRuntime("AoeTracking");
 }
 
 static bool HookThrowablePath()
@@ -837,13 +816,6 @@ static bool HookExplosionPath()
 // ─────────────────────────────────────────────────────────────────────────────
 namespace AoeTracking {
 
-void GetGjjProbe(bool& resolved, uint32_t& originOff, uint32_t& destOff)
-{
-    resolved  = g_gjjFieldsResolved.load(std::memory_order_relaxed);
-    originOff = g_gjjResolvedOriginOff;
-    destOff   = g_gjjResolvedDestOff;
-}
-
 void Install()
 {
     EnsureInstalled();
@@ -865,14 +837,14 @@ void EnsureInstalled()
         return;
     }
     RuntimeOffsets::EnsureAll();
-    TryInitInfrastructure();
-    if (!s_mhInit || !g_CsInit) {
+    const bool mhReady = TryInitInfrastructure();
+    if (!mhReady || !g_CsInit) {
         // #region agent log
         static std::atomic<uint32_t> s_infraLog{ 0 };
         const uint32_t n = s_infraLog.fetch_add(1, std::memory_order_relaxed);
         if (n < 6u || (n % 200u) == 0u) {
             std::ostringstream d;
-            d << "{\"mhInit\":" << (s_mhInit ? 1 : 0) << ",\"csInit\":" << (g_CsInit ? 1 : 0) << "}";
+            d << "{\"mhInit\":" << (mhReady ? 1 : 0) << ",\"csInit\":" << (g_CsInit ? 1 : 0) << "}";
             AgentLogAoe("H2", "AoeTracking.cpp:EnsureInstalled", "infra_not_ready", d.str());
         }
         // #endregion
@@ -883,6 +855,26 @@ void EnsureInstalled()
     const bool fh = HookFhohPath();
     const bool ex = HookExplosionPath();
     const bool sf = HookShowEffectPath();
+
+    // TRANSITION-ONLY, and deliberately NOT AgentLogAoe: that macro is _DEBUG-only
+    // AND env-gated, so every AoE install/record signal is invisible in the Release
+    // build the game actually loads — which is exactly why "did the AoE hooks come
+    // up?" could not be answered from a shipped session's trace. One line per
+    // change in the installed-hook count; steady state costs one integer compare.
+    //
+    //   GREP THE TRACE LOG FOR:  [AoeTracking] hooks:
+    {
+        const int hookCount = (g_GjjTarget ? 1 : 0) + (g_FhohTarget ? 1 : 0)
+                            + (g_ExplTarget ? 1 : 0) + (g_SfxTarget ? 1 : 0);
+        static int s_lastHookCount = -1;
+        if (hookCount != s_lastHookCount) {
+            s_lastHookCount = hookCount;
+            DBG_FILE_LOG("[AoeTracking] hooks: " << hookCount << "/4 installed"
+                << " (throwable=" << (th ? 1 : 0) << " fhoh=" << (fh ? 1 : 0)
+                << " explosion=" << (ex ? 1 : 0) << " showEffect=" << (sf ? 1 : 0) << ")"
+                << (hookCount == 0 ? "  <-- NO AoE will EVER be recorded this session" : ""));
+        }
+    }
     // #region agent log
     static std::atomic<uint32_t> s_ensureTick{ 0 };
     const uint32_t t = s_ensureTick.fetch_add(1, std::memory_order_relaxed);
@@ -900,30 +892,14 @@ void EnsureInstalled()
 
 void Uninstall()
 {
-    if (g_GjjTarget) {
-        MH_DisableHook(g_GjjTarget);
-        MH_RemoveHook(g_GjjTarget);
-        g_GjjTarget   = nullptr;
-        g_OrigGjjKob  = nullptr;
-    }
-    if (g_FhohTarget) {
-        MH_DisableHook(g_FhohTarget);
-        MH_RemoveHook(g_FhohTarget);
-        g_FhohTarget  = nullptr;
-        g_OrigFhohKob = nullptr;
-    }
-    if (g_ExplTarget) {
-        MH_DisableHook(g_ExplTarget);
-        MH_RemoveHook(g_ExplTarget);
-        g_ExplTarget    = nullptr;
-        g_OrigExplSpawn = nullptr;
-    }
-    if (g_SfxTarget) {
-        MH_DisableHook(g_SfxTarget);
-        MH_RemoveHook(g_SfxTarget);
-        g_SfxTarget      = nullptr;
-        g_OrigShowEffect = nullptr;
-    }
+    Il2CppHook::UninstallMinHook(g_GjjTarget, "AoeTracking.Gjj");
+    g_OrigGjjKob  = nullptr;
+    Il2CppHook::UninstallMinHook(g_FhohTarget, "AoeTracking.Fhoh");
+    g_OrigFhohKob = nullptr;
+    Il2CppHook::UninstallMinHook(g_ExplTarget, "AoeTracking.Expl");
+    g_OrigExplSpawn = nullptr;
+    Il2CppHook::UninstallMinHook(g_SfxTarget, "AoeTracking.Sfx");
+    g_OrigShowEffect = nullptr;
 }
 
 void CopyActiveForDraw(std::vector<WorldAoe>& out)

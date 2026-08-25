@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+#include <unordered_set>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WorldEntity — snapshot of one entity from the entity dictionary.
@@ -252,10 +253,32 @@ namespace WorldTAB {
     const std::vector<WorldTile>&   GetTiles();
     const std::vector<WorldProjectile>& GetProjectiles();
 
+    // Collect the instance pointers of every projectile CURRENTLY LIVE in the game
+    // (walks the WorldManager projectile pools fresh). Used to prune tracked shots
+    // the game has already deleted (wall/enemy/player hit). Returns false if the
+    // WorldManager is unreadable — callers MUST NOT prune on false (safety: an
+    // incomplete/failed read would otherwise retire live shots).
+    bool CollectLiveProjectilePtrs(std::unordered_set<uintptr_t>& out);
+
     // Returns true if tile (tx, ty) blocks movement.
     // Flash isWalkable() parity: NoWalk ground OR entity with OccupySquare OR FullOccupy.
     // Damaging tiles are NOT in this set; they are physically walkable.
     bool IsTileBlocked(int tx, int ty);
+
+    // Bulk PLAYER-BOX occupancy read over a grid of side*side cells (row-major,
+    // out[gy*side+gx]). Cell (gx,gy) maps to world CENTER
+    // (originX + gx*cellTiles, originY + gy*cellTiles); a cell is blocked (out=1)
+    // when the player-box footprint over that center — floor(center +/- playerHalfEdge)
+    // on each axis, matching the game's collision half-edge (kUOccPlayerHalfEdge =
+    // 0.2285, i.e. TestTAB's kPlayerChebyshevScale) — touches any blocked tile.
+    // When foldHazard, damaging tiles count as blocked too. Takes the tile mutex
+    // ONCE for the whole grid (vs the per-cell CanOccupy mutex storm this replaces).
+    // Undiscovered tiles stay walkable (optimistic). This is IsPositionBlocked's box
+    // logic hoisted under a single lock. Noclip is intentionally NOT consulted: the
+    // planner treats walls as solid, while noclip lets the player through them
+    // anyway — leaving noclip out is conservative, never a safety regression.
+    void CopyBoxBlocked(float originX, float originY, int side, float cellTiles,
+                        float playerHalfEdge, bool foldHazard, unsigned char* out);
 
     // Returns true if tile (tx, ty) has a FullOccupy entity.
     // Used for the Flash isValidPosition sub-tile neighbour check (section B):

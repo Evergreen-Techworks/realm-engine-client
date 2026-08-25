@@ -25,6 +25,7 @@ export type { Packet } from '../src/packets/Packet.js';
 export type { GameWorldState, TrackedEntity } from '../src/state/GameWorldState.js';
 export type { GameDataLoader, PlayerClassStatMaxes } from '../src/game-data/GameDataLoader.js';
 export type { DllThreat, DllGround } from '../src/bridge/DllThreatBus.js';
+export type { DllAim } from '../src/bridge/DllAimBus.js';
 
 // ── Values (core infra) ──────────────────────────────────────────────
 export { sendDllFeature } from '../src/bridge/DllFeatureBus.js'; // typed via plan 12
@@ -33,3 +34,4 @@ export { ConditionEffect } from '../src/constants/ConditionEffect.js';
 export { ClassId } from '../src/constants/ClassId.js';
 export { RuntimeScheduler } from '../src/util/RuntimeScheduler.js';
 export { getDllThreats, getDllGround, getDllThreatsAgeMs, getDllThreatsTruncated } from '../src/bridge/DllThreatBus.js';
+export { getDllAim, getDllAimAgeMs } from '../src/bridge/DllAimBus.js';

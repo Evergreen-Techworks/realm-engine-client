@@ -20,6 +20,12 @@
 // LKHPPBEGNOM own fields >= dump 0x1B8 — +0x50 ACTK shift.
 // FKALGHJIADI own fields — +0x50 ACTK shift.
 
+// NOT migrated to Mem::ReadOr / Game:: accessors (plan 103): these gate on
+// Mem::PageReadable, which is STRICTER than the Mem::AddrOk check every
+// Mem::/Game:: read uses. Switching would loosen validation on a panel that
+// WRITES to the local player. If this is ever unified, the decision to make
+// is whether PageReadable should become the default for write-adjacent
+// reads, not whether VisualsTAB should drop it.
 static int32_t ReadInt32At(void* local, uint32_t fieldOffset)
 {
     if (!local || !Mem::PageReadable(local))

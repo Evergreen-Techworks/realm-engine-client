@@ -35,4 +35,10 @@ void Enumerate(Callback cb, void* user);
 // depends on WorldTAB having fired at least once.
 int32_t GetLocalPlayerObjectId();
 
+// Resolve the LIVE world position of ANY object by its dict key (object id) —
+// including remote PLAYERS, which the enemy snapshot filters out. Walks the world
+// Dictionary and reads PosX/PosY off the matching entity. Returns false if the id
+// is not in view / the world manager is unreadable. Game-update thread only.
+bool ResolveObjectPos(int32_t id, float& outX, float& outY);
+
 } // namespace EnemyTracker

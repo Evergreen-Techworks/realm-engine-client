@@ -20,7 +20,16 @@ constexpr float kTwoPi           = 6.28318530717958647692f;
 // ── Map capacities (fixed buffers — zero per-frame heap allocation) ─────────
 constexpr int kMaxProjectiles = 96;
 constexpr int kMaxAoes        = 32;
-constexpr int kMaxEnemies     = 64;
+// 192, raised from 64: within the 16-tile blocker cull a dungeon corridor or a
+// horde routinely exceeds 64 entities. Overflow used to DROP the newcomer, and
+// PopulateEnemies fills in snapshot order — so a breakable wall one tile ahead
+// could be dropped while a distant enemy that appeared earlier kept its slot,
+// making the wall invisible to EnemyBlockedLocal (UDodgePathfinder) and letting
+// A* route straight through it. PopulateEnemies now also evicts the FARTHEST
+// kept blocker instead of dropping the nearer newcomer, which is what makes the
+// set correct at ANY cap; this larger cap just keeps eviction rare.
+// Cost: EnemyBlocker is 12 B, so 768 B -> 2.3 KB of fixed buffer.
+constexpr int kMaxEnemies     = 192;
 // Legacy route cap — DebugSnapshot still declares a path[] buffer of this size.
 constexpr int kMaxPathPoints  = 48;
 
@@ -34,24 +43,57 @@ constexpr float kUScoreStyleBand = 1.5f;
 // player half-extent into effR; our DangerMap lane.hitHalf is the BULLET half
 // only, so the safety test must add this. Value mirrors DodgeHit::kPlayerHalf.
 constexpr float kUPlayerHalf = 0.2139f;
+// Player environment-COLLISION Chebyshev half-edge (tiles). This is the footprint
+// used to decide whether the player can STAND at a position — the box the game
+// tests against blocked tiles (mirrors TestTAB's kPlayerChebyshevScale = 0.2285,
+// consumed by IsPositionBlocked / IsWalkPositionBlocked). It is DISTINCT from
+// kUPlayerHalf (0.2139), which is the BULLET-HIT half folded into shot geometry:
+// collision clearance and hit clearance are different quantities — do NOT conflate
+// them. Passed to WorldTAB::CopyBoxBlocked so the bulk occupancy reader rasterizes
+// the exact same walkability footprint the per-cell CanOccupy path used.
+constexpr float kUOccPlayerHalfEdge = 0.2285f;
 // Baked command-latency safety pad (tiles): keep the chosen point this far
 // clear of the server hit boundary so a bullet seen one RTT ahead of our read
-// can't clip it. NO user setting.
-constexpr float kULatencyPad = 0.10f;
+// can't clip it. Lowered for TIGHT weaving — the player wants to walk right up
+// against a shot's edge; this is the only buffer beyond the true hit geometry
+// (bulletHalf + kUPlayerHalf), so a small value hugs the boundary. NO user setting.
+constexpr float kULatencyPad = 0.05f;
 
 // Smart-direction objective weights over the SAFE candidate set. Safety is a
 // hard constraint (every scored point is already provably safe); these only
 // choose AMONG safe points and can never trade safety away.
 constexpr float kSolveCommitW      = 1.0f;  // directional continuity (anti-jitter)
+// Extra continuity reward (plan 76) for a candidate whose heading nearly matches
+// the committed heading (Dot > 0.9). It breaks near-equal SAFE options toward
+// "keep going" without touching the base kSolveCommitW term. Applied over the
+// already-safe candidate set only, so it can never trade safety away.
+constexpr float kSolveCommitBonus  = 0.5f;
 constexpr float kSolveGoalW        = 0.8f;  // goal/WASD progress (fades near danger)
 constexpr float kSolvePerpW        = 1.2f;  // lateral sidestep vs radial flee/charge: strong enough
                                             // that a left/right sidestep beats a backpedal's clearance edge
 constexpr float kSolveMoveW        = 1.2f;  // minimal-disruption penalty (prefer nearest safe)
 constexpr float kSolveClearW       = 0.25f; // gentle comfort tiebreak, capped
-constexpr float kSolveClearComfort = 1.0f;  // clearance (tiles) above which comfort stops rewarding
+constexpr float kSolveClearComfort = 0.5f;  // clearance (tiles) above which comfort
+                                            // stops rewarding — capped low so a wide
+                                            // flee never out-scores a valid tight thread
+// Reward a candidate that WEAVES the pattern — accepted because it is clear at
+// ARRIVAL time (in/near a lane now, gap opens as the player arrives) — over one
+// that flees to open space. Applied ONLY to already-safe (arrival-clear)
+// candidates, so it can never trade safety away; it just keeps the dodge tight
+// and aggressive instead of retreating off the pattern. Bounded, modest.
+constexpr float kSolveWeaveW = 0.35f;   // flat reward for a threaded (in-gap) candidate
 constexpr float kSolveStandBias    = 0.15f; // score the stand point gets so we don't twitch off a safe stand
 constexpr float kSolveOutRangeW    = 1.6f;  // penalty per tile a dodge point sits OUTSIDE the boss
                                             // weapon range — prefer dodging inward, stay in shooting range
+// Extra out-of-range penalty proportional to the SQUARE of tiles past weapon
+// range. Keeps a small dodge-out cheap (safety still wins near the edge) while
+// making a large drift out of the fight expensive, so the player returns to the
+// annulus promptly. Locked boss only. Chooses among SAFE candidates only.
+constexpr float kSolveOutRangeQuadW = 0.8f;   // tune in testing
+// Hysteresis band (tiles) beyond weapon range before the solver actively steps
+// back INTO the annulus from a safe stand. A band (not 0) so the player does not
+// twitch in/out at the exact range boundary. Locked boss only.
+constexpr float kUReturnRangeSlack = 0.5f;
 
 // Route-step anti-oscillation (movement smoothing; baked, NO user setting). The
 // worker republishes a route each server tick and its first-step direction can
@@ -63,6 +105,32 @@ constexpr float kSolveOutRangeW    = 1.6f;  // penalty per tile a dodge point si
 // continuation must pass the same walkable + enemy + temporal floor, so a reversal
 // that safety truly requires is never smoothed away.
 constexpr float kURouteReverseDot  = -0.25f;
+
+// Reflex score-tie band: two safe candidates within this score of each other are
+// treated as equal and the tie is broken toward the committed heading (anti-
+// jitter). Small — a meaningfully better safe cell still wins outright. Choosing
+// among SAFE candidates only, so it never trades safety away.
+constexpr float kSolveReflexHystEps = 0.15f;
+
+// ── Plan-commitment / anti-flip-flop hysteresis (plan 76; baked, NO user setting) ─
+// Commitment chooses only AMONG equally-SAFE goals — never a safety override. Two
+// layers cooperate with the existing route-reversal damp (kURouteReverseDot) and
+// heading-continuity term (kSolveCommitW):
+//  • GOAL hysteresis (worker Dijkstra): carry the previously-committed durable-safe
+//    goal cell forward and keep it when it is STILL a valid in-annulus goal reachable
+//    in time and arrives within kURouteGoalHystMs of the new best goal's arrival —
+//    otherwise take the new best. For the PARTIAL route (no durable goal) the old
+//    target is kept unless the new safest reachable cell is MEANINGFULLY better:
+//    ≥ kPartialGainTiles safer OR ≥ kURouteGoalHystTiles closer to the player. A goal
+//    that stops being reachable/durable is dropped that same pass (re-tested every pass).
+//  • HEADING commitment (solver): a soft branch of the route-step damp keeps
+//    continuing the committed heading through a >60° toggle while the continuation is
+//    still fully safe (walkable + enemy-free + temporally clear), capped at
+//    kUMaxDampTicks consecutive damped ticks so a genuine required turn is never
+//    delayed indefinitely.
+constexpr float   kURouteGoalHystMs    = 120.f;  // keep the old goal unless a new one arrives this much sooner
+constexpr float   kURouteGoalHystTiles = 1.5f;   // ...or (partial route) is this much closer to the player
+constexpr uint8_t kUMaxDampTicks       = 3;      // max consecutive soft-damped ticks before accepting the new step
 
 // ── Lookahead path planning (plan 64 extension; baked, NO user sliders) ──────
 // The per-tick candidate set only reaches one move budget (≈1–1.5 tiles). In a
@@ -79,10 +147,20 @@ constexpr float kURouteReverseDot  = -0.25f;
 // the solver stops actively progressing toward it (repositionToward gate).
 constexpr float kUWalkArriveTiles = 0.5f;
 constexpr float kULookaheadTiles = 6.0f;  // horizon radius for the durable-pocket search (tiles)
-constexpr float kUPocketMargin   = 0.35f; // clearance (tiles) a cell needs BEYOND the hard safety
-                                          // boundary (PointSafety already folds in the bullet half +
-                                          // player half) to count as a DURABLE pocket — and the
-                                          // comfortable margin the current spot needs to just HOLD
+// Comfort slack (tiles) the TEMPORAL arrival test adds beyond the exact server
+// hit boundary (which already folds bulletHalf·scale + kUPlayerHalf). This is
+// the ONLY knob for how tightly the player may weave in FRONT of / BETWEEN
+// moving shots: a bullet that is not within (hit + kUArrivalMargin) of the
+// player at the moment the player is there is threaded, not fled. SMALL = tight.
+// Must stay > 0 so a slightly-off prediction can never let a real hit through.
+constexpr float kUArrivalMargin = 0.10f;   // step 3 tightening: was 0.18; lets the player thread ~0.08 tiles closer to moving shots (still a real cushion — SWEPT test folds full hit half + player half)
+static_assert(kUArrivalMargin > 0.f, "kUArrivalMargin must stay > 0: a zero/negative arrival margin lets the player accept a point a bullet is exactly on at arrival (a hit)");
+
+// Clearance (tiles) a cell needs BEYOND the server hit boundary to count as a
+// DURABLE resting pocket / route goal, and the comfort a HELD stand keeps. This
+// is a RESTING-comfort knob, deliberately independent of the arrival-thread knob
+// above: a hold/goal should stay comfortable even as threading gets tighter.
+constexpr float kUDurablePocketMargin = 0.18f;
 constexpr int   kUPocketRings    = 12;    // concentric rings out to kULookaheadTiles (0.5-tile step)
 constexpr int   kUPocketAngles   = 24;    // angular samples per ring (15° resolution)
 constexpr float kSolveFallbackPocketW = 0.5f; // fallback: bias the least-bad step toward the pocket/gap
@@ -98,10 +176,12 @@ constexpr float kSolveFallbackPocketW = 0.5f; // fallback: bias the least-bad st
 // (LaneThreat::pointTimesMs) — no re-prediction, so it stays cheap. The
 // instantaneous lane-based safety (PointSafety) remains the conservative floor
 // for the immediate per-tick reflex; temporal only upgrades the LOOKAHEAD.
-constexpr int   kUTemporalSteps    = 5;      // march samples beyond t=0 (horizon = steps × stepMs)
-constexpr float kUTemporalStepMs   = 100.f;  // coarse march step (~half a server tick) — swept-segment
-                                             // checks between samples prevent a fast bullet tunnelling
-// horizon = kUTemporalSteps × kUTemporalStepMs = 500 ms ≈ 2.5 server ticks
+constexpr int   kUTemporalSteps    = 8;      // 8 × 100 ms = 800 ms horizon (~4 server ticks) — long
+                                             // enough to catch a slow-closing wall instead of freezing
+                                             // a still-approaching bullet at its 500 ms position (plan 95)
+constexpr float kUTemporalStepMs   = 100.f;  // unchanged; swept-segment checks between samples prevent
+                                             // a fast bullet tunnelling across a candidate mid-step
+// horizon = kUTemporalSteps × kUTemporalStepMs = 800 ms ≈ 4 server ticks
 constexpr float kUTemporalCullTiles = 8.f;   // only predict bullets whose traced path passes within this
                                              // radius of the player over the horizon (skip far/receding)
 
@@ -119,6 +199,20 @@ constexpr float kUTemporalCullTiles = 8.f;   // only predict bullets whose trace
 // constraint applies ONLY when locked; unlocked behavior is unchanged.
 constexpr float kUInRangeSlack = 0.35f;  // tiles of grace added to weaponRange when gating pockets to the
                                          // disk, so a pocket right at the boundary still counts as in-range
+
+// ── Inner-standoff annulus (locked-boss only; plan 75; baked, NO user sliders) ─
+// The in-range manifold is an ANNULUS [innerStandoff, weaponRange], not a filled
+// disk: the planner keeps the boss hittable AND never hugs it (shotgun /
+// point-blank patterns kill at close range). innerStandoff is a fraction of
+// weapon range (scales with range across classes) with an absolute floor so a
+// very short-range weapon still keeps a body's-worth of gap. The inner ring is a
+// GOAL/SCORE exclusion, NEVER a traversal veto — a player who STARTS inside it
+// must always be able to move outward (see UDodgeSolver/UDodgePathfinder).
+constexpr float kUInnerStandoffFrac     = 0.35f;  // inner radius as a fraction of weapon range (tune in testing)
+constexpr float kUInnerStandoffMinTiles = 2.0f;   // absolute inner-radius floor (tiles)
+// Solver inner-standoff penalty per tile a dodge point sits INSIDE the inner ring.
+// At least as strong as kSolveOutRangeW so the score never prefers point-blank.
+constexpr float kSolveInnerW = 1.6f;
 
 // ── Grid pathfinder (route AROUND obstacles; baked, NO user sliders) ─────────
 // The straight-line durable-pocket search can only reach a gap that lies on an
@@ -139,7 +233,7 @@ constexpr float kUPathCellTiles    = 0.5f;  // grid cell size (tiles) — coarse
 constexpr int   kUPathBaseRadCells = 12;    // initial window radius (cells) = 6 tiles
 constexpr int   kUPathMaxRadCells  = 24;    // expansion cap (cells) = 12 tiles
 constexpr int   kUPathRadStepCells = 6;     // window growth per expansion step (3 tiles)
-constexpr float kUPathDangerW      = 30.f;  // cost per tile of PointSafety BELOW the pocket margin
+constexpr float kUPathDangerW      = 30.f;  // cost per tile of PointSafety BELOW the durable pocket margin
                                             // (grades how strongly the route bends around danger)
 constexpr float kUPathHitPenalty   = 120.f; // extra cost for a cell INSIDE the server hit region
                                             // (PointSafety < 0) — traversable only when boxed in
@@ -147,6 +241,47 @@ constexpr float kUPathRoot2        = 1.41421356f;
 constexpr int   kUPathMaxSide      = kUPathMaxRadCells * 2 + 1;                    // 49
 constexpr int   kUPathMaxCells     = kUPathMaxSide * kUPathMaxSide;               // 49x49 = 2401
 constexpr int   kUPathHeapCap      = kUPathMaxCells * 8;  // fixed min-heap (lazy Dijkstra, done-check on pop)
+
+// ── Navigation planner (Shift+Click walk-to A*; baked, NO user sliders) ──────
+// The dodge pathfinder above searches a small (≤12-tile) window for the nearest
+// SAFE pocket — it cannot route a long maze corridor to a distant clicked spot.
+// The navigation A* is a SEPARATE, larger, GOAL-DIRECTED search: a coarse 1-tile
+// occupancy grid centered on the player, filled from WorldTAB's blocked-tile map
+// (walls the game has revealed; UNDISCOVERED tiles are absent → treated WALKABLE,
+// the optimistic "assume open until we learn otherwise" model). An 8-neighbour A*
+// with an octile heuristic aimed straight at the goal threads the corridor; if the
+// goal lies outside the window the search targets the in-window cell nearest the
+// goal (partial) and the window re-centers on the player each tick as it advances,
+// so newly-revealed walls just re-route the next replan. Runs on the SAME worker
+// thread as the dodge Dijkstra (a second job in Path::Compute). Enemy bodies from
+// the plain snapshot are hard-blocked; bullets are NOT (the micro-dodge floor
+// handles shots while walking). Cleared on arrival / new click / WASD.
+constexpr float kUNavCellTiles = 1.0f;   // grid cell size (tiles) — coarse; corridors are tile-scale
+constexpr int   kUNavRadCells  = 72;     // window radius (cells = tiles) — reach of one plan (72 tiles).
+                                         // Larger = the A* sees far enough to route around long walls and
+                                         // pick a good side; the rasterize is refill-gated (kUNavRefillTiles)
+                                         // so the bigger grid does NOT cost per tick.
+constexpr int   kUNavSide      = kUNavRadCells * 2 + 1;          // 145
+constexpr int   kUNavCells     = kUNavSide * kUNavSide;          // 145x145 = 21025
+constexpr int   kUNavHeapCap   = kUNavCells * 8;                 // fixed A* min-heap (lazy, done-check on pop)
+constexpr int   kMaxNavWpts    = 96;     // route polyline cap handed back to the driver (bigger window → longer routes)
+constexpr float kUNavRefillTiles = 16.f; // re-rasterize the nav window only after the player moves this far
+                                         // (else reuse the cached grid — the worker handles the player's
+                                         // offset from the stale center). Keeps the big grid cheap.
+constexpr float kUNavArriveTiles = 0.6f; // waypoint-reached radius when advancing along the route
+constexpr float kUNavHazardCost  = 6.0f; // extra A* cost to ENTER a hazard cell (water/lava): routes
+                                         // around it when a dry path exists, but still traverses it when
+                                         // boxed in (never a hard wall — a hazard-floored arena must path)
+
+// The route step-target (the "anchor" the player drives toward) is placed this
+// many move-budgets ahead along the route polyline, NOT one. At one budget the
+// player reaches it in a single tick and then STALLS until the next worker plan
+// (~1 tick latency) — a visible catch-up-and-stall stutter. A few budgets of
+// runway keep the player moving continuously; the actual per-tick step is still
+// one budget (min(dist, budget)) and still temporally validated, so lookahead
+// only smooths the drive, never the safety.
+constexpr float kUStepLookaheadBudgets = 2.5f;  // dodge route anchor runway
+constexpr float kUNavLookaheadBudgets  = 3.0f;  // walk-to corridor anchor runway (open ground)
 
 // ── Async pathfinder worker (plan 65; two-rate MPC — baked, NO user sliders) ──
 // The heavy grid Dijkstra + radius expansion runs on a DEDICATED WORKER THREAD
@@ -205,6 +340,8 @@ struct Settings {
     bool  speedScale  = true;    // match gentle overrides to intent speed
     bool  fieldEscape = true;    // Dijkstra pocket search when boxed in
     bool  debugOverlay = true;
+    bool  debugWeights = false;  // color-code the pathfinder's visible cells by safety weight
+                                 // (heatmap + nav route/window) — debug viz, off by default (draw cost)
     bool  lockFollow  = false;   // consume DangerPlanner external goal as intent
     bool  followLantern = false; // Autopilot: stand-on object scan (perf cost)
     bool  autopilot     = false; // Autopilot auto-lock: auto-select the highest-maxHp
@@ -328,12 +465,15 @@ struct CoreState {
     uint32_t selectedTick = 0;
     bool     haveTick = false;
     Vec2     lastMoveDir{};   // last committed heading — directional-commitment memory (plan 63)
+    uint8_t  dampStreak = 0;  // consecutive soft-damped route ticks (plan 76 heading commitment);
+                              // capped at kUMaxDampTicks so a genuine required turn is never delayed
     void Reset()
     {
         selectedCandidate = kStandCandidate;
         selectedTick = 0;
         haveTick = false;
         lastMoveDir = {};
+        dampStreak = 0;
     }
 };
 
@@ -375,9 +515,25 @@ struct DebugSnapshot {
     // map.lockPos. Enemy exclusion circles come from map.enemies (radius per body).
     bool  hasRoute = false;
     Vec2  routeGoal{};
+    // Dodge route status (why the plan looks the way it does) — surfaced in the
+    // overlay header so path behavior is diagnosable at a glance.
+    bool  routePartial    = false;  // no durable pocket time-reachable → heads to safest-reachable
+    bool  routeExpanded   = false;  // window grew past the base radius to find a goal
+    bool  routeOutOfRange = false;  // locked: no in-range pocket → routed OUTSIDE weapon range (fled)
+    float routeGoalDist   = 0.f;    // route arc-length to the goal (tiles)
     float inRangeRadius = 0.f;
     CandidateDebug candidates[kCandidateCount]{};
     DangerMap map{};
+    // ── Navigation (walk-to) overlay + weight heatmap ────────────────────────
+    bool  drawWeights = false;      // render the pathfinder-visibility heatmap (settings.debugWeights)
+    float hitScale    = 1.f;        // for the heatmap's server-accurate PointSafety
+    bool  safeWalk    = true;       // fold hazard into the heatmap's wall coloring
+    bool  navActive   = false;      // a walk-to A* is in progress → draw its route + window
+    bool  navPartial  = false;      // route only reaches toward the goal (goal outside window / blocked)
+    int   navWptCount = 0;
+    Vec2  navWpts[kMaxNavWpts]{};   // A* route polyline (world; [0] = player)
+    Vec2  navGoal{};                // the clicked walk-to spot
+    Vec2  navStepTarget{};          // the immediate steering target along the corridor
 };
 
 } // namespace UDodge

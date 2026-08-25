@@ -15,7 +15,7 @@ REM   CLIENT_DIR    client folder name         (default: auto)
 REM   INTERNAL_DIR  internal folder name       (default: auto)
 
 REM ── Defaults ────────────────────────────────────────────────────────────────
-if "!WSL_DISTRO!"==""   set "WSL_DISTRO=Debian"
+if "!WSL_DISTRO!"==""   set "WSL_DISTRO=Debian-OLD"
 if "!WSL_USER!"=="" (
     for /f "delims=" %%I in ('wsl -d !WSL_DISTRO! whoami 2^>nul') do set "WSL_USER=%%I"
     if "!WSL_USER!"=="" set "WSL_USER=%USERNAME%"

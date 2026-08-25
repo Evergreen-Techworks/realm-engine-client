@@ -3,6 +3,7 @@
 #include "GameState.h"
 #include "Il2CppResolver.h"
 #include "Il2CppHook.h"
+#include "game/symbols/GameClasses.h"
 #include "core/runtime/MemRead.h"
 #include <mutex>
 #include <cstdio>
@@ -55,7 +56,10 @@ void FloatingTextService::ApplyPendingPluginText()
         }
     }
 
-    Il2CppClass* klass = Resolver::FindClassLoose("MapObjectUIManager");
+    // Not obfuscated in this build, so the readable name doubles as the fallback
+    // literal. GameClasses caches the hit — this used to be a full class-table
+    // scan on every floating text.
+    Il2CppClass* klass = GameClasses::Resolve("MapObjectUIManager", "MapObjectUIManager");
     const MethodInfo* mi = Il2CppHook::ResolveMethodCached("MapObjectUIManager", "ShowFloatingText", 6);
     app::MapObjectUIManager* localMgr = nullptr;
     void* local = GameState::GetLocalPtr();

@@ -5,8 +5,6 @@
 #include "DbgFileLog.h"
 #include "helpers.h"
 
-#include "minhook/MinHook.h"
-
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -174,6 +172,8 @@ void TryInstall()
     s_connectTarget    = connectFn;
     s_setSteamIdTarget = setSteamFn;
 
+    if (!Il2CppHook::EnsureRuntime("CredentialCapture")) return;
+
     if (!Il2CppHook::InstallMinHook(s_connectTarget,
             reinterpret_cast<void*>(&HookedConnect),
             reinterpret_cast<void**>(&s_origConnect), "credcap.Connect")) {
@@ -213,16 +213,8 @@ void Uninstall()
 {
     if (!s_hooksInstalled.load(std::memory_order_acquire)) return;
 
-    if (s_connectTarget) {
-        MH_DisableHook(s_connectTarget);
-        MH_RemoveHook(s_connectTarget);
-        s_connectTarget = nullptr;
-    }
-    if (s_setSteamIdTarget) {
-        MH_DisableHook(s_setSteamIdTarget);
-        MH_RemoveHook(s_setSteamIdTarget);
-        s_setSteamIdTarget = nullptr;
-    }
+    Il2CppHook::UninstallMinHook(s_connectTarget, "CredentialCapture.Connect");
+    Il2CppHook::UninstallMinHook(s_setSteamIdTarget, "CredentialCapture.SetSteamId");
     s_origConnect    = nullptr;
     s_origSetSteamId = nullptr;
     s_hooksInstalled.store(false, std::memory_order_release);

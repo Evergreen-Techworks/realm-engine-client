@@ -14,10 +14,9 @@
 #include <chrono>
 #include <thread>
 #include <Il2CppResolver.h>
-#include "AutoAim.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
 #include "RuntimeOffsets.h"
 #include "BootGate.h"
-#include "DiagBridge.h"
 #include "GameState.h"
 #include "LocalPlayer.h"
 #include "SkinChanger.h"
@@ -193,7 +192,6 @@ HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags
 	AutoAim::Tick();         // entity dict walk — uses GameState::GetWorldMgr()
 	BagLooter::Tick();       // throttled bag scan + ext-goal routing
 	BootGate::Tick();        // boot gating loop (runs EnsureAll + audit)
-	DiagBridge::Tick();      // mirror live state to %LOCALAPPDATA%\RealmEngine\diag.json
 
 	static std::once_flag init_flag;
 	std::call_once(init_flag, [&]() {

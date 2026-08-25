@@ -36,6 +36,8 @@ struct Cand {
     bool  occOk = false;
     bool  safe = false; // occOk && clr >= kULatencyPad
     bool  stand = false;
+    bool  threaded = false;   // admitted via the arrival-time thread (in a lane NOW,
+                              // clear on arrival) rather than open-space spatial safety
 };
 
 // Aggregate incoming-threat direction: normalized sum of (player − lane.anchor)
@@ -63,8 +65,14 @@ float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
 
     // Continuity — reward continuing the last committed heading (kills jitter).
     // The stand point (dir {}) scores 0 here.
-    if (LenSq(c.dir) > 1e-6f && LenSq(prevDir) > 1e-6f)
-        score += kSolveCommitW * std::max(0.f, Dot(c.dir, prevDir));
+    if (LenSq(c.dir) > 1e-6f && LenSq(prevDir) > 1e-6f) {
+        const float align = Dot(c.dir, prevDir);
+        score += kSolveCommitW * std::max(0.f, align);
+        // Plan 76: extra commitment bonus when the candidate closely matches the
+        // committed heading — breaks near-equal SAFE options toward "keep going".
+        // Every scored candidate is already safe, so this never trades safety away.
+        if (align > 0.9f) score += kSolveCommitBonus;
+    }
 
     // Advance toward the goal, but fade the pull to zero as the point approaches
     // the safety floor so near danger the dodge never chases the orbit line.
@@ -89,13 +97,31 @@ float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
     // Gentle comfort tiebreak, capped so it never dominates.
     score += kSolveClearW * std::min(c.clr, kSolveClearComfort);
 
+    // Tight-weave preference: a threaded (arrival-clear, in-gap) candidate is
+    // rewarded so we hold the pattern instead of fleeing to open space. Safe by
+    // construction — only arrival-clear candidates carry threaded=true.
+    if (c.threaded) score += kSolveWeaveW;
+
     // Stay in shooting range: penalize a dodge point that sits OUTSIDE the boss
     // weapon range, so we dodge inward/laterally and keep our range instead of
     // fleeing outward. Only when locked (goal.fromLock) with a real range.
     if (goal.fromLock && goal.maxRange > 0.f) {
         const float distToBoss = Len(Sub(c.pos, goal.lockPos));
-        if (distToBoss > goal.maxRange)
-            score -= kSolveOutRangeW * (distToBoss - goal.maxRange);
+        const float over = distToBoss - goal.maxRange;
+        if (over > 0.f)
+            score -= kSolveOutRangeW * over            // linear base (unchanged slope near the edge)
+                   + kSolveOutRangeQuadW * over * over; // super-linear far-drift penalty
+    }
+
+    // Never fight point-blank: penalize a dodge point INSIDE the inner-standoff
+    // ring so the annulus [innerStandoff, maxRange] — not the filled disk — is the
+    // held manifold. A SCORE term over the SAFE set (never a hard filter): if the
+    // only safe cells are inside the ring the player still dodges there (safety
+    // wins) and this pulls back outward next tick. Only when locked.
+    if (goal.fromLock && goal.innerStandoff > 0.f) {
+        const float distToBoss = Len(Sub(c.pos, goal.lockPos));
+        if (distToBoss < goal.innerStandoff)
+            score -= kSolveInnerW * (goal.innerStandoff - distToBoss);
     }
 
     // Stand bias: when standing still is safe and nothing is clearly better,
@@ -196,114 +222,30 @@ void Evaluate(const MapInput& in, Cand* c, int n)
 // time-gaps the static test forbids while keeping a comfort margin so a
 // slightly-off prediction can't clip the player.
 
-constexpr int kUTemporalSamples = kUTemporalSteps + 1;   // includes t = 0
-
-// Per-tick temporal context: for each RELEVANT lane, the bullet's predicted
-// position at each march sample time, plus its effective hit half. Built once
-// per Solve from the lane polylines (no re-prediction); read many times by the
-// pocket search. Fixed-size — no per-tick heap.
-struct TempCtx {
-    int   count = 0;
-    Vec2  pos[kMaxProjectiles][kUTemporalSamples];   // bullet position at t = k·stepMs
-    float half[kMaxProjectiles];                     // hitHalf·scale + kUPlayerHalf
-};
-
-// Sample one lane's bullet position at each march time by interpolating its
-// spacetime polyline (points + pointTimesMs). Monotone cursor over the polyline
-// as t increases → O(points + samples). Beyond the traced horizon the position
-// clamps to the last traced point (conservative — never invents "safe").
-void SampleLaneOverTime(const LaneThreat& L, Vec2* outPos)
-{
-    const int cnt = L.pointCount;
-    if (cnt <= 0) { for (int k = 0; k < kUTemporalSamples; ++k) outPos[k] = Vec2{}; return; }
-    if (cnt == 1) { for (int k = 0; k < kUTemporalSamples; ++k) outPos[k] = L.points[0]; return; }
-
-    int seg = 0;
-    for (int k = 0; k < kUTemporalSamples; ++k) {
-        const float t = static_cast<float>(k) * kUTemporalStepMs;
-        while (seg + 1 < cnt - 1 && t > L.pointTimesMs[seg + 1]) ++seg;
-        const float t0 = L.pointTimesMs[seg];
-        const float t1 = L.pointTimesMs[seg + 1];
-        if (t <= t0)       outPos[k] = L.points[seg];
-        else if (t >= t1)  outPos[k] = L.points[seg + 1];   // clamp at path end
-        else {
-            const float f = (t - t0) / std::max(t1 - t0, 1e-3f);
-            outPos[k] = Add(L.points[seg], Mul(Sub(L.points[seg + 1], L.points[seg]), f));
-        }
-    }
-}
-
-// Build the temporal context: predict every lane's future positions once, and
-// cull lanes whose whole traced path stays outside the pocket-search region
-// (far / receding shots contribute nothing to a pocket within kULookaheadTiles).
-void BuildTempCtx(const MapInput& in, TempCtx& ctx)
-{
-    ctx.count = 0;
-    if (!in.map) return;
-    const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
-    const float cull = kUTemporalCullTiles;
-    for (int i = 0; i < in.map->laneCount && ctx.count < kMaxProjectiles; ++i) {
-        const LaneThreat& L = in.map->lanes[i];
-        if (L.pointCount <= 0) continue;
-        Vec2 samples[kUTemporalSamples];
-        SampleLaneOverTime(L, samples);
-        float minD = kHugeClearance;
-        for (int k = 0; k < kUTemporalSamples; ++k)
-            minD = std::min(minD, Len(Sub(samples[k], in.player)));
-        if (minD > cull) continue;                       // far/receding — irrelevant to nearby pockets
-        const int idx = ctx.count++;
-        for (int k = 0; k < kUTemporalSamples; ++k) ctx.pos[idx][k] = samples[k];
-        ctx.half[idx] = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + kUPlayerHalf;
-    }
-}
-
-// TIME-parameterized clearance test. The player walks STRAIGHT from its live
-// position toward P at its own speed, arriving at tArrive, then holds at P. March
-// time over the horizon: at each step check the player's position against every
-// relevant bullet's SWEPT segment over that step (swept, so a fast bullet cannot
-// tunnel between samples). Clear at every step ⇒ the whole path to P — and
-// holding there — dodges the moving bullets, with kUPocketMargin of slack.
-bool TemporalPathClear(const MapInput& in, const TempCtx& ctx, Vec2 P)
-{
-    const Vec2  player = in.player;
-    const Vec2  to = Sub(P, player);
-    const float dist = Len(to);
-    const Vec2  dir = dist > 1e-4f ? Mul(to, 1.f / dist) : Vec2{};
-    const float v = in.speed;   // tiles/ms
-    const float tArrive = (v > 1e-6f) ? dist / v : (dist > 1e-4f ? kHugeClearance : 0.f);
-
-    for (int li = 0; li < ctx.count; ++li) {
-        const float half = ctx.half[li] + kUPocketMargin;
-        for (int k = 0; k < kUTemporalSteps; ++k) {
-            const float t = static_cast<float>(k) * kUTemporalStepMs;
-            const Vec2 pp = (t >= tArrive) ? P : Add(player, Mul(dir, v * t));
-            const Vec2 b0 = ctx.pos[li][k];
-            const Vec2 b1 = ctx.pos[li][k + 1];
-            if (MinChebOnSegment(b0.x - pp.x, b0.y - pp.y,
-                                 b1.x - pp.x, b1.y - pp.y) <= half) return false;
-        }
-        // Final sample (t = horizon): player is holding at P by now.
-        const float tEnd = static_cast<float>(kUTemporalSteps) * kUTemporalStepMs;
-        const Vec2 ppEnd = (tEnd >= tArrive) ? P : Add(player, Mul(dir, v * tEnd));
-        const Vec2 bEnd = ctx.pos[li][kUTemporalSteps];
-        if (Cheb(bEnd.x - ppEnd.x, bEnd.y - ppEnd.y) <= half) return false;
-    }
-    return true;
-}
+// The arrival-time temporal model (SampleLane / Build / PathClear) now lives in
+// the shared Core::Temporal module (plan 72) — the immediate solver here and the
+// worker pathfinder call the SAME implementation. The solver builds its context
+// culling relative to the PLAYER (kUTemporalCullTiles); the query is PathClear
+// (walk straight to a point and hold). See UDodgeCore.{h,cpp}.
 
 // A durable TEMPORAL pocket: occupiable, off enemy bodies, and temporally clear
 // (path + hold) over the horizon. For the STAND point we additionally require it
 // be spatially safe RIGHT NOW (the conservative floor: never "hold" on a spot a
 // bullet is currently inside), so temporal only ever makes us hold LESS, never
 // more, than the instantaneous safety guarantees.
-bool IsDurablePocketTemporal(const MapInput& in, const TempCtx& ctx, Vec2 p, bool isStand)
+bool IsDurablePocketTemporal(const MapInput& in, const Core::Temporal::Ctx& ctx, Vec2 p, bool isStand)
 {
     const bool walkable = !in.env.canOccupy ||
                  in.env.canOccupy(p.x, p.y, in.settings.safeWalk);
     if (!walkable) return false;
     if (EnemyBlocked(in, p)) return false;
     if (isStand && Core::PointSafety(in, p) < kULatencyPad) return false;   // safe-now floor
-    return TemporalPathClear(in, ctx, p);
+    // A durable pocket must be clear of ACTIVE AoE discs. The isStand floor above
+    // already covers this for a STAND (PointSafety subtracts active zones), but a
+    // non-stand pocket goal would otherwise be validated by the zone-blind
+    // Temporal alone and could sit inside a live blast.
+    if (!Core::ZoneClear(in, p)) return false;
+    return Core::Temporal::PathClear(ctx, in.player, in.speed, p);
 }
 
 } // namespace
@@ -325,8 +267,8 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     // then find the nearest cell where the STRAIGHT walk to it — and holding
     // there — dodges the moving bullets in TIME. This threads gaps the static
     // whole-path test cannot, and it drives the pre-positioning below.
-    TempCtx ctx;
-    BuildTempCtx(in, ctx);
+    Core::Temporal::Ctx ctx;
+    Core::Temporal::Build(*in.map, in.settings.hitScale, in.player, kUTemporalCullTiles, ctx);
     out.tempLanes = static_cast<uint8_t>(std::min(ctx.count, 255));
 
     // ── HOLD gate: is the current spot a DURABLE temporal pocket? ────────────
@@ -367,7 +309,8 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     if (standDurable) {
         bool repositionInward = false;
         if (goal.fromLock && goal.maxRange > 0.f)
-            repositionInward = Len(Sub(in.player, goal.lockPos)) > goal.maxRange;
+            repositionInward = Len(Sub(in.player, goal.lockPos))
+                               > goal.maxRange + kUReturnRangeSlack;   // hysteresis: only re-close past a small band
         // Shift+Click walk-to: keep progressing toward the commanded spot even when
         // the stand is safe (the user told us to go somewhere). Falls through to the
         // safe-set reflex below, which the goal-progress score (kSolveGoalW) steers
@@ -381,8 +324,42 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             out.target = in.player;
             out.clearance = cands[0].clr;
             out.shouldMove = false;
-            state.lastMoveDir = {};   // fresh commitment when the next dodge starts
+            // Keep lastMoveDir across a brief hold so a re-triggered dodge commits to
+            // the same heading instead of flipping (plan 94). It is naturally refreshed
+            // when the next move is chosen; only a genuine direction change overwrites
+            // it. The Hold still returns shouldMove=false / target=player — only the
+            // heading MEMORY persists, consumed by the next dodge's scoring.
+            state.dampStreak = 0;     // a hold ends a route-damp run, but heading memory persists
             return;
+        }
+
+        // Shift+Click walk-to while the stand is safe: the candidate scoring would
+        // pick the STAND cell (stand bias + zero move cost) and never advance, so
+        // drive an explicit budget-step toward goal.pos (= the nav corridor's next
+        // step, which already threads walls). Safety-gated: only take it if the step
+        // lands on safe, walkable, enemy-free ground; otherwise fall through to the
+        // reflex (which still biases toward the goal via kSolveGoalW).
+        if (repositionToward && !repositionInward) {
+            const Vec2  to = Sub(goal.pos, in.player);
+            const float d  = Len(to);
+            if (d > 1e-4f) {
+                const Vec2  dir    = Mul(to, 1.f / d);
+                const float r      = std::min(d, b);
+                const Vec2  target = Add(in.player, Mul(dir, r));
+                const bool  walkable = !in.env.canOccupy ||
+                             in.env.canOccupy(target.x, target.y, in.settings.safeWalk);
+                if (walkable && !EnemyBlocked(in, target) &&
+                    Core::PointSafe(in, target, kULatencyPad)) {
+                    out.kind          = SolveKind::Safe;
+                    out.target        = target;
+                    out.clearance     = Core::PointSafety(in, target);
+                    out.shouldMove    = true;
+                    out.followedRoute = route.found;
+                    state.lastMoveDir = dir;
+                    state.dampStreak  = 0;   // plan 76: explicit walk-to step is not a damp
+                    return;
+                }
+            }
         }
     }
 
@@ -403,21 +380,31 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             // ── Anti-oscillation (movement smoothing) ────────────────────────────
             // A worker republish can FLIP the route's first-step direction when it
             // toggles between two near-equal durable-safe goals; consuming that raw
-            // jerks the player back and forth. If the fresh step hard-REVERSES our
-            // committed heading but continuing that heading is ITSELF still walkable,
-            // enemy-free and temporally clear, keep committing straight — smooth.
-            // Safety stays authoritative: the continuation passes the SAME hard floor
-            // as the route step, so a reversal safety truly needs is never damped.
-            if (LenSq(prevDir) > 1e-6f && Dot(dir, prevDir) < kURouteReverseDot) {
-                const Vec2 contTarget = Add(in.player, Mul(prevDir, b));
-                const bool contWalkable = !in.env.canOccupy ||
-                             in.env.canOccupy(contTarget.x, contTarget.y, in.settings.safeWalk);
-                if (contWalkable && !EnemyBlocked(in, contTarget) &&
-                    TemporalPathClear(in, ctx, contTarget)) {
-                    dir = prevDir;
-                    to  = Sub(contTarget, in.player);
-                    d   = Len(to);
-                    out.routeDamped = true;
+            // jerks the player back and forth. Two branches damp it (plan 76):
+            //   • HARD reversal (>105°, Dot < kURouteReverseDot): always eligible.
+            //   • SOFT toggle (>60°, Dot < 0.5): the ~90° left/right flip — eligible
+            //     only while we have not been damping too long (dampStreak cap), so a
+            //     genuine required turn is never delayed indefinitely.
+            // In either case we keep the committed heading ONLY if continuing it is
+            // ITSELF still walkable, enemy-free and temporally clear — the continuation
+            // passes the SAME hard floor as the route step, so a reversal safety truly
+            // needs is never damped away. Safety stays authoritative.
+            if (LenSq(prevDir) > 1e-6f) {
+                const float dp = Dot(dir, prevDir);
+                const bool hardReversal = dp < kURouteReverseDot;
+                const bool softToggle   = dp < 0.5f && state.dampStreak < kUMaxDampTicks;
+                if (hardReversal || softToggle) {
+                    const Vec2 contTarget = Add(in.player, Mul(prevDir, b));
+                    const bool contWalkable = !in.env.canOccupy ||
+                                 in.env.canOccupy(contTarget.x, contTarget.y, in.settings.safeWalk);
+                    if (contWalkable && !EnemyBlocked(in, contTarget) &&
+                        Core::ZoneClear(in, contTarget) &&   // never hold a heading INTO a live blast
+                        Core::Temporal::PathClear(ctx, in.player, in.speed, contTarget)) {
+                        dir = prevDir;
+                        to  = Sub(contTarget, in.player);
+                        d   = Len(to);
+                        out.routeDamped = true;
+                    }
                 }
             }
 
@@ -426,7 +413,8 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             const bool  walkable = !in.env.canOccupy ||
                          in.env.canOccupy(target.x, target.y, in.settings.safeWalk);
             if (walkable && !EnemyBlocked(in, target) &&
-                TemporalPathClear(in, ctx, target)) {   // immediate-step temporal floor
+                Core::ZoneClear(in, target) &&                                    // active-zone hard floor (Temporal is lane-only)
+                Core::Temporal::PathClear(ctx, in.player, in.speed, target)) {   // immediate-step temporal floor
                 out.kind = SolveKind::Safe;
                 out.target = target;
                 out.clearance = Core::PointSafety(in, target);   // spatial clr (may be <0 — time-threaded)
@@ -434,6 +422,10 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
                 out.prePosition = true;
                 out.followedRoute = true;
                 state.lastMoveDir = dir;
+                // Plan 76: count consecutive soft/hard damped ticks; reset when we
+                // accept the fresh (undamped) step so the cap only bounds a run of damps.
+                state.dampStreak = out.routeDamped
+                    ? static_cast<uint8_t>(state.dampStreak + 1) : 0;
                 return;
             }
         }
@@ -447,11 +439,54 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     int best = -1;
     float bestScore = -kHugeClearance;
     for (int i = 0; i < n; ++i) {
-        if (!cands[i].safe) continue;
-        const float s = ScoreCand(cands[i], in.player, goal, flow, prevDir, b);
-        if (best < 0 || s > bestScore) {
-            bestScore = s;
-            best = i;
+        if (!cands[i].occOk) continue;   // walls / enemy bodies: hard block, never threaded
+        // A candidate is acceptable two ways:
+        //  1) INSTANTANEOUSLY safe — endpoint clear AND the swept segment
+        //     player→candidate clears every lane/zone right now (Fix B, plan 78: a
+        //     thin lane crossing between us and the step can't clip us mid-move).
+        //  2) TIME-THREADED (tighter play) — the swept move is clear of every bullet
+        //     AT THE MOMENT the player is there, even though a lane covers it NOW.
+        //     This is how we slip in FRONT of / behind a shot instead of treating
+        //     its whole lane as a wall (the "bubble"). PathClear keeps kUArrivalMargin
+        //     of comfort, so a slightly-off prediction still can't clip — smart, not
+        //     reckless.
+        const bool instSafe = cands[i].safe &&
+                              Core::SegmentSafety(in, in.player, cands[i].pos) >= kULatencyPad;
+        // Core::ZoneClear is a HARD FLOOR here, not a refinement. Temporal models
+        // BULLET LANES ONLY (Ctx has no zone storage), so PathClear happily returns
+        // true for a cell dead-centre in a live blast disc. Threading a moving
+        // bullet is the intended behaviour; "threading" a static AoE disc is not a
+        // thing — it is just standing in the bomb. Without this, an active zone
+        // makes instSafe false for EVERY candidate (SegmentSafety starts at the
+        // player, who is inside the disc), admission falls entirely onto the
+        // zone-blind path, the clr clamp below erases the negative penetration, and
+        // the weave reward makes standing still the winning move.
+        const bool tempSafe = !instSafe &&
+                              Core::ZoneClear(in, cands[i].pos) &&
+                              Core::Temporal::PathClear(ctx, in.player, in.speed, cands[i].pos);
+        if (!instSafe && !tempSafe) continue;
+        // Score: an instantaneously-safe spot keeps its real (high) clearance, so an
+        // open pocket still wins WHEN one exists; a time-threaded spot (in a lane now,
+        // clear on arrival) is given the durable pocket margin so its negative instantaneous
+        // clearance doesn't veto it — it then competes on goal-progress / lateral
+        // sidestep / commitment, which is exactly the tight, smart gap-threading.
+        Cand sc = cands[i];
+        sc.threaded = tempSafe;
+        if (tempSafe) sc.clr = std::max(sc.clr, kUDurablePocketMargin);
+        const float s = ScoreCand(sc, in.player, goal, flow, prevDir, b);
+        // Anti-jitter commitment tiebreak (plan 94): a clearly better SAFE cell is
+        // taken outright; two SAFE cells within kSolveReflexHystEps of each other are
+        // a near-tie, broken toward the committed heading so the reflex stops toggling
+        // left/right between near-equal cells. Only admitted (instSafe/tempSafe)
+        // candidates reach here, so this never widens admission or holds a heading
+        // into danger — an unsafe committed heading simply is not among the candidates.
+        if (best < 0 || s > bestScore + kSolveReflexHystEps) {
+            bestScore = s; best = i;                         // clearly better → take it
+        } else if (s > bestScore - kSolveReflexHystEps &&    // near-tie …
+                   LenSq(prevDir) > 1e-6f && best >= 0 &&
+                   Dot(sc.dir, prevDir) > Dot(cands[best].dir, prevDir)) {
+            best = i;                                         // … break toward the committed heading
+            // keep bestScore (the incumbent's) so a later clearly-better cand still wins
         }
     }
 
@@ -466,6 +501,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             out.kind = SolveKind::Safe;
             out.shouldMove = true;
             state.lastMoveDir = w.dir;
+            state.dampStreak = 0;   // plan 76: conservative reflex step is a fresh commitment
         }
         return;
     }
@@ -496,7 +532,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             ? playerToPocket - Len(Sub(w.pos, pocketPos)) : 0.f;
         const bool helps = w.clr > standClr + 1e-3f ||
                            (pocketFound && progToward > 1e-3f &&
-                            w.clr >= standClr - kUPocketMargin);
+                            w.clr >= standClr - kUDurablePocketMargin);
         if (helps && w.moveDist > 1e-4f) {
             out.kind = SolveKind::Fallback;
             out.target = w.pos;
@@ -505,6 +541,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             out.prePosition = pocketFound && !standDurable;
             out.followedRoute = pocketFound && route.waypoints > 2;
             if (LenSq(w.dir) > 1e-6f) state.lastMoveDir = w.dir;
+            state.dampStreak = 0;   // plan 76: least-bad fallback step is a fresh commitment
             return;
         }
     }

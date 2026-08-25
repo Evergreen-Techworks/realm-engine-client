@@ -5,6 +5,7 @@
 
 #include "minhook/MinHook.h"
 
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -24,6 +25,39 @@ void* ResolveMethod(const char* className, const char* methodName,
             result = reinterpret_cast<void*>(mi->methodPointer);
     });
     return result;
+}
+
+// ─── MinHook runtime bring-up ────────────────────────────────────────────────
+static std::once_flag        s_mhOnce;
+static std::atomic<bool>     s_mhReady{ false };
+
+bool EnsureRuntime(const char* label)
+{
+    if (s_mhReady.load(std::memory_order_relaxed)) return true;
+    std::call_once(s_mhOnce, [label]() {
+        const MH_STATUS st = MH_Initialize();
+        if (st == MH_OK || st == MH_ERROR_ALREADY_INITIALIZED) {
+            s_mhReady.store(true, std::memory_order_relaxed);
+            return;
+        }
+        DBG_FILE_LOG("[il2cpphook] MH_Initialize(" << (label ? label : "?")
+                     << ") failed: " << st << " — NO hooks will install this session");
+    });
+    return s_mhReady.load(std::memory_order_relaxed);
+}
+
+bool UninstallMinHook(void*& target, const char* label)
+{
+    if (!target) return true;
+    const char* tag = label ? label : "?";
+    const MH_STATUS disabled = MH_DisableHook(target);
+    if (disabled != MH_OK)
+        DBG_FILE_LOG("[il2cpphook] MH_DisableHook(" << tag << ") failed: " << disabled);
+    const MH_STATUS removed = MH_RemoveHook(target);
+    if (removed != MH_OK)
+        DBG_FILE_LOG("[il2cpphook] MH_RemoveHook(" << tag << ") failed: " << removed);
+    target = nullptr;
+    return disabled == MH_OK && removed == MH_OK;
 }
 
 bool InstallMinHook(void* target, void* detour, void** original, const char* label)

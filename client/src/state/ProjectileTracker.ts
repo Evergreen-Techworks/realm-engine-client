@@ -24,8 +24,9 @@ export interface TrackedProjectile {
 
 /**
  * Tracks all active enemy projectiles from ENEMYSHOOT packets.
- * Stores spawn position, angle, damage, and linked ProjectileDef
- * for trajectory calculation by ProjectileSimulator.
+ * Stores spawn position, angle, damage, and linked ProjectileDef.
+ * Trajectory prediction itself lives in the DLL and reaches the client
+ * over DllThreatBus.
  *
  * Bullets are keyed by "${ownerId}:${bulletId}" and expire after
  * their lifetime (from game data) or a hard cap of 10 seconds.

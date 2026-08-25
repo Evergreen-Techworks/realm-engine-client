@@ -30,7 +30,7 @@ using TestTAB::DodgeMode;
 #include "CameraTAB.h"
 #include "DirectX.h"
 #include "ProjectileTracking.h"
-#include "AutoAim.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
 #include "BagLooter.h"
 #include "RuntimeOffsets.h"
 #include "core/runtime/MemRead.h"
@@ -509,6 +509,36 @@ static void MovePlayer(float targetWorldX, float targetWorldY, float dt,
     DangerPlanner::NativeMoveTo(player, moveX, moveY);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Ctrl+click teleport write gate (plan 105, decision D2)
+// ─────────────────────────────────────────────────────────────────────────────
+// All four teleport writes are floats and fail OPEN on a stale offset — a wrong
+// float offset writes SUCCESSFULLY onto some other valid, writable float
+// (RuntimeOffsets.h "Fail-closed gate for FLOAT WRITES"), so the write cannot
+// fault and refusing is the only defence. KJ_Float3Pos in particular would
+// scribble a float3 into an unknown struct on the local player. Gate all four
+// together: a partial teleport (position moved, float3 not, or vice versa) is
+// worse than no teleport. KJ_Float3Pos + 4u is covered by the KJ_Float3Pos
+// entry — the gate keys on the offset VARIABLE's address, not the computed
+// value. Mirrors PlayerCollider::CollisionOffsetTrusted.
+static int s_tpWriteTrustLogged = -1;   // -1 unknown, 0 refused, 1 armed
+
+static bool TeleportOffsetsTrusted()
+{
+    const bool trusted =
+           RuntimeOffsets::IsFieldWriteTrusted(&RuntimeOffsets::PosX)          // raw-access-ok: plan 105 D2 — offset-HEALTH query by variable address, reads no game memory
+        && RuntimeOffsets::IsFieldWriteTrusted(&RuntimeOffsets::PosY)          // raw-access-ok: plan 105 D2 — offset-HEALTH query by variable address, reads no game memory
+        && RuntimeOffsets::IsFieldWriteTrusted(&RuntimeOffsets::KJ_Float3Pos);
+    const int now = trusted ? 1 : 0;
+    if (now != s_tpWriteTrustLogged) {
+        s_tpWriteTrustLogged = now;
+        DBG_FILE_LOG(trusted
+            ? "[TestTAB] teleport offsets metadata-resolved — Ctrl+click teleport ARMED"
+            : "[TestTAB] teleport offset FALLBACK/STALE (PosX/PosY/KJ_Float3Pos) — "
+              "REFUSING Ctrl+click teleport writes");
+    }
+    return trusted;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TestTAB::Tick — called every frame from dPresent
@@ -798,11 +828,11 @@ void TestTAB::Tick(bool menuVisible)
                 const bool okLand = ComputeCtrlTeleportLanding(
                     camX, camY, g_mouseWorldX, g_mouseWorldY, tpX, tpY);
 
-                if (okLand) {
-                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::PosX, tpX);
-                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::PosY, tpY);
-                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::KJ_Float3Pos, tpX);
-                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::KJ_Float3Pos + 4u, -tpY);
+                if (okLand && TeleportOffsetsTrusted()) {
+                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::PosX, tpX);                    // raw-access-ok: plan 105 D2 — gated teleport WRITE (TeleportOffsetsTrusted), not a position read
+                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::PosY, tpY);                    // raw-access-ok: plan 105 D2 — gated teleport WRITE (TeleportOffsetsTrusted), not a position read
+                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::KJ_Float3Pos, tpX);            // raw-access-ok: plan 105 D2 — gated teleport WRITE (TeleportOffsetsTrusted)
+                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::KJ_Float3Pos + 4u, -tpY);      // raw-access-ok: plan 105 D2 — gated teleport WRITE (TeleportOffsetsTrusted)
                 }
             }
         }
@@ -833,13 +863,26 @@ void TestTAB::Tick(bool menuVisible)
             if (chordEdge && !menuVisible
                 && MinimapNav::HitTest(g_mouseSX, g_mouseSY, cs.screenW, cs.screenH))
             {
-                float mmWorldX = 0.f, mmWorldY = 0.f;
-                if (MinimapNav::ClickToWorld(g_mouseSX, g_mouseSY,
-                                             cs.screenW, cs.screenH,
-                                             camX, camY, CameraTAB::GetAngle(),
-                                             mmWorldX, mmWorldY))
-                {
-                    DangerPlanner::SetWalkGoal(mmWorldX, mmWorldY);
+                // Minimap Shift+Click is a TOGGLE: if a walk-to path is already
+                // active, this click CANCELS it — clear the path AND any locked
+                // enemy (so we stop navigating / orbiting). Otherwise it sets a new
+                // walk-to goal at the clicked world spot and drops any lock so we
+                // walk rather than orbit. Walk-to waypoints are minimap-ONLY.
+                float wgx = 0.f, wgy = 0.f; bool wgActive = false;
+                DangerPlanner::GetWalkGoal(wgx, wgy, wgActive);
+                if (wgActive) {
+                    DangerPlanner::ClearWalkGoal();
+                    DangerPlanner::ClearEnemyLock();
+                } else {
+                    float mmWorldX = 0.f, mmWorldY = 0.f;
+                    if (MinimapNav::ClickToWorld(g_mouseSX, g_mouseSY,
+                                                 cs.screenW, cs.screenH,
+                                                 camX, camY, CameraTAB::GetAngle(),
+                                                 mmWorldX, mmWorldY))
+                    {
+                        DangerPlanner::ClearEnemyLock();
+                        DangerPlanner::SetWalkGoal(mmWorldX, mmWorldY);
+                    }
                 }
                 minimapConsumed = true;
             }
@@ -898,19 +941,11 @@ void TestTAB::Tick(bool menuVisible)
                     const int32_t current = DangerPlanner::GetEnemyLock();
                     if (current == bestEnemyId) DangerPlanner::ClearEnemyLock();
                     else                        DangerPlanner::SetEnemyLock(bestEnemyId);
-                } else {
-                    // Shift+Click on EMPTY GROUND (no enemy or player under the
-                    // cursor) → UDodge walk-to-spot. Reuse the EXACT proven screen→
-                    // world cursor conversion the Ctrl+click teleport uses
-                    // (g_mouseWorldX/Y from S2W); UDodge::Tick pathfinds there while
-                    // still micro-dodging, and clears the goal on arrival / WASD.
-                    // Coexistence: an on-entity Shift+Click keeps the enemy-lock /
-                    // player-follow behavior above; only empty ground walks.
-                    // A Shift+Click INSIDE the minimap is handled earlier by the
-                    // MinimapNav intercept (minimap→world walk-to); this branch is
-                    // the on-ground cursor path for clicks OUTSIDE the minimap.
-                    DangerPlanner::SetWalkGoal(g_mouseWorldX, g_mouseWorldY);
                 }
+                // Shift+Click on EMPTY GROUND in-world does NOTHING now — walk-to
+                // waypoints are set ONLY from the minimap (handled by the MinimapNav
+                // intercept above). In-world Shift+Click stays purely enemy-lock /
+                // player-follow.
             }
         }
 
@@ -1148,25 +1183,6 @@ void TestTAB::Render()
     ImGui::Separator();
     ImGui::Spacing();
 
-    // ── Developer diagnostics / MCP bridge ────────────────────────────────────
-    // Runtime opt-in for the re-mcp diagnostics egress. Compiled in for everyone,
-    // dormant until flipped on here (settings.bEnableDiagBridge gates DiagBridge::Tick).
-    ImGui::TextColored(ImVec4(0.6f, 1.f, 0.7f, 1.f), "DIAGNOSTICS BRIDGE (MCP)");
-    ImGui::Checkbox("Enable diagnostics egress (MCP bridge)##diagbridge", &settings.bEnableDiagBridge);
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s",
-            "Developer tool. Mirrors live BootGate / dodge state to\n"
-            "%LOCALAPPDATA%\\RealmEngine\\*.json so the re-mcp server (internal/tools/re-mcp)\n"
-            "can runtime-test the DLL from an MCP client. Off = nothing is written.");
-    }
-    ImGui::TextDisabled("%s", settings.bEnableDiagBridge
-        ? "Writing %LOCALAPPDATA%\\RealmEngine\\{diag,cmd,resp}.json (~1 Hz)."
-        : "Off — no files written. Enable to use the re_* MCP tools.");
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
     // Debug Overlay
     ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.f, 1.f), "OVERLAY PROJECTION");
     ImGui::Checkbox("Measured Unity basis##w2sbasis", CamState::UseMeasuredBasisPtr());
@@ -1360,6 +1376,15 @@ void TestTAB::Render()
         ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.f, 1.f),
             "Current game multiplier: %.4f  (effective half = %.4f tiles)",
             liveMult, 0.2285f * liveMult);
+
+        const uint64_t colTick = PlayerCollider::LastTickMs();
+        const uint64_t sinceMs  = colTick ? (GetTickCount64() - colTick) : 0;
+        ImGui::TextColored(colTick && sinceMs < 500 ? ImVec4(0.4f,1.f,0.4f,1.f)
+                                                    : ImVec4(1.f,0.5f,0.3f,1.f),
+            "Collider Tick: %s (%llu ms ago)  offset=%s",
+            colTick ? "live" : "NEVER TICKED",
+            (unsigned long long)sinceMs,
+            PlayerCollider::OffsetTrusted() ? "metadata-trusted" : "FALLBACK/untrusted");
     }
 
     ImGui::Unindent(8.f);

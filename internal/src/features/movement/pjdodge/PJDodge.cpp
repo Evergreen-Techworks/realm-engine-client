@@ -248,35 +248,6 @@ void RenderDebugOverlay(float camX, float camY, float angle, float zoom, float c
     Debug::Render(*snap, camX, camY, angle, zoom, cx, cy);
 }
 
-DiagView GetDiagView()
-{
-    DiagView v{};
-    v.enabled = IsEnabled();
-    std::lock_guard<std::mutex> lock(g_debugMutex);
-    const DebugSnapshot& d = DebugSlot();
-    v.decision = static_cast<int>(d.decision);
-    v.playerX = d.player.x;
-    v.playerY = d.player.y;
-    v.overrideActive = d.overrideActive;
-    const Vec2 dir = d.candidates[std::clamp(d.candidate, 0, kCandidateCount - 1)].dir;
-    v.velXPerSec = d.overrideActive ? dir.x * d.speed * d.speedScale * 1000.f : 0.f;
-    v.velYPerSec = d.overrideActive ? dir.y * d.speed * d.speedScale * 1000.f : 0.f;
-    v.candidate = d.candidate;
-    v.speedScale = d.speedScale;
-    v.threatCount = d.threatCount;
-    v.earliestImpactMs = d.earliestImpactMs >= kMaxTimeMs ? -1.f : d.earliestImpactMs;
-    v.projectiles = d.sensors.projectileCount;
-    v.aoes = d.sensors.aoeCount;
-    v.enemies = d.sensors.enemyCount;
-    const ProjectileTracking::PredictionDiag pd = ProjectileTracking::GetPredictionDiag();
-    v.predEnabled       = pd.enabled;
-    v.predCalibrated    = pd.calibrated;
-    v.predClockErrMs    = pd.emaAbsTauMs;
-    v.predModelErrTiles = pd.emaCrossTiles;
-    v.predModelMaxTiles = pd.maxCrossTiles;
-    return v;
-}
-
 void  SetHorizonMs(float ms) { g_horizonMs.store(Clamp(ms, 200.f, 2000.f), std::memory_order_relaxed); }
 float GetHorizonMs() { return g_horizonMs.load(std::memory_order_relaxed); }
 void  SetLeadMs(float ms) { g_leadMs.store(Clamp(ms, 0.f, 250.f), std::memory_order_relaxed); }

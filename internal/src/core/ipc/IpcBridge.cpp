@@ -1,5 +1,5 @@
 // Purpose: owns the DLL-side named-pipe bridge loop and the public IpcBridge_*
-// API for overlay, shutdown, tile, threat, and auth state.
+// API for overlay, shutdown, threat, and auth state.
 
 // Helpful notes:
 // - This DLL is the pipe client; the Node/Electron side is the pipe server.
@@ -27,7 +27,6 @@
 #include <cstring>
 #include <iostream>
 
-#include "IpcTileState.h"
 #include "IpcFraming.h"
 #include "IpcJson.h"
 #include "IpcMessages.h"
@@ -50,23 +49,6 @@
 
 static const char* PipeName() { return BUILD_PIPE_NAME; }
 static const DWORD PIPE_BUFFER_SIZE = 65536;
-
-// Tile map API
-
-bool IpcBridge_IsTileWalkable(float worldX, float worldY)
-{
-    return IpcTileState::IsWalkable(worldX, worldY);
-}
-
-void IpcBridge_GetTileStats(int* outTileCount, int* outNoWalkTypeCount)
-{
-    IpcTileState::GetStats(outTileCount, outNoWalkTypeCount);
-}
-
-int IpcBridge_CopyUniqueTypeEntries(IpcTileTypeEntry* buf, int maxCount)
-{
-    return IpcTileState::CopyUniqueTypeEntries(buf, maxCount);
-}
 
 // Connection liveness state (single-threaded — only touched by IpcBridgeThread).
 struct BridgeConn {
@@ -137,6 +119,17 @@ void IpcBridge_PublishThreats(const IpcThreat* threats, int count, const IpcGrou
     s_threatsPending  = true;
 }
 
+static std::mutex s_aimMutex;
+static IpcAim     s_aim;
+static bool       s_aimPending = false;
+
+void IpcBridge_PublishAim(const IpcAim& aim)
+{
+    std::lock_guard<std::mutex> lk(s_aimMutex);
+    s_aim        = aim;
+    s_aimPending = true;
+}
+
 // Room for the compact versioned payload (see IpcMessages::EncodeThreats):
 // "<version>;<ground>;<threats>;<T>" — +4 over the raw segments for the leading
 // "1;" and trailing ";<T>" tokens.
@@ -164,6 +157,24 @@ static bool WriteThreats(HANDLE hPipe, char* msgBuf, int msgBufSize)
     if (IpcMessages::EncodeThreats(payload, sizeof(payload), local, n, localGround, truncated) < 0)
         return true;   // encode failure — skip this tick
     const int len = IpcMessages::BuildThreats(msgBuf, msgBufSize, payload);
+    return IpcFraming::WriteMessage(hPipe, msgBuf, len);
+}
+
+static bool WriteAim(HANDLE hPipe, char* msgBuf, int msgBufSize)
+{
+    IpcAim local{};
+    {
+        std::lock_guard<std::mutex> lk(s_aimMutex);
+        if (!s_aimPending) return true;   // nothing new
+        s_aimPending = false;
+        local = s_aim;
+    }
+
+    // Ample for the fixed 11-token layout (see IpcMessages::EncodeAim).
+    char payload[192] = {};
+    if (IpcMessages::EncodeAim(payload, sizeof(payload), local) < 0)
+        return true;   // encode failure — skip this tick
+    const int len = IpcMessages::BuildAim(msgBuf, msgBufSize, payload);
     return IpcFraming::WriteMessage(hPipe, msgBuf, len);
 }
 
@@ -212,27 +223,6 @@ static bool ParseSetFeatureCommand(char* json, FeatureCommand* out)
     return true;
 }
 
-static bool DispatchTileCommand(const char* type, char* json)
-{
-    if (strcmp(type, "clearTiles") == 0) {
-        IpcTileState::ClearTiles();
-        return true;
-    }
-    if (strcmp(type, "noWalkInit") == 0) {
-        char typesBuf[8192] = {};
-        if (!IpcJson::GetString(json, "types", typesBuf, sizeof(typesBuf))) return true;
-        IpcTileState::InitNoWalkTypes(typesBuf);
-        return true;
-    }
-    if (strcmp(type, "tileUpdate") == 0) {
-        char tilesBuf[65000] = {};
-        if (!IpcJson::GetString(json, "tiles", tilesBuf, sizeof(tilesBuf))) return true;
-        IpcTileState::ApplyTileUpdate(tilesBuf);
-        return true;
-    }
-    return false;
-}
-
 static void DispatchSetFeature(char* json)
 {
     FeatureCommand feature{};
@@ -244,7 +234,6 @@ static void DispatchCommand(char* json)
 {
     char typeBuf[64] = {};
     if (!IpcJson::GetString(json, "type", typeBuf, sizeof(typeBuf))) return;
-    if (DispatchTileCommand(typeBuf, json)) return;
     if (strcmp(typeBuf, "setFeature") == 0) DispatchSetFeature(json);
 }
 
@@ -372,6 +361,11 @@ DWORD WINAPI IpcBridgeThread(LPVOID)
             if (!connected) break;
 
             if (!WriteThreats(hPipe, msgBuf, sizeof(msgBuf))) {
+                connected = false;
+                break;
+            }
+
+            if (!WriteAim(hPipe, msgBuf, sizeof(msgBuf))) {
                 connected = false;
                 break;
             }

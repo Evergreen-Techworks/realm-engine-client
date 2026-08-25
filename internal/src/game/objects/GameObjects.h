@@ -1,6 +1,7 @@
 #pragma once
 #include "core/runtime/MemRead.h"
 #include "core/runtime/RuntimeOffsets.h"
+#include <cmath>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Typed, zero-cost game-object views. Flat wrappers (composition, no inheritance,
@@ -25,6 +26,30 @@ public:
     void*    Ptr()     const { return p_; }
     float    X()       const { return Mem::ReadOr<float>(p_, RuntimeOffsets::PosX, 0.f); }
     float    Y()       const { return Mem::ReadOr<float>(p_, RuntimeOffsets::PosY, 0.f); }
+    // Success-reporting position read. X()/Y() answer "what is it, with a
+    // fallback"; TryPos answers "did the read work" — which is what almost
+    // every real call site needs, and why so many of them hand-wrote the
+    // Mem::TryRead pair instead of using X()/Y().
+    //
+    // EXACTLY equivalent to:
+    //     Mem::TryRead(p, RuntimeOffsets::PosX, x) && Mem::TryRead(p, RuntimeOffsets::PosY, y)
+    // including the short circuit: if PosX faults, PosY is NOT read and `y` is
+    // left untouched. PosX and PosY are separate table entries and are NOT
+    // guaranteed adjacent, so this deliberately does NOT read a Vec2 under one
+    // guard.
+    //
+    // Zero-cost: two inlined Mem::TryRead calls, identical codegen to the
+    // hand-written pair.
+    bool TryPos(float& x, float& y) const {
+        return Mem::TryRead(p_, RuntimeOffsets::PosX, x)
+            && Mem::TryRead(p_, RuntimeOffsets::PosY, y);
+    }
+    // Finite position. Callers that additionally reject the (0,0) "exists in
+    // the dict but has not been positioned yet" placeholder must keep that
+    // clause at the call site — it is deliberately NOT folded in here.
+    bool TryPosFinite(float& x, float& y) const {
+        return TryPos(x, y) && std::isfinite(x) && std::isfinite(y);
+    }
     int32_t  ObjType() const { return Mem::ReadOr<int32_t>(p_, RuntimeOffsets::ObjType, 0); }
     int32_t  ObjId()   const { return Mem::ReadOr<int32_t>(p_, RuntimeOffsets::ObjId, 0); }
     void*    Props()   const { return Mem::ReadPtr(p_, RuntimeOffsets::ObjProps); }
@@ -53,6 +78,12 @@ public:
     const Entity& AsEntity() const { return e_; }
     int32_t Hp()      const { return Mem::ReadOr<int32_t>(e_.Ptr(), RuntimeOffsets::HP, 0); }
     int32_t MaxHp()   const { return Mem::ReadOr<int32_t>(e_.Ptr(), RuntimeOffsets::MaxHP, 0); }
+    // Success-reporting HP pair. Same rationale as Entity::TryPos, and the same
+    // short circuit: a fault on HP leaves maxHp untouched.
+    bool TryHp(int32_t& hp, int32_t& maxHp) const {
+        return Mem::TryRead(e_.Ptr(), RuntimeOffsets::HP,    hp)
+            && Mem::TryRead(e_.Ptr(), RuntimeOffsets::MaxHP, maxHp);
+    }
     int32_t Defense() const { return Mem::ReadOr<int32_t>(e_.Ptr(), RuntimeOffsets::Defense, 0); }
     // MoVelocity Vector2. Reads both floats under one guard (a fault on either
     // aborts the whole read, matching the hand-rolled __try). false if the

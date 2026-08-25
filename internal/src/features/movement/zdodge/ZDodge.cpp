@@ -9,7 +9,7 @@
 #include "ProjectileTracking.h"
 #include "SteerInput.h"
 #include "ZDodgeTarget.h"
-#include "AutoAim.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
 #include "gui/tabs/WorldTAB.h"
 #include "gui/tabs/TestTAB.h"
 

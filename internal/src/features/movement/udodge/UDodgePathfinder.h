@@ -9,7 +9,7 @@
 // never route AROUND the obstruction. This does: it lays a coarse occupancy grid
 // over a bounded window centered on the player, marks walls / hazard / enemy
 // bodies as BLOCKED, then runs an 8-neighbour Dijkstra (no diagonal corner-cutting)
-// to the nearest durable-safe cell (PointSafety ≥ kUPocketMargin).
+// to the nearest durable-safe cell (PointSafety ≥ kUDurablePocketMargin).
 //
 // ── SPEED-AWARE / TIME-EXPANDED (the fix) ────────────────────────────────────
 // The player moves at a FINITE speed, so a multi-tile route takes several ticks
@@ -56,6 +56,16 @@ struct OccGrid {
     uint8_t flags[kUPathMaxCells]{};   // bit0 = wall/blocked, bit1 = hazard
 };
 
+// Coarse 1-tile navigation occupancy for the walk-to A* (SEPARATE from OccGrid —
+// larger window, no hazard/temporal axis). The GAME THREAD fills it from WorldTAB's
+// blocked-tile map (one bulk locked read; undiscovered tiles left 0 = walkable, the
+// optimistic model). center = the world position of the CENTER cell (= player at
+// raster time); cell (gx,gy) covers world tile floor(center) + (gx-rad, gy-rad).
+struct NavGrid {
+    Vec2    center{};                  // world position of the center cell (= player)
+    uint8_t flags[kUNavCells]{};       // bit0 = blocked (wall / occupy-square)
+};
+
 // Everything the pathfinder needs — PLAIN DATA ONLY (no IL2CPP handles, no void*,
 // no function pointers). Safe to copy across the thread boundary.
 struct PlannerSnapshot {
@@ -69,8 +79,21 @@ struct PlannerSnapshot {
     bool     hasLock = false;      // locked boss → gate goal cells to the weapon-range disk
     Vec2     lockPos{};
     float    weaponRangeTiles = 0.f; // disk radius (0 = no gate)
+    float    innerStandoffTiles = 0.f; // annulus inner radius (0 = no inner gate). Goal cells inside
+                                       // this radius of lockPos are rejected as GOALS but stay traversable.
+    // ── Plan-commitment hysteresis (plan 76) ─────────────────────────────────
+    // Last tick's accepted durable-safe goal, carried forward so the Dijkstra can
+    // prefer it among near-equal options (stops the goal marker flip-flopping). The
+    // worker re-tests it every pass and drops it the instant it stops being a valid
+    // reachable-in-time durable goal — commitment is a tiebreak, never a safety override.
+    bool     prevGoalValid = false;
+    Vec2     prevGoalPos{};         // last accepted g_route.goalPos (world)
     DangerMap map{};               // plain-data danger (lanes+times / zones / enemies) for per-cell cost
     OccGrid   grid{};              // rasterized occupancy+hazard (game thread fills)
+    // ── Navigation (Shift+Click walk-to) — second job on the same worker ─────
+    bool     navActive = false;   // a walk-to is in progress → run the nav A* too
+    Vec2     navGoal{};           // world walk-to target (the clicked spot)
+    NavGrid  navGrid{};           // coarse 1-tile occupancy (game thread fills from WorldTAB)
 };
 
 // The pathfinder's output — PLAIN DATA ONLY.
@@ -98,6 +121,19 @@ struct PlanResult {
     int   tempLanes    = 0;     // relevant lanes kept for the arrival-time temporal check (diagnostics)
     int   radiusCells = 0;     // final window radius used (diagnostics)
     int   pops        = 0;     // cells finalized by Dijkstra across all passes (perf diagnostics)
+    // ── Navigation A* output (walk-to) ───────────────────────────────────────
+    bool  navFound     = false; // an A* route toward the walk-to goal was produced
+    bool  navPartial   = false; // goal was outside the window → route heads to the in-window cell nearest it
+    bool  navArrived   = false; // the goal cell itself was reached within the window
+    Vec2  navStepTarget{};      // immediate steering target: route point ~one move budget ahead
+    Vec2  navGoalCell{};        // world center of the reached/target goal cell (diagnostics)
+    int   navWptCount  = 0;     // number of route cells in navWpts
+    Vec2  navWpts[kMaxNavWpts]{}; // route polyline (world; [0] = player cell) — driver + overlay
+    int   navPops      = 0;     // A* cells finalized (perf diagnostics)
+    // ── Worker phase timing (perf diagnostics) — plain data, filled by Compute
+    // on the worker thread, read by the game thread through the normal handoff.
+    float computeDodgeMs = 0.f; // wall-clock of ComputeDodge (ms)
+    float computeNavMs   = 0.f; // wall-clock of ComputeNav (ms; 0 when nav idle)
 };
 
 // Pure, host-independent, thread-safe: no IL2CPP, no globals, no I/O, no Env.

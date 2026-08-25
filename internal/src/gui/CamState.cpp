@@ -4,6 +4,7 @@
 #include "gui/tabs/WorldTAB.h"
 #include "core/runtime/MemRead.h"
 #include "core/runtime/RuntimeOffsets.h"
+#include "game/objects/GameObjects.h"
 #include "DirectX.h"
 #include <windows.h>
 
@@ -26,8 +27,7 @@ bool s_useMeasuredBasis = true;
 static bool ReadLivePlayerXY(float& outX, float& outY)
 {
     void* p = WorldTAB::GetLocalPtr();
-    if (Mem::TryRead(p, RuntimeOffsets::PosX, outX) &&
-        Mem::TryRead(p, RuntimeOffsets::PosY, outY))
+    if (Game::Entity(p).TryPos(outX, outY))
         return true;
     outX = WorldTAB::GetLocalX();
     outY = WorldTAB::GetLocalY();
@@ -137,7 +137,13 @@ void Tick()
             s.cy   = s_basis.anchorScreenY;
 
             if (s_basis.hasScaleAndRotation) {
-                s.angleRad = s_basis.rotationRad;
+                // Keep the LIVE camera angle (set above from CameraTAB::GetAngle)
+                // rather than the basis's rotationRad — the basis rotation only
+                // refreshes every kRefineEveryMs (~100ms), so during a camera
+                // rotation it is stale and the overlay "sticks" until the next
+                // refine. The live angle updates every frame; the basis still
+                // provides the accurate anchor + pixels-per-tile (which don't
+                // change as the camera spins).
                 s.zoom     = s_basis.pixelsPerTile;
             }
             s.basisMeasured = true;
