@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -83,6 +83,7 @@
     <ClCompile Include="src\features\projectiles\ProjectileStore.cpp" />
     <ClCompile Include="src\features\projectiles\ProjectileTrajectory.cpp" />
     <ClCompile Include="src\features\projectiles\ShotOrigin.cpp" />
+    <ClCompile Include="src\features\projectiles\ShotOriginHook.cpp" />
     <ClCompile Include="src\features\account\HwidCapture.cpp" />
     <ClCompile Include="src\features\account\CharSelect.cpp" />
     <ClCompile Include="src\features\account\CredentialCapture.cpp" />
@@ -212,6 +213,7 @@
     <ClInclude Include="src\features\projectiles\ProjectileStore.h" />
     <ClInclude Include="src\features\projectiles\ProjectileTrajectory.h" />
     <ClInclude Include="src\features\projectiles\ShotOrigin.h" />
+    <ClInclude Include="src\features\projectiles\ShotOriginHook.h" />
     <ClInclude Include="src\features\account\HwidCapture.h" />
     <ClInclude Include="src\features\account\CharSelect.h" />
     <ClInclude Include="src\features\account\CredentialCapture.h" />

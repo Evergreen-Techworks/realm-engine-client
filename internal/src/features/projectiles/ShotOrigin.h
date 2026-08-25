@@ -14,7 +14,12 @@ enum class Source : uint8_t {
     Vanilla  = 0,  // no override — pass the game's own startX/startY through
     Muzzle   = 1,  // manual muzzle-offset slider
     Magnet   = 2,  // MagnetAim visual offset
-    KillAura = 3,  // killaura origin (only this one changes where the shot LANDS)
+    // Resolve() NEVER returns KillAura any more, and the value is kept only so
+    // the Combat-tab readout's switch stays exhaustive. Rewriting the spawn
+    // arguments could not move the local bullet — the game overwrites the
+    // position through a later entity setter — so killaura now hooks that setter
+    // (features/projectiles/ShotOriginHook.h) and reports through its own Stats.
+    KillAura = 3,
 };
 
 struct Request {

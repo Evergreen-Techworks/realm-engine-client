@@ -6,7 +6,9 @@
 #include "../../projectiles/ProjectileStore.h"
 #include "../../projectiles/ProjectileTrajectory.h"
 #include "features/projectiles/ShotOrigin.h"
+#include "features/projectiles/ShotOriginHook.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
+#include "features/combat/autoaim/modes/KillAura.h"
 #include "gui/tabs/WorldTAB.h"
 #include "BootGate.h"
 #include "Il2CppResolver.h"
@@ -217,6 +219,19 @@ void* __fastcall SpawnProjectileDetour(
     if (!Mem::AddrOk(ret))
         return ret;
 
+    // KillAura: arm the ONE-SHOT origin override for the projectile the spawn
+    // funnel just handed back. The position we pass is ABSOLUTE world tiles —
+    // ComputeShotOrigin already returns that, and the setter takes it in that
+    // space, so nothing is rebased here (rebasing it into shooter-relative space
+    // and handing it to the spawn call was the bug this replaces). The actual
+    // move happens in ShotOriginHook's detour on KJMONHENJEN::BDEBGEHBPCJ.
+    bool  kaMoved = false;
+    float kaX = 0.f, kaY = 0.f;
+    if (isLocalShot && KillAura::ComputeShotOrigin(angle, kaX, kaY)) {
+        ShotOriginHook::ArmOneShot(ret, static_cast<int32_t>(ownerObjId), kaX, kaY);
+        kaMoved = ShotOriginHook::IsInstalled();
+    }
+
     bool ownerIsEnemy = false;
     const bool ownerClassified = TryReadObjectPropertiesIsEnemy(objProps, ownerIsEnemy);
     // Broadened: store any shot the owner is classed enemy OR that can hit the
@@ -231,7 +246,13 @@ void* __fastcall SpawnProjectileDetour(
     LookupShooterOrigin(attackerObjId, ownerObjId, entityX, entityY);
 
     float sx, sy;
-    if (fabsf(entityX) > 0.5f || fabsf(entityY) > 0.5f) {
+    if (kaMoved) {
+        // Track the shot from where killaura is about to put it, not from the
+        // muzzle — same value the old (broken) rebase produced here, so the
+        // local-shot overlay keeps the behaviour it had.
+        sx = kaX;
+        sy = kaY;
+    } else if (fabsf(entityX) > 0.5f || fabsf(entityY) > 0.5f) {
         sx = entityX + spawnX;
         sy = entityY + spawnY;
     } else {
@@ -321,7 +342,15 @@ static void* g_spawnTarget = nullptr;
 
 void Install()
 {
-    if (g_Installed) return;
+    if (g_Installed) {
+        // Spawn hook is up; keep retrying only the subordinate origin hook. Its
+        // class can resolve later than ours, and this is the only path that gets
+        // called again after we latch — without it a single early failure would
+        // leave killaura permanently unable to move the bullet. Both exits are a
+        // bool test once installed (or once permanently refused).
+        ShotOriginHook::Install();
+        return;
+    }
     // Feature gate: after a game patch BootGate parks in UpdateDetected until
     // offsets are re-resolved. FeatureAllowed() is fail-closed — false unless
     // BootGate is Ready AND every anchor the feature needs is healthy. Installing
@@ -384,6 +413,12 @@ void Install()
 
     g_Installed = true;
     DBG_FILE_LOG("[ProjectileTracking] Install: spawn hook INSTALLED — bullets now captured");
+
+    // Killaura's local-bullet origin rewrite rides the same lifecycle: the spawn
+    // detour arms it, the entity-position detour applies it. It is deliberately
+    // NOT fatal here — a refusal only costs killaura damage, never bullet
+    // capture — and it logs its own INSTALLED/REFUSED line.
+    ShotOriginHook::Install();
 }
 
 bool IsInstalled()
@@ -398,6 +433,9 @@ void Uninstall()
         g_OriginalSpawn = nullptr;
         g_Installed = false;
     }
+    // After the spawn detour, never before: the arm side (spawn) must die first
+    // so the apply side is never asked for an override it can no longer receive.
+    ShotOriginHook::Uninstall();
     ProjectileStore::Shutdown();
     if (g_EntCsInit) {
         DeleteCriticalSection(&g_EntCs);

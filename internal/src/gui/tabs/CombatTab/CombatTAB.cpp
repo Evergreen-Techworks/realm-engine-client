@@ -6,6 +6,7 @@
 #include "features/combat/autoaim/modes/AutoFire.h"
 #include "features/combat/autoaim/modes/AutoBreakWalls.h"
 #include "features/projectiles/ShotOrigin.h"
+#include "features/projectiles/ShotOriginHook.h"
 #include "AutoNexus.h"
 #include "LocalPlayer.h"
 #include "ProjectileTracking.h"
@@ -83,7 +84,7 @@ void Render()
     ImGui::EndDisabled();
     if (magnetAimOn)
         ImGui::TextDisabled("Manual spawn offset is overridden while Magnet Aim is enabled.");
-    ImGui::TextDisabled("Killaura outranks both while it is armed.");
+    ImGui::TextDisabled("Killaura is independent of this: it moves the spawned bullet itself.");
     ImGui::TextDisabled("Vanilla ~0.3; at 0.3 the hook skips retargeting (no extra trig).");
 
     const char* originName = "?";
@@ -94,6 +95,15 @@ void Render()
         case ShotOrigin::Source::KillAura: originName = "KILLAURA"; break;
     }
     ImGui::TextDisabled("Local spawn origin: %s", originName);
+
+    // Killaura no longer shows up as a spawn "origin" — it moves the bullet from
+    // the entity position setter instead (features/projectiles/ShotOriginHook.h).
+    // rewrites is the number that matters: arms without rewrites means killaura
+    // is aiming but the bullet is not being moved, so nothing takes damage.
+    const ShotOriginHook::Stats ka = ShotOriginHook::GetStats();
+    ImGui::TextDisabled("Killaura origin hook: %s  arms=%u rewrites=%u drops=%u",
+                        ka.installed ? "INSTALLED" : (ka.refused ? "REFUSED" : "not installed"),
+                        ka.arms, ka.rewrites, ka.drops);
     ImGui::Checkbox("Debug: weapon range ring + last spawn dot##muzzleDbg", &g_muzzleWeaponRangeDebug);
     ImGui::TextDisabled("Uses AutoAim range + last local SpawnProjectile world position.");
 
