@@ -61,7 +61,7 @@ modes/KillAura.cpp:181            → TargetSelector::SelectKillAura(...)
 modes/AutoFire.cpp:113,155,162    → ShootRuntime::EnsureResolved /
                                     TryComputeShootAngle / CallShootWithAngle
 modes/AutoAim.cpp:67,103,115      → AimHooks::SetTarget / AimHooks::Install
-features/projectiles/ShotOrigin.cpp:43 → KillAura::ComputeShotOrigin(...)
+movement/dodge/ProjectileTracking.cpp:230 → KillAura::GetAuthoritativeInput(...)
 ```
 
 ## Entry points

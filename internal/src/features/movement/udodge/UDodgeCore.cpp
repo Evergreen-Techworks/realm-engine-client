@@ -235,15 +235,18 @@ namespace Temporal {
 // only UNDER-counts a still-closing wall OUTSIDE the horizon; the fix for that
 // under-count is the longer horizon (kUTemporalSteps, plan 95), not extrapolation.
 // This is safety-positive: it can only report equal-or-more danger, never less.
-void SampleLane(const LaneThreat& L, Vec2* outPos)
+// Sample a lane's spacetime polyline at `count` times starting at `firstMs`,
+// spaced kUTemporalStepMs apart. Used for both the march grid (firstMs = 0) and
+// the fast-lane half-step refinement (firstMs = ½·step).
+static void SampleLaneTimes(const LaneThreat& L, float firstMs, int count, Vec2* outPos)
 {
     const int cnt = L.pointCount;
-    if (cnt <= 0) { for (int k = 0; k < kSamples; ++k) outPos[k] = Vec2{}; return; }
-    if (cnt == 1) { for (int k = 0; k < kSamples; ++k) outPos[k] = L.points[0]; return; }
+    if (cnt <= 0) { for (int k = 0; k < count; ++k) outPos[k] = Vec2{}; return; }
+    if (cnt == 1) { for (int k = 0; k < count; ++k) outPos[k] = L.points[0]; return; }
 
     int seg = 0;
-    for (int k = 0; k < kSamples; ++k) {
-        const float t = static_cast<float>(k) * kUTemporalStepMs;
+    for (int k = 0; k < count; ++k) {
+        const float t = firstMs + static_cast<float>(k) * kUTemporalStepMs;
         while (seg + 1 < cnt - 1 && t > L.pointTimesMs[seg + 1]) ++seg;
         const float t0 = L.pointTimesMs[seg];
         const float t1 = L.pointTimesMs[seg + 1];
@@ -254,6 +257,11 @@ void SampleLane(const LaneThreat& L, Vec2* outPos)
             outPos[k] = Add(L.points[seg], Mul(Sub(L.points[seg + 1], L.points[seg]), f));
         }
     }
+}
+
+void SampleLane(const LaneThreat& L, Vec2* outPos)
+{
+    SampleLaneTimes(L, 0.f, kSamples, outPos);
 }
 
 // Build the temporal context: predict every lane's future positions once, and
@@ -276,6 +284,18 @@ void Build(const DangerMap& map, float hitScale, Vec2 cullCenter,
         const int idx = out.count++;
         for (int k = 0; k < kSamples; ++k) out.pos[idx][k] = samples[k];
         out.half[idx] = std::clamp(L.hitHalf, 0.05f, 2.5f) * scale + kUPlayerHalf;
+        // FAST LANE? The swept-segment queries chord this lane between march
+        // samples; if it travels far enough per step for that chord to diverge
+        // from its real (possibly curving) path, sample the half-steps too so the
+        // queries follow the path in two pieces instead of one. Only fast lanes
+        // pay for this — one extra SampleLaneTimes here and one extra segment
+        // test per step in the queries.
+        float maxSweep = 0.f;
+        for (int k = 0; k < kUTemporalSteps; ++k)
+            maxSweep = std::max(maxSweep, Len(Sub(samples[k + 1], samples[k])));
+        out.sub[idx] = (maxSweep > kUTemporalMaxSweepTiles);
+        if (out.sub[idx])
+            SampleLaneTimes(L, kUTemporalStepMs * 0.5f, kUTemporalSteps, out.mid[idx]);
     }
 }
 
@@ -297,35 +317,122 @@ Vec2 BulletPosAt(const Ctx& c, int li, float tMs)
     return Add(c.pos[li][k], Mul(Sub(c.pos[li][k + 1], c.pos[li][k]), f));
 }
 
+// Same, but following a FAST lane's half-step samples (Ctx::mid) when it has
+// them, so an arbitrary-time query does not chord across the real path. Falls
+// back to BulletPosAt for slow lanes — identical result, identical cost.
+static Vec2 BulletPosFine(const Ctx& c, int li, float tMs)
+{
+    if (!c.sub[li])          return BulletPosAt(c, li, tMs);
+    if (tMs <= 0.f)          return c.pos[li][0];
+    if (tMs >= kHorizonMs)   return c.pos[li][kUTemporalSteps];
+    const float h = kUTemporalStepMs * 0.5f;
+    const float g = tMs / h;
+    int         j = static_cast<int>(g);                 // half-step index
+    if (j >= 2 * kUTemporalSteps) j = 2 * kUTemporalSteps - 1;   // defensive; g < 2·steps above
+    const float f = std::clamp(g - static_cast<float>(j), 0.f, 1.f);
+    const int   k = j >> 1;
+    const Vec2  a = (j & 1) ? c.mid[li][k] : c.pos[li][k];
+    const Vec2  b = (j & 1) ? c.pos[li][k + 1] : c.mid[li][k];
+    return Add(a, Mul(Sub(b, a), f));
+}
+
+// Bullet position INSIDE march step k, at fraction f of that step. Follows the
+// half-step samples for a fast lane (two sub-segments) and the plain chord for a
+// slow one — the hot path for a slow lane is the same single interpolation as
+// before.
+static inline Vec2 BulletInStep(const Ctx& c, int li, int k, float f)
+{
+    if (f <= 0.f) return c.pos[li][k];
+    if (f >= 1.f) return c.pos[li][k + 1];
+    if (c.sub[li]) {
+        const Vec2 a = (f <= 0.5f) ? c.pos[li][k]   : c.mid[li][k];
+        const Vec2 b = (f <= 0.5f) ? c.mid[li][k]   : c.pos[li][k + 1];
+        const float g = (f <= 0.5f) ? (f * 2.f) : ((f - 0.5f) * 2.f);
+        return Add(a, Mul(Sub(b, a), g));
+    }
+    const Vec2 a = c.pos[li][k];
+    const Vec2 b = c.pos[li][k + 1];
+    return Add(a, Mul(Sub(b, a), f));
+}
+
 // TIME-parameterized clearance test (solver query). The player walks STRAIGHT
 // from `player` toward P at `speed`, arriving at tArrive, then holds at P. March
-// time over the horizon: at each step check the player's position against every
-// relevant bullet's SWEPT segment over that step (swept, so a fast bullet cannot
-// tunnel between samples). Clear at every step ⇒ the whole path to P — and
-// holding there — dodges the moving bullets, with kUArrivalMargin of slack.
-bool PathClear(const Ctx& c, Vec2 player, float speed, Vec2 P)
+// time over the horizon and, at each step, test the RELATIVE sweep: the segment
+// from (bullet(t0) - player(t0)) to (bullet(t1) - player(t1)). Because both the
+// bullet and the player move linearly inside a step, that relative segment IS the
+// exact bullet-to-player offset over the whole step — the previous form pinned the
+// player at the START of the step while sweeping the bullet across it, which for a
+// fast bullet (or a fast player) compared the two at different instants and could
+// miss a crossing entirely. That mispairing is the fast-shot clip.
+//
+// Two refinements sit on top of the relative sweep, both cheap:
+//   • the step that CONTAINS tArrive is split at tArrive, so the walk-then-stop
+//     kink is modelled exactly and a bullet sitting on P at the moment of arrival
+//     always rejects the candidate;
+//   • a fast lane (Ctx::sub) is additionally split at its half-step sample so the
+//     bullet follows its real path rather than a long chord.
+//
+// TRANSIT is checked over the FULL horizon; DWELL only for dwellMs past arrival
+// (kUDwellMs) — past that a lane stops being tested against the held position
+// rather than counting as a hit, because the solver will have re-planned many
+// times over by then. See kUDwellMs.
+bool PathClear(const Ctx& c, Vec2 player, float speed, Vec2 P, float dwellMs)
 {
     const Vec2  to = Sub(P, player);
     const float dist = Len(to);
     const Vec2  dir = dist > 1e-4f ? Mul(to, 1.f / dist) : Vec2{};
     const float v = speed;   // tiles/ms
     const float tArrive = (v > 1e-6f) ? dist / v : (dist > 1e-4f ? kHugeClearance : 0.f);
+    // Everything up to tArrive is transit (always checked); dwellMs past it is the
+    // hold window. Never longer than the horizon we actually have samples for.
+    const float tCheckEnd = std::min(tArrive + std::max(dwellMs, 0.f), kHorizonMs);
+
+    // Player position on the walk-then-hold path at absolute time t.
+    const auto playerAt = [&](float t) -> Vec2 {
+        return (t >= tArrive) ? P : Add(player, Mul(dir, v * t));
+    };
 
     for (int li = 0; li < c.count; ++li) {
         const float half = c.half[li] + kUArrivalMargin;
         for (int k = 0; k < kUTemporalSteps; ++k) {
-            const float t = static_cast<float>(k) * kUTemporalStepMs;
-            const Vec2 pp = (t >= tArrive) ? P : Add(player, Mul(dir, v * t));
-            const Vec2 b0 = c.pos[li][k];
-            const Vec2 b1 = c.pos[li][k + 1];
-            if (MinChebOnSegment(b0.x - pp.x, b0.y - pp.y,
-                                 b1.x - pp.x, b1.y - pp.y) <= half) return false;
+            const float t0 = static_cast<float>(k) * kUTemporalStepMs;
+            if (t0 >= tCheckEnd) break;              // past the dwell window — next lane
+            const float t1 = t0 + kUTemporalStepMs;
+
+            // Breakpoints inside this step, in time order: the arrival kink and (for
+            // a fast lane) the half-step sample. At most two, so at most three
+            // sub-segments; a slow lane outside the arrival step keeps ONE test.
+            float ts[4];
+            int   n = 0;
+            ts[n++] = t0;
+            const float tMid = t0 + kUTemporalStepMs * 0.5f;
+            const bool  useMid = c.sub[li];
+            const bool  useArr = (tArrive > t0 && tArrive < t1);
+            if (useMid && useArr) {
+                if (tArrive < tMid) { ts[n++] = tArrive; ts[n++] = tMid; }
+                else                { ts[n++] = tMid;    ts[n++] = tArrive; }
+            } else if (useMid)      { ts[n++] = tMid; }
+            else if (useArr)        { ts[n++] = tArrive; }
+            ts[n++] = t1;
+
+            Vec2 pPrev = playerAt(ts[0]);
+            Vec2 bPrev = BulletInStep(c, li, k, 0.f);
+            for (int i = 1; i < n; ++i) {
+                const float f = (ts[i] - t0) * (1.f / kUTemporalStepMs);
+                const Vec2  pCur = playerAt(ts[i]);
+                const Vec2  bCur = BulletInStep(c, li, k, f);
+                if (MinChebOnSegment(bPrev.x - pPrev.x, bPrev.y - pPrev.y,
+                                     bCur.x  - pCur.x,  bCur.y  - pCur.y) <= half) return false;
+                pPrev = pCur; bPrev = bCur;
+            }
         }
-        // Final sample (t = horizon): player is holding at P by now.
-        const float tEnd = static_cast<float>(kUTemporalSteps) * kUTemporalStepMs;
-        const Vec2 ppEnd = (tEnd >= tArrive) ? P : Add(player, Mul(dir, v * tEnd));
-        const Vec2 bEnd = c.pos[li][kUTemporalSteps];
-        if (Cheb(bEnd.x - ppEnd.x, bEnd.y - ppEnd.y) <= half) return false;
+        // Final sample (t = horizon): player is holding at P by now. Only meaningful
+        // if the dwell window actually reaches the end of the horizon.
+        if (kHorizonMs <= tCheckEnd) {
+            const Vec2 ppEnd = playerAt(kHorizonMs);
+            const Vec2 bEnd  = c.pos[li][kUTemporalSteps];
+            if (Cheb(bEnd.x - ppEnd.x, bEnd.y - ppEnd.y) <= half) return false;
+        }
     }
     return true;
 }
@@ -335,14 +442,54 @@ bool PathClear(const Ctx& c, Vec2 player, float speed, Vec2 P)
 // swept-segment min-Chebyshev to B must exceed the effective hit half +
 // kUArrivalMargin, or a bullet is at B while the player is there. Swept (not
 // endpoint-only) so a fast bullet cannot tunnel across B between arrival times.
+//
+// NOTE (transit/dwell): unlike PathClear this query carries NO stand-still
+// assumption to relax — [tA, tB] is exactly the edge-traversal window the caller
+// is paying for (UDodgePathfinder.cpp, edge relaxation), it never runs past tB,
+// and the route's final cell is not held open for the rest of the horizon. So the
+// dwell fix does not apply here.
+//
+// A FAST lane is followed piecewise across the stored (half-)samples inside the
+// window instead of chorded end-to-end: an edge window can span more than one
+// march step, and chording a fast lane across several steps straightens away the
+// very crossing this test exists to catch. Bounded — an edge window is one cell
+// of travel, and the walk is hard-capped anyway.
 bool ArrivalClear(const Ctx& c, Vec2 B, float tA, float tB)
 {
     for (int li = 0; li < c.count; ++li) {
         const float half = c.half[li] + kUArrivalMargin;
-        const Vec2  b0 = BulletPosAt(c, li, tA);
-        const Vec2  b1 = BulletPosAt(c, li, tB);
-        if (MinChebOnSegment(b0.x - B.x, b0.y - B.y,
-                             b1.x - B.x, b1.y - B.y) <= half) return false;
+        if (!c.sub[li]) {
+            const Vec2 b0 = BulletPosAt(c, li, tA);
+            const Vec2 b1 = BulletPosAt(c, li, tB);
+            if (MinChebOnSegment(b0.x - B.x, b0.y - B.y,
+                                 b1.x - B.x, b1.y - B.y) <= half) return false;
+            continue;
+        }
+        // Fast lane: step from tA to tB, breaking at every stored half-step sample.
+        const float dt = kUTemporalStepMs * 0.5f;
+        float t = std::max(tA, 0.f);
+        const float tEnd = std::min(std::max(tB, t), kHorizonMs);
+        Vec2  prev = BulletPosFine(c, li, t);
+        bool  tested = false;
+        for (int guard = 0; guard < 2 * kUTemporalSteps + 2 && t < tEnd; ++guard) {
+            float tn = (std::floor(t / dt) + 1.f) * dt;
+            if (tn > tEnd || tn <= t) tn = tEnd;
+            const Vec2 cur = BulletPosFine(c, li, tn);
+            if (MinChebOnSegment(prev.x - B.x, prev.y - B.y,
+                                 cur.x  - B.x, cur.y  - B.y) <= half) return false;
+            prev   = cur;
+            t      = tn;
+            tested = true;
+        }
+        // Degenerate window (tB == tA, or both past the horizon): still test the
+        // single instant, so the fast path can never be laxer than the slow one.
+        if (!tested && Cheb(prev.x - B.x, prev.y - B.y) <= half) return false;
+        if (tB > kHorizonMs) {
+            // Beyond the horizon the lane is frozen at its last sample (the
+            // CONSERVATIVE-FREEZE contract) — one endpoint test covers the rest.
+            const Vec2 bFrozen = c.pos[li][kUTemporalSteps];
+            if (Cheb(bFrozen.x - B.x, bFrozen.y - B.y) <= half) return false;
+        }
     }
     return true;
 }

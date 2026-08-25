@@ -49,12 +49,42 @@ struct State {
 };
 State GetState();
 
-// The ONE shot-origin formula, shared by every consumer:
-//   origin = target - (cos(shotAngle), sin(shotAngle)) * standoff
-// Returns false (and leaves ox/oy untouched) when not armed, when the inputs are
-// not finite, or when the result would sit further than GetMaxOffsetTiles() from
-// the local player — fail-closed, the caller then leaves the shot alone.
-bool ComputeShotOrigin(float shotAngleRad, float& ox, float& oy);
+// ── The ONE authoritative killaura input ─────────────────────────────────────
+// The shot origin used to be computed TWICE, independently: once inside the
+// projectile-spawn detour (a live ComputeShotOrigin call) and once in the client
+// proxy from a separately-published aim sample. Nothing forced the two to agree,
+// so the LOCAL bullet could be moved to one point while the server was told a
+// different one — the client then claimed a hit the server's own simulation of
+// the shot never produced, and refused it (visible damage that reverts).
+//
+// So the origin is now computed EXACTLY ONCE per refresh, inside Tick, from the
+// very same (target, player, standoff) values that refresh is committing, and
+// stamped with a monotonically increasing GENERATION. Every consumer reads THAT
+// value — nobody recomputes it. `ComputeShotOrigin` is deliberately no longer
+// part of this interface: a second way to obtain an origin is the bug.
+//
+// The two consumers still SAMPLE it at different latencies (the local bullet
+// reads it in-process; the outbound rewrite reads it across the IPC pipe), so
+// they can legitimately hold different generations. That gap is exactly what
+// `generation` makes measurable — see the [ShotOriginHook] trace line and the
+// [Killaura] diag line in the proxy log.
+struct Input {
+    float    ox = 0.f, oy = 0.f;   // ABSOLUTE world tiles — the shot origin
+    float    angleRad = 0.f;       // the angle the origin was solved at
+    int32_t  targetId = 0;
+    uint32_t generation = 0;       // refresh counter; monotonic, never reused
+    uint32_t stampMs = 0;          // GetTickCount64() low 32 bits at publish
+};
+
+// Reads the ONE authoritative input. Returns false — leaving `out` untouched —
+// when killaura is not armed, when the refresh that produced this sample refused
+// an origin (the standoff/maxOffset caps), when a refresh landed mid-read, or
+// when the sample is older than the freshness window (~50 ms; Tick refreshes at
+// up to ~125 Hz, so a current sample is always far inside it).
+//
+// Callers MUST fail closed on false and leave the shot vanilla. Rewriting from a
+// value the server was never told is strictly worse than not rewriting.
+bool GetAuthoritativeInput(Input& out);
 
 // Render thread. Draws the Combat-tab section.
 void RenderSettings();

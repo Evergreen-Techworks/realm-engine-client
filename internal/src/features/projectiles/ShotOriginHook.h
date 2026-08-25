@@ -21,7 +21,7 @@
 // onto a later projectile or an unrelated entity.
 //
 // Coordinates are ABSOLUTE world tiles — the same space the setter takes and
-// the same space KillAura::ComputeShotOrigin returns. Nothing is rebased.
+// the same space KillAura::Input carries. Nothing is rebased.
 //
 // FAIL-CLOSED: the hook refuses to install unless exactly one method on the
 // KJMONHENJEN class itself matches (name, 2 float params, bool return). A
@@ -42,19 +42,32 @@ namespace ShotOriginHook {
     bool IsInstalled();
 
     // Arm the one-shot override for `projectile` (the instance the spawn funnel
-    // returned). `ownerObjId` is carried for the witness log only. No-op when
-    // the hook is not installed, so a refused hook silently leaves shots alone.
-    void ArmOneShot(void* projectile, int32_t ownerObjId, float absX, float absY);
+    // returned). `ownerObjId` is carried for the witness log only. `generation`
+    // is the KillAura::Input generation the origin came from — carried so the
+    // trace line can be compared against the generation the OUTBOUND rewrite
+    // used (the [Killaura] diag line in the proxy log). No-op when the hook is
+    // not installed, so a refused hook silently leaves shots alone.
+    void ArmOneShot(void* projectile, int32_t ownerObjId, float absX, float absY,
+                    uint32_t generation);
+
+    // A local shot fired while killaura was enabled but no CURRENT authoritative
+    // origin existed, so the shot was left vanilla. Counted (and witnessed) so
+    // "killaura is on but nothing is being rewritten" is visible rather than
+    // silent. See KillAura::GetAuthoritativeInput.
+    void NoteStaleInput();
 
     // Read-only diagnostic (Combat tab). `rewrites` is the count that actually
     // matters: `arms` without `rewrites` means killaura is aiming but the bullet
-    // is not being moved.
+    // is not being moved. `lastGeneration` is the generation of the most recent
+    // arm — the local half of the local-vs-outbound generation comparison.
     struct Stats {
-        bool     installed = false;
-        bool     refused   = false;
-        uint32_t arms      = 0;
-        uint32_t rewrites  = 0;
-        uint32_t drops     = 0;
+        bool     installed      = false;
+        bool     refused        = false;
+        uint32_t arms           = 0;
+        uint32_t rewrites       = 0;
+        uint32_t drops          = 0;
+        uint32_t staleInputs    = 0;
+        uint32_t lastGeneration = 0;
     };
     Stats GetStats();
 

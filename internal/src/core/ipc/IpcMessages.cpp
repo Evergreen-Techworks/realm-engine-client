@@ -119,18 +119,25 @@ int EncodeThreats(char* out, int outSize, const IpcThreat* threats, int count,
     return used;
 }
 
-// "1;<armed>;<mode>;<targetId>;<tx>;<ty>;<px>;<py>;<standoff>;<maxOffset>;<stamp>"
-// EXACTLY 11 ';'-separated tokens. This is the ONLY encoder; the ONLY decoder is
+// "2;<armed>;<mode>;<targetId>;<tx>;<ty>;<px>;<py>;<standoff>;<maxOffset>;<stamp>"
+//   ";<originValid>;<ox>;<oy>;<generation>"
+// EXACTLY 15 ';'-separated tokens. This is the ONLY encoder; the ONLY decoder is
 // decodeAimPayload in client/src/bridge/DllAimBus.ts. Field order is
 // authoritative here and there.
+//
+// The four v2 tokens are the point of the schema bump: ox/oy are the origin the
+// DLL ALREADY committed for this refresh (the same one the local bullet is moved
+// to), and `generation` identifies which refresh it came from, so a divergence
+// between the two rewrites is measurable instead of invisible.
 int EncodeAim(char* out, int outSize, const IpcAim& a)
 {
     if (!out || outSize <= 0) return -1;
     const int wrote = snprintf(out, static_cast<size_t>(outSize),
-        "%d;%d;%d;%d;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%u",
+        "%d;%d;%d;%d;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%u;%d;%.3f;%.3f;%u",
         AIM_SCHEMA_VERSION, (int)a.armed, (int)a.mode, a.targetId,
         (double)a.tx, (double)a.ty, (double)a.px, (double)a.py,
-        (double)a.standoffTiles, (double)a.maxOffsetTiles, a.stampMs);
+        (double)a.standoffTiles, (double)a.maxOffsetTiles, a.stampMs,
+        (int)a.originValid, (double)a.ox, (double)a.oy, a.generation);
     return (wrote <= 0 || wrote >= outSize) ? -1 : wrote;
 }
 

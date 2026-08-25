@@ -18,12 +18,28 @@ export interface DllAim {
   maxOffsetTiles: number;
   /** DLL GetTickCount64() low 32 bits — diagnostics only. DO NOT compare to Date.now(). */
   stamp: number;
+
+  // ── v2: the ONE authoritative shot origin ──────────────────────────────
+  // The DLL solves the shot origin exactly once per killaura refresh and sends
+  // the RESULT, not the ingredients. `ox`/`oy` are the SAME absolute-world-tile
+  // point the DLL moved the local bullet to. Consumers must forward this value,
+  // never re-derive one from tx/ty/standoff: two independent derivations that
+  // disagree is precisely why the server was refusing the hit claims.
+  /** false = that refresh refused an origin (standoff/maxOffset caps) — do NOT rewrite. */
+  originValid: boolean;
+  /** Absolute world tiles. Meaningful only when `originValid`. */
+  ox: number;
+  oy: number;
+  /** KillAura refresh counter that produced `ox`/`oy`. Monotonic; never reused. */
+  generation: number;
 }
 
 // Aim wire schema version. Bump only in lockstep with AIM_SCHEMA_VERSION in
 // internal/src/core/ipc/IpcBridge.h. A version skew is rejected loud below
 // (null + one-line warn) so killaura fails closed rather than misreading.
-export const AIM_SCHEMA_VERSION = 1;
+//
+// v2 added originValid/ox/oy/generation (4 trailing tokens, 11 -> 15).
+export const AIM_SCHEMA_VERSION = 2;
 
 const GLOBAL_SLOT_KEY = '__LFG_dllAimBus_v1';
 
@@ -66,9 +82,10 @@ let warnedVersionToken: string | null = null;
  * The ONE decoder for the compact aim wire string. Its inverse is
  * IpcMessages::EncodeAim in internal/src/core/ipc/IpcMessages.cpp.
  *
- *   "1;<armed>;<mode>;<targetId>;<tx>;<ty>;<px>;<py>;<standoff>;<maxOffset>;<stamp>"
+ *   "2;<armed>;<mode>;<targetId>;<tx>;<ty>;<px>;<py>;<standoff>;<maxOffset>;<stamp>"
+ *     ";<originValid>;<ox>;<oy>;<generation>"
  *
- * EXACTLY 11 ';'-separated tokens; field order is authoritative here and there.
+ * EXACTLY 15 ';'-separated tokens; field order is authoritative here and there.
  * A version other than AIM_SCHEMA_VERSION is rejected loud (console.warn, returns
  * null) so killaura fails closed rather than misreading.
  *
@@ -78,7 +95,7 @@ export function decodeAimPayload(payload: string): DllAim | null {
   if (!payload) return null;
 
   const segs = payload.split(';');
-  if (segs.length !== 11) return null;
+  if (segs.length !== 15) return null;
 
   const version = Number(segs[0]);
   if (version !== AIM_SCHEMA_VERSION) {
@@ -99,11 +116,16 @@ export function decodeAimPayload(payload: string): DllAim | null {
   const standoffTiles = Number(segs[8]);
   const maxOffsetTiles = Number(segs[9]);
   const stamp = Number(segs[10]);
+  const ox = Number(segs[12]);
+  const oy = Number(segs[13]);
+  const generation = Number(segs[14]);
 
   if (!Number.isFinite(tx) || !Number.isFinite(ty)
     || !Number.isFinite(px) || !Number.isFinite(py)
-    || !Number.isFinite(standoffTiles) || !Number.isFinite(maxOffsetTiles)) return null;
-  if (!Number.isInteger(targetId) || !Number.isInteger(stamp)) return null;
+    || !Number.isFinite(standoffTiles) || !Number.isFinite(maxOffsetTiles)
+    || !Number.isFinite(ox) || !Number.isFinite(oy)) return null;
+  if (!Number.isInteger(targetId) || !Number.isInteger(stamp)
+    || !Number.isInteger(generation)) return null;
 
   return {
     armed: segs[1] === '1',
@@ -116,5 +138,9 @@ export function decodeAimPayload(payload: string): DllAim | null {
     standoffTiles,
     maxOffsetTiles,
     stamp,
+    originValid: segs[11] === '1',
+    ox,
+    oy,
+    generation,
   };
 }

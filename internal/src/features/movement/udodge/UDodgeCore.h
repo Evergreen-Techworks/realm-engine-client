@@ -82,6 +82,13 @@ struct Ctx {
     int   count = 0;
     Vec2  pos[kMaxProjectiles][kSamples];   // bullet position at t = k·stepMs
     float half[kMaxProjectiles];            // hitHalf·scale + kUPlayerHalf
+    // Fast-lane refinement (kUTemporalMaxSweepTiles): for lanes whose per-step
+    // travel is long enough that the straight chord between two march samples can
+    // hide a crossing, `mid[i][k]` is the lane's TRUE position at the half-step
+    // t = (k + ½)·stepMs, so the queries follow two sub-segments per step instead
+    // of one chord. Only valid where sub[i]; slow lanes never read it.
+    Vec2  mid[kMaxProjectiles][kUTemporalSteps];
+    bool  sub[kMaxProjectiles];             // this lane needs the half-step samples
 };
 
 // Sample one lane's spacetime polyline at each march time (clamp past the traced
@@ -101,7 +108,12 @@ Vec2 BulletPosAt(const Ctx& c, int li, float tMs);
 
 // Query A (solver): the player walks STRAIGHT from `player` to P at `speed`
 // (tiles/ms), arriving at tArrive, then holds at P; clear at every march step?
-bool PathClear(const Ctx& c, Vec2 player, float speed, Vec2 P);
+// TRANSIT is always checked over the FULL horizon. DWELL (the hold at P) is only
+// checked for `dwellMs` past arrival — see kUDwellMs for why the dodge does not
+// have to promise a full horizon of stillness. Pass kHorizonMs to opt out and get
+// the old whole-window stand-still test (the STAND-durability gate does).
+bool PathClear(const Ctx& c, Vec2 player, float speed, Vec2 P,
+               float dwellMs = kUDwellMs);
 
 // Query B (pathfinder edge relaxation): standing at B, is every bullet clear
 // over the arrival window [tA, tB] (swept)?

@@ -185,6 +185,44 @@ constexpr float kUTemporalStepMs   = 100.f;  // unchanged; swept-segment checks 
 constexpr float kUTemporalCullTiles = 8.f;   // only predict bullets whose traced path passes within this
                                              // radius of the player over the horizon (skip far/receding)
 
+// ── TRANSIT horizon vs DWELL horizon ────────────────────────────────────────
+// PathClear models a candidate as "walk straight there, then STAND STILL for the
+// rest of the horizon". Those two halves deserve very different trust:
+//   • TRANSIT (t < tArrive) is REAL — the player genuinely occupies every point
+//     of that walk at those times, so it is checked over the FULL horizon and is
+//     never relaxed. The player must never be clipped en route.
+//   • DWELL (t >= tArrive) is a FICTION — the solver re-runs every frame and
+//     re-validates the step it actually takes, so it never commits to standing on
+//     a candidate for the whole 800 ms horizon. Demanding 800 ms of stillness
+//     rejects every tile a wall will EVENTUALLY sweep, which is exactly how the
+//     dodge ends up refusing to enter a room whose shot-walls must be weaved
+//     through (Lost Halls miniboss): the only tiles that survive an 800 ms
+//     stand-still test are the ones nothing ever crosses, and in a wall pattern
+//     there are none.
+// kUDwellMs is how long AFTER ARRIVAL a candidate must stay clear. 300 ms =
+// 1.5 × kServerTickSec (0.2 s): the arrival tick itself plus a full replan
+// quantum of slack, so (a) a bullet occupying the candidate at or near arrival
+// still rejects it, and (b) the player always has one whole planning quantum in
+// which to leave again before the dwell guarantee runs out. Past kUDwellMs a lane
+// simply STOPS being tested against the held position — it is not treated as a
+// hit, it is treated as "the next solve's problem", which is literally true.
+// NOTE: the STAND-durability gate deliberately opts OUT of this (it passes the
+// full horizon) — detecting a slow-closing wall early is the whole point of that
+// query, and there the stand-still assumption is the honest one.
+constexpr float kUDwellMs = 300.f;
+
+// ── Fast-lane sub-stepping (plan 95 §3 — activated) ─────────────────────────
+// The march step's swept-segment test treats the bullet as travelling a straight
+// chord between two 100 ms samples. That is exact for a straight shot but loses
+// the real path shape for a shot that CURVES inside a 100 ms window, and a fast
+// lane's chord is long enough for that error to hide a crossing. When a lane's
+// per-step travel exceeds this, Build additionally samples it at the HALF-step
+// times and the queries walk those finer samples (2 sub-segments per step instead
+// of 1). 1.0 tile / 100 ms = 10 tiles/s, above ordinary shot speeds, so only the
+// genuinely fast lanes pay the extra test; slow lanes keep today's single-segment
+// path. Bounded by construction: one extra sample per step, never more.
+constexpr float kUTemporalMaxSweepTiles = 1.0f;
+
 // ── In-range-disk pathfinding (locked-boss only; baked, NO user sliders) ─────
 // When a boss is LOCKED the movement manifold is the FILLED DISK of radius =
 // weaponRange (goal.maxRange) around the boss — every position from which the

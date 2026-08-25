@@ -104,6 +104,12 @@ void Render()
     ImGui::TextDisabled("Killaura origin hook: %s  arms=%u rewrites=%u drops=%u",
                         ka.installed ? "INSTALLED" : (ka.refused ? "REFUSED" : "not installed"),
                         ka.arms, ka.rewrites, ka.drops);
+    // staleInputs = local shots left vanilla because no CURRENT authoritative
+    // origin existed; gen = the generation the LAST local rewrite used. Compare
+    // gen against the `gen=` on the proxy log's [Killaura] diag line, which is
+    // the generation the OUTBOUND rewrite used — a large gap is the two rewrites
+    // disagreeing about where the shot started.
+    ImGui::TextDisabled("  staleInputs=%u  lastGen=%u", ka.staleInputs, ka.lastGeneration);
     ImGui::Checkbox("Debug: weapon range ring + last spawn dot##muzzleDbg", &g_muzzleWeaponRangeDebug);
     ImGui::TextDisabled("Uses AutoAim range + last local SpawnProjectile world position.");
 

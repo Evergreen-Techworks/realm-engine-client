@@ -43,16 +43,19 @@ static bool          g_refused   = false;   // permanent: ambiguous / wrong sign
 static std::atomic<uint32_t> g_arms{ 0 };
 static std::atomic<uint32_t> g_rewrites{ 0 };
 static std::atomic<uint32_t> g_drops{ 0 };
+static std::atomic<uint32_t> g_staleInputs{ 0 };
+static std::atomic<uint32_t> g_lastGen{ 0 };
 
 // ── One-shot override slot ───────────────────────────────────────────────────
 // thread_local: armed by the spawn detour and consumed by the position setter,
 // both on the game thread. A slot that is not consumed by the very next setter
 // call is DROPPED, so an override can never leak onto a later projectile.
 struct Pending {
-    void*   proj  = nullptr;
-    int32_t owner = 0;
-    float   x     = 0.f;
-    float   y     = 0.f;
+    void*    proj  = nullptr;
+    int32_t  owner = 0;
+    float    x     = 0.f;
+    float    y     = 0.f;
+    uint32_t gen   = 0;   // KillAura::Input generation this origin came from
 };
 static thread_local Pending t_pending;
 
@@ -66,10 +69,21 @@ static thread_local Pending t_pending;
 // all, REWRITTEN says a real local bullet was moved (with owner + absolute
 // origin), and DROPPED says the override was armed but the projectile's setter
 // never came — armed, not moved.
+//
+// REWRITTEN carries `gen=` — the KillAura refresh generation the origin came
+// from. Its counterpart is `gen=` on the [Killaura] diag line in the PROXY log
+// (%TEMP%\realm-engine-proxy.log), which is the generation the OUTBOUND rewrite
+// used. Two rewrites driven by generations that are far apart is exactly the
+// divergence that made the server refuse the hit; comparing the two lines is how
+// that shows up as evidence instead of as mysteriously reverted damage.
+//
+// STALE says a local shot was fired with killaura enabled but no current
+// authoritative origin, so the shot was deliberately left vanilla.
 static ULONGLONG g_lastRewriteLogMs = 0;
-static int       g_lastOutcome      = -1;   // -1 none yet, 0 dropped, 1 rewritten
+static int       g_lastOutcome      = -1;   // -1 none yet, 0 dropped, 1 rewritten, 2 stale
 
-static void WitnessOutcome(int outcome, void* proj, int32_t owner, float ax, float ay)
+static void WitnessOutcome(int outcome, void* proj, int32_t owner, float ax, float ay,
+                           uint32_t gen)
 {
     const ULONGLONG now = GetTickCount64();
     const bool changed  = (outcome != g_lastOutcome);
@@ -79,10 +93,19 @@ static void WitnessOutcome(int outcome, void* proj, int32_t owner, float ax, flo
     g_lastOutcome      = outcome;
     g_lastRewriteLogMs = now;
 
-    if (outcome == 1) {
+    if (outcome == 2) {
+        DBG_FILE_LOG("[ShotOriginHook] local shot left VANILLA — killaura is enabled but "
+            "no CURRENT authoritative origin existed at spawn (disarmed, origin refused by "
+            "the caps, or the publisher is stalled). Rewriting from a value the server was "
+            "never told would be worse than this."
+            << " staleInputs=" << g_staleInputs.load(std::memory_order_relaxed)
+            << " arms=" << g_arms.load(std::memory_order_relaxed)
+            << " rewrites=" << g_rewrites.load(std::memory_order_relaxed));
+    } else if (outcome == 1) {
         DBG_FILE_LOG("[ShotOriginHook] local bullet origin REWRITTEN proj=" << proj
             << " owner=" << owner
             << " -> abs=(" << ax << "," << ay << ")"
+            << " gen=" << gen
             << " arms=" << g_arms.load(std::memory_order_relaxed)
             << " rewrites=" << g_rewrites.load(std::memory_order_relaxed)
             << " drops=" << g_drops.load(std::memory_order_relaxed));
@@ -90,6 +113,7 @@ static void WitnessOutcome(int outcome, void* proj, int32_t owner, float ax, flo
         DBG_FILE_LOG("[ShotOriginHook] armed override DROPPED — the first position "
             "setter after the spawn funnel was a DIFFERENT object, so this shot was "
             "NOT moved (killaura aimed but the bullet left the muzzle)"
+            << " gen=" << gen
             << " arms=" << g_arms.load(std::memory_order_relaxed)
             << " rewrites=" << g_rewrites.load(std::memory_order_relaxed)
             << " drops=" << g_drops.load(std::memory_order_relaxed));
@@ -103,18 +127,19 @@ bool __fastcall SetPositionDetour(void* self, float x, float y, void* method)
 {
     void* const want = t_pending.proj;
     if (want) {
-        const int32_t owner = t_pending.owner;
-        const float   ax    = t_pending.x;
-        const float   ay    = t_pending.y;
+        const int32_t  owner = t_pending.owner;
+        const float    ax    = t_pending.x;
+        const float    ay    = t_pending.y;
+        const uint32_t gen   = t_pending.gen;
         t_pending.proj = nullptr;   // one-shot: consumed OR dropped, never carried
         if (want == self) {
             x = ax;
             y = ay;
             g_rewrites.fetch_add(1, std::memory_order_relaxed);
-            WitnessOutcome(1, self, owner, ax, ay);
+            WitnessOutcome(1, self, owner, ax, ay, gen);
         } else {
             g_drops.fetch_add(1, std::memory_order_relaxed);
-            WitnessOutcome(0, self, owner, ax, ay);
+            WitnessOutcome(0, self, owner, ax, ay, gen);
         }
     }
     return g_orig(self, x, y, method);
@@ -242,7 +267,8 @@ void Uninstall()
 
 bool IsInstalled() { return g_installed; }
 
-void ArmOneShot(void* projectile, int32_t ownerObjId, float absX, float absY)
+void ArmOneShot(void* projectile, int32_t ownerObjId, float absX, float absY,
+                uint32_t generation)
 {
     if (!g_installed) return;                 // fail-closed: no hook, no override
     if (!Mem::AddrOk(projectile)) return;
@@ -250,7 +276,15 @@ void ArmOneShot(void* projectile, int32_t ownerObjId, float absX, float absY)
     t_pending.owner = ownerObjId;
     t_pending.x     = absX;
     t_pending.y     = absY;
+    t_pending.gen   = generation;
     g_arms.fetch_add(1, std::memory_order_relaxed);
+    g_lastGen.store(generation, std::memory_order_relaxed);
+}
+
+void NoteStaleInput()
+{
+    g_staleInputs.fetch_add(1, std::memory_order_relaxed);
+    WitnessOutcome(2, nullptr, 0, 0.f, 0.f, 0);
 }
 
 Stats GetStats()
@@ -258,9 +292,11 @@ Stats GetStats()
     Stats s;
     s.installed = g_installed;
     s.refused   = g_refused;
-    s.arms      = g_arms.load(std::memory_order_relaxed);
-    s.rewrites  = g_rewrites.load(std::memory_order_relaxed);
-    s.drops     = g_drops.load(std::memory_order_relaxed);
+    s.arms           = g_arms.load(std::memory_order_relaxed);
+    s.rewrites       = g_rewrites.load(std::memory_order_relaxed);
+    s.drops          = g_drops.load(std::memory_order_relaxed);
+    s.staleInputs    = g_staleInputs.load(std::memory_order_relaxed);
+    s.lastGeneration = g_lastGen.load(std::memory_order_relaxed);
     return s;
 }
 

@@ -43,9 +43,13 @@ static std::atomic<bool>    s_driveAimAngle{ true };   // default ON — see Kil
 // first one. Same commitment/anti-flip-flop idea as the dodge solver's
 // kSolveReflexHystEps / kUReturnRangeSlack (features/movement/udodge/UDodgeTypes.h).
 //
-// Retention is only ever a BRIDGE over a momentary miss: a target that is dead,
-// absent from the EnemyTracker snapshot, no longer damageable, or past the drop
-// radius is dropped on the spot and never retained. When in doubt, drop.
+// Retention is only ever a BRIDGE over a momentary miss, and the distinction it
+// turns on is POSITIVE EVIDENCE vs mere absence: a target the snapshot still
+// carries but that is dead, no longer damageable, or past the drop radius is
+// dropped on the spot and never retained. An id that is simply MISSING from the
+// snapshot is NOT evidence of death — the snapshot is rebuilt periodically and an
+// entry can momentarily fail a filter, which is precisely the transient this
+// grace window exists to ride out. See RetainVerdict.
 //
 // Grace window measured from the FIRST miss of a run. ~250 ms is a handful of
 // refreshes — long enough to ride out a snapshot rebuilt mid-frame or one
@@ -97,6 +101,33 @@ static std::atomic<float>    s_px{ 0.f };
 static std::atomic<float>    s_py{ 0.f };
 static std::atomic<uint32_t> s_stampMs{ 0 };
 
+// ── The ONE authoritative input (see KillAura.h) ─────────────────────────────
+// Written on the render thread from ApplyState; read on the game thread from
+// the projectile-spawn detour. The GENERATION doubles as the sequence number of
+// a seqlock: it is stored LAST (release) and re-read by the consumer after the
+// payload, so a refresh landing mid-read is DETECTED and refused rather than
+// handing back a half-old, half-new origin. GetState()'s "plain value copy of
+// atomics" is fine for a UI readout; it is not fine for the one value two
+// separate rewrites have to agree on.
+//
+// s_inGen counts REFRESHES, not accepted origins: every ApplyState bumps it, so
+// a disarm invalidates any in-flight read the same way a re-arm does. Starts at
+// 0, which the consumer treats as "nothing published yet".
+static std::atomic<uint32_t> s_inGen{ 0 };
+static std::atomic<bool>     s_inValid{ false };   // did THIS refresh accept an origin?
+static std::atomic<float>    s_inOx{ 0.f };
+static std::atomic<float>    s_inOy{ 0.f };
+static std::atomic<float>    s_inAngle{ 0.f };
+static std::atomic<int32_t>  s_inTargetId{ 0 };
+static std::atomic<uint32_t> s_inStampMs{ 0 };
+
+// Freshness window for GetAuthoritativeInput. Tick self-throttles to 8 ms
+// (~125 Hz), so a live publisher is never more than ~2 refreshes behind; 50 ms
+// is ~6 refreshes of slack — wide enough to ride a frame hitch, narrow enough
+// that a stalled render thread stops arming rewrites almost immediately.
+// GetTickCount64 is 10-16 ms coarse, so the effective window is ~34-66 ms.
+static constexpr uint32_t kKaInputMaxAgeMs = 50u;
+
 // ── Render-thread-only bookkeeping ───────────────────────────────────────────
 static ULONGLONG s_lastThrottleMs      = 0;
 static ULONGLONG s_lastIdlePublishMs   = 0;
@@ -122,8 +153,60 @@ static float ClampF(float v, float lo, float hi, float fallback)
     return v;
 }
 
+// The ONE shot-origin formula:
+//   origin = target - (cos(shotAngle), sin(shotAngle)) * standoff
+// UNCHANGED from the ComputeShotOrigin this replaces — same formula, same caps,
+// same fail-closed contract. All that moved is WHERE it runs: once per refresh
+// inside ApplyState, instead of once per consumer.
+//
+// False (ox/oy untouched) when an input is not finite or when the result would
+// sit further than maxOffset from the local player.
+static bool SolveShotOrigin(float shotAngleRad,
+                            float tx, float ty, float px, float py,
+                            float standoff, float maxOff,
+                            float& ox, float& oy)
+{
+    if (!std::isfinite(shotAngleRad)) return false;
+    if (!std::isfinite(tx) || !std::isfinite(ty) ||
+        !std::isfinite(px) || !std::isfinite(py) ||
+        !std::isfinite(standoff) || !std::isfinite(maxOff))
+        return false;
+
+    const float nx = tx - std::cos(shotAngleRad) * standoff;
+    const float ny = ty - std::sin(shotAngleRad) * standoff;
+    if (!std::isfinite(nx) || !std::isfinite(ny)) return false;
+
+    // Hard cap — never move the origin further than maxOffset from the player.
+    const float dx = nx - px, dy = ny - py;
+    if (dx * dx + dy * dy > maxOff * maxOff) return false;
+
+    ox = nx;
+    oy = ny;
+    return true;
+}
+
+// Commits one refresh of the authoritative input. Called from ApplyState ONLY —
+// this is the single writer. `valid == false` still bumps the generation, so a
+// disarm is a refresh like any other and no consumer can keep reading a sample
+// the lock no longer backs.
+static void CommitInput(bool valid, float ox, float oy, float angle,
+                        int32_t targetId, uint32_t stamp)
+{
+    s_inValid.store(false, std::memory_order_release);   // fields are in flux
+    s_inOx.store(ox, std::memory_order_relaxed);
+    s_inOy.store(oy, std::memory_order_relaxed);
+    s_inAngle.store(angle, std::memory_order_relaxed);
+    s_inTargetId.store(targetId, std::memory_order_relaxed);
+    s_inStampMs.store(stamp, std::memory_order_relaxed);
+    s_inValid.store(valid, std::memory_order_release);
+    // Generation LAST: the consumer reads it first and last and refuses a
+    // mismatch, so this store is what makes the payload above visible-or-refused.
+    s_inGen.fetch_add(1, std::memory_order_release);
+}
+
 static void PublishNow(bool armed, int32_t targetId,
-                       float tx, float ty, float px, float py, uint32_t stamp)
+                       float tx, float ty, float px, float py, uint32_t stamp,
+                       bool originValid, float ox, float oy, uint32_t generation)
 {
     IpcAim a{};
     a.armed           = armed ? 1 : 0;
@@ -136,6 +219,12 @@ static void PublishNow(bool armed, int32_t targetId,
     a.standoffTiles   = s_standoffTiles.load(std::memory_order_relaxed);
     a.maxOffsetTiles  = s_maxOffsetTiles.load(std::memory_order_relaxed);
     a.stampMs         = stamp;
+    // The SAME origin the local-bullet rewrite reads, carried by the SAME
+    // generation — not a recipe for the client to re-derive one from.
+    a.originValid     = originValid ? 1 : 0;
+    a.ox              = ox;
+    a.oy              = oy;
+    a.generation      = generation;
     IpcBridge_PublishAim(a);
     ++s_publishCount;
 }
@@ -189,8 +278,38 @@ static void ApplyState(bool armed, int32_t targetId,
     else
         AutoAim::SetKillAuraAimOverride(false, 0.f, 0.f, 0);
 
+    // ── The ONE shot-origin computation ──────────────────────────────────────
+    // Right here, once, from the values THIS call is committing — the same
+    // (tx, ty) the aim-angle handoff above just pushed and the same (px, py)
+    // the tick read. Both rewrites downstream read the result; neither solves
+    // its own. See KillAura.h for why that duplication was the bug.
+    //
+    // The angle is atan2(target - player), which is exactly the formula the shot
+    // will be redirected to (AimHooks::RedirectAngle, same expression from the
+    // player's real position) evaluated at most one refresh (~8 ms) earlier.
+    // Two knowingly-accepted approximations, neither of which moves the origin
+    // more than 2*standoff (~0.7 tiles) off the target:
+    //   * "Drive aim angle" OFF leaves the player's own angle driving the shot,
+    //     so the origin is placed on killaura's side of the target rather than
+    //     the player's.
+    //   * AimHooks::ApplyWeaponTweaks (the reverse-cult-staff +pi) is not
+    //     mirrored here.
+    // Both are far cheaper than reintroducing a second, independent solve.
+    float ox = 0.f, oy = 0.f, originAngle = 0.f;
+    bool  originValid = false;
+    if (armed) {
+        originAngle = std::atan2(ty - py, tx - px);
+        originValid = SolveShotOrigin(originAngle, tx, ty, px, py,
+                                      s_standoffTiles.load(std::memory_order_relaxed),
+                                      s_maxOffsetTiles.load(std::memory_order_relaxed),
+                                      ox, oy);
+    }
+    CommitInput(originValid, ox, oy, originAngle, armed ? targetId : 0, stamp);
+    const uint32_t gen = s_inGen.load(std::memory_order_relaxed);
+
     if (armed || edge)
-        PublishNow(armed, armed ? targetId : 0, tx, ty, px, py, stamp);
+        PublishNow(armed, armed ? targetId : 0, tx, ty, px, py, stamp,
+                   originValid, ox, oy, gen);
 
     // "Client not listening": armed for > 2 s while the bridge is down means
     // nothing is draining the aim publisher. Rate-limited so it stays readable.
@@ -214,24 +333,34 @@ static void RefPoint(bool atMouse, float px, float py, float& rx, float& ry)
     if (mx != 0.f || my != 0.f) { rx = mx; ry = my; }
 }
 
-// Retention validity gate — the INVARIANT. True only while `id` is still a legal
-// killaura target in the CURRENT EnemyTracker snapshot: present, alive,
-// damageable, and no further than range + margin from the reference point.
-// Anything else, including an id the snapshot no longer carries, is a hard drop.
-static bool RetainedTargetStillValid(int32_t id, float rx, float ry, float rangeT)
+// Retention validity gate — the INVARIANT, as a TRI-STATE. Absence from the
+// snapshot used to be folded into "invalid", which made the transient retention
+// was built to bridge indistinguishable from proof of death, and dropped the
+// lock ~35 ms after arming on an enemy that was still very much alive.
+//
+//   Valid   — in the CURRENT snapshot and still a legal killaura target:
+//             alive, health-barred, damageable, finite, within range + margin.
+//   Invalid — in the snapshot but FAILING one of those checks. Positive
+//             evidence the target should go: callers drop on the spot.
+//   Absent  — the id is not in this snapshot at all. Says nothing about whether
+//             the enemy died; it is the momentary miss the grace window covers.
+enum class RetainVerdict { Valid, Invalid, Absent };
+
+static RetainVerdict ClassifyRetainedTarget(int32_t id, float rx, float ry, float rangeT)
 {
-    if (id == 0) return false;
+    if (id == 0) return RetainVerdict::Invalid;
     const float dropR = rangeT + kKaRetainRangeMarginTiles;
     for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot()) {
         if (e.id != id) continue;
-        if (e.hp <= 0)        return false;   // dead
-        if (!e.hasHealthBar)  return false;   // same filter acquisition applied
-        if (e.isInvulnerable) return false;   // no longer damageable
-        if (!std::isfinite(e.x) || !std::isfinite(e.y)) return false;
+        if (e.hp <= 0)        return RetainVerdict::Invalid;   // dead
+        if (!e.hasHealthBar)  return RetainVerdict::Invalid;   // same filter acquisition applied
+        if (e.isInvulnerable) return RetainVerdict::Invalid;   // no longer damageable
+        if (!std::isfinite(e.x) || !std::isfinite(e.y)) return RetainVerdict::Invalid;
         const float dx = e.x - rx, dy = e.y - ry;
-        return dx * dx + dy * dy <= dropR * dropR;
+        return (dx * dx + dy * dy <= dropR * dropR) ? RetainVerdict::Valid
+                                                    : RetainVerdict::Invalid;
     }
-    return false;   // absent from the snapshot — gone
+    return RetainVerdict::Absent;   // not in THIS snapshot — bridgeable, not proof of death
 }
 
 // The selector's ranking values for one id, read out of the CURRENT snapshot:
@@ -279,9 +408,13 @@ static bool KeepIncumbentOverPick(int32_t heldId, const TargetSelector::Result& 
     float rx = px, ry = py;
     RefPoint(atMouse, px, py, rx, ry);
 
-    // Dead / gone / no longer damageable / past range+margin — the same
-    // invariant retention enforces, reused rather than re-stated.
-    if (!RetainedTargetStillValid(heldId, rx, ry, rangeT)) return false;
+    // Dead / no longer damageable / past range+margin — the same invariant
+    // retention enforces, reused rather than re-stated. Only Valid keeps the
+    // incumbent, and Absent counting as "cannot keep" is deliberate rather than
+    // accidental: an incumbent the snapshot does not carry cannot be SCORED
+    // against the challenger — CandidateScore reads that same snapshot and would
+    // fail two lines down — so there is nothing to bias the comparison with.
+    if (ClassifyRetainedTarget(heldId, rx, ry, rangeT) != RetainVerdict::Valid) return false;
 
     int   heldRank = 0,   candRank = 0;
     float heldDist = 0.f, candDist = 0.f;
@@ -388,10 +521,14 @@ void Tick()
         }
         if (now - s_lastIdlePublishMs >= 250ULL) {
             s_lastIdlePublishMs = now;
+            // Idle re-assert: disarmed, so there is no origin to carry. The
+            // generation is NOT bumped — nothing was refreshed — it is echoed
+            // so the client can see it is the same stale-but-honest disarm.
             PublishNow(false, 0, 0.f, 0.f,
                        s_px.load(std::memory_order_relaxed),
                        s_py.load(std::memory_order_relaxed),
-                       static_cast<uint32_t>(now));
+                       static_cast<uint32_t>(now),
+                       false, 0.f, 0.f, s_inGen.load(std::memory_order_relaxed));
         }
         return;
     }
@@ -466,10 +603,44 @@ void Tick()
     if (forced == 0 && s_heldTargetId != 0) {
         float rx = px, ry = py;
         RefPoint(atMouse, px, py, rx, ry);
-        if (!RetainedTargetStillValid(s_heldTargetId, rx, ry, rangeT)) {
-            dropReason = "retain-invalid";        // dead / gone / past range+margin
-        } else if (s_retainMisses > 0 && wall - s_retainSinceMs > kKaRetainMs) {
-            dropReason = "retain-expired";        // grace window used up
+        const RetainVerdict verdict = ClassifyRetainedTarget(s_heldTargetId, rx, ry, rangeT);
+        const bool expired = (s_retainMisses > 0 && wall - s_retainSinceMs > kKaRetainMs);
+        if (verdict == RetainVerdict::Invalid) {
+            dropReason = "retain-invalid";        // dead / not damageable / past range+margin
+        } else if (expired) {
+            // Grace window used up. The two ways a run can run out are worth
+            // telling apart in the trace: bridged selector misses on a target the
+            // snapshot still shows, vs an id the snapshot never brought back.
+            dropReason = (verdict == RetainVerdict::Absent) ? "retain-absent-expired"
+                                                           : "retain-expired";
+        } else if (verdict == RetainVerdict::Absent) {
+            // The id is missing from the snapshot, which is NOT proof it died —
+            // it is the transient kKaRetainMs exists for, so stay armed and count
+            // it against the window.
+            //
+            // Deliberately NOT the bridge path below: SelectKillAura reads the
+            // SAME snapshot, so forcing the held id through it would also come up
+            // empty and the lock would die as retain-resolve-failed — moving the
+            // bug, not fixing it. Hold the last aim point already committed for
+            // this target instead. Freezing the aim — i.e. giving up lead
+            // prediction — for at most 250 ms is the right trade against dropping
+            // the lock outright, which costs vanilla (missed) shots for the rest
+            // of the burst.
+            const float hx = s_tx.load(std::memory_order_relaxed);
+            const float hy = s_ty.load(std::memory_order_relaxed);
+            if (std::isfinite(hx) && std::isfinite(hy)) {
+                if (s_retainMisses == 0) {
+                    s_retainSinceMs = wall;
+                    // Transition-only (once per bridged run, never per refresh):
+                    // this is a BRIDGED drop, not a real one — no disarm edge.
+                    DBG_FILE_LOG("[KillAura] retained targetId=" << s_heldTargetId
+                                 << " reason=snapshot-absent (aim frozen, lock bridged, still armed)");
+                }
+                ++s_retainMisses;
+                ApplyState(true, s_heldTargetId, hx, hy, px, py, nullptr);
+                return;
+            }
+            dropReason = "retain-absent-no-aim";  // nothing sane to hold on to
         } else {
             // Re-resolve the SAME id through the selector's locked path so the
             // bridged aim point keeps its lead prediction instead of freezing.
@@ -543,31 +714,33 @@ State GetState()
     return s;
 }
 
-bool ComputeShotOrigin(float shotAngleRad, float& ox, float& oy)
+bool GetAuthoritativeInput(Input& out)
 {
-    if (!s_armed.load(std::memory_order_relaxed)) return false;
-    if (!std::isfinite(shotAngleRad)) return false;
+    // Generation first and last — see CommitInput. Anything but an exact match
+    // means a refresh landed while we were reading, and a torn origin is the
+    // precise failure this whole mechanism exists to prevent, so refuse it.
+    const uint32_t g0 = s_inGen.load(std::memory_order_acquire);
+    if (g0 == 0) return false;                                   // nothing published yet
+    if (!s_inValid.load(std::memory_order_acquire)) return false; // refresh accepted no origin
 
-    const float tx       = s_tx.load(std::memory_order_relaxed);
-    const float ty       = s_ty.load(std::memory_order_relaxed);
-    const float px       = s_px.load(std::memory_order_relaxed);
-    const float py       = s_py.load(std::memory_order_relaxed);
-    const float standoff = s_standoffTiles.load(std::memory_order_relaxed);
-    if (!std::isfinite(tx) || !std::isfinite(ty) ||
-        !std::isfinite(px) || !std::isfinite(py) || !std::isfinite(standoff))
-        return false;
+    Input v;
+    v.ox         = s_inOx.load(std::memory_order_relaxed);
+    v.oy         = s_inOy.load(std::memory_order_relaxed);
+    v.angleRad   = s_inAngle.load(std::memory_order_relaxed);
+    v.targetId   = s_inTargetId.load(std::memory_order_relaxed);
+    v.stampMs    = s_inStampMs.load(std::memory_order_relaxed);
+    v.generation = g0;
 
-    const float nx = tx - std::cos(shotAngleRad) * standoff;
-    const float ny = ty - std::sin(shotAngleRad) * standoff;
-    if (!std::isfinite(nx) || !std::isfinite(ny)) return false;
+    if (s_inGen.load(std::memory_order_acquire) != g0) return false;   // torn
 
-    // Hard cap — never move the origin further than maxOffset from the player.
-    const float maxOff = s_maxOffsetTiles.load(std::memory_order_relaxed);
-    const float dx = nx - px, dy = ny - py;
-    if (dx * dx + dy * dy > maxOff * maxOff) return false;
+    // Freshness. Unsigned wrap is intentional and correct across the 49.7-day
+    // GetTickCount64 low-word rollover: the difference stays small.
+    const uint32_t now = static_cast<uint32_t>(GetTickCount64());
+    if (now - v.stampMs > kKaInputMaxAgeMs) return false;
 
-    ox = nx;
-    oy = ny;
+    if (!std::isfinite(v.ox) || !std::isfinite(v.oy)) return false;
+
+    out = v;
     return true;
 }
 

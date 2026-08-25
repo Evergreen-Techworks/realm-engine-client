@@ -245,7 +245,15 @@ bool IsDurablePocketTemporal(const MapInput& in, const Core::Temporal::Ctx& ctx,
     // non-stand pocket goal would otherwise be validated by the zone-blind
     // Temporal alone and could sit inside a live blast.
     if (!Core::ZoneClear(in, p)) return false;
-    return Core::Temporal::PathClear(ctx, in.player, in.speed, p);
+    // DWELL HORIZON: a STAND is the one query where "the player is still standing
+    // there later" is literally true and worth knowing — judging it over the FULL
+    // horizon is how a slow-closing wall gets us pre-positioning early (plan 95).
+    // A pocket/goal we merely intend to WALK to is re-solved and re-validated long
+    // before the horizon runs out, so it only has to hold up for kUDwellMs past
+    // arrival; demanding the full horizon there is what made the dodge refuse to
+    // enter shot-wall rooms it is supposed to weave through.
+    const float dwellMs = isStand ? Core::Temporal::kHorizonMs : kUDwellMs;
+    return Core::Temporal::PathClear(ctx, in.player, in.speed, p, dwellMs);
 }
 
 } // namespace

@@ -4,11 +4,18 @@ import { sendDllFeature, getDllAim, getDllAimAgeMs, RuntimeScheduler } from './a
 /**
  * Killaura — outbound half.
  *
- * The DLL picks the target and publishes an `aim` state over the named pipe
- * (DllAimBus). This plugin rewrites the OUTGOING `PLAYERSHOOT.projectilePosition`
- * so the *server's* simulation of the shot starts adjacent to that target. The
- * local bullet origin is the DLL's job (plan 87) — nothing here pulls a trigger,
- * blocks a packet, or lies about `playerPosition`.
+ * The DLL picks the target, SOLVES THE SHOT ORIGIN ONCE, and publishes both over
+ * the named pipe (DllAimBus) stamped with a generation. This plugin rewrites the
+ * OUTGOING `PLAYERSHOOT.projectilePosition` to that published origin so the
+ * *server's* simulation of the shot starts where the DLL already put the local
+ * bullet. The local bullet origin is the DLL's job (plan 87) — nothing here pulls
+ * a trigger, blocks a packet, or lies about `playerPosition`.
+ *
+ * IT DOES NOT COMPUTE AN ORIGIN. It used to: it re-derived one from
+ * `tx - cos(angle) * standoff` off an aim sample up to 250 ms stale, while the
+ * DLL armed the local bullet from a LIVE solve at spawn time. Nothing forced the
+ * two to match, so the client claimed a hit the server's simulation never
+ * produced. One value, one generation, or no rewrite at all.
  *
  * Everything fails closed: a stale/absent aim, a non-finite number, an origin
  * beyond the DLL's hard cap, or a packet whose serialize round-trip is not
@@ -20,7 +27,31 @@ export function register(ctx: PluginContext) {
   // Off by default — this rewrites outbound game traffic; opt in explicitly.
   ctx.enabled = false;
 
-  const stats = { rewrites: 0, enemyHitsSent: 0, enemyHitsBlocked: 0 };
+  const stats = {
+    rewrites: 0,
+    enemyHitsSent: 0,
+    enemyHitsBlocked: 0,
+    /** Shots forwarded unchanged because no non-stale authoritative origin was held. */
+    staleSkips: 0,
+    /** Generation of the origin the LAST outbound rewrite used. See the diag line. */
+    lastGen: 0,
+  };
+
+  /**
+   * Freshness bound for the aim sample, in ms of LOCAL RECEIVE time.
+   *
+   * Was 250 ms, which is ~30 DLL refreshes (KillAura::Tick self-throttles to
+   * 8 ms) — an origin that old describes where the target WAS, not where the DLL
+   * just put the bullet. A shot is a discrete event; the sample has to be
+   * near-current or it is not evidence about this shot.
+   *
+   * 80 ms is the floor that still clears the transport: the DLL's pipe writer
+   * drains pending aim payloads on a 25 ms loop (IpcBridge.cpp), so a live
+   * publisher lands a sample roughly every 25-40 ms and 80 ms leaves ~2 write
+   * cycles of slack for node event-loop jitter without ever admitting a sample
+   * from a stalled publisher.
+   */
+  const AIM_MAX_AGE_MS = 80;
 
   /**
    * Serialize-identity self-check. `ClientConnection` forwards a modified packet
@@ -182,25 +213,31 @@ export function register(ctx: PluginContext) {
     if (!ctx.getSetting<boolean>('rewriteOutbound')) return;
     if (!packet.isDefined) return;                       // unknown shape -> never touch
 
-    const aim = getDllAim(250);                          // fail-closed on staleness
-    if (!aim || !aim.armed || aim.targetId === 0) return;
+    // Fail closed on staleness. `originValid === false` means that DLL refresh
+    // solved no origin at all (the standoff/maxOffset caps refused it), so there
+    // is nothing authoritative to forward — the shot goes out untouched, exactly
+    // as the DLL left the local bullet untouched.
+    const aim = getDllAim(AIM_MAX_AGE_MS);
+    if (!aim || !aim.armed || aim.targetId === 0 || !aim.originValid) {
+      stats.staleSkips++;
+      return;
+    }
 
-    const angle = packet.data.angle;
     const player = packet.data.playerPosition;
     const proj = packet.data.projectilePosition;
-    if (typeof angle !== 'number' || !Number.isFinite(angle)) return;
     if (!player || !proj) return;
     if (!Number.isFinite(player.x) || !Number.isFinite(player.y)) return;
 
-    // The ONE shot-origin formula. Mirrors KillAura::ComputeShotOrigin in
-    // internal/src/features/combat/autoaim/modes/KillAura.cpp. Using the PACKET'S OWN
-    // angle makes it mode-agnostic: it is correct whether the player aims at the
-    // target or at the mouse.
-    const ox = aim.tx - Math.cos(angle) * aim.standoffTiles;
-    const oy = aim.ty - Math.sin(angle) * aim.standoffTiles;
+    // The DLL's ONE origin, forwarded verbatim. No arithmetic here on purpose:
+    // any expression in this file is a second implementation of the formula in
+    // KillAura::SolveShotOrigin and can drift from it.
+    const ox = aim.ox;
+    const oy = aim.oy;
     if (!Number.isFinite(ox) || !Number.isFinite(oy)) return;
 
-    // HARD CAP. Never displace the origin further than the DLL allows.
+    // HARD CAP, re-checked against the PACKET'S OWN player position. The DLL
+    // already capped against the position it held at solve time; this is an
+    // independent net against the player having moved since.
     const dx = ox - player.x, dy = oy - player.y;
     if (dx * dx + dy * dy > aim.maxOffsetTiles * aim.maxOffsetTiles) return;
 
@@ -209,6 +246,7 @@ export function register(ctx: PluginContext) {
     packet.data.projectilePosition = { x: ox, y: oy };
     packet.modified = true;
     stats.rewrites++;
+    stats.lastGen = aim.generation;
   });
 
   // ── Lifecycle + diagnostics ─────────────────────────────────────────────
@@ -231,6 +269,15 @@ export function register(ctx: PluginContext) {
       enemyHitsBlocked: stats.enemyHitsBlocked,
       refused: armState === 'refused',
       aimAgeMs: getDllAimAgeMs(),
+      // The generation the LAST outbound rewrite used. Its counterpart is `gen=`
+      // on the DLL trace log's [ShotOriginHook] "REWRITTEN" line, which is the
+      // generation the LOCAL bullet rewrite used. The two consumers sample the
+      // same published value at different latencies, so they will not always be
+      // equal — but a LARGE, GROWING gap means the server is being told an origin
+      // from a refresh the local bullet never used, which is the divergence that
+      // makes the server refuse the hit claim.
+      gen: stats.lastGen,
+      staleSkips: stats.staleSkips,
     };
     ctx.setData('killaura', diag);
     ctx.broadcastData('killaura', diag);
@@ -244,6 +291,10 @@ export function register(ctx: PluginContext) {
     //
     //   GREP THE PROXY LOG FOR:  [Killaura] diag
     //   (%TEMP%\\realm-engine-proxy.log)
+    // `gen` and `staleSkips` are PRINTED but deliberately NOT in the change key.
+    // gen moves in lockstep with rewrites (already keyed), and staleSkips ticks
+    // on every shot fired while unarmed — keying on it would turn a steady
+    // "enabled but no target" session into one log line every second.
     const key = `${diag.armed}|${diag.refused}|${diag.targetId}|${diag.rewrites}`
               + `|${diag.enemyHitsSent}|${diag.enemyHitsBlocked}`;
     if (key !== lastDiagKey) {
@@ -251,7 +302,7 @@ export function register(ctx: PluginContext) {
       ctx.log(`diag armed=${diag.armed} refused=${diag.refused}`
         + ` target=${diag.targetId} rewrites=${diag.rewrites}`
         + ` enemyHitsSent=${diag.enemyHitsSent} enemyHitsBlocked=${diag.enemyHitsBlocked}`
-        + ` aimAgeMs=${diag.aimAgeMs}`
+        + ` aimAgeMs=${diag.aimAgeMs} gen=${diag.gen} staleSkips=${diag.staleSkips}`
         + (diag.rewrites > 0 && diag.enemyHitsSent === 0
             ? '  <-- bullets moved but the client NEVER claimed a hit'
             : ''));

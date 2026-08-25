@@ -170,8 +170,8 @@ static bool WriteAim(HANDLE hPipe, char* msgBuf, int msgBufSize)
         local = s_aim;
     }
 
-    // Ample for the fixed 11-token layout (see IpcMessages::EncodeAim).
-    char payload[192] = {};
+    // Ample for the fixed 15-token layout (see IpcMessages::EncodeAim).
+    char payload[256] = {};
     if (IpcMessages::EncodeAim(payload, sizeof(payload), local) < 0)
         return true;   // encode failure — skip this tick
     const int len = IpcMessages::BuildAim(msgBuf, msgBufSize, payload);

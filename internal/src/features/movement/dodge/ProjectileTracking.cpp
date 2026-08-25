@@ -221,15 +221,32 @@ void* __fastcall SpawnProjectileDetour(
 
     // KillAura: arm the ONE-SHOT origin override for the projectile the spawn
     // funnel just handed back. The position we pass is ABSOLUTE world tiles —
-    // ComputeShotOrigin already returns that, and the setter takes it in that
+    // KillAura::Input carries it in that space, and the setter takes it in that
     // space, so nothing is rebased here (rebasing it into shooter-relative space
     // and handing it to the spawn call was the bug this replaces). The actual
     // move happens in ShotOriginHook's detour on KJMONHENJEN::BDEBGEHBPCJ.
+    //
+    // READS the authoritative origin — it does NOT solve one. This used to call
+    // KillAura::ComputeShotOrigin(angle, ...) live, which produced a SECOND,
+    // independent origin that the outbound rewrite the server sees had no reason
+    // to match. Reading the one published value with its generation is the fix;
+    // see KillAura.h. A refused read leaves the shot completely vanilla.
     bool  kaMoved = false;
     float kaX = 0.f, kaY = 0.f;
-    if (isLocalShot && KillAura::ComputeShotOrigin(angle, kaX, kaY)) {
-        ShotOriginHook::ArmOneShot(ret, static_cast<int32_t>(ownerObjId), kaX, kaY);
-        kaMoved = ShotOriginHook::IsInstalled();
+    if (isLocalShot) {
+        KillAura::Input ka;
+        if (KillAura::GetAuthoritativeInput(ka)) {
+            kaX = ka.ox;
+            kaY = ka.oy;
+            ShotOriginHook::ArmOneShot(ret, static_cast<int32_t>(ownerObjId),
+                                       kaX, kaY, ka.generation);
+            kaMoved = ShotOriginHook::IsInstalled();
+        } else if (KillAura::IsEnabled()) {
+            // Enabled but no current sample: witness it, then leave the shot
+            // alone. Gated on IsEnabled so an ordinary shot with killaura off is
+            // not counted as a refusal.
+            ShotOriginHook::NoteStaleInput();
+        }
     }
 
     bool ownerIsEnemy = false;
