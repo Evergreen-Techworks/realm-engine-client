@@ -31,6 +31,7 @@ using TestTAB::DodgeMode;
 #include "DirectX.h"
 #include "ProjectileTracking.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
+#include "features/combat/autoaim/modes/KillAura.h"
 #include "BagLooter.h"
 #include "RuntimeOffsets.h"
 #include "core/runtime/MemRead.h"
@@ -662,6 +663,8 @@ void TestTAB::Tick(bool menuVisible)
                 UDodge::RenderDebugOverlay(camX, camY, angleRad, zoom, cx, cy);
             }
             CombatTAB::FeatAutoNexus::RenderDebugPath(camX, camY, angleRad, zoom, cx, cy);
+            // Killaura lock overlay — self-gates on its own enable + overlay toggle.
+            KillAura::RenderOverlay(camX, camY, angleRad, zoom, cx, cy);
         }
 
         // Locked enemy visualization — red reticle + two rings:

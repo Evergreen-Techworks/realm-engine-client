@@ -17,9 +17,14 @@ void Tick();
 
 void  SetEnabled(bool on);            bool  IsEnabled();
 void  SetMode(Mode m);                Mode  GetMode();
-void  SetRangeTiles(float t);         float GetRangeTiles();       // clamp [1, 40], default 8
+void  SetRangeTiles(float t);         float GetRangeTiles();       // clamp [1, 40], default 16
 void  SetStandoffTiles(float t);      float GetStandoffTiles();    // clamp [0.05, 1.5], default 0.35
 void  SetMaxOffsetTiles(float t);     float GetMaxOffsetTiles();   // clamp [1, 40], default 12
+
+// In-world lock overlay: the locked target's marker plus the selection-range
+// ring around the reference point, so a target about to fall out of range is
+// visible BEFORE the lock drops. Defaults ON — visibility is the whole point.
+void  SetOverlayEnabled(bool on);     bool  IsOverlayEnabled();
 
 // Forced target override (auto-break-walls, plan 89). 0 = clear.
 void    SetForcedTargetId(int32_t id);
@@ -44,5 +49,10 @@ bool ComputeShotOrigin(float shotAngleRad, float& ox, float& oy);
 
 // Render thread. Draws the Combat-tab section.
 void RenderSettings();
+
+// Render thread, called from the shared world-overlay pass with the frame's
+// camera basis (same signature/contract as the dodge engines' RenderDebugOverlay).
+// Self-gates on IsEnabled() && IsOverlayEnabled(); draws only, never logs.
+void RenderOverlay(float camX, float camY, float angle, float zoom, float cx, float cy);
 
 } // namespace KillAura
