@@ -150,16 +150,29 @@ inline bool AddProjectilePathThreat(Threat& threat, const WorldProjectile& proje
 	// Subsequent samples rebase cached-path deltas onto the live position
 	// so the path is correct even when the cache is in offset coordinates.
 	Detail::AddThreatSample(threat, projectile.x, projectile.y, 0.f);
+	bool  shotEnds  = false;
+	bool  spanned   = false;   // the cache reached past the window (coverage complete)
 	for (int i = anchorIdx + 1; i < count && threat.sampleCount < kMaxPathSamples; ++i) {
 		if (!Detail::IsFinitePoint(projectile.pathX[i], projectile.pathY[i])) break;
 		const float sampleTimeMs = projectile.pathSampleTimesMs[i];
 		if (!Detail::IsFinite(sampleTimeMs)) break;
 		if (Detail::IsFinite(projectile.lifetime) && projectile.lifetime > 0.f && sampleTimeMs > projectile.lifetime) break;
 		const float futureMs = std::max(0.f, sampleTimeMs - baseTimeMs);
-		if (futureMs > reactWindowMs) break;
+		if (futureMs > reactWindowMs) { spanned = true; break; }   // cache reaches past the window
 		const float dx = projectile.pathX[i] - anchorX;
 		const float dy = projectile.pathY[i] - anchorY;
 		Detail::AddThreatSample(threat, projectile.x + dx, projectile.y + dy, futureMs);
+		shotEnds  = Detail::IsFinite(projectile.lifetime) && projectile.lifetime > 0.f
+		         && sampleTimeMs >= projectile.lifetime - 1.f;
+	}
+	// TIME COVERAGE (cached path is bounded from spawn — WorldTAB.h
+	// kWorldProjectilePathCoverMs). A long-lived shot outruns the cache, and a
+	// path that stops short of the window while the shot is STILL ALIVE would
+	// silently under-state danger. Refuse it (resetting what we appended) so the
+	// caller re-samples fresh from positionAt over the full window.
+	if (!spanned && !shotEnds && threat.sampleCount < kMaxPathSamples) {
+		threat.sampleCount = 0;
+		return false;
 	}
 	return threat.sampleCount >= 2;
 }

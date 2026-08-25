@@ -1058,6 +1058,50 @@ int CountActive()
     return n;
 }
 
+// ── Per-source arming semantics (the ONE definition) ────────────────────────
+// Is a zone dangerous from the MOMENT it was captured, or does it have a flight /
+// telegraph phase to wait out first? Per-SOURCE, because the four capture paths
+// mean genuinely different things (see WorldTAB.h kAoeSrc*):
+//
+//   kAoeSrcExpl  - FGOFPGIIEPC is the explosion CONTROLLER; it empirically fires
+//                  AT detonation, so the blast is full strength from elapsed=0
+//                  and ends when `lifetime` runs out. Its `arcMs` is the bomb's
+//                  already-completed travel time, NOT a landing delay: reading it
+//                  as one (three consumers did) modelled up to 2.1 s of live,
+//                  full-strength blast as inert. ARMED ON CAPTURE.
+//   kAoeSrcSfx   - ShowEffect packet; depends on the effect:
+//                    NOVA(5) / AoE(39)          - go off at the announced spot as
+//                                                 announced. ARMED ON CAPTURE.
+//                    THROW(4)                   - an arc from pos1 to pos2; the
+//                                                 disc at pos2 is the LANDING spot.
+//                    CIRCLE_TELEGRAPH(23)       - a ground warning that resolves at
+//                                                 the END of its duration.
+//                                                 Both: telegraphed, arm window.
+//   kAoeSrcGjj / kAoeSrcFhoh - the throwable entity and its landing-circle visual.
+//                  The disc is where the throwable WILL land and `lifetime` is the
+//                  flight time, so danger is at the end. The detonation itself
+//                  arrives separately as a kAoeSrcExpl entry. Arm window.
+bool ArmedOnCapture(const WorldAoe& a)
+{
+    if (a.source == kAoeSrcExpl) return true;
+    if (a.source == kAoeSrcSfx)
+        return a.sfxEffectType == kSfxType_Nova || a.sfxEffectType == kSfxType_AoE;
+    return false;
+}
+
+float LifetimeMs(const WorldAoe& a)
+{
+    return (std::isfinite(a.lifetime) && a.lifetime > 0.f) ? a.lifetime : 2000.f;
+}
+
+float LandDelayMs(const WorldAoe& a)
+{
+    if (ArmedOnCapture(a)) return 0.f;
+    // Telegraphed: the flight time when a source carries one, else the full
+    // lifetime (the disc IS the countdown).
+    return (std::isfinite(a.arcMs) && a.arcMs > 0.f) ? a.arcMs : LifetimeMs(a);
+}
+
 int CountHooks()
 {
     int c = 0;

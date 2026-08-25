@@ -99,6 +99,14 @@ struct Ctx {
     // of one chord. Only valid where sub[i]; slow lanes never read it.
     Vec2  mid[kMaxProjectiles][kUTemporalSteps];
     bool  sub[kMaxProjectiles];             // this lane needs the half-step samples
+    // SPEED-SCALED ARRIVAL MARGIN (see kUPredErrMs, UDodgeTypes.h). `speed[i]` is
+    // the lane's fastest per-step travel over the march grid expressed in
+    // tiles/ms — free, because Build already measures that chord for the fast-lane
+    // test. `arrPad[i]` is the arrival margin it implies, precomputed
+    // (kUArrivalMargin + speed·kUPredErrMs, capped) so the queries still do ONE
+    // add per lane and the per-candidate cost is unchanged.
+    float speed[kMaxProjectiles];           // tiles/ms, max per-step over the horizon
+    float arrPad[kMaxProjectiles];          // kUArrivalMargin + speed·kUPredErrMs (capped)
     // TRUSTED PREFIX (the honest freeze). `trust[i]` is the last march index whose
     // sample is a real prediction; kUTemporalSteps means the lane is traced all the
     // way to the horizon (or to the shot's death) and needs no special handling —
@@ -109,6 +117,11 @@ struct Ctx {
     // instead. See the UNKNOWN TAIL comment in UDodgeCore.cpp.
     int   trust[kMaxProjectiles];
 };
+// Ctx is a STACK LOCAL in Solver::Solve and in UDodge.cpp's per-frame step
+// re-validation (the worker pathfinder keeps a static). 14,692 bytes at
+// kMaxProjectiles = 96 — keep it well inside a stack frame's budget; if this
+// starts approaching the ceiling, the arrays are what to shrink, not the horizon.
+static_assert(sizeof(Ctx) <= 32768, "Temporal::Ctx must stay small enough to be a stack local in Solve()");
 
 // Sample one lane's spacetime polyline at each march time (clamp past the traced
 // horizon — never invents "safe"). outPos must hold kSamples entries.

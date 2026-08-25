@@ -333,6 +333,13 @@ void Build(const DangerMap& map, float hitScale, Vec2 cullCenter,
         for (int k = 0; k < kUTemporalSteps; ++k)
             maxSweep = std::max(maxSweep, Len(Sub(samples[k + 1], samples[k])));
         out.sub[idx] = (maxSweep > kUTemporalMaxSweepTiles);
+        // Lane SPEED (tiles/ms) from the same chord — one divide per lane, once
+        // per solve. MAX over the steps, not mean: the margin has to hold at the
+        // lane's fastest moment, and a lane whose trace ran short reads slow on
+        // the clamped tail (taking the max keeps the moving part honest).
+        out.speed[idx]  = maxSweep / kUTemporalStepMs;
+        out.arrPad[idx] = kUArrivalMargin +
+            std::min(out.speed[idx] * kUPredErrMs, kUPredPadMaxTiles);
         if (out.sub[idx])
             SampleLaneTimes(L, kUTemporalStepMs * 0.5f, kUTemporalSteps, out.mid[idx]);
         // TRUSTED PREFIX. Samples past the polyline's last point are the clamp, not
@@ -475,7 +482,7 @@ bool PathClear(const Ctx& c, Vec2 player, float speed, Vec2 P, float dwellMs)
     };
 
     for (int li = 0; li < c.count; ++li) {
-        const float half  = c.half[li] + kUArrivalMargin;
+        const float half  = c.half[li] + c.arrPad[li];   // speed-scaled (kUPredErrMs)
         const int   trust = c.trust[li];
         for (int k = 0; k < kUTemporalSteps; ++k) {
             if (k >= trust) break;                   // untrusted tail — handled below
@@ -538,8 +545,9 @@ bool PathClear(const Ctx& c, Vec2 player, float speed, Vec2 P, float dwellMs)
 
 // ARRIVAL-TIME SAFETY (pathfinder query). Standing at B over the arrival window
 // [tA, tB], each bullet sweeps from BulletPosAt(tA) to BulletPosAt(tB); the
-// swept-segment min-Chebyshev to B must exceed the effective hit half +
-// kUArrivalMargin, or a bullet is at B while the player is there. Swept (not
+// swept-segment min-Chebyshev to B must exceed the effective hit half + the
+// lane's arrival pad (kUArrivalMargin plus its speed term — see kUPredErrMs), or
+// a bullet is at B while the player is there. Swept (not
 // endpoint-only) so a fast bullet cannot tunnel across B between arrival times.
 //
 // NOTE (transit/dwell): unlike PathClear this query carries NO stand-still
@@ -556,7 +564,7 @@ bool PathClear(const Ctx& c, Vec2 player, float speed, Vec2 P, float dwellMs)
 bool ArrivalClear(const Ctx& c, Vec2 B, float tA, float tB)
 {
     for (int li = 0; li < c.count; ++li) {
-        const float half = c.half[li] + kUArrivalMargin;
+        const float half = c.half[li] + c.arrPad[li];   // speed-scaled (kUPredErrMs)
         // UNKNOWN TAIL: this edge's window runs past what the lane's trace covers,
         // so past that point the lane is judged against its whole traced path
         // (see TracedPathClear). One test covers the entire untrusted remainder —

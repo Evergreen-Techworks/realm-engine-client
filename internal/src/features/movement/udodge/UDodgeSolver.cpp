@@ -458,8 +458,9 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         //     AT THE MOMENT the player is there, even though a lane covers it NOW.
         //     This is how we slip in FRONT of / behind a shot instead of treating
         //     its whole lane as a wall (the "bubble"). PathClear keeps kUArrivalMargin
-        //     of comfort, so a slightly-off prediction still can't clip — smart, not
-        //     reckless.
+        //     of comfort PLUS a per-lane speed term (kUPredErrMs), so a slightly-off
+        //     prediction still can't clip — and the faster the shot, the more room
+        //     that slop buys it. Smart, not reckless.
         const bool instSafe = cands[i].safe &&
                               Core::SegmentSafety(in, in.player, cands[i].pos) >= kULatencyPad;
         // Core::ZonePathClear is a HARD FLOOR here, not a refinement. Temporal models

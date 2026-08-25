@@ -50,4 +50,25 @@ namespace AoeTracking {
 
     // How many native spawn hooks are active (effect paths + explosion path).
     int  CountHooks();
+
+    // ── Per-source arming semantics (ONE definition, all consumers) ──────────
+    // Every consumer of WorldAoe has to answer the same two questions — "when
+    // does this zone start doing damage?" and "how long does it last?" — and the
+    // answer is a property of the CAPTURE PATH, not of the consumer. It lived
+    // inline in four places and three of them read `arcMs` as a landing delay,
+    // which is flatly wrong for kAoeSrcExpl (see ArmedOnCapture in the .cpp).
+    // Anything that needs a landing time MUST call LandDelayMs, never read
+    // `arcMs` directly.
+
+    /// True when the zone is full-strength damage from the MOMENT it was
+    /// captured — no flight / telegraph phase to wait out.
+    bool  ArmedOnCapture(const WorldAoe& a);
+
+    /// Zone duration (ms from spawnTick), with the shared 2000 ms fallback for an
+    /// unreadable/absurd lifetime.
+    float LifetimeMs(const WorldAoe& a);
+
+    /// Ms after spawnTick at which the zone starts doing damage: 0 for an
+    /// armed-on-capture zone, the telegraphed flight time otherwise.
+    float LandDelayMs(const WorldAoe& a);
 }

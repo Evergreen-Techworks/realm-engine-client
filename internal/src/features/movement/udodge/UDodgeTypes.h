@@ -58,6 +58,15 @@ constexpr float kUOccPlayerHalfEdge = 0.2285f;
 // against a shot's edge; this is the only buffer beyond the true hit geometry
 // (bulletHalf + kUPlayerHalf), so a small value hugs the boundary. NO user setting.
 constexpr float kULatencyPad = 0.05f;
+// SPEED-INDEPENDENT ON PURPOSE — do not "fix" this into a speed-scaled pad.
+// kULatencyPad gates the SPATIAL tests only, and those measure against a whole
+// LANE: the lane already covers the bullet's entire forward path over the trace
+// window, so it is infinitely conservative in time and a faster bullet does not
+// end up sitting any closer to it. The margin that genuinely has to absorb
+// speed-scaled error is the TEMPORAL one (kUArrivalMargin + kUPredErrMs below),
+// because that one compares a bullet and the player at an INSTANT. An earlier
+// plan (78, "Hole E") diagnosed the speed sensitivity here; the audit corrected
+// it to the arrival margin. Leaving this note so it is not re-opened.
 
 // Smart-direction objective weights over the SAFE candidate set. Safety is a
 // hard constraint (every scored point is already provably safe); these only
@@ -155,6 +164,35 @@ constexpr float kULookaheadTiles = 6.0f;  // horizon radius for the durable-pock
 // Must stay > 0 so a slightly-off prediction can never let a real hit through.
 constexpr float kUArrivalMargin = 0.10f;   // step 3 tightening: was 0.18; lets the player thread ~0.08 tiles closer to moving shots (still a real cushion — SWEPT test folds full hit half + player half)
 static_assert(kUArrivalMargin > 0.f, "kUArrivalMargin must stay > 0: a zero/negative arrival margin lets the player accept a point a bullet is exactly on at arrival (a hit)");
+
+// SPEED TERM on the arrival margin. kUArrivalMargin above is a fixed COMFORT
+// slack, but the errors the temporal test actually has to absorb are TIMING
+// errors, and a timing error becomes a DISTANCE error in proportion to how fast
+// the bullet is moving: the same 20 ms of slop is ~0.12 tiles on a 6 tiles/s
+// shot and ~0.24 on a 12 tiles/s one. So the effective margin is
+//     half + kUArrivalMargin + laneSpeed x kUPredErrMs
+// with laneSpeed precomputed per lane at Ctx build time (Core::Temporal::Build),
+// which leaves PathClear / ArrivalClear at exactly their previous per-candidate
+// cost.
+//
+// kUPredErrMs is "how far in TIME the prediction may be off", and it is sized
+// from the two irreducible timing errors in this pipeline:
+//   • spawnTick / elapsed comes from GetTickCount64, whose resolution is one
+//     scheduler tick (~15.6 ms) — the bullet's phase along its own path is only
+//     ever known to that precision;
+//   • one 60 fps frame (~16.7 ms) passes between the solve and the move actually
+//     being applied, during which the bullet keeps moving.
+// Those are independent, so ~sqrt(15.6² + 16.7²) ≈ 23 ms; 20 ms is the round
+// number just under that, chosen on the TIGHT-WEAVING side deliberately (the
+// swept-segment tests and the fast-lane half-steps already cover the geometric
+// chord error, so this term must not also pay for that). The march grid's 100 ms
+// spacing is NOT in here: steps are swept, not sampled at endpoints.
+constexpr float kUPredErrMs = 20.f;
+// Ceiling on the speed term (tiles). A lane whose sampled speed is absurd (bad
+// offsets, a ghost sample) must not be able to inflate the margin until nothing
+// is admissible — refusing to move is its own way of dying. 0.30 tiles is
+// reached at 15 tiles/s, already past any real shot.
+constexpr float kUPredPadMaxTiles = 0.30f;
 
 // Clearance (tiles) a cell needs BEYOND the server hit boundary to count as a
 // DURABLE resting pocket / route goal, and the comfort a HELD stand keeps. This

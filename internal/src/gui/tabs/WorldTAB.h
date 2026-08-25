@@ -75,7 +75,22 @@ static constexpr uint8_t TCOND_NOWALK  = 0x10;
 // WorldProjectile — SpawnProjectile hook + WorldManager KJMONHENJEN containers (DIA4A offsets).
 // Filled from ProjectileTracking::SnapshotToWorld and WM dict/list merge on each refresh.
 // ─────────────────────────────────────────────────────────────────────────────
-static constexpr int kWorldProjectilePathSampleCap = 24;
+// ── Cached trajectory sampling (ProjectileTrajectory::CachePath) ────────────
+// Sampled at a FIXED TIME STEP, not at lifetime/(N-1). The old fraction-of-
+// lifetime scheme put 87 ms between samples on a 2000 ms shot, 217 ms at 5 s and
+// 435 ms at 10 s, while every consumer LINEARLY INTERPOLATES between them: a wavy
+// shot (Flash period ~600 ms) was reconstructed as its chord, so the model was
+// conservative about a curve the bullet never flies — dangerous where the bullet
+// is not, safe where it is. A fixed 50 ms step is ~12 samples per wavy period at
+// any lifetime.
+// The span is bounded by the sample budget (cover = (cap-1) x step), so a shot
+// that outlives the cache simply runs out of cached path; consumers detect that
+// (their cached-path builders refuse a path that stops short of the window they
+// need while the shot is still alive) and re-sample fresh from positionAt.
+static constexpr float kWorldProjectilePathStepMs    = 50.f;
+static constexpr int   kWorldProjectilePathSampleCap = 48;      // 47 x 50 ms = 2350 ms
+static constexpr float kWorldProjectilePathCoverMs   =
+    static_cast<float>(kWorldProjectilePathSampleCap - 1) * kWorldProjectilePathStepMs;
 
 struct WorldProjectile
 {
@@ -228,9 +243,10 @@ struct WorldAoe
                                    // as the arming window so severity ramps during arc, peaks at blast.
                                    // CAVEAT for kAoeSrcExpl: FGOFPGIIEPC fires AT detonation, so its
                                    // arcMs is travel time ALREADY SPENT, not a landing delay — the
-                                   // blast is live from elapsed=0. udodge (UDodgeSensors::
-                                   // ZoneArmedOnCapture) accounts for this; pjdodge and autonexus
-                                   // still read it as a delay.
+                                   // blast is live from elapsed=0. DO NOT read this field as a
+                                   // landing time: call AoeTracking::LandDelayMs, which applies the
+                                   // per-source arming rule every consumer (udodge, pjdodge,
+                                   // autonexus, the overlays) now shares.
     uint64_t spawnTick   = 0;      // GetTickCount64() at capture time
     bool     valid       = false;
     bool     isDamaging      = false;  // true = throwable / explosion AOE

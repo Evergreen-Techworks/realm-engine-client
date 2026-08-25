@@ -128,14 +128,26 @@ bool AddCachedPath(Threat& t, const WorldProjectile& p, float reactWindowMs, flo
     const float baseMs = IsFinite(p.pathSampleTimesMs[anchor]) ? p.pathSampleTimesMs[anchor] : elapsedMs;
 
     AddSample(t, p.x, p.y, 0.f);
+    bool  shotEnds  = false;
+    bool  spanned   = false;   // the cache reached past the window (coverage complete)
     for (int i = anchor + 1; i < count && t.sampleCount < kMaxPathSamples; ++i) {
         if (!IsFinitePoint(p.pathX[i], p.pathY[i])) break;
         const float sMs = p.pathSampleTimesMs[i];
         if (!IsFinite(sMs)) break;
         if (IsFinite(p.lifetime) && p.lifetime > 0.f && sMs > p.lifetime) break;
         const float futureMs = std::max(0.f, sMs - baseMs);
-        if (futureMs > reactWindowMs) break;
+        if (futureMs > reactWindowMs) { spanned = true; break; }   // cache reaches past the window
         AddSample(t, p.x + (p.pathX[i] - ax), p.y + (p.pathY[i] - ay), futureMs);
+        shotEnds  = IsFinite(p.lifetime) && p.lifetime > 0.f && sMs >= p.lifetime - 1.f;
+    }
+    // TIME COVERAGE (cached path is bounded from spawn — WorldTAB.h
+    // kWorldProjectilePathCoverMs). A long-lived shot outruns the cache, and a
+    // path that stops short of the window while the shot is STILL ALIVE would
+    // silently under-state danger. Refuse it (resetting what we appended) so the
+    // caller re-samples fresh from positionAt over the full window.
+    if (!spanned && !shotEnds && t.sampleCount < kMaxPathSamples) {
+        t.sampleCount = 0;
+        return false;
     }
     return t.sampleCount >= 2;
 }

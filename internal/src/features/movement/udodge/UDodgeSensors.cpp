@@ -182,15 +182,28 @@ bool LaneFromCachedPath(LaneThreat& lane, const WorldProjectile& p, float elapse
         lastIdx = i;
         if (LaneTraceDone(pathLen, laneCap, lane.pointTimesMs[lane.pointCount - 1])) break;
     }
-    // A COMPLETE cache spans the whole lifetime (ProjectileTrajectory::CachePath
-    // samples [0, lifetime] into kWorldProjectilePathSampleCap points), so consuming
-    // its final sample means we traced the shot to its death. A cache that was cut
-    // short by a failed positionAt read ends early — that tail is genuinely unknown.
+    // Did the trace reach the shot's DEATH? CachePath pins its final sample exactly
+    // on the lifetime whenever the shot dies inside the cached span, so consuming
+    // that sample means we traced the shot out. A cache cut short by a failed
+    // positionAt read — or by its own time budget — ends earlier, and that tail is
+    // genuinely unknown.
     if (lastIdx == count - 1 && IsFinite(p.lifetime) && p.lifetime > 0.f &&
         IsFinite(p.pathSampleTimesMs[count - 1]) &&
         p.pathSampleTimesMs[count - 1] >= p.lifetime - 1.f)
         lane.tailAtShotEnd = true;
-    return lane.pointCount >= 2;
+    if (lane.pointCount < 2) return false;
+    // TIME COVERAGE. The cache spans a bounded window from SPAWN now
+    // (kWorldProjectilePathCoverMs), so a long-lived shot eventually outruns it and
+    // what is left of the cache ahead of the live anchor stops short of the
+    // temporal horizon. Core::Temporal would honestly degrade that to the
+    // present-tense floor — but a FRESH positionAt trace can still cover the full
+    // kLaneCoverMs, so refuse here and let TraceLane fall through to it instead of
+    // accepting a truncated lane. Only shots older than (cover − kLaneCoverMs) ever
+    // reach this, and only until they die.
+    if (!lane.tailAtShotEnd && lane.pointCount < kMaxLanePoints &&
+        lane.pointTimesMs[lane.pointCount - 1] < kLaneCoverMs)
+        return false;
+    return true;
 }
 
 // Lane from a fresh positionAt trace anchored on the live position (adapted
@@ -388,35 +401,12 @@ void TraceLane(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, floa
     lane.pointTimesMs[0] = 0.f;   // trajectory unknown → temporal test treats it as static (conservative)
 }
 
-// Is this zone dangerous from the MOMENT it was captured, or does it have a
-// flight / telegraph phase to wait out first? Per-SOURCE, because the four
-// capture paths mean genuinely different things (see WorldTAB.h kAoeSrc*):
-//
-//   kAoeSrcExpl  — FGOFPGIIEPC is the explosion CONTROLLER; it empirically fires
-//                  AT detonation, so the blast is full strength from elapsed=0
-//                  and ends when `lifetime` runs out. Its `arcMs` is the bomb's
-//                  already-completed travel time, NOT a landing delay: reading it
-//                  as one (the old code did) modelled up to 2.1 s of live,
-//                  full-strength blast as inert. ARMED ON CAPTURE.
-//   kAoeSrcSfx   — ShowEffect packet; depends on the effect:
-//                    NOVA(5) / AoE(39)          — go off at the announced spot as
-//                                                 announced. ARMED ON CAPTURE.
-//                    THROW(4)                   — an arc from pos1 to pos2; the
-//                                                 disc at pos2 is the LANDING spot.
-//                    CIRCLE_TELEGRAPH(23)       — a ground warning that resolves at
-//                                                 the END of its duration.
-//                                                 Both: telegraphed, arm window.
-//   kAoeSrcGjj / kAoeSrcFhoh — the throwable entity and its landing-circle visual.
-//                  The disc is where the throwable WILL land and `lifetime` is the
-//                  flight time, so danger is at the end. The detonation itself
-//                  arrives separately as a kAoeSrcExpl entry. Arm window.
-bool ZoneArmedOnCapture(const WorldAoe& a)
-{
-    if (a.source == kAoeSrcExpl) return true;
-    if (a.source == kAoeSrcSfx)
-        return a.sfxEffectType == kSfxType_Nova || a.sfxEffectType == kSfxType_AoE;
-    return false;
-}
+// The per-SOURCE arming rule (is this zone live from capture, or does it have a
+// flight / telegraph phase to wait out?) is a property of the CAPTURE PATH, not
+// of this consumer, so it lives with the producer: AoeTracking::ArmedOnCapture /
+// LandDelayMs (AoeTracking.cpp carries the full per-source rationale). autonexus
+// and pjdodge read the SAME functions - never re-derive a landing time from
+// `arcMs` here, it is travel time ALREADY SPENT for kAoeSrcExpl.
 
 // Per-zone arm window (ms before landing at which a telegraphed zone becomes hard
 // danger). See the kAoeArmWindow* block above for the formula and its bounds.
@@ -463,13 +453,10 @@ void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& 
         if (!IsFinitePoint(a.destX, a.destY)) continue;
 
         const float elapsedMs = static_cast<float>(nowMs > a.spawnTick ? nowMs - a.spawnTick : 0u);
-        const float lifeMs = IsFinite(a.lifetime) && a.lifetime > 0.f ? a.lifetime : 2000.f;
+        const float lifeMs = AoeTracking::LifetimeMs(a);
         // Armed-on-capture sources are live from elapsed=0; telegraphed ones land
-        // at the end of their flight (a.arcMs when a source ever carries one,
-        // otherwise the full lifetime).
-        const float landAtMs = ZoneArmedOnCapture(a)
-            ? 0.f
-            : ((IsFinite(a.arcMs) && a.arcMs > 0.f) ? a.arcMs : lifeMs);
+        // at the end of their flight. Shared per-source rule - see AoeTracking.
+        const float landAtMs = AoeTracking::LandDelayMs(a);
         const bool hasLanded = elapsedMs >= landAtMs;
         if (elapsedMs >= lifeMs + 25.f) continue;                  // fully expired
         if (hasLanded && lifeMs - elapsedMs <= 25.f) continue;     // effectively expired

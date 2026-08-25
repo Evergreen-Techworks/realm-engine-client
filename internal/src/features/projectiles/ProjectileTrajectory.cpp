@@ -114,20 +114,30 @@ bool GetPositionAtTime(const WorldProjectile& proj, float tMs, float& outX, floa
     return ReadGamePositionAtTime(proj.ptr, tMs, outX, outY);
 }
 
+// Sample the shot's trajectory once, at spawn, at a FIXED TIME STEP
+// (kWorldProjectilePathStepMs) over min(lifetime, kWorldProjectilePathCoverMs).
+// See the constants in WorldTAB.h for why the step is time-based rather than a
+// fraction of lifetime. The final sample is pinned exactly ON the lifetime when
+// the shot dies inside the covered span, because that is how consumers recognise
+// a path that ends at the SHOT'S END (a fact) rather than one that merely ran out
+// of budget (an unknown tail).
 bool CachePath(WorldProjectile& proj)
 {
     proj.hasCachedPath = false;
     proj.pathSampleCount = 0;
     const float lifetime = (proj.lifetime > 1.f && std::isfinite(proj.lifetime)) ? proj.lifetime : 2000.f;
-    constexpr int sampleCap = kWorldProjectilePathSampleCap;
-    for (int i = 0; i < sampleCap; ++i) {
-        const float tMs = (lifetime * static_cast<float>(i)) / static_cast<float>(sampleCap - 1);
+    const float coverMs  = (lifetime < kWorldProjectilePathCoverMs) ? lifetime : kWorldProjectilePathCoverMs;
+    for (int i = 0; i < kWorldProjectilePathSampleCap; ++i) {
+        float tMs = kWorldProjectilePathStepMs * static_cast<float>(i);
+        bool  atSpanEnd = false;
+        if (tMs >= coverMs) { tMs = coverMs; atSpanEnd = true; }   // pin the last sample on the end
         float x = 0.f, y = 0.f;
         if (!GetPositionAtTime(proj, tMs, x, y)) break;
         proj.pathSampleTimesMs[proj.pathSampleCount] = tMs;
         proj.pathX[proj.pathSampleCount] = x;
         proj.pathY[proj.pathSampleCount] = y;
         ++proj.pathSampleCount;
+        if (atSpanEnd) break;
     }
     proj.hasCachedPath = proj.pathSampleCount >= 2;
     return proj.hasCachedPath;

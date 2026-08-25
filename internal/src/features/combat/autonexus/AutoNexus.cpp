@@ -617,8 +617,14 @@ static void RunAutoNexus()
 
             const float radius   = (std::isfinite(a.radius) && a.radius > 0.f) ? std::min(a.radius, 12.f) : 1.5f;
             const float elapsed  = static_cast<float>(nowA > a.spawnTick ? nowA - a.spawnTick : 0ULL);
-            const float lifeMs   = (std::isfinite(a.lifetime) && a.lifetime > 0.f) ? a.lifetime : 2000.f;
-            const float landAtMs = (std::isfinite(a.arcMs) && a.arcMs > 0.f) ? a.arcMs : lifeMs;
+            const float lifeMs   = AoeTracking::LifetimeMs(a);
+            // PER-SOURCE ARMING (shared with udodge/pjdodge — AoeTracking.cpp).
+            // An explosion-controller (kAoeSrcExpl) entry is captured AT detonation:
+            // its arcMs is travel time ALREADY SPENT, so reading it as a landing
+            // delay treated up to ~2.1 s of live, full-strength blast as inert and
+            // AutoNexus simply did not fire. Observed state only — this is a
+            // capture-path fact, never anything the dodge intends to do.
+            const float landAtMs = AoeTracking::LandDelayMs(a);
             const float detonMs  = landAtMs - elapsed;          // ms until blast (≤0 = already blasting)
             if (elapsed >= lifeMs + 50.f) continue;             // expired
             if (detonMs > horizon) continue;                    // too far out — re-check next poll
@@ -793,9 +799,10 @@ void RenderDebugPath(float camX, float camY, float angleRad, float zoom, float c
                                ? std::min(a.radius, 12.f) : 1.5f;
             const float elapsed = static_cast<float>(now > a.spawnTick ? now - a.spawnTick : 0ULL);
             
-            const float landAtMs  = (std::isfinite(a.arcMs) && a.arcMs > 0.f)
-                                  ? a.arcMs
-                                  : ((std::isfinite(a.lifetime) && a.lifetime > 0.f) ? a.lifetime : 2000.f);
+            // Same shared per-source arming rule the predictor uses, so the overlay
+            // shows an EXPL blast as LIVE (red) instead of counting down a landing
+            // that already happened.
+            const float landAtMs  = AoeTracking::LandDelayMs(a);
             const float landingMs = landAtMs - elapsed;
 
             ImU32 col, fill;

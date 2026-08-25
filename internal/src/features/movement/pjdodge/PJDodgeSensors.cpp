@@ -20,6 +20,10 @@ constexpr float kThreatCullTiles = 16.f;
 constexpr float kEnemyRadius     = 0.5f;
 constexpr float kAoeCullPad      = 16.f;
 constexpr float kPathPadMs       = 300.f;   // sample past the horizon so the lead never runs off the path
+// Danger instant used for an AoE zone that is ALREADY live at capture (see the
+// AoE block in Build). Smallest positive value that survives PJDodgeCore's
+// `landingMs > 0` gates; deliberately not 0, which those gates would discard.
+constexpr float kAoeLiveNowMs    = 1.f;
 
 // Per-tick memo for the hazard lookup: the core probes CanOccupy at hundreds of
 // points per frame, so each distinct tile is queried at most once per tick.
@@ -98,14 +102,26 @@ bool AddCachedPath(ProjectileThreat& t, const WorldProjectile& p, float windowMs
     const float baseMs = IsFinite(p.pathSampleTimesMs[anchor]) ? p.pathSampleTimesMs[anchor] : elapsedMs;
 
     AddSample(t, p.x, p.y, 0.f);
+    bool  shotEnds  = false;
+    bool  spanned   = false;   // the cache reached past the window (coverage complete)
     for (int i = anchor + 1; i < count && t.sampleCount < kMaxPathSamples; ++i) {
         if (!IsFinitePoint(p.pathX[i], p.pathY[i])) break;
         const float sMs = p.pathSampleTimesMs[i];
         if (!IsFinite(sMs)) break;
         if (IsFinite(p.lifetime) && p.lifetime > 0.f && sMs > p.lifetime) break;
         const float futureMs = std::max(0.f, sMs - baseMs);
-        if (futureMs > windowMs) break;
+        if (futureMs > windowMs) { spanned = true; break; }   // cache reaches past the window
         AddSample(t, p.x + (p.pathX[i] - ax), p.y + (p.pathY[i] - ay), futureMs);
+        shotEnds  = IsFinite(p.lifetime) && p.lifetime > 0.f && sMs >= p.lifetime - 1.f;
+    }
+    // TIME COVERAGE (cached path is bounded from spawn — WorldTAB.h
+    // kWorldProjectilePathCoverMs). A long-lived shot outruns the cache, and a
+    // path that stops short of the window while the shot is STILL ALIVE would
+    // silently under-state danger. Refuse it (resetting what we appended) so the
+    // caller re-samples fresh from positionAt over the full window.
+    if (!spanned && !shotEnds && t.sampleCount < kMaxPathSamples) {
+        t.sampleCount = 0;
+        return false;
     }
     return t.sampleCount >= 2;
 }
@@ -232,9 +248,12 @@ void Build(Snapshot& out, float playerX, float playerY, const Settings& settings
         if (t.sampleCount > 0) ++out.projectileCount;
     }
 
-    // AoE telegraphs → landing events. Danger is AT the landing instant
-    // (arcMs = flight/arming time when known, else the full lifetime).
-    // Already-detonated zones that persist show up as damaging tiles instead.
+    // AoE telegraphs → landing events. Danger is AT the landing instant, which is
+    // the SHARED per-source rule (AoeTracking::LandDelayMs) — an explosion-
+    // controller entry is captured AT detonation, so its arcMs is travel time
+    // already spent and reading it as a landing delay parked a live blast up to
+    // ~2.1 s in the future. Already-detonated telegraphed zones that persist show
+    // up as damaging tiles instead.
     AoeTracking::EnsureInstalled();
     static std::vector<WorldAoe> s_aoes;
     s_aoes.clear();
@@ -245,10 +264,16 @@ void Build(Snapshot& out, float playerX, float playerY, const Settings& settings
         if (!IsFinitePoint(a.destX, a.destY)) continue;
 
         const float elapsedMs = static_cast<float>(nowMs > a.spawnTick ? nowMs - a.spawnTick : 0u);
-        const float landAtMs = (IsFinite(a.arcMs) && a.arcMs > 0.f) ? a.arcMs
-                             : (IsFinite(a.lifetime) && a.lifetime > 0.f ? a.lifetime : 2000.f);
-        const float landingMs = landAtMs - elapsedMs;
-        if (landingMs <= 0.f || landingMs > windowMs) continue;
+        const float landAtMs = AoeTracking::LandDelayMs(a);
+        // An ARMED-ON-CAPTURE zone is doing damage RIGHT NOW, so its danger instant
+        // is t=0. AoeThreat models a single instant and every consumer gates on
+        // landingMs > 0 (PJDodgeCore), so "now" is expressed as the smallest
+        // positive instant — a literal 0 would silently drop the zone, which is the
+        // same under-count in a different disguise. CopyActiveForDraw has already
+        // pruned anything past its lifetime, so this only emits live blasts.
+        float landingMs = landAtMs - elapsedMs;
+        if (landAtMs <= 0.f)                              landingMs = kAoeLiveNowMs;
+        else if (landingMs <= 0.f || landingMs > windowMs) continue;
 
         const float radius = (IsFinite(a.radius) && a.radius > 0.f) ? std::clamp(a.radius, 0.2f, 12.f) : 1.5f;
         const float cull = kAoeCullPad + radius;
