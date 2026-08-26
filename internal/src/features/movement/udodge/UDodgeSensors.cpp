@@ -93,34 +93,107 @@ bool TryPredict(const WorldProjectile& p, float tMs, float& outX, float& outY)
     return true;
 }
 
-// Anchor a cached projectile path to its live position (falls back to elapsed
-// time if the live anchor is implausible — guards against bad PosX/PosY offsets).
+// Does this shot follow a NON-LINEAR path? Wavy / parametric / boomerang /
+// turning / accelerating shots can revisit the same neighbourhood on different
+// legs of their flight, which is what makes a spatial "nearest cached sample"
+// anchor unsafe for them. ONE predicate, shared by CachedAnchorIndex below and by
+// ReanchorMap's re-trace branch, so the two can never disagree about what
+// "curved" means.
+bool IsCurvedShot(const WorldProjectile& p)
+{
+    return p.wavy || p.parametric || p.boomerang || p.isTurning ||
+           p.isTurningDelayed || p.isCircleTurnDelayed || p.isAccelerating;
+}
+
+// Anchor index (which cached sample is the bullet's live position) — the sample
+// the whole lane is rebased onto, so picking the wrong one time-shifts the ENTIRE
+// polyline.
+//
+// FINDING H: this used to be spatial-nearest FIRST for every shot type, with the
+// elapsed-time clock engaging only when the nearest sample was more than 5 tiles
+// away (kMaxLiveAnchorDistSq). ReanchorMap already refuses a rigid nearest-point
+// shift for curved shots for exactly the right reason — "matching the nearest
+// point on an oscillating/curving polyline can lock onto the WRONG crest" — and
+// then re-traces through TraceLane → LaneFromCachedPath → here, which promptly
+// did the same nearest-point match one level down. A boomerang or tight-turning
+// shot whose outbound and return legs pass within 5 tiles of each other anchors
+// on the WRONG LEG and the whole lane is time-shifted: phantom danger painted on
+// one leg, real danger missing from the other. The re-trace was defeating itself.
+//
+// So for a curved shot the ELAPSED CLOCK LEADS: the bullet's phase along its own
+// path is what identifies the sample, and the clock is unambiguous where geometry
+// is not. Spatial nearest is kept as a SANITY CHECK on that answer (a bad
+// spawnTick / a stale cache would otherwise place the anchor nowhere near the
+// live bullet) and remains the primary for straight shots, where the polyline
+// never doubles back and nearest-point is exact and cheaper. The reversal is safe
+// because the elapsed clock was ALREADY trusted enough to be the fallback here.
 int CachedAnchorIndex(const WorldProjectile& p, float elapsedMs)
 {
     const int count = std::clamp(p.pathSampleCount, 0, kWorldProjectilePathSampleCap);
     if (count <= 1) return 0;
     if (!IsFinitePoint(p.x, p.y)) return -1;
 
-    int best = 0;
-    float bestDistSq = 3.402823466e+38f;
-    for (int i = 0; i < count; ++i) {
-        const float x = p.pathX[i], y = p.pathY[i];
-        if (!IsFinitePoint(x, y)) continue;
-        const float d = DistSq(x, y, p.x, p.y);
-        if (d < bestDistSq) { bestDistSq = d; best = i; }
-    }
-    constexpr float kMaxLiveAnchorDistSq = 25.f;
-    if (bestDistSq <= kMaxLiveAnchorDistSq) return best;
+    // Sample whose cached timestamp is closest to the shot's age. -1 when the
+    // clock is unusable (pre-first-tick, or no finite sample time).
+    const auto byElapsed = [&]() -> int {
+        if (!IsFinite(elapsedMs) || elapsedMs <= 0.f) return -1;
+        int   bi = -1;
+        float bestDelta = 3.402823466e+38f;
+        for (int i = 0; i < count; ++i) {
+            const float tcand = p.pathSampleTimesMs[i];
+            if (!IsFinite(tcand)) continue;
+            const float delta = std::fabs(tcand - elapsedMs);
+            if (delta < bestDelta) { bestDelta = delta; bi = i; }
+        }
+        return bi;
+    };
 
-    if (!IsFinite(elapsedMs) || elapsedMs <= 0.f) return -1;
-    float bestDelta = 3.402823466e+38f;
-    for (int i = 0; i < count; ++i) {
-        const float tcand = p.pathSampleTimesMs[i];
-        if (!IsFinite(tcand)) continue;
-        const float delta = std::fabs(tcand - elapsedMs);
-        if (delta < bestDelta) { bestDelta = delta; best = i; }
+    // Sample nearest the live position; reports its distance² so the caller can
+    // judge whether to believe it.
+    const auto byNearest = [&](float& outDistSq) -> int {
+        int   bi = -1;
+        float bestDistSq = 3.402823466e+38f;
+        for (int i = 0; i < count; ++i) {
+            const float x = p.pathX[i], y = p.pathY[i];
+            if (!IsFinitePoint(x, y)) continue;
+            const float d = DistSq(x, y, p.x, p.y);
+            if (d < bestDistSq) { bestDistSq = d; bi = i; }
+        }
+        outDistSq = bestDistSq;
+        return bi;
+    };
+
+    // 5 tiles (25 tiles²). Same number in both directions: as the ceiling on how
+    // far a believable anchor may sit from the live bullet, and as the sanity
+    // bound on the clock's answer.
+    constexpr float kMaxLiveAnchorDistSq = 25.f;
+
+    if (IsCurvedShot(p)) {
+        const int ti = byElapsed();
+        if (ti >= 0) {
+            // Sanity: the clock's sample must still land near the live bullet. If it
+            // does not, the spawn clock or the cache is wrong, not the geometry —
+            // fall through to the spatial answer rather than trusting a bad clock.
+            const float dx = p.pathX[ti] - p.x, dy = p.pathY[ti] - p.y;
+            if (IsFinitePoint(p.pathX[ti], p.pathY[ti]) &&
+                dx * dx + dy * dy <= kMaxLiveAnchorDistSq)
+                return ti;
+        }
+        float distSq = 3.402823466e+38f;
+        const int ni = byNearest(distSq);
+        return (ni >= 0 && distSq <= kMaxLiveAnchorDistSq) ? ni : -1;
     }
-    return best;
+
+    // Straight shot: the polyline never doubles back, so nearest-point is exact
+    // (and cheaper). Unchanged from before this finding, including the legacy
+    // last-resort: when the clock is usable but no sample carries a finite time,
+    // the far spatial answer is still handed back rather than losing the lane.
+    float bestDistSq = 3.402823466e+38f;
+    const int best = byNearest(bestDistSq);
+    if (best >= 0 && bestDistSq <= kMaxLiveAnchorDistSq) return best;
+    if (!IsFinite(elapsedMs) || elapsedMs <= 0.f) return -1;
+    const int ti = byElapsed();
+    return ti >= 0 ? ti : best;
 }
 
 // Shared scratch buffers for the copy APIs (they need vectors, but the
@@ -745,8 +818,7 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
         // painting danger where there is no shot (and hiding real danger). Re-TRACE
         // them from the accurate cached positionAt path, anchored at the live time.
         // Straight shots keep the cheap exact rigid shift below.
-        const bool curved = p.wavy || p.parametric || p.boomerang || p.isTurning ||
-                            p.isTurningDelayed || p.isCircleTurnDelayed || p.isAccelerating;
+        const bool curved = IsCurvedShot(p);   // ONE definition, shared with CachedAnchorIndex
         const float laneCap = std::clamp(settings.laneTiles, 2.f, 16.f);
         if (curved) {
             const float elapsedMs = static_cast<float>(nowMs > p.spawnTick ? nowMs - p.spawnTick : 0u);

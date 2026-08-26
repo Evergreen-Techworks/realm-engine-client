@@ -18,7 +18,13 @@
 // subject to |path'| ≤ speed and safety at each t:
 //   • The Dijkstra edge cost is TIME, not distance: moving cell A→B costs
 //     dist(A,B) / player_speed, so g(cell) is the arrival TIME along the route.
-//     player_speed derives from the snapshot moveBudget (= speed × kServerTickSec).
+//     player_speed is the snapshot's REAL PlannerSnapshot::speed — the same
+//     MapInput::speed the immediate solver validates the step with (finding K).
+//   • A BOUNDED WAIT (finding F): where the direct relaxation would arrive into a
+//     bullet, the search may depart up to kUPathMaxWaitSlices temporal slices
+//     later (standing at the current cell, itself ArrivalClear over that whole
+//     window) — "stand here 200 ms, let the wall pass, then go", the move a pure
+//     arrival-time Dijkstra with no self-edge cannot express.
 //   • A cell is traversable only if it is SAFE AT ITS ARRIVAL TIME g(cell): the
 //     player position (the cell) is checked against every relevant bullet's
 //     PREDICTED position at g(cell), reusing the plan-64 temporal prediction (the
@@ -26,10 +32,15 @@
 //     culled to nearby lanes). So the route is chosen only if the player, moving
 //     at real speed, is clear of bullets at every point at the time they are there.
 //   • Goal = a durable-safe cell reached by such a time-feasible route; the
-//     time-cost Dijkstra naturally prefers the one reachable SOONEST. If NO
-//     time-feasible route to a durable pocket exists, it degrades gracefully to
-//     the best partial route toward the safest reachable-in-time cell — never a
-//     route that assumes impossible speed.
+//     time-cost Dijkstra naturally prefers the one reachable SOONEST. If no such
+//     SPATIAL pocket exists anywhere in the window, a SECOND-CLASS TEMPORAL goal
+//     is admitted instead (finding F): a cell that is merely ArrivalClear over
+//     [arrival, arrival + kUDwellMs). The spatial pocket ALWAYS wins when one is
+//     available — this is a fallback that stops the route collapsing to `partial`
+//     in exactly the dense patterns where the solver's temporal layer would have
+//     threaded the gap. Failing both, it degrades gracefully to the best partial
+//     route toward the safest reachable-in-time cell — never a route that assumes
+//     impossible speed.
 // Its first step (≈ one budget along the route) is the lookahead target; over
 // ticks the player follows the curve around the obstacle. If nothing safe is near,
 // the window EXPANDS outward and re-searches. The game-thread immediate micro-dodge
@@ -72,7 +83,21 @@ struct PlannerSnapshot {
     uint32_t seq = 0;              // monotonic publish sequence (freshness plumbing)
     uint32_t tickId = 0;
     Vec2     player{};
-    float    moveBudget = 1.f;     // per-tick move budget (tiles) — places the step target
+    float    moveBudget = 1.f;     // per-tick move budget (tiles) — a STEP-LENGTH knob ONLY:
+                                   // it places the route's step target / lookahead anchor. It is
+                                   // NOT the speed the arrival times are computed from — see `speed`.
+    // REAL player speed (tiles per ms), the same MapInput::speed the immediate
+    // solver validates with. FINDING K: the pathfinder used to derive its
+    // ms-per-tile from moveBudget, which equals speed × kServerTickSec ONLY when
+    // the user leaves the "Step distance" slider on auto AND the auto clamp
+    // [0.4, 3.0] does not bind. Set the slider (or play a heavily-Slowed / very
+    // fast character) and the two DECOUPLE: the worker planned arrival times at a
+    // fictional speed while the solver validated the step at the real one, so
+    // cells were admitted here and rejected there (churn), or a route step was
+    // validated against an optimistic arrival. Carrying the real speed makes the
+    // two halves of the MPC agree by construction. 0 = unreadable → the old
+    // moveBudget-derived value is used as the fallback.
+    float    speed = 0.f;
     Settings settings{};           // hitScale / safeWalk feed the plain safety + occupancy tests
     bool     goalActive = false;   // a soft goal exists (tie-break only)
     Vec2     goalPos{};
@@ -117,6 +142,15 @@ struct PlanResult {
     bool  partial      = false; // no durable pocket was time-reachable; the route heads to the
                                 // SAFEST reachable-in-time cell instead (best-effort lookahead bias,
                                 // still fully time-feasible — never assumes impossible speed)
+    bool  tempGoal     = false; // the goal is a SECOND-CLASS TEMPORAL pocket (finding F): no
+                                // SPATIAL durable pocket (PointSafety ≥ kUDurablePocketMargin — the
+                                // whole-lane-forever test) was time-reachable anywhere in the window,
+                                // so the route targets a cell that is merely ArrivalClear over
+                                // [arrival, arrival + kUDwellMs]. A spatial pocket ALWAYS wins when
+                                // one exists; this only stops the route collapsing to `partial` in
+                                // dense patterns where the durable-goal set is empty but the solver's
+                                // temporal layer would happily thread the gap. found=true,
+                                // partial=false — it is a real, time-feasible goal, just a weaker one.
     float goalArriveMs = 0.f;   // predicted arrival TIME at the goal along the time-cost route (ms)
     int   tempLanes    = 0;     // relevant lanes kept for the arrival-time temporal check (diagnostics)
     int   radiusCells = 0;     // final window radius used (diagnostics)

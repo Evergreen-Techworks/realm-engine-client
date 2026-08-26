@@ -100,6 +100,14 @@ struct SolveResult {
     bool      prePosition = false;
     float     pocketDist  = 0.f; // reach to the nearest durable pocket (0 = none, or standing in one)
     uint8_t   tempLanes   = 0;   // relevant bullets fed to the temporal test (post-cull) — diagnostics
+    // Pending (telegraphed, unarmed) AoE penetration at the chosen target, in tiles
+    // (finding G-2). 0 = clear of every telegraph. Diagnostics ONLY — the term that
+    // acts on it is a score penalty over the safe set (kSolvePendingW); a pending
+    // zone never blocks, never subtracts clearance, and never vetoes a target.
+    float     pendingCost = 0.f;
+    // The HOLD was declined purely because the stand sits under a telegraph, so the
+    // solve fell through to the reflex to drift out early rather than at arm time.
+    bool      leftTelegraph = false;
     // ── In-range-disk pathfinding (locked-boss only) ─────────────────────────
     // inRangeDisk: this solve was constrained to the boss's weapon-range disk
     // (goal.fromLock) — the durable-pocket search preferred spots keeping the

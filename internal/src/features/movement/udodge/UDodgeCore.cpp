@@ -249,6 +249,47 @@ bool EnemyBlocked(const MapInput& in, Vec2 pos)
     return false;
 }
 
+// SWEPT enemy-body test for a MOVE (finding J). Endpoint-only was a real hole:
+// the solver's step reaches ~1.9 tiles while an enemy no-go circle is only
+// ~1.01 tiles across (kEnemyRadius 0.8 + kUPlayerHalf), so a step could enter and
+// leave a mob between its two tested endpoints and neither end would notice.
+// Geometry mirrors SegmentSafety's active-zone term exactly — min Euclidean
+// distance from the body centre to the segment, against radius + kUPlayerHalf.
+//
+// The escape hatch is the same one ZonePathClear needs, for the same reason: if
+// `from` already sits inside a body (a mob walked onto us), EVERY move out of it
+// sweeps that body, so a swept veto would refuse every candidate at the one
+// moment escape matters most. There we keep the endpoint rule, which still
+// refuses a step that ENDS inside a body while admitting the ones that leave.
+bool EnemyPathBlocked(const MapInput& in, Vec2 from, Vec2 to)
+{
+    if (!in.map) return false;
+    if (EnemyBlocked(in, from)) return EnemyBlocked(in, to);   // escaping a body: endpoint rule
+    for (int i = 0; i < in.map->enemyCount; ++i) {
+        const EnemyBlocker& e = in.map->enemies[i];
+        if (PointSegDistEuclid(e.pos, from, to) < e.radius + kUPlayerHalf) return true;
+    }
+    return false;
+}
+
+// Pending-zone penetration sum (finding G-2). Deliberately NOT folded into
+// PointSafety / SegmentSafety / PointClear: those are the HARD safety floor and a
+// telegraphed blast is not yet danger — folding it in would silently turn a soft
+// preference into a block, which is the failure mode the "cost-only" contract
+// exists to prevent. Cheap: zoneCount is 0 in most rooms and bounded by kMaxAoes.
+float PendingZoneCost(const MapInput& in, Vec2 pos)
+{
+    if (!in.map) return 0.f;
+    float sum = 0.f;
+    for (int i = 0; i < in.map->zoneCount; ++i) {
+        const ZoneThreat& z = in.map->zones[i];
+        if (z.active) continue;                       // armed discs are the HARD case
+        const float pen = (z.radius + kUPlayerHalf) - Len(Sub(pos, z.pos));
+        if (pen > 0.f) sum += pen;
+    }
+    return sum;
+}
+
 // ── Shared arrival-time bullet-prediction model (plan 72) ────────────────────
 // Merged verbatim from the two former copies (solver TempCtx/TemporalPathClear
 // + pathfinder BuildTempCtx/BulletPosAt/ArrivalClear); the cull center/radius is

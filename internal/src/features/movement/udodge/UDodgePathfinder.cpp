@@ -27,6 +27,11 @@ int     s_prev[kUPathMaxCells];   // predecessor cell index (path reconstruction
 uint8_t s_done[kUPathMaxCells];   // 1 = finalized (popped) this pass
 uint8_t s_eval[kUPathMaxCells];   // 0 = unevaluated, 1 = blocked, 2 = open
 uint8_t s_goal[kUPathMaxCells];   // 1 = durable-safe goal cell (open + PointSafety ≥ margin + disk gate)
+uint8_t s_tgoal[kUPathMaxCells];  // 1 = SECOND-CLASS temporal goal (finding F): not a spatial durable
+                                  // pocket, but ArrivalClear over [arrival, arrival + kUDwellMs).
+                                  // Only written for cells the pass actually tested (see SearchPass).
+uint8_t s_pend[kUPathMaxCells];   // 1 = this cell sits inside a PENDING (telegraphed, unarmed) AoE disc
+                                  // — cost-only, never a block; taints it as a goal (finding G-2)
 float   s_safe[kUPathMaxCells];   // cached spatial Core::PointSafety (goal test + partial-route metric)
 int     s_path[kUPathMaxCells];   // reconstructed route (forward order: [0] = start)
 
@@ -174,6 +179,24 @@ bool ZoneBlockedLocal(const DangerMap& m, Vec2 player, Vec2 p)
     return false;
 }
 
+// A cell sits inside a PENDING (telegraphed, not-yet-landed) AoE disc. Finding
+// G-2: five places in this engine document pending zones as "cost-only (soft)"
+// and NO cost term ever existed — nothing anywhere read a pending zone, so a
+// telegraphed bomb 1.2 s out was FULLY INVISIBLE and the planner would commit to
+// its dead centre as a durable pocket, then have to flee when it armed (churn,
+// and a wasted route). This is that missing term's predicate. It is NEVER a
+// block: it only TAINTS a cell as a goal, and a tainted goal is still taken when
+// no clean one turns up inside kUPathPendingDetourMs (see SearchPass).
+bool PendingZoneLocal(const DangerMap& m, Vec2 p)
+{
+    for (int i = 0; i < m.zoneCount; ++i) {
+        const ZoneThreat& z = m.zones[i];
+        if (z.active) continue;                                   // armed discs are the HARD case
+        if (Len(Sub(p, z.pos)) < z.radius + kUPlayerHalf) return true;
+    }
+    return false;
+}
+
 struct Ctx {
     const PlannerSnapshot* s = nullptr;
     MapInput mi{};            // .env NULL, .map aliases the plain snapshot copy — plain-data only
@@ -182,9 +205,21 @@ struct Ctx {
     float diskLimit = 0.f;    // weaponRange + slack (annulus OUTER radius)
     float diskInner = 0.f;    // annulus INNER radius (0 = no inner gate). GOAL-only: cells inside
                               // this radius are rejected as goals but stay traversable.
-    float timePerTile = 0.f;  // ms to cross one tile at the player's speed (edge-cost scale)
+    float timePerTile = 0.f;  // ms to cross one tile at the player's REAL speed (edge-cost scale;
+                              // PlannerSnapshot::speed — finding K)
     int   prevGoalCell = -1;  // last tick's committed goal cell (plan 76 goal hysteresis; -1 = none/off-grid)
 };
+
+// ANNULUS gate: a valid GOAL cell keeps the boss hittable (≤ diskLimit) AND is
+// not point-blank (≥ diskInner). Gates only the GOAL sets (s_goal / the temporal
+// goal below) — the cell stays open/traversable regardless, so a player inside
+// the inner ring can always route outward and is never trapped against the boss.
+bool GoalGateOk(const Ctx& c, Vec2 w)
+{
+    if (!c.diskActive) return true;
+    const float dB = Len(Sub(w, c.diskCenter));
+    return dB <= c.diskLimit && dB >= c.diskInner;
+}
 
 // Lazily classify a cell the first time Dijkstra reaches it. Records occupancy,
 // the spatial PointSafety (used ONLY for the durable-goal test and the partial
@@ -207,16 +242,9 @@ void EvalCell(const Ctx& c, int idx, int gx, int gy)
     }
     const float safety = Core::PointSafety(c.mi, w);
     s_safe[idx] = safety;
-    bool goalOk = safety >= kUDurablePocketMargin;
-    if (goalOk && c.diskActive) {
-        // ANNULUS gate: a valid GOAL cell keeps the boss hittable (≤ diskLimit) AND
-        // is not point-blank (≥ diskInner). This gates only s_goal — the cell stays
-        // open/traversable regardless, so a player inside the inner ring can always
-        // route outward and is never trapped against the boss.
-        const float dB = Len(Sub(w, c.diskCenter));
-        goalOk = dB <= c.diskLimit && dB >= c.diskInner;
-    }
-    s_goal[idx] = goalOk ? 1 : 0;
+    s_goal[idx] = (safety >= kUDurablePocketMargin && GoalGateOk(c, w)) ? 1 : 0;
+    s_tgoal[idx] = 0;                                  // set lazily, only if the pass tests it
+    s_pend[idx] = PendingZoneLocal(c.s->map, w) ? 1 : 0;
     s_eval[idx] = 2;
 }
 
@@ -228,6 +256,35 @@ constexpr int kDy[8] = { 0,  0, 1, -1, 1, -1,  1, -1 };
 // — avoids emitting a route for a negligibly-safer cell. Baked (no user setting).
 constexpr float kPartialGainTiles = 0.15f;
 
+// ── BOUNDED WAIT EDGE (finding F) ───────────────────────────────────────────
+// How many consecutive kUTemporalStepMs slices the player may STAND at world
+// position `w` starting at time `t` — the "let the wall pass" pause the pure
+// arrival-time Dijkstra has no self-edge to express. Capped at
+// kUPathMaxWaitSlices (200 ms = one server tick = one replan period; see the
+// constant for why longer is meaningless) and refused once the window would run
+// past Core::Temporal::kHorizonMs, where the prediction is a conservative freeze
+// and there is nothing left to wait out.
+//
+// An ACTIVE AoE disc is a hard refusal: Core::Temporal is lane-only (Ctx has no
+// zone storage), so ArrivalClear would happily certify standing dead-centre in a
+// live blast. Cells inside an active disc are already blocked by EvalCell — but
+// the START cell is force-opened so the player can always escape one, and
+// "waiting" inside the bomb you are standing in is precisely what must not
+// happen. Pending discs stay cost-only here (they never block; see
+// PendingZoneLocal / the goal taint).
+int ClearWaitSlices(const Ctx& c, Vec2 w, float t)
+{
+    if (!Core::ZoneClear(c.mi, w)) return 0;   // never wait inside a live blast
+    int n = 0;
+    for (; n < kUPathMaxWaitSlices; ++n) {
+        const float t0 = t + static_cast<float>(n) * kUTemporalStepMs;
+        const float t1 = t0 + kUTemporalStepMs;
+        if (t1 > Core::Temporal::kHorizonMs) break;   // past the horizon: nothing to wait out
+        if (!Core::Temporal::ArrivalClear(s_tctx, w, t0, t1)) break;
+    }
+    return n;
+}
+
 // One TIME-EXPANDED Dijkstra pass bounded to a window of `curRad` cells (Chebyshev)
 // around the center. The cost is ARRIVAL TIME (ms): edge A→B costs
 // dist(A,B) × timePerTile, so g(cell) is when the player reaches it moving at real
@@ -235,10 +292,25 @@ constexpr float kPartialGainTiles = 0.15f;
 // over [g(A), g(B)]) — the route can never require standing where a bullet is. The
 // search prefers the durable goal reachable SOONEST (min arrival time). It also
 // tracks the safest reachable-in-time non-goal cell (partialIdx/partialSafety) for
-// graceful degradation. Returns the goal cell index (or -1); adds pops.
+// graceful degradation. Returns the SPATIAL durable goal cell index (or -1); adds pops.
+//
+// Three additions (findings F and G-2), all strictly second-class to the spatial
+// durable goal this returns:
+//   • WAIT EDGE — when the direct relaxation cur→ni would arrive into a bullet, the
+//     search retries departing up to kUPathMaxWaitSlices slices later (the stand at
+//     `cur` itself gated by ClearWaitSlices). Dijkstra records only the EARLIEST
+//     arrival per cell, so a delayed arrival is recorded ONLY where no earlier one
+//     exists — a wait creates a route, it never replaces a faster one.
+//   • TEMPORAL GOAL — `tempGoalIdx` is the soonest-reached cell that is merely
+//     ArrivalClear over [arrival, arrival + kUDwellMs). RunSearch consumes it ONLY
+//     when this returns -1, i.e. no spatial pocket exists anywhere in the window.
+//   • PENDING TAINT — a goal cell inside a telegraphed (unarmed) disc does not end
+//     the search immediately; it is held while the search looks up to
+//     kUPathPendingDetourMs further for a clean one, then used anyway if none turns up.
 int SearchPass(const Ctx& c, int curRad, int start, int& pops,
                int& partialIdx, float& partialSafety, float startSafety,
-               int& prevGoalIdx, float& prevGoalMs)
+               int& prevGoalIdx, float& prevGoalMs,
+               int& tempGoalIdx, float& tempGoalMs)
 {
     for (int i = 0; i < kUPathMaxCells; ++i) {
         s_cost[i] = kHugeClearance; s_prev[i] = -1; s_done[i] = 0; s_eval[i] = 0;
@@ -248,16 +320,20 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
     partialSafety = startSafety + kPartialGainTiles;   // only a MEANINGFULLY safer cell qualifies
     prevGoalIdx = -1;                                   // plan 76: prev goal cell, once reached-in-time
     prevGoalMs  = 0.f;                                  // ...and its arrival time along this route
+    tempGoalIdx = -1;                                   // finding F: second-class temporal goal
+    tempGoalMs  = 0.f;                                  // ...and its arrival time along this route
 
     const Vec2 center = c.s->grid.center;
     // The start (player cell) is always expandable, even if a wall/enemy sample
     // lands on it momentarily — treat it as open ground so the search can leave.
     s_eval[start] = 2; s_safe[start] = startSafety; s_goal[start] = 0;
+    s_tgoal[start] = 0; s_pend[start] = 0;
     s_cost[start] = 0.f;                                // arrival time at the start = 0
     HeapPush(0.f, start);
 
     int found = -1;
     float foundCost = 0.f;
+    bool  foundPending = false;   // finding G-2: the incumbent goal sits in a telegraphed disc
     float cost; int cur;
     while (HeapPop(cost, cur)) {
         if (s_done[cur]) continue;                 // stale heap entry
@@ -276,21 +352,69 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
         }
 
         if (cur != start && s_eval[cur] == 2 && s_goal[cur]) {
-            if (found < 0) { found = cur; foundCost = cost; }   // best (soonest) durable goal
-            // Normally exit at the soonest durable goal. But when a previous goal is
-            // being tracked for hysteresis, keep popping until we finalize it or pass
-            // the window below — its arrival may still be within kURouteGoalHystMs.
-            if (c.prevGoalCell < 0 || prevGoalIdx >= 0) break;
+            if (found < 0) { found = cur; foundCost = cost; foundPending = s_pend[cur] != 0; }
+            else if (foundPending && !s_pend[cur]) {
+                // FINDING G-2: the incumbent goal sits in a telegraphed (unarmed)
+                // disc and this one does not. A pending zone is COST-ONLY and must
+                // never block, so it did not stop the incumbent being recorded — but
+                // a clean cell reached inside the detour budget is strictly better
+                // than committing to the centre of a bomb we would have to flee.
+                found = cur; foundCost = cost; foundPending = false;
+            }
+            // Normally exit at the soonest durable goal. But keep popping when
+            // (a) a previous goal is being tracked for hysteresis — its arrival may
+            // still be within kURouteGoalHystMs — or (b) the goal we have is
+            // pending-tainted and the detour budget has not run out yet.
+            if ((c.prevGoalCell < 0 || prevGoalIdx >= 0) && !foundPending) break;
         }
-        // Once the best goal is known, stop as soon as no unpopped cell can still fall
-        // inside the prev goal's hysteresis window (Dijkstra pops in increasing time).
-        if (found >= 0 && cost > foundCost + kURouteGoalHystMs) break;
+        // Once the best goal is known, stop as soon as no unpopped cell can still
+        // improve on it (Dijkstra pops in increasing time): the prev goal's
+        // hysteresis window, or — for a pending-tainted goal — the detour budget we
+        // are willing to spend to reach a clean one instead.
+        if (found >= 0) {
+            const float budget = foundPending
+                ? std::max(kURouteGoalHystMs, kUPathPendingDetourMs) : kURouteGoalHystMs;
+            if (cost > foundCost + budget) break;
+        }
+
+        // ── SECOND-CLASS TEMPORAL GOAL (finding F) ──────────────────────────
+        // The spatial goal test above is PointSafety ≥ kUDurablePocketMargin — the
+        // whole-lane-forever test, i.e. a cell no traced bullet path ever crosses.
+        // In a dense shot wall that set is EMPTY, every route degraded to `partial`
+        // and pulled toward open space, while the solver's Temporal::PathClear was
+        // meanwhile happy to thread the very gap the route refused to plan into:
+        // the two halves of the two-rate MPC were using OPPOSITE criteria for the
+        // same cell. So record the soonest cell that is merely clear over its own
+        // arrival + dwell window. It is consumed ONLY when no spatial pocket exists
+        // (RunSearch), so the durable pocket still wins whenever one is available.
+        //
+        // Cost: at most ONE extra ArrivalClear per pop, and only until the first
+        // such cell is found (plus a re-test of the previously-committed goal, for
+        // hysteresis). It never delays the break above, so it adds no pops.
+        if (cur != start && s_eval[cur] == 2 && !s_goal[cur] &&
+            (tempGoalIdx < 0 || cur == c.prevGoalCell)) {
+            const Vec2 wc = CellWorld(center, cgx, cgy);
+            // kUDwellMs, not the bare replan period: it is already this engine's
+            // calibrated answer to "how long past arrival must a spot stay clear"
+            // (the arrival tick plus a full replan quantum of slack), and it is the
+            // stricter of the two. Core::ZoneClear because Temporal is lane-blind —
+            // without it a cell dead-centre in a live blast reads perfectly clear.
+            if (GoalGateOk(c, wc) && Core::ZoneClear(c.mi, wc) &&
+                Core::Temporal::ArrivalClear(s_tctx, wc, cost, cost + kUDwellMs)) {
+                s_tgoal[cur] = 1;
+                if (tempGoalIdx < 0) { tempGoalIdx = cur; tempGoalMs = cost; }
+            }
+        }
 
         // Track the safest reachable-in-time cell for the graceful-degradation route.
         if (cur != start && s_eval[cur] == 2 && s_safe[cur] > partialSafety) {
             partialSafety = s_safe[cur];
             partialIdx    = cur;
         }
+
+        // Wait budget at THIS cell, computed at most once per pop and only if some
+        // neighbour actually needs it (finding F). -1 = not computed yet.
+        int waitSlices = -1;
 
         for (int k = 0; k < 8; ++k) {
             const int nx = cgx + kDx[k], ny = cgy + kDy[k];
@@ -317,11 +441,45 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
             // SPEED-AWARE GATE: only walk into B if the player, arriving at tB
             // (having left cur at s_cost[cur]), is clear of every bullet there.
             const Vec2 wB = CellWorld(center, nx, ny);
-            if (!Core::Temporal::ArrivalClear(s_tctx, wB, s_cost[cur], tB)) continue;
-            if (tB < s_cost[ni]) {
-                s_cost[ni] = tB;
+            float tArr = tB;
+            if (!Core::Temporal::ArrivalClear(s_tctx, wB, s_cost[cur], tB)) {
+                // ── BOUNDED WAIT EDGE (finding F) ───────────────────────────
+                // Leaving NOW walks into a bullet. Try leaving one or two temporal
+                // slices later instead — "stand here, let the wall pass, then go".
+                // The stand itself must be clear over the whole pause (ClearWaitSlices,
+                // which also refuses to pause inside a live blast or past the
+                // prediction horizon), and the delayed arrival must pass the SAME
+                // gate. Hard-capped at kUPathMaxWaitSlices, so this is at most
+                // kUPathMaxWaitSlices extra ArrivalClear calls on an edge that has
+                // ALREADY failed — a passing edge costs exactly what it did before.
+                if (waitSlices < 0)
+                    waitSlices = ClearWaitSlices(c, CellWorld(center, cgx, cgy), s_cost[cur]);
+                int w = 1;
+                for (; w <= waitSlices; ++w) {
+                    const float d = static_cast<float>(w) * kUTemporalStepMs;
+                    if (Core::Temporal::ArrivalClear(s_tctx, wB, s_cost[cur] + d, tB + d)) break;
+                }
+                if (w > waitSlices) continue;   // no admissible departure delay — edge stays blocked
+                tArr = tB + static_cast<float>(w) * kUTemporalStepMs;
+            }
+            // Dijkstra keeps only the EARLIEST arrival, so a waited (later) arrival
+            // is recorded only where nothing reached this cell sooner: the wait can
+            // OPEN a route that did not exist, never lengthen one that did.
+            //
+            // HOW THE PAUSE ACTUALLY HAPPENS. The reconstructed polyline carries no
+            // "hold here" marker — s_prev/s_path are cells, not a schedule — and the
+            // step target is placed by ARC LENGTH along it, so the solver will not
+            // literally stand still on command. It does not need to: the game thread
+            // re-validates every step it takes with Temporal::PathClear, so while the
+            // gap is still shut it simply declines the pre-position step and holds,
+            // then walks the moment the lane clears. The wait edge's job is to make
+            // the route EXIST so the player is aimed at the gap instead of being
+            // dragged toward open space; the pause is produced by the safety floor.
+            // goalArriveMs does include the wait, so the arrival time stays honest.
+            if (tArr < s_cost[ni]) {
+                s_cost[ni] = tArr;
                 s_prev[ni] = cur;
-                HeapPush(tB, ni);
+                HeapPush(tArr, ni);
             }
         }
     }
@@ -343,11 +501,21 @@ void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, Pla
     c.diskCenter  = s.lockPos;
     c.diskLimit   = s.weaponRangeTiles + kUInRangeSlack;
     c.diskInner   = s.innerStandoffTiles;   // annulus inner radius (goal-only gate)
-    // PLAYER SPEED enters here: moveBudget = tiles per server tick = speed ×
-    // kServerTickSec, so tiles/ms = moveBudget / (kServerTickSec × 1000) and the
-    // time to cross one tile is its reciprocal. This is the edge-cost scale that
-    // turns the distance grid into an ARRIVAL-TIME grid.
-    c.timePerTile = kServerTickSec * 1000.f / std::max(s.moveBudget, 1e-3f);
+    // PLAYER SPEED enters here — the edge-cost scale that turns the distance grid
+    // into an ARRIVAL-TIME grid. FINDING K: this used to be derived from
+    // moveBudget (= in.stepTiles), which equals speed × kServerTickSec ONLY while
+    // the "Step distance" slider is on auto AND the auto clamp [0.4, 3.0] does not
+    // bind (tps < 2 under heavy Slowed, or tps > 15). Set the slider or hit the
+    // clamp and the pathfinder planned arrival times at a FICTIONAL speed while
+    // the solver validated the very same step at the real one — cells admitted
+    // here and rejected there (churn), or a route step validated against an
+    // optimistic arrival. Now both halves read the one real speed. moveBudget
+    // stays purely a step-LENGTH knob (it places the lookahead anchor below).
+    // speed == 0 means the game's tiles-per-second was unreadable this tick; fall
+    // back to the old moveBudget derivation rather than dividing by zero.
+    c.timePerTile = (s.speed > 1e-6f)
+                        ? 1.f / s.speed
+                        : kServerTickSec * 1000.f / std::max(s.moveBudget, 1e-3f);
     // Plan 76: locate last tick's committed goal cell (off-grid → -1 → no hysteresis).
     c.prevGoalCell = s.prevGoalValid ? GoalCellExact(s.grid.center, s.prevGoalPos) : -1;
 
@@ -366,11 +534,17 @@ void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, Pla
     float partialSafety = 0.f;
     int   prevGoalIdx = -1;   // plan 76: prev goal cell reached-in-time this pass (else -1)
     float prevGoalMs  = 0.f;  // ...its arrival time along the route (ms)
+    int   tempGoalIdx = -1;   // finding F: second-class temporal goal from the last (widest) pass
+    float tempGoalMs  = 0.f;  // ...its arrival time along the route (ms)
     for (;;) {
         goal = SearchPass(c, rad, start, out.pops, partialIdx, partialSafety, startSafety,
-                          prevGoalIdx, prevGoalMs);
+                          prevGoalIdx, prevGoalMs, tempGoalIdx, tempGoalMs);
         usedRad = rad;
         if (goal >= 0) break;
+        // A temporal goal deliberately does NOT stop the expansion (finding F): the
+        // window keeps growing so a real SPATIAL pocket further out still wins. That
+        // also means it adds no pops — the pass already ran to exhaustion whenever
+        // no spatial pocket existed (the `partial` path).
         if (rad >= kUPathMaxRadCells) break;
         rad = std::min(rad + kUPathRadStepCells, kUPathMaxRadCells);
         expanded = true;
@@ -378,10 +552,16 @@ void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, Pla
     out.radiusCells = usedRad;
     out.expanded    = expanded;
 
-    // GRACEFUL DEGRADATION: no durable pocket reachable in time → head to the
-    // safest reachable-in-time cell instead (the arrays hold the last, widest pass).
-    const bool isPartial = (goal < 0);
-    int        target    = isPartial ? partialIdx : goal;
+    // GRACEFUL DEGRADATION (the arrays hold the last, widest pass), in order:
+    //   1. the SPATIAL durable pocket, whenever one is time-reachable;
+    //   2. else the SECOND-CLASS TEMPORAL goal (finding F) — a cell that is clear
+    //      over its arrival + dwell window. This is what stops a dense shot wall
+    //      collapsing every route to `partial` while the solver's temporal layer
+    //      was perfectly willing to thread the same gap;
+    //   3. else the safest reachable-in-time cell (partial, unchanged).
+    const bool isTempGoal = (goal < 0 && tempGoalIdx >= 0);
+    const bool isPartial  = (goal < 0 && tempGoalIdx < 0);
+    int        target     = (goal >= 0) ? goal : (isTempGoal ? tempGoalIdx : partialIdx);
     if (target < 0) { out.found = false; return; }   // nothing better than standing — pure reflex
 
     // Reconstruct the route (target → start), then reverse into forward order.
@@ -393,10 +573,17 @@ void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, Pla
     // the prev goal was reachable-in-time THIS pass (else prevGoalIdx == -1 and it is
     // dropped) — commitment is a tiebreak, never a safety override.
     if (prevGoalIdx >= 0 && prevGoalIdx != target) {
-        if (!isPartial) {
+        if (goal >= 0) {
             // Durable goal: keep the old goal only if it is STILL a valid durable
             // in-annulus goal AND arrives within kURouteGoalHystMs of the new best.
             if (s_goal[prevGoalIdx] && prevGoalMs <= s_cost[goal] + kURouteGoalHystMs)
+                target = prevGoalIdx;
+        } else if (isTempGoal) {
+            // Temporal goal: same rule against the temporal-goal set. SearchPass
+            // re-tests the previously-committed cell every pass even after it has a
+            // temporal goal, so s_tgoal[prevGoalIdx] is a fresh answer, not a stale
+            // one — a prev goal that stopped being arrival-clear is dropped at once.
+            if (s_tgoal[prevGoalIdx] && prevGoalMs <= tempGoalMs + kURouteGoalHystMs)
                 target = prevGoalIdx;
         } else {
             // Partial route: keep last tick's target unless the new safest reachable
@@ -420,6 +607,7 @@ void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, Pla
 
     out.found       = true;
     out.partial     = isPartial;
+    out.tempGoal    = isTempGoal;
     out.goalArriveMs = s_cost[target];   // predicted arrival TIME along the route (ms)
     out.waypoints   = n;
     out.goalPos     = CellWorld(center, target % kS, target / kS);
@@ -727,10 +915,18 @@ static void ComputeDodge(const PlannerSnapshot& in, PlanResult& out)
     // return once clear); failing that, degrade to a partial route toward safety.
     const bool disk = in.hasLock && in.weaponRangeTiles > 0.f;
 
+    // A SPATIAL durable pocket outranks everything, in range or out; only then does
+    // the second-class TEMPORAL goal (finding F) get a say, and only then a partial
+    // route. Keeping that order here is what makes "the spatial pocket must still
+    // win when one is available" true across BOTH searches, not just within one.
+    const auto spatialGoal = [](const PlanResult& r) {
+        return r.found && !r.partial && !r.tempGoal;
+    };
+
     PlanResult primary{};
     primary.forSeq = in.seq;
     RunSearch(in, disk, startSafety, primary);
-    if (primary.found && !primary.partial) {          // durable in-range pocket, time-feasible
+    if (spatialGoal(primary)) {                       // durable in-range pocket, time-feasible
         primary.tempLanes = s_tctx.count;
         out = primary;
         return;
@@ -740,21 +936,31 @@ static void ComputeDodge(const PlannerSnapshot& in, PlanResult& out)
         PlanResult unc{};
         unc.forSeq = in.seq;
         RunSearch(in, false, startSafety, unc);
-        if (unc.found && !unc.partial) {              // durable pocket only outside range
+        if (spatialGoal(unc)) {                       // durable pocket only outside range
             unc.outOfRange = true;
             unc.tempLanes  = s_tctx.count;
             out = unc;
             return;
         }
-        // No durable pocket anywhere → prefer the unconstrained partial (it explores
-        // the wider manifold), else the in-range partial, else pure reflex.
+        // No SPATIAL pocket anywhere. Next best is a temporal goal — in range first
+        // (it keeps the boss hittable), then outside range.
+        if (primary.found && primary.tempGoal) { primary.tempLanes = s_tctx.count; out = primary; return; }
+        if (unc.found && unc.tempGoal) {
+            unc.outOfRange = true;
+            unc.tempLanes  = s_tctx.count;
+            out = unc;
+            return;
+        }
+        // Nothing but partials → prefer the unconstrained one (it explores the wider
+        // manifold), else the in-range partial, else pure reflex.
         if (unc.found)          { unc.tempLanes = s_tctx.count;     out = unc;     return; }
         if (primary.found)      { primary.tempLanes = s_tctx.count; out = primary; return; }
         out.tempLanes = s_tctx.count;
         return;
     }
 
-    // Unlocked: primary is a durable-goal (handled above) or a partial route / nothing.
+    // Unlocked: primary is a spatial goal (handled above), a temporal goal, a
+    // partial route, or nothing.
     primary.tempLanes = s_tctx.count;
     out = primary;
 }

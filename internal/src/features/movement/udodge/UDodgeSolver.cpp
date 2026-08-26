@@ -34,8 +34,18 @@ struct Cand {
     float moveDist = 0.f;
     float clr = 0.f;    // Core::PointSafety at pos
     bool  occOk = false;
+    // FINDING J: `occOk` is the ENDPOINT rule (walkable + not standing inside an
+    // enemy body). `pathOk` additionally SWEEPS the step player→pos against enemy
+    // bodies, so a ~1.9-tile step can no longer slice clean through a ~1.01-tile
+    // no-go circle with both ends clear. The safe set is admitted on pathOk; the
+    // least-bad FALLBACK deliberately still uses occOk — in RotMG a mob does not
+    // physically block the player, so this is an intent-level "don't melee" rule
+    // and it must not make escaping a surround harder than it already was.
+    bool  pathOk = false;
     bool  safe = false; // occOk && clr >= kULatencyPad
     bool  stand = false;
+    float soft = 0.f;   // finding G-2: pending (telegraphed, unarmed) AoE penetration at pos,
+                        // in tiles — the quantity CandidateDebug::softCost documents. SCORE only.
     bool  threaded = false;   // admitted via the arrival-time thread (in a lane NOW,
                               // clear on arrival) rather than open-space spatial safety
 };
@@ -124,6 +134,17 @@ float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
             score -= kSolveInnerW * (goal.innerStandoff - distToBoss);
     }
 
+    // Don't park under a telegraphed bomb (finding G-2). Pending zones are
+    // COST-ONLY by contract, and until now that cost did not exist anywhere — a
+    // blast 1.2 s out was invisible, so the solver would hold in its dead centre
+    // and then have to flee the moment it armed. A SCORE term over the SAFE set,
+    // exactly like kSolveInnerW: it can only reorder safe candidates, never remove
+    // one, so if the telegraph covers everything safe the player still dodges
+    // there. Capped so a large or overlapping telegraph cannot turn a preference
+    // into a de-facto filter.
+    if (c.soft > 0.f)
+        score -= std::min(kSolvePendingW * c.soft, kSolvePendingMax);
+
     // Stand bias: when standing still is safe and nothing is clearly better,
     // hold (minimal disruption) instead of twitching off a safe stand.
     if (c.stand) score += kSolveStandBias;
@@ -208,7 +229,9 @@ void Evaluate(const MapInput& in, Cand* c, int n)
         const bool walkable = !in.env.canOccupy ||
                      in.env.canOccupy(c[i].pos.x, c[i].pos.y, in.settings.safeWalk);
         c[i].occOk = walkable && !EnemyBlocked(in, c[i].pos);
+        c[i].pathOk = c[i].occOk && !Core::EnemyPathBlocked(in, in.player, c[i].pos);
         c[i].clr = Core::PointSafety(in, c[i].pos);
+        c[i].soft = Core::PendingZoneCost(in, c[i].pos);   // finding G-2 (score only, never a filter)
         c[i].safe = c[i].occOk && c[i].clr >= kULatencyPad;
     }
 }
@@ -329,10 +352,22 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         bool repositionToward = false;
         if (goal.walkTo && goal.active)
             repositionToward = Len(Sub(in.player, goal.pos)) > kUWalkArriveTiles;
-        if (!repositionInward && !repositionToward) {
+        // FINDING G-2: don't HOLD under a telegraphed blast. The stand can be a
+        // perfectly durable temporal pocket (Temporal is lane-only and a pending
+        // disc is not danger yet) and we would sit in the bomb's dead centre until
+        // its arm window opened, then have to flee at ~0.9 s — churn, and the route
+        // we spent a tick planning thrown away. This does NOT force a move: it only
+        // declines the early Hold return so the normal reflex runs, where the
+        // pending SCORE term (kSolvePendingW) drifts us out among SAFE candidates —
+        // and re-picks the stand anyway if nothing better exists. Soft, as documented.
+        const bool repositionOffTelegraph = Core::PendingZoneCost(in, in.player) > 0.f;
+        out.leftTelegraph = repositionOffTelegraph &&
+                            !repositionInward && !repositionToward;
+        if (!repositionInward && !repositionToward && !repositionOffTelegraph) {
             out.kind = SolveKind::Hold;
             out.target = in.player;
             out.clearance = cands[0].clr;
+            out.pendingCost = cands[0].soft;
             out.shouldMove = false;
             // Keep lastMoveDir across a brief hold so a re-triggered dodge commits to
             // the same heading instead of flipping (plan 94). It is naturally refreshed
@@ -358,11 +393,12 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
                 const Vec2  target = Add(in.player, Mul(dir, r));
                 const bool  walkable = !in.env.canOccupy ||
                              in.env.canOccupy(target.x, target.y, in.settings.safeWalk);
-                if (walkable && !EnemyBlocked(in, target) &&
+                if (walkable && !Core::EnemyPathBlocked(in, in.player, target) &&
                     Core::PointSafe(in, target, kULatencyPad)) {
                     out.kind          = SolveKind::Safe;
                     out.target        = target;
                     out.clearance     = Core::PointSafety(in, target);
+                    out.pendingCost   = Core::PendingZoneCost(in, target);
                     out.shouldMove    = true;
                     out.followedRoute = route.found;
                     state.lastMoveDir = dir;
@@ -407,7 +443,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
                     const Vec2 contTarget = Add(in.player, Mul(prevDir, b));
                     const bool contWalkable = !in.env.canOccupy ||
                                  in.env.canOccupy(contTarget.x, contTarget.y, in.settings.safeWalk);
-                    if (contWalkable && !EnemyBlocked(in, contTarget) &&
+                    if (contWalkable && !Core::EnemyPathBlocked(in, in.player, contTarget) &&
                         Core::ZonePathClear(in, in.player, contTarget) &&   // never hold a heading INTO or THROUGH a live blast
                         Core::Temporal::PathClear(ctx, in.player, in.speed, contTarget)) {
                         dir = prevDir;
@@ -422,12 +458,13 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             const Vec2  target = Add(in.player, Mul(dir, r));
             const bool  walkable = !in.env.canOccupy ||
                          in.env.canOccupy(target.x, target.y, in.settings.safeWalk);
-            if (walkable && !EnemyBlocked(in, target) &&
+            if (walkable && !Core::EnemyPathBlocked(in, in.player, target) &&  // enemy bodies, SWEPT (finding J)
                 Core::ZonePathClear(in, in.player, target) &&                     // active-zone hard floor, SWEPT (Temporal is lane-only)
                 Core::Temporal::PathClear(ctx, in.player, in.speed, target)) {   // immediate-step temporal floor
                 out.kind = SolveKind::Safe;
                 out.target = target;
                 out.clearance = Core::PointSafety(in, target);   // spatial clr (may be <0 — time-threaded)
+                out.pendingCost = Core::PendingZoneCost(in, target);
                 out.shouldMove = true;
                 out.prePosition = true;
                 out.followedRoute = true;
@@ -449,7 +486,9 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     int best = -1;
     float bestScore = -kHugeClearance;
     for (int i = 0; i < n; ++i) {
-        if (!cands[i].occOk) continue;   // walls / enemy bodies: hard block, never threaded
+        // Walls / enemy bodies: hard block, never threaded. SWEPT for the bodies
+        // (finding J) — the step itself must not cross a mob, not merely end clear of one.
+        if (!cands[i].pathOk) continue;
         // A candidate is acceptable two ways:
         //  1) INSTANTANEOUSLY safe — endpoint clear AND the swept segment
         //     player→candidate clears every lane/zone right now (Fix B, plan 78: a
@@ -506,6 +545,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         const Cand& w = cands[best];
         out.target = w.pos;
         out.clearance = w.clr;
+        out.pendingCost = w.soft;
         if (w.stand || w.moveDist <= 1e-4f) {
             out.kind = SolveKind::Hold;
             out.shouldMove = false;
@@ -527,6 +567,10 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     int best2 = -1;
     float best2Val = -kHugeClearance;
     for (int i = 0; i < n; ++i) {
+        // Endpoint rule ON PURPOSE here (finding J): this is the surround-escape
+        // path, reached only when nothing is safe. An enemy body is an intent-level
+        // no-go, not a physical wall, so the swept rule must not be allowed to
+        // shrink the set of ways out when the player is already boxed in.
         if (!cands[i].occOk) continue;
         float val = cands[i].clr;
         if (pocketFound) {
@@ -549,6 +593,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             out.kind = SolveKind::Fallback;
             out.target = w.pos;
             out.clearance = w.clr;
+            out.pendingCost = w.soft;
             out.shouldMove = true;
             out.prePosition = pocketFound && !standDurable;
             out.followedRoute = pocketFound && route.waypoints > 2;
@@ -562,6 +607,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     out.kind = SolveKind::Surrounded;
     out.target = in.player;
     out.clearance = standClr;
+    out.pendingCost = Core::PendingZoneCost(in, in.player);
     out.shouldMove = false;
 }
 

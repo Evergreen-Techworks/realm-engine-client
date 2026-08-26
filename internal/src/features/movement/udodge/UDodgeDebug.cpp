@@ -203,16 +203,26 @@ void Render(const DebugSnapshot& snap,
     d->AddText(ImVec2(12.f, 12.f), IM_COL32(120, 220, 255, 255), buf);
 
     // Route status line — WHY the plan looks the way it does (diagnostic).
-    char rbuf[192];
+    char rbuf[256];
+    // pending: penetration into telegraphed (unarmed) blast discs at the stand /
+    // the chosen target, in tiles (finding G-2). Shown only when non-zero, so the
+    // line is unchanged in the overwhelmingly common no-telegraph case. This used
+    // to be unreportable — the field it comes from was never written.
+    char pbuf[64] = "";
+    if (snap.standPending > 0.f || snap.targetPending > 0.f)
+        std::snprintf(pbuf, sizeof(pbuf), "  pending stand:%.1ft tgt:%.1ft",
+                      snap.standPending, snap.targetPending);
     std::snprintf(rbuf, sizeof(rbuf),
-                  "path: %s%s%s%s  dist:%.1ft  reach:%.0ft%s",
+                  "path: %s%s%s%s%s  dist:%.1ft  reach:%.0ft%s%s",
                   snap.hasRoute ? "planned" : "none",
                   snap.routePartial    ? "  PARTIAL(no durable pocket reachable)" : "",
+                  snap.routeTempGoal   ? "  TEMP-GOAL(threading a time-gap)" : "",
                   snap.routeOutOfRange ? "  OUT-OF-RANGE(fled the disk)" : "",
                   snap.routeExpanded   ? "  expanded" : "",
                   snap.routeGoalDist,
                   static_cast<double>(kUPathMaxRadCells * kUPathCellTiles),
-                  snap.inRangeRadius > 0.f ? "  [LOCKED]" : "");
+                  snap.inRangeRadius > 0.f ? "  [LOCKED]" : "",
+                  pbuf);
     d->AddText(ImVec2(12.f, 28.f),
                snap.routeOutOfRange ? IM_COL32(255, 140, 60, 255) : IM_COL32(150, 230, 180, 255),
                rbuf);

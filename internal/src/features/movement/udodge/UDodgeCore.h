@@ -71,6 +71,34 @@ float SegmentSafety(const MapInput& in, Vec2 a, Vec2 b);
 // (re-anchored) enemy positions every frame, not only at solve time.
 bool EnemyBlocked(const MapInput& in, Vec2 pos);
 
+// SWEPT variant for a MOVE: true when the straight step `from`→`to` passes
+// through any enemy body (+ the player half-extent). FINDING J: enemy bodies were
+// endpoint-tested only, and a step is up to ~1.9 tiles while the no-go circle is
+// ~1.01 tiles across — so the dodge could cheerfully slice straight through a mob
+// with both ends of the step clear. Same cost shape as SegmentSafety's zone term
+// (one point-segment distance per enemy). Falls back to the endpoint rule when
+// `from` is ALREADY inside a body, for the same reason ZonePathClear does: every
+// move out of a circle necessarily sweeps it, and vetoing those would trap the
+// player under a mob that walked onto them.
+//
+// NOTE: in RotMG an enemy body does not physically block the player, so this is
+// an INTENT-level "don't melee" rule, not a collision constraint. It is therefore
+// applied to the SAFE-set admission and to committed steps — never to the
+// least-bad fallback path, which is the surround-escape and must stay as
+// permissive as it was.
+bool EnemyPathBlocked(const MapInput& in, Vec2 from, Vec2 to);
+
+// Total PENDING-zone penetration (tiles) at `pos`: summed over every telegraphed,
+// not-yet-landed disc, how far `pos` sits INSIDE (radius + kUPlayerHalf). 0 =
+// outside every telegraph. FINDING G-2: pending zones are documented as
+// "cost-only (soft)" throughout this engine and NO cost term existed — nothing
+// read them at all, so a bomb 1.2 s out was invisible to both the solver and the
+// planner. This is the quantity that cost is built from (kSolvePendingW), and the
+// value CandidateDebug::softCost has always claimed to hold. It is a SCORE input
+// only: pending zones must never block, never subtract clearance, and never
+// appear in PointSafety / SegmentSafety / PointClear.
+float PendingZoneCost(const MapInput& in, Vec2 pos);
+
 // ── Shared arrival-time bullet-prediction model (plan 72) ────────────────────
 // The one home for the temporal lookahead the immediate solver AND the worker
 // pathfinder both use: sample each danger lane's spacetime polyline over a

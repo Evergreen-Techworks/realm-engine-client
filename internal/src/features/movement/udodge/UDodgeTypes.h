@@ -92,6 +92,30 @@ constexpr float kSolveClearComfort = 0.5f;  // clearance (tiles) above which com
 // and aggressive instead of retreating off the pattern. Bounded, modest.
 constexpr float kSolveWeaveW = 0.35f;   // flat reward for a threaded (in-gap) candidate
 constexpr float kSolveStandBias    = 0.15f; // score the stand point gets so we don't twitch off a safe stand
+// ── PENDING-ZONE SOFT COST (finding G-2) ────────────────────────────────────
+// A pending (telegraphed, not-yet-landed) AoE disc is documented as "cost-only
+// (soft)" in five places across this engine — and no cost term existed anywhere.
+// Nothing read a pending zone at all, so a bomb 1.2 s from landing was FULLY
+// INVISIBLE: the solver would happily hold in its dead centre and the planner
+// would call that a durable pocket, only to have to flee at 0.9 s when the arm
+// window opened. Churn, and a wasted route.
+//
+// This is the missing term: a SCORE penalty per tile a candidate sits INSIDE a
+// pending disc (+ kUPlayerHalf), applied over the ALREADY-SAFE set only — exactly
+// like kSolveInnerW. It is NEVER a filter. If the only safe cells are inside the
+// telegraph the player still dodges there (safety wins outright) and this simply
+// pulls back out on the next tick, which is the whole point of "soft".
+//
+// 0.6/tile: at one tile of penetration it outweighs the stand bias and the
+// comfort tiebreak, so we drift off a telegraphed spot when anywhere equal is
+// available, without out-shouting goal progress or the lateral-sidestep term.
+constexpr float kSolvePendingW   = 0.6f;
+// Ceiling on the total penalty (score units). Penetration is a SUM over discs and
+// a disc radius runs to 12 tiles, so an uncapped term could reach ~-20 and become
+// a de-facto hard filter — the one thing a pending zone must never be. 2.0 is
+// firmly decisive against every other term while staying a preference.
+constexpr float kSolvePendingMax = 2.0f;
+
 constexpr float kSolveOutRangeW    = 1.6f;  // penalty per tile a dodge point sits OUTSIDE the boss
                                             // weapon range — prefer dodging inward, stay in shooting range
 // Extra out-of-range penalty proportional to the SQUARE of tiles past weapon
@@ -317,6 +341,43 @@ constexpr float kUPathRoot2        = 1.41421356f;
 constexpr int   kUPathMaxSide      = kUPathMaxRadCells * 2 + 1;                    // 49
 constexpr int   kUPathMaxCells     = kUPathMaxSide * kUPathMaxSide;               // 49x49 = 2401
 constexpr int   kUPathHeapCap      = kUPathMaxCells * 8;  // fixed min-heap (lazy Dijkstra, done-check on pop)
+
+// ── BOUNDED WAIT EDGE (finding F) ───────────────────────────────────────────
+// g(cell) in the pathfinder is ARRIVAL TIME and every edge advances time by
+// exactly the travel time, so without a self-edge the search cannot express the
+// single most important move in a shot-wall fight: "stand here for a moment, let
+// the wall pass, THEN go". The solver's temporal layer (Temporal::PathClear)
+// threads exactly that gap, so the two halves of the two-rate MPC were using
+// opposite criteria for the same cell.
+//
+// The wait is expressed as a DELAYED DEPARTURE on an ordinary edge, not as a new
+// state dimension: when the direct relaxation cur→ni fails the arrival gate, the
+// search retries departing w slices later (arriving w slices later), gated by
+// ArrivalClear over the whole stand at `cur`. Because Dijkstra records only the
+// EARLIEST arrival at a cell, a delayed arrival is only ever recorded where no
+// earlier one exists — a wait can create a route, never replace a faster one.
+//
+// The cap is what keeps this bounded. 2 slices = 200 ms = ONE server tick = one
+// replan period: the longest wait that is still consistent with the whole plan
+// being recomputed and republished before it elapses. Waiting longer would be
+// planning past the point where the plan is thrown away. A wait is additionally
+// refused once the departure time reaches Core::Temporal::kHorizonMs, because
+// past the horizon the prediction is a conservative freeze — there is nothing
+// left to wait out, and unbounded waiting would otherwise walk arrival times off
+// the end of the model. See UDodgePathfinder.cpp SearchPass.
+constexpr int   kUPathMaxWaitSlices = 2;   // ≤ 2 × kUTemporalStepMs = 200 ms = one server tick
+
+// ── PENDING-ZONE GOAL DETOUR (finding G-2) ──────────────────────────────────
+// A pending (telegraphed, not yet landed) AoE disc is COST-ONLY and must never
+// hard-block — but the route goal test never costed it at all, so the planner
+// would happily commit to the dead centre of a bomb 1.2 s out and then have to
+// flee when it armed. This is how much LATER an arrival the goal search will
+// accept in order to reach a goal cell that is NOT inside a pending disc. Two
+// server ticks: a pending disc is at most ~kAoeArmWindowMaxMs from arming (after
+// which it hard-blocks anyway), so paying two ticks of travel to not be standing
+// in it when it lands is cheap. Never a filter — when no clean goal turns up
+// inside the budget, the tainted goal is still used.
+constexpr float kUPathPendingDetourMs = 400.f;
 
 // ── Navigation planner (Shift+Click walk-to A*; baked, NO user sliders) ──────
 // The dodge pathfinder above searches a small (≤12-tile) window for the nearest
@@ -575,7 +636,12 @@ struct CandidateDebug {
     Vec2  dir{};
     bool  valid = true;
     float clearance = kHugeClearance;  // min hard clearance along the step segment (tiles)
-    float softCost  = 0.f;             // pending-zone penetration sum (tiles)
+    float softCost  = 0.f;             // pending-zone penetration sum (tiles) — Core::PendingZoneCost.
+                                       // Finding G-2: this was documented for the whole life of the
+                                       // struct and NEVER written by anything, so it always read 0
+                                       // and the overlay silently claimed "no telegraph here" while
+                                       // sitting under a bomb. UDodge now fills slot kStandCandidate
+                                       // (the stand) and slot 1 (the chosen target).
     float blockDist = kHugeClearance;  // distance at which walls truncate the segment
 };
 
@@ -640,6 +706,10 @@ struct DebugSnapshot {
     // Dodge route status (why the plan looks the way it does) — surfaced in the
     // overlay header so path behavior is diagnosable at a glance.
     bool  routePartial    = false;  // no durable pocket time-reachable → heads to safest-reachable
+    bool  routeTempGoal   = false;  // finding F: the goal is a second-class TEMPORAL pocket (no spatial
+                                    // durable pocket existed anywhere in the window)
+    float standPending    = 0.f;    // finding G-2: pending-zone penetration at the PLAYER (tiles)
+    float targetPending   = 0.f;    // ...and at the solver's chosen target
     bool  routeExpanded   = false;  // window grew past the base radius to find a goal
     bool  routeOutOfRange = false;  // locked: no in-range pocket → routed OUTSIDE weapon range (fled)
     float routeGoalDist   = 0.f;    // route arc-length to the goal (tiles)

@@ -697,7 +697,24 @@ void Tick(void* player, float px, float py, float dt)
         // route can thread a safe arc AROUND the boss, not just a 12-tile bubble
         // around the player. Unlocked → player-centered as before. The worker starts
         // its search from the player's cell within this window (StartCell).
-        const bool lockedCenter = goal.fromLock && goal.maxRange > 0.f;
+        //
+        // FINDING L: boss-centring only helps while the PLAYER IS INSIDE the window.
+        // Beyond it, Path::PlayerCell CLAMPS the start to the grid edge, so the
+        // search starts from a cell the player is not standing in while RunSearch
+        // measures the step target from the REAL player — the first step can point
+        // somewhere the route never goes. That is exactly the "drifted out of range,
+        // reposition inward" case, i.e. the moment the route matters most. So fall
+        // back to player-centred once the player is near/past the window edge: the
+        // boss then sits outside the grid, the disk gate simply admits no in-range
+        // goal, and ComputeDodge's existing unconstrained re-search takes over.
+        // Margin of 2 cells (1 tile) so a player hugging the boundary — or one who
+        // moved since this tick's raster — is never planned from a clamped start.
+        constexpr float kGridEdgeMarginTiles =
+            (kUPathMaxRadCells - 2) * kUPathCellTiles;   // 11 tiles of the 12-tile window
+        const bool playerInGrid =
+            std::max(std::fabs(in.player.x - goal.lockPos.x),
+                     std::fabs(in.player.y - goal.lockPos.y)) <= kGridEdgeMarginTiles;
+        const bool lockedCenter = goal.fromLock && goal.maxRange > 0.f && playerInGrid;
         const Vec2 gridCenter   = lockedCenter ? goal.lockPos : in.player;
         {
             PhaseTimer _p(g_tRaster);
@@ -706,6 +723,12 @@ void Tick(void* player, float px, float py, float dt)
         s_snap.tickId           = g_map.tickId;
         s_snap.player           = in.player;
         s_snap.moveBudget       = b;
+        // FINDING K: carry the REAL player speed (tiles/ms) so the worker's
+        // arrival-time grid and this thread's step validation agree on how fast the
+        // player actually moves. moveBudget above is in.stepTiles, which decouples
+        // from the real speed the moment the user sets the "Step distance" slider
+        // or the auto clamp [0.4, 3.0] binds — it stays a step-LENGTH knob only.
+        s_snap.speed            = in.speed;
         s_snap.settings         = settings;
         s_snap.goalActive       = goal.active;
         s_snap.goalPos          = goal.pos;
@@ -750,6 +773,9 @@ void Tick(void* player, float px, float py, float dt)
                 << " found=" << g_route.found << " len=" << g_route.waypoints
                 << " gridR=" << g_route.radiusCells << " pops=" << g_route.pops
                 << " expanded=" << g_route.expanded
+                << " partial=" << g_route.partial
+                << " tempGoal=" << g_route.tempGoal
+                << " arriveMs=" << g_route.goalArriveMs
                 << " | nav found=" << g_route.navFound
                 << " partial=" << g_route.navPartial
                 << " arrived=" << g_route.navArrived
@@ -809,7 +835,15 @@ void Tick(void* player, float px, float py, float dt)
         // Enemy bodies are a HARD no-go for EVERY target kind — a moving add can
         // walk onto a spot the route chose a tick ago — so re-check the cached
         // target against the CURRENT (re-anchored, frame-fresh) enemy positions.
-        const bool enemyClearNow = !Core::EnemyBlocked(in, g_solve.target);
+        // SWEPT (finding J): the committed step must not cross a body either, not
+        // just end clear of one — and a mob that walked into the middle of the step
+        // since the solve is exactly what this per-frame re-check exists to catch.
+        // EXCEPT a Fallback, the surround-escape, which the solver admits on the
+        // ENDPOINT rule: this gate must never be stricter than the rule that chose
+        // the target, or a boxed-in player would be refused the only way out.
+        const bool enemyClearNow = (g_solve.kind == Solver::SolveKind::Fallback)
+            ? !Core::EnemyBlocked(in, g_solve.target)
+            : !Core::EnemyPathBlocked(in, in.player, g_solve.target);
         bool targetOk;
         if (!enemyClearNow) {
             targetOk = false;
@@ -865,7 +899,10 @@ void Tick(void* player, float px, float py, float dt)
     // ── Drive toward the (possibly re-solved) target ─────────────────────────
     // Enemy bodies stay a hard no-go even after a re-solve; a target that is
     // enemy-blocked now is not driven (the next tick's fresh solve re-picks).
-    if (g_solve.shouldMove && !Core::EnemyBlocked(in, g_solve.target)) {
+    const bool enemyDriveClear = (g_solve.kind == Solver::SolveKind::Fallback)
+        ? !Core::EnemyBlocked(in, g_solve.target)                       // surround-escape: endpoint rule
+        : !Core::EnemyPathBlocked(in, in.player, g_solve.target);       // finding J: swept
+    if (g_solve.shouldMove && enemyDriveClear) {
         const Vec2 to = Sub(g_solve.target, in.player);
         const float d = Len(to);
         const Vec2 dir = d > 1e-4f ? Mul(to, 1.f / d) : Vec2{};
@@ -970,11 +1007,28 @@ void Tick(void* player, float px, float py, float dt)
             d.routeGoal = {};
         }
         d.routePartial    = g_route.partial;
+        d.routeTempGoal   = g_route.tempGoal;
         d.routeExpanded   = g_route.expanded;
         d.routeOutOfRange = g_route.outOfRange;
         d.routeGoalDist   = g_route.goalDist;
         d.inRangeRadius = goal.fromLock ? goal.maxRange : 0.f;
         for (int i = 0; i < kCandidateCount; ++i) d.candidates[i] = CandidateDebug{};
+        // FINDING G-2: CandidateDebug::softCost has always documented "pending-zone
+        // penetration sum (tiles)" and was never written by anything — the overlay
+        // read a hardcoded 0 and so reported "clear of every telegraph" while the
+        // player stood in the middle of one. Fill the two slots that carry meaning
+        // for this solver (its real candidate set is 131 wide, not kCandidateCount):
+        // the STAND, and the target actually chosen.
+        d.standPending  = Core::PendingZoneCost(in, in.player);
+        d.targetPending = g_solve.pendingCost;
+        d.candidates[kStandCandidate].softCost = d.standPending;
+        d.candidates[kStandCandidate].dir      = {};
+        if (kCandidateCount > 1) {
+            d.candidates[1].softCost = d.targetPending;
+            d.candidates[1].dir      = g_solve.shouldMove
+                ? Normalize(Sub(g_solve.target, in.player)) : Vec2{};
+            d.candidates[1].valid    = g_solve.shouldMove;
+        }
         d.map = g_map;
         // Weight heatmap + navigation overlay.
         d.drawWeights = settings.debugWeights;
