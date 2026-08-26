@@ -101,7 +101,7 @@ static std::vector<WorldProjectile>  g_projectiles;
 static std::unordered_map<uint32_t, bool>  s_blockedMap;    // present = movement blocked (NoWalk / OccupySquare / FullOccupy)
 static std::unordered_map<uint32_t, bool>  s_fullOccupyMap; // present = tile has FullOccupy entity (for sub-tile neighbour check)
 static std::unordered_map<uint32_t, bool>  s_damagingMap;  // present = tile deals damage (minDmg/maxDmg > 0)
-static std::unordered_map<uint32_t, bool>  s_sinkMap;      // present = sink/sinking ground (water / lava-visual) — nav routes AROUND it
+static std::unordered_map<uint32_t, bool>  s_sinkMap;      // present = sink/sinking ground (water) — nav treats as impassable, the dodge does not
 static std::unordered_map<uint32_t, int>   s_tileMaxDmgMap; // value = tile maxDmg (damaging tiles only)
 static std::unordered_map<uint32_t, float> s_tileSpeedMap; // value = XML speed multiplier (non-zero tiles only)
 static std::mutex s_tileMapMutex;
@@ -153,10 +153,16 @@ static void RebuildBlockedMap()
             damagingMap[k] = true;
             tileMaxDmgMap[k] = (t.maxDmg > 0) ? t.maxDmg : t.damageCached;
         }
-        // Sink / sinking ground = water and lava-style tiles. Physically walkable
-        // on the server but bad to path across (you sink / it's lava) — the nav A*
-        // routes AROUND it (hug the coast) via the hazard fold in CopyBoxBlocked.
-        // Not added to blockedMap (the dodge may still cross it to avoid a shot).
+        // Sink / sinking ground = water and lava-style tiles. The player cannot
+        // realistically cross deep water, so NAVIGATION treats these as impassable
+        // (CopyBoxBlocked bit2, which the nav A* hard-blocks on — it hugs the coast
+        // instead of swimming the lake). Deliberately NOT added to blockedMap: the
+        // immediate dodge must still be free to cross one to escape a shot, and
+        // blockedMap is the dodge's wall source too.
+        // TCOND_SINK and TCOND_SINKING are folded together: both are the same XML
+        // "you sink into this ground" family and nothing we read (no depth, no
+        // separate walk flag) distinguishes a crossable shallow from a deep one, so
+        // the user-reported behaviour (cannot cross) governs both.
         if (t.conds & (TCOND_SINK | TCOND_SINKING))
             sinkMap[k] = true;
         // Store speed modifier for any tile that has one (0 = no modifier)
@@ -2235,8 +2241,9 @@ namespace WorldTAB {
     // acquisition rasterizes the whole grid: for each cell we floor the player-box
     // footprint (center +/- playerHalfEdge) on each axis and mark the cell blocked
     // if any tile in that small box is in s_blockedMap (or s_damagingMap when
-    // foldHazard). This is IsPositionBlocked's box logic hoisted out of the per-cell
-    // path. Noclip is deliberately not consulted (conservative — never unsafe).
+    // foldHazard, or s_sinkMap always — see the bit legend below). This is
+    // IsPositionBlocked's box logic hoisted out of the per-cell path. Noclip is
+    // deliberately not consulted (conservative — never unsafe).
     void CopyBoxBlocked(float originX, float originY, int side, float cellTiles,
                         float playerHalfEdge, bool foldHazard, unsigned char* out)
     {
@@ -2250,17 +2257,25 @@ namespace WorldTAB {
                 const int x1 = static_cast<int>(std::floor(cx + playerHalfEdge));
                 const int y0 = static_cast<int>(std::floor(cy - playerHalfEdge));
                 const int y1 = static_cast<int>(std::floor(cy + playerHalfEdge));
-                // bit0 = hard wall (impassable). bit1 = hazard (damaging/sink/water)
-                // when foldHazard — a SOFT avoid: the nav A* routes around it but can
-                // still traverse it when boxed in (a lava/water-floored arena must not
-                // wall the planner in). A true wall always sets bit0 regardless.
+                // bit0 = hard wall (impassable).
+                // bit1 = DAMAGING ground when foldHazard — a SOFT avoid: the nav A*
+                //        routes around it but can still traverse it when boxed in (a
+                //        lava-floored arena must not wall the planner in).
+                // bit2 = SINK/water ground, emitted ALWAYS (independent of foldHazard,
+                //        which is a safe-walk preference; not being able to swim is
+                //        not a preference). Consumers decide: the nav A* hard-blocks
+                //        it, the dodge occupancy grid ignores it (it may cross water
+                //        to escape a shot). Sink used to ride bit1 and only cost the
+                //        nav kUNavHazardCost per tile, which any shoreline detour of
+                //        more than ~6 tiles beat — so walk-to swam the lake.
+                // A true wall always sets bit0 regardless.
                 unsigned char f = 0;
                 for (int tx = x0; tx <= x1; ++tx) {
                     for (int ty = y0; ty <= y1; ++ty) {
                         const uint32_t k = BlockedKey(tx, ty);
-                        if (s_blockedMap.count(k) != 0) { f |= 0x1; }
-                        else if (foldHazard && (s_damagingMap.count(k) != 0 ||
-                                                s_sinkMap.count(k) != 0)) { f |= 0x2; }
+                        if (s_blockedMap.count(k) != 0) { f |= 0x1; continue; }
+                        if (foldHazard && s_damagingMap.count(k) != 0) { f |= 0x2; }
+                        if (s_sinkMap.count(k) != 0)                   { f |= 0x4; }
                     }
                     if (f & 0x1) break;   // a wall dominates; no need to keep scanning
                 }

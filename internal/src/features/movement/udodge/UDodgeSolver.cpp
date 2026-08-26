@@ -48,6 +48,11 @@ struct Cand {
                         // in tiles — the quantity CandidateDebug::softCost documents. SCORE only.
     bool  threaded = false;   // admitted via the arrival-time thread (in a lane NOW,
                               // clear on arrival) rather than open-space spatial safety
+    // Signed gap (tiles) from pos to the NEAREST enemy body surface — the same
+    // circle EnemyBlocked excludes on (radius + kUPlayerHalf). Clamped at
+    // kSolveStandoffBand when nothing is near, i.e. "no standoff penalty". SCORE
+    // only (kSolveStandoffW); never gates admission.
+    float enemyGap = kSolveStandoffBand;
 };
 
 // Aggregate incoming-threat direction: normalized sum of (player − lane.anchor)
@@ -63,6 +68,73 @@ Vec2 FlowDir(const MapInput& in)
         sum = Add(sum, Normalize(Sub(in.player, L.points[0])));
     }
     return Normalize(sum);
+}
+
+// ── General enemy standoff support (kSolveStandoffW / kSolveStandoffBand) ───
+// The nearby enemies whose bodies the standoff score term keeps us off. Built
+// ONCE per solve and culled to the bodies a candidate could possibly be scored
+// against (every candidate lies within one move budget of the player), so the
+// per-candidate lookup below runs over a handful of entries instead of all
+// kMaxEnemies — see the cost note on Evaluate.
+struct StandoffSet {
+    Vec2  pos[kMaxEnemies]{};
+    float noGo[kMaxEnemies]{};   // radius + kUPlayerHalf — EnemyBlocked's hard circle
+    int   n = 0;
+    // Gap from the PLAYER to the LOCKED body, which is kept out of the scored set
+    // above (its annulus already penalises it) but still has to be visible to the
+    // HOLD decline — being parked on the boss is exactly the case where declining
+    // the early Hold lets kSolveInnerW pull us back out to the annulus.
+    float lockGap = kSolveStandoffBand;
+};
+
+// Position match (squared tiles) used to recognise the LOCKED boss inside the
+// enemy array. Both come from the same EnemyTracker entry in the same
+// PopulateEnemies pass, so this only has to survive float copies.
+constexpr float kSolveLockMatchEps2 = 0.01f;   // 0.1 tile
+
+void BuildStandoffSet(const MapInput& in, const Goal& goal, float b, StandoffSet& out)
+{
+    out.n = 0;
+    if (!in.map) return;
+    // Composition with the locked-boss annulus: when the annulus is live it ALREADY
+    // holds us off the lock (kSolveInnerW over [0, innerStandoff], a ring that is at
+    // least kUInnerStandoffMinTiles = 2 tiles and normally wider than this band), so
+    // the locked body is dropped here rather than penalised twice — double-counting
+    // would bias the dodge outward off the annulus it is supposed to be holding.
+    // Every OTHER enemy (adds crowding the boss included) still gets the term.
+    const bool skipLock = goal.fromLock && goal.innerStandoff > 0.f;
+    for (int i = 0; i < in.map->enemyCount; ++i) {
+        const EnemyBlocker& e = in.map->enemies[i];
+        const float noGo = e.radius + kUPlayerHalf;
+        // Cull: a candidate is at most b from the player, so a body farther than
+        // b + noGo + band away cannot reach any candidate's fade region.
+        const float cull = b + noGo + kSolveStandoffBand;
+        if (LenSq(Sub(e.pos, in.player)) > cull * cull) continue;
+        if (skipLock && LenSq(Sub(e.pos, goal.lockPos)) < kSolveLockMatchEps2) {
+            out.lockGap = std::min(out.lockGap, Len(Sub(e.pos, in.player)) - noGo);
+            continue;                                   // scored by the annulus, not here
+        }
+        out.pos[out.n]  = e.pos;
+        out.noGo[out.n] = noGo;
+        ++out.n;
+    }
+}
+
+// Gap from p to the nearest body surface in the set, clamped at the band (= no
+// penalty). The squared pre-test keeps the common case (a candidate not near any
+// body) free of the sqrt. Never negative for a SCORED candidate — occOk already
+// excludes anything inside a body — so the ramp in ScoreCand needs no clamp of its own.
+float StandoffGap(const StandoffSet& s, Vec2 p)
+{
+    float best = kSolveStandoffBand;
+    for (int i = 0; i < s.n; ++i) {
+        const float lim = s.noGo[i] + kSolveStandoffBand;
+        const float d2  = LenSq(Sub(p, s.pos[i]));
+        if (d2 >= lim * lim) continue;                   // outside the fade — cannot score
+        const float g = std::sqrt(d2) - s.noGo[i];
+        if (g < best) best = g;
+    }
+    return best;
 }
 
 // Smart-direction score over the SAFE set only (safety already guaranteed for
@@ -132,6 +204,19 @@ float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
         const float distToBoss = Len(Sub(c.pos, goal.lockPos));
         if (distToBoss < goal.innerStandoff)
             score -= kSolveInnerW * (goal.innerStandoff - distToBoss);
+    }
+
+    // Don't sit ON a mob — the general standoff, for EVERY enemy rather than only
+    // a locked one (kSolveStandoffW). Quadratic ramp: full weight where the
+    // candidate touches the body surface, zero by kSolveStandoffBand beyond it, so
+    // the dodge prefers the outer part of its reach while still being free to come
+    // in. Like kSolveInnerW this only REORDERS safe candidates — dodging inward
+    // onto a mob stays available when that is where the safe cells are. The locked
+    // boss is not in the set while its annulus is live (see BuildStandoffSet), so
+    // the two never stack on the same body.
+    if (c.enemyGap < kSolveStandoffBand) {
+        const float t = 1.f - c.enemyGap / kSolveStandoffBand;   // 0 at the band edge, 1 on the body
+        score -= kSolveStandoffW * t * t;
     }
 
     // Don't park under a telegraphed bomb (finding G-2). Pending zones are
@@ -223,7 +308,12 @@ bool EnemyBlocked(const MapInput& in, Vec2 p)
 }
 
 // Evaluate occupancy + server-accurate clearance for every candidate.
-void Evaluate(const MapInput& in, Cand* c, int n)
+// COST: the enemy-standoff gap adds one pass over the CULLED StandoffSet per
+// candidate (typically 0-3 bodies within b + ~3 tiles; a squared pre-test keeps
+// the miss free of the sqrt) — the same 131 x nearby-enemies shape the EnemyBlocked
+// / EnemyPathBlocked passes in this very loop already have, and far cheaper than
+// the PointSafety lane march beside it.
+void Evaluate(const MapInput& in, const StandoffSet& so, Cand* c, int n)
 {
     for (int i = 0; i < n; ++i) {
         const bool walkable = !in.env.canOccupy ||
@@ -233,6 +323,7 @@ void Evaluate(const MapInput& in, Cand* c, int n)
         c[i].clr = Core::PointSafety(in, c[i].pos);
         c[i].soft = Core::PendingZoneCost(in, c[i].pos);   // finding G-2 (score only, never a filter)
         c[i].safe = c[i].occOk && c[i].clr >= kULatencyPad;
+        c[i].enemyGap = StandoffGap(so, c[i].pos);         // score only, never a filter
     }
 }
 
@@ -335,7 +426,11 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
 
     Cand cands[kMaxCandidates];
     const int n = BuildCandidates(in, b, goal, pocketFound, pocketPos, cands);
-    Evaluate(in, cands, n);
+    // Nearby bodies for the general standoff score (kSolveStandoffW) — built once
+    // per solve, not per candidate.
+    StandoffSet standoff;
+    BuildStandoffSet(in, goal, b, standoff);
+    Evaluate(in, standoff, cands, n);
 
     // ── Hold ONLY when the current spot is a DURABLE temporal pocket ─────────
     // The ONE exception: a boss lock drifted OUTSIDE weapon range repositions inward.
@@ -361,9 +456,24 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         // pending SCORE term (kSolvePendingW) drifts us out among SAFE candidates —
         // and re-picks the stand anyway if nothing better exists. Soft, as documented.
         const bool repositionOffTelegraph = Core::PendingZoneCost(in, in.player) > 0.f;
+        // Don't HOLD while sitting ON a mob (the general standoff). Identical shape
+        // to the telegraph decline above and for the same reason: the stand can be a
+        // perfectly durable temporal pocket while the player is parked on a boss
+        // body, and the kSolveStandoffW score can only act on candidates that are
+        // actually SCORED — this early return never reaches them. It does NOT force
+        // a move: it only declines the early Hold so the reflex runs, drifts us out
+        // among SAFE candidates, and re-picks the stand anyway when nothing better
+        // exists. cands[0] is the stand point; its gap came from Evaluate. The
+        // LOCKED body counts here (standoff.lockGap) even though it is kept out of
+        // the scored set: once the reflex runs it is the ANNULUS (kSolveInnerW) that
+        // pulls us back out, which is exactly the right term for a lock — the two
+        // still never penalise the same body twice.
+        const bool repositionOffEnemy =
+            std::min(cands[0].enemyGap, standoff.lockGap) < kSolveStandoffHoldGap;
         out.leftTelegraph = repositionOffTelegraph &&
                             !repositionInward && !repositionToward;
-        if (!repositionInward && !repositionToward && !repositionOffTelegraph) {
+        if (!repositionInward && !repositionToward && !repositionOffTelegraph &&
+            !repositionOffEnemy) {
             out.kind = SolveKind::Hold;
             out.target = in.player;
             out.clearance = cands[0].clr;

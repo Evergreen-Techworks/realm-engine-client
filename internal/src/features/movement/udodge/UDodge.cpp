@@ -238,6 +238,9 @@ void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls)
     // IsWalkPositionBlocked/CanOccupy used) over the same source (s_blockedMap), so
     // the walkability is unchanged — this is pure perf. safeWalk stays OUT here
     // (foldHazard=false) so hazard remains a SEPARATE bit the worker folds itself.
+    // Only bit0 (wall) is consumed: CopyBoxBlocked also emits bit2 (sink/water)
+    // unconditionally, and water is NOT a wall for the DODGE — it may cross one to
+    // escape a shot (only NAVIGATION hard-blocks it). Mask, don't truth-test.
     // Origin is the world center of cell (0,0), player - R*cell, matching the old
     // per-cell center player + (gx-R)*cell.
     uint8_t wallScratch[kUPathMaxCells];
@@ -253,8 +256,8 @@ void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls)
             const int i = gy * S + gx;
             uint8_t& f = grid.flags[i];
             if (rebuildWalls) {
-                if (wallScratch[i]) f |= 0x1;
-                else                f &= static_cast<uint8_t>(~0x1);
+                if (wallScratch[i] & 0x1) f |= 0x1;
+                else                      f &= static_cast<uint8_t>(~0x1);
             }
             // HAZARD bit1 stays per-cell via the cheap per-tick hazard memo.
             const float wx = player.x + static_cast<float>(gx - R) * kUPathCellTiles;
@@ -271,7 +274,9 @@ void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls)
 // uses (kUOccPlayerHalfEdge, the game's collision half-edge). Undiscovered tiles
 // stay walkable (the optimistic model); damaging tiles fold in when safeWalk. The
 // origin is the world CENTER of cell (0,0), player - kUNavRadCells*cell, so cell
-// centers match the worker's NavCellWorld mapping (player + (gx-kNR)*cell). Moving
+// centers match the worker's NavCellWorld mapping (player + (gx-kNR)*cell). Sink /
+// water cells arrive as bit2 regardless of safeWalk and the nav A* hard-blocks them
+// (NavBlocked) — walking into deep water is not a safe-walk preference. Moving
 // from single-tile to the player-box footprint makes walk-to hug walls slightly
 // less — the intended fix for routing the player's edge into a wall the game blocks.
 // Cheap: one mutex lock, kUNavCells hashmap probes, only when a walk-to is active.

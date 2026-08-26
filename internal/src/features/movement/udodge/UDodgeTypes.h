@@ -314,6 +314,48 @@ constexpr float kUInnerStandoffMinTiles = 2.0f;   // absolute inner-radius floor
 // At least as strong as kSolveOutRangeW so the score never prefers point-blank.
 constexpr float kSolveInnerW = 1.6f;
 
+// ── General enemy standoff (EVERY enemy, lock or no lock; baked, NO sliders) ─
+// The annulus above only exists while a boss is LOCKED. With no lock the ONLY
+// thing holding the player off a mob was Core::EnemyBlocked's HARD exclusion at
+// kEnemyRadius + kUPlayerHalf (~1.01 tiles from the enemy CENTRE) — and
+// kEnemyRadius is one baked value for every mob (EnemyBlocker carries no per-type
+// size), so on a large boss body that circle sits INSIDE the sprite: the player
+// ends up standing on top of it. This term is the missing preference.
+// It is a SCORE term over the already-SAFE candidate set, modelled on
+// kSolveInnerW, and it is NEVER a filter: if the only safe cells are on top of a
+// mob the player still dodges there and drifts back out on the next tick. Safety
+// always wins over standoff. It does not widen kEnemyRadius / EnemyBlocked (the
+// shared solver+pathfinder radius, which also decides what the ROUTE treats as
+// impassable) — this is a preference layered on top, not a bigger wall.
+// Measured as the GAP from that same hard-exclusion circle
+// (dist - (radius + kUPlayerHalf)), so it is anchored to the body surface the
+// exclusion already defines and stays correct if per-objType radii ever land in
+// EnemyBlocker::radius. Ramps quadratically with closeness — strongest right on
+// the body, fading to nothing at the band edge — so it reads as "prefer to sit
+// out here, come in if you must" rather than a step the dodge fights against.
+constexpr float kSolveStandoffBand = 2.0f;  // gap (tiles) over which the penalty fades to ZERO.
+                                            // ~3.0 tiles from an enemy CENTRE — clear of any realistic
+                                            // sprite, yet inside every weapon range (even a melee reach
+                                            // of ~3 tiles), so it pushes the dodge off the body without
+                                            // ever refusing to approach one.
+constexpr float kSolveStandoffW    = 1.6f;  // penalty AT the body surface (gap 0). Matched to
+                                            // kSolveInnerW / kSolveOutRangeW so sitting on a mob is never
+                                            // the cheapest option, and above a full-budget move
+                                            // (kSolveMoveW = 1.2) so the solver will spend a whole step to
+                                            // get off one. The quadratic ramp keeps it at only ~0.4 by
+                                            // half the band, where it cannot outweigh the goal-progress /
+                                            // lateral-sidestep terms that make the dodge work.
+// A durable-pocket HOLD returns before any candidate is scored, so a player parked
+// on a mob would never see the term above. When the stand is this close to a body
+// the solver declines that early Hold and runs the normal reflex, where the score
+// drifts us outward among SAFE candidates (and re-picks the stand anyway when
+// nothing better exists) — the same soft shape kSolvePendingW uses for telegraphs.
+// Deliberately TIGHTER than the score band: the score only reorders candidates we
+// are already choosing between, whereas this spends a whole reflex solve, so it
+// must fire when the player is genuinely sitting on a mob — not merely fighting at
+// close range, which would churn the reflex every tick.
+constexpr float kSolveStandoffHoldGap = 0.9f;   // ~1.9 tiles from an enemy CENTRE
+
 // ── Grid pathfinder (route AROUND obstacles; baked, NO user sliders) ─────────
 // The straight-line durable-pocket search can only reach a gap that lies on an
 // unobstructed ray from the player: if a bullet wall or a real wall sits between
@@ -406,9 +448,13 @@ constexpr float kUNavRefillTiles = 16.f; // re-rasterize the nav window only aft
                                          // (else reuse the cached grid — the worker handles the player's
                                          // offset from the stale center). Keeps the big grid cheap.
 constexpr float kUNavArriveTiles = 0.6f; // waypoint-reached radius when advancing along the route
-constexpr float kUNavHazardCost  = 6.0f; // extra A* cost to ENTER a hazard cell (water/lava): routes
-                                         // around it when a dry path exists, but still traverses it when
-                                         // boxed in (never a hard wall — a hazard-floored arena must path)
+constexpr float kUNavHazardCost  = 6.0f; // extra A* cost to ENTER a DAMAGING cell (lava/venom, safeWalk
+                                         // only): routes around it when a clean path exists, but still
+                                         // traverses it when boxed in (never a hard wall — a hazard-floored
+                                         // arena must path). SINK/WATER is NOT priced here: it is impassable
+                                         // for nav (NavGrid bit2 / NavBlocked), because no per-tile cost that
+                                         // still loses to a long shoreline detour can stop walk-to from
+                                         // swimming a lake the player cannot cross.
 
 // The route step-target (the "anchor" the player drives toward) is placed this
 // many move-budgets ahead along the route polyline, NOT one. At one budget the

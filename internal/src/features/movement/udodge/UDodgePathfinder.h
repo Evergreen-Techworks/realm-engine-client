@@ -75,6 +75,8 @@ struct OccGrid {
 struct NavGrid {
     Vec2    center{};                  // world position of the center cell (= player)
     uint8_t flags[kUNavCells]{};       // bit0 = blocked (wall / occupy-square)
+                                      // bit1 = damaging ground (SOFT: kUNavHazardCost per cell, safeWalk only)
+                                      // bit2 = sink / water ground (HARD: impassable for nav — see NavBlocked)
 };
 
 // Everything the pathfinder needs — PLAIN DATA ONLY (no IL2CPP handles, no void*,

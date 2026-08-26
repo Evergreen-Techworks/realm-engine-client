@@ -302,8 +302,12 @@ namespace WorldTAB {
     // when the player-box footprint over that center — floor(center +/- playerHalfEdge)
     // on each axis, matching the game's collision half-edge (kUOccPlayerHalfEdge =
     // 0.2285, i.e. TestTAB's kPlayerChebyshevScale) — touches any blocked tile.
-    // When foldHazard, damaging tiles count as blocked too. Takes the tile mutex
-    // ONCE for the whole grid (vs the per-cell CanOccupy mutex storm this replaces).
+    // Output bits per cell: bit0 = hard wall, bit1 = DAMAGING ground (only when
+    // foldHazard — a soft avoid for the consumer), bit2 = SINK/water ground (always
+    // emitted, foldHazard-independent: the nav A* hard-blocks it, the dodge grid
+    // ignores it). Consumers that only want walls must mask bit0 explicitly.
+    // Takes the tile mutex ONCE for the whole grid (vs the per-cell CanOccupy
+    // mutex storm this replaces).
     // Undiscovered tiles stay walkable (optimistic). This is IsPositionBlocked's box
     // logic hoisted under a single lock. Noclip is intentionally NOT consulted: the
     // planner treats walls as solid, while noclip lets the player through them

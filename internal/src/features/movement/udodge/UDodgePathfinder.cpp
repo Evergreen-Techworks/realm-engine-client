@@ -706,13 +706,22 @@ bool NavHeapPop(float& cost, int& idx)
     return true;
 }
 
-// A nav cell is blocked by a wall (grid bit0) or an enemy body. The player's OWN
-// cell (start) is never treated as blocked so we can always route out of one.
+// A nav cell is blocked by a wall (grid bit0), by SINK/WATER ground (grid bit2),
+// or by an enemy body. The player's OWN cell (start) is never treated as blocked so
+// we can always route out of one — including out of the middle of a lake, where
+// every neighbour is water: the search then reaches nothing, ComputeNav's
+// target == start branch fires and the driver steers straight at the goal, so a
+// player already in the water is never stranded by this rule.
+// Water is HARD here and only here. It used to be the soft bit1 hazard cost
+// (kUNavHazardCost = 6/cell), which any shoreline detour longer than ~6 tiles lost
+// to — so walk-to routed straight through deep water the player cannot cross. The
+// DODGE grid is untouched: it never sees the water bit (FillOccGrid masks bit0),
+// so the immediate solver may still cross water to escape a shot.
 bool NavBlocked(const PlannerSnapshot& in, int gx, int gy, bool isStart)
 {
     if (gx < 0 || gx >= kNS || gy < 0 || gy >= kNS) return true;
     if (isStart) return false;
-    if (in.navGrid.flags[NavIdx(gx, gy)] & 0x1) return true;
+    if (in.navGrid.flags[NavIdx(gx, gy)] & 0x5) return true;   // bit0 wall | bit2 water
     return EnemyBlockedLocal(in.map, NavCellWorld(in.navGrid.center, gx, gy));
 }
 
@@ -800,9 +809,10 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
             const int   nidx = NavIdx(nx, ny);
             if (s_navClosed[nidx]) continue;
             float step = (kDx[d] != 0 && kDy[d] != 0) ? kUPathRoot2 : 1.f;
-            // Hazard (bit1: water/lava) is a SOFT cost, not a wall — route around it
-            // when a dry path exists, but still traverse it when that's the only way
-            // out (so a hazard-floored arena never boxes the planner in).
+            // Hazard (bit1: DAMAGING ground) is a SOFT cost, not a wall — route around
+            // it when a clean path exists, but still traverse it when that's the only
+            // way out (so a lava-floored arena never boxes the planner in). Water
+            // (bit2) is NOT here: it is impassable and handled in NavBlocked.
             if (in.navGrid.flags[nidx] & 0x2) step += kUNavHazardCost;
             const float ng   = s_navG[cur] + step;
             if (!s_navSeen[nidx] || ng < s_navG[nidx]) {
