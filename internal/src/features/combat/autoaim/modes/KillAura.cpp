@@ -19,18 +19,66 @@
 #include <cstdint>
 #include <cstdio>
 
+// ═══════════════════════════════════════════════════════════════════════════
+// MEASURED RESULT — 2026-08-25. READ THIS BEFORE RE-ADDING ORIGIN DISPLACEMENT.
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// 1. The disconnects are FIXED, and the fix must stay. Rewriting BOTH
+//    PLAYERSHOOT.projectilePosition AND playerPosition into a self-consistent
+//    frame ("I am standing at B and my bullet started at B + muzzle") was
+//    measured at 81/81 rewrites ACCEPTED, zero FAILURE, zero drops. The old
+//    projectilePosition-only shape disconnected 4/4. That is what
+//    `spoofPlayerPosition` (default ON, client/plugins/killaura.ts) buys.
+//
+// 2. But enemies STILL do not die at range — and they DO die when the player is
+//    adjacent to them. That pattern is the whole finding. The server validates
+//    an ENEMYHIT against ITS OWN position for the player, maintained from the
+//    MOVE stream, NOT against the position claimed in the shot packet. Our
+//    claimed playerPosition is accepted-but-not-authoritative.
+//
+// 3. THEREFORE: origin displacement cannot extend effective range, at ANY
+//    offset. Reach would require lying in the MOVE stream too — out of scope
+//    and a well-known ban heuristic (a per-shot teleport out and back).
+//
+// 4. THEREFORE: the LOCAL bullet displacement (the old ShotOriginHook, a detour
+//    on KJMONHENJEN::BDEBGEHBPCJ) was pure downside and is very likely WHY the
+//    at-range hit claims were refused: it made the local bullet arrive at the
+//    enemy almost instantly while the server's simulation still had it in
+//    flight from the player's real position, so the hit claim was implausible.
+//    Close range worked precisely because the displacement was small there.
+//    That hook and its files are DELETED. The DLL-side origin SOLVE and its
+//    publication over the `aim` IPC stay — the outbound rewrite consumes them
+//    and that path now works.
+//
+// 5. THEREFORE: killaura aims inside the range the player ACTUALLY has. It used
+//    to pin TargetSelector's range override at a flat 16 tiles, which REPLACED
+//    the weapon-derived radius; it locked targets out of reach and ~70% of the
+//    resulting shots were refused downstream by the origin cap
+//    (staleSkips=291 vs rewrites=81). The user slider is now a shrink-only CAP
+//    over the weapon's own resolved range, defaulting to 0 = auto.
+//
+// If you are about to re-add displacement: the numbers above are the reason not
+// to. Nothing changes until the MOVE stream changes, and that is a different
+// (and far riskier) feature.
+// ═══════════════════════════════════════════════════════════════════════════
+
 namespace {
 
 // ── Settings (relaxed atomics — written from the IPC/UI threads, read here) ───
 static std::atomic<bool>    s_enabled{ false };
 static std::atomic<int>     s_modeInt{ 0 };
-// Default 16 tiles, matching the reference implementation this feature was
-// modelled on. The old 8 kept enemies hovering at the selection boundary — with
-// the dodge moving the player, that boundary crossing is what produced the
-// acquire/drop flapping. Only the DEFAULT changed; the clamp stays [1, 40].
-static std::atomic<float>   s_rangeTiles{ 16.f };
+// 0 = AUTO (the default): the selection radius is the WEAPON's own resolved
+// range, derived by TargetSelector from the calibrated projectile properties. A
+// non-zero value is a shrink-only CAP over that radius — see SetRangeTiles and
+// point 5 of the measured-result block above. The previous flat 16 REPLACED the
+// weapon range and is exactly what this default undoes.
+static std::atomic<float>   s_rangeTiles{ 0.f };
 static std::atomic<float>   s_standoffTiles{ 0.35f };
-static std::atomic<float>   s_maxOffsetTiles{ 12.f };
+// The radius the last armed tick actually selected on (weapon range under the
+// cap). Published so the overlay, the retention drop radius and the origin cap
+// all read the SAME number the selector filtered on. 0 until the first armed
+// tick.
+static std::atomic<float>   s_effRangeTiles{ 0.f };
 static std::atomic<int32_t> s_forcedTargetId{ 0 };
 static std::atomic<bool>    s_overlayEnabled{ true };   // default ON — see KillAura.h
 static std::atomic<bool>    s_driveAimAngle{ true };   // default ON — see KillAura.h
@@ -60,6 +108,21 @@ static constexpr ULONGLONG kKaRetainMs = 250ULL;
 // point: an enemy sitting exactly on the selection radius — routine while the
 // dodge is walking the player around — cannot flap in and out of the lock.
 static constexpr float kKaRetainRangeMarginTiles = 2.0f;
+
+// ── Origin hard cap (derived, no longer a user slider) ───────────────────────
+// The solved origin sits at (target - standoff along the shot angle), so it can
+// never be further from the player than the SELECTION radius plus a hair. This
+// margin absorbs the player moving between the solve and the shot, and the
+// standoff itself.
+//
+// It USED to be a user slider (`killauraMaxOffsetTiles`, default 12) while the
+// selection radius was pinned at 16. Those two numbers disagreed, so the cap
+// refused every origin for a target between 12 and 16 tiles out — measured at
+// staleSkips=291 against rewrites=81. A cap derived from the radius it is meant
+// to bound cannot drift from it. The value is still PUBLISHED on the aim payload
+// so the client's independent re-check (against the packet's own player
+// position) uses the identical bound.
+static constexpr float kKaOriginCapMarginTiles = 2.0f;
 
 // ── Selection stickiness (incumbent bias) ────────────────────────────────────
 // Retention above only bridges selector MISSES. It does nothing about the other
@@ -160,7 +223,9 @@ static float ClampF(float v, float lo, float hi, float fallback)
 // inside ApplyState, instead of once per consumer.
 //
 // False (ox/oy untouched) when an input is not finite or when the result would
-// sit further than maxOffset from the local player.
+// sit further than maxOff from the local player. maxOff is DERIVED from the
+// selection radius (see kKaOriginCapMarginTiles), so it can no longer refuse an
+// origin for a target the selector itself just accepted.
 static bool SolveShotOrigin(float shotAngleRad,
                             float tx, float ty, float px, float py,
                             float standoff, float maxOff,
@@ -217,10 +282,17 @@ static void PublishNow(bool armed, int32_t targetId,
     a.px              = px;
     a.py              = py;
     a.standoffTiles   = s_standoffTiles.load(std::memory_order_relaxed);
-    a.maxOffsetTiles  = s_maxOffsetTiles.load(std::memory_order_relaxed);
+    // Derived from the radius the selector filtered on — see
+    // kKaOriginCapMarginTiles. The client re-checks the origin against this same
+    // bound using the PACKET'S own player position, so publishing the derived
+    // value (rather than a separate user slider) is what keeps the two nets
+    // measuring the same thing.
+    a.maxOffsetTiles  = s_effRangeTiles.load(std::memory_order_relaxed)
+                      + kKaOriginCapMarginTiles;
     a.stampMs         = stamp;
-    // The SAME origin the local-bullet rewrite reads, carried by the SAME
-    // generation — not a recipe for the client to re-derive one from.
+    // The solved origin itself, carried with the generation that produced it —
+    // not a recipe for the client to re-derive one from. This payload is now the
+    // ONLY route the origin takes out of the DLL.
     a.originValid     = originValid ? 1 : 0;
     a.ox              = ox;
     a.oy              = oy;
@@ -301,7 +373,8 @@ static void ApplyState(bool armed, int32_t targetId,
         originAngle = std::atan2(ty - py, tx - px);
         originValid = SolveShotOrigin(originAngle, tx, ty, px, py,
                                       s_standoffTiles.load(std::memory_order_relaxed),
-                                      s_maxOffsetTiles.load(std::memory_order_relaxed),
+                                      s_effRangeTiles.load(std::memory_order_relaxed)
+                                          + kKaOriginCapMarginTiles,
                                       ox, oy);
     }
     CommitInput(originValid, ox, oy, originAngle, armed ? targetId : 0, stamp);
@@ -402,7 +475,8 @@ static void LogSuppressedSwitch(int32_t keepId, int32_t candId, float delta)
 // Every early false is deliberate: stickiness may delay a switch, but it must
 // never keep a target the selector would have been right to drop.
 static bool KeepIncumbentOverPick(int32_t heldId, const TargetSelector::Result& pick,
-                                  bool atMouse, float px, float py, float rangeT,
+                                  bool atMouse, float px, float py,
+                                  float rangeT, float rangeCap,
                                   float& outAimX, float& outAimY)
 {
     float rx = px, ry = py;
@@ -430,7 +504,7 @@ static bool KeepIncumbentOverPick(int32_t heldId, const TargetSelector::Result& 
     // Keeping it: re-resolve the held id through the selector's forced path so
     // the aim point keeps its live lead prediction instead of freezing.
     const TargetSelector::Result h = TargetSelector::SelectKillAura(
-        atMouse, rangeT, px, py, heldId, WeaponCalibrator::GetProfile());
+        atMouse, rangeCap, px, py, heldId, WeaponCalibrator::GetProfile());
     if (!h.found) return false;
 
     outAimX = h.aimX; outAimY = h.aimY;
@@ -556,12 +630,35 @@ void Tick()
     WeaponCalibrator::Tick(local);
     EnemyTracker::Tick();
 
+    // ── Range resolution ─────────────────────────────────────────────────────
+    // REFUSE TO ARM until the weapon profile is calibrated. `rangeTiles` on an
+    // uncalibrated profile is a 15.0 PLACEHOLDER, not a measurement, and acting
+    // on it is precisely the failure this feature was just fixed for: selecting
+    // targets the player cannot reach, whose hit claims the server then refuses.
+    // Calibration happens on the first local shot (WeaponCalibrator::
+    // OnProjectileSpawn) and resets on realm transition — killaura never pulls
+    // the trigger, so the cost is that the FIRST shot of a realm is vanilla and
+    // every shot after it is armed. That is self-healing and honest; treating
+    // the placeholder as truth is neither.
+    const WeaponProfile& weapon = WeaponCalibrator::GetProfile();
+    if (!weapon.isResolved) {
+        ApplyState(false, 0, 0.f, 0.f, px, py, "weapon-uncalibrated");
+        return;
+    }
+
     const int32_t forced   = s_forcedTargetId.load(std::memory_order_relaxed);
     const bool    atMouse  = (s_modeInt.load(std::memory_order_relaxed) == 1);
-    const float   rangeT   = s_rangeTiles.load(std::memory_order_relaxed);
+    // The user's setting is a SHRINK-ONLY cap (0 = auto); the radius that
+    // actually applies comes from the selector so retention, the overlay rings
+    // and the origin cap below cannot disagree with what Select() filtered on.
+    // SelectKillAura takes the CAP and derives the radius itself — handing it
+    // the already-derived radius would shrink it a second time.
+    const float   rangeCap = s_rangeTiles.load(std::memory_order_relaxed);
+    const float   rangeT   = TargetSelector::KillAuraSelectionRangeTiles(weapon, rangeCap);
+    s_effRangeTiles.store(rangeT, std::memory_order_relaxed);
 
     const TargetSelector::Result r = TargetSelector::SelectKillAura(
-        atMouse, rangeT, px, py, forced, WeaponCalibrator::GetProfile());
+        atMouse, rangeCap, px, py, forced, weapon);
 
     if (r.found) {
         if (!s_loggedFirstSelect) {
@@ -577,7 +674,8 @@ void Tick()
         int32_t pickId = r.enemyId;
         float   aimX   = r.aimX, aimY = r.aimY;
         if (forced == 0 && s_heldTargetId != 0 && r.enemyId != s_heldTargetId
-            && KeepIncumbentOverPick(s_heldTargetId, r, atMouse, px, py, rangeT, aimX, aimY)) {
+            && KeepIncumbentOverPick(s_heldTargetId, r, atMouse, px, py,
+                                     rangeT, rangeCap, aimX, aimY)) {
             pickId = s_heldTargetId;
         }
 
@@ -645,7 +743,7 @@ void Tick()
             // Re-resolve the SAME id through the selector's locked path so the
             // bridged aim point keeps its lead prediction instead of freezing.
             const TargetSelector::Result h = TargetSelector::SelectKillAura(
-                atMouse, rangeT, px, py, s_heldTargetId, WeaponCalibrator::GetProfile());
+                atMouse, rangeCap, px, py, s_heldTargetId, WeaponCalibrator::GetProfile());
             if (h.found) {
                 if (s_retainMisses == 0) {
                     s_retainSinceMs = wall;
@@ -681,14 +779,21 @@ Mode GetMode() {
     return s_modeInt.load(std::memory_order_relaxed) == 1 ? Mode::AtMouse : Mode::AtTarget;
 }
 
-void  SetRangeTiles(float t)      { s_rangeTiles.store(ClampF(t, 1.f, 40.f, 16.f), std::memory_order_relaxed); }
+// 0 (and anything non-positive or non-finite) means AUTO: no cap, the weapon's
+// own resolved range stands. Falling back to auto rather than to some number we
+// invented is the point — an invented radius is how killaura came to lock
+// targets out of reach in the first place.
+void  SetRangeTiles(float t)
+{
+    const float v = (std::isfinite(t) && t > 0.f) ? ClampF(t, 1.f, 40.f, 0.f) : 0.f;
+    s_rangeTiles.store(v, std::memory_order_relaxed);
+}
 float GetRangeTiles()             { return s_rangeTiles.load(std::memory_order_relaxed); }
+
+float GetEffectiveRangeTiles()    { return s_effRangeTiles.load(std::memory_order_relaxed); }
 
 void  SetStandoffTiles(float t)   { s_standoffTiles.store(ClampF(t, 0.05f, 1.5f, 0.35f), std::memory_order_relaxed); }
 float GetStandoffTiles()          { return s_standoffTiles.load(std::memory_order_relaxed); }
-
-void  SetMaxOffsetTiles(float t)  { s_maxOffsetTiles.store(ClampF(t, 1.f, 40.f, 12.f), std::memory_order_relaxed); }
-float GetMaxOffsetTiles()         { return s_maxOffsetTiles.load(std::memory_order_relaxed); }
 
 void SetOverlayEnabled(bool on) { s_overlayEnabled.store(on, std::memory_order_relaxed); }
 bool IsOverlayEnabled()         { return s_overlayEnabled.load(std::memory_order_relaxed); }
@@ -714,6 +819,9 @@ State GetState()
     return s;
 }
 
+// NO CALLER as of the local-displacement removal — see the note on this function
+// in KillAura.h. Kept, not deleted, because the seqlock behind it is the only
+// torn-free way to hand the origin to an in-process consumer.
 bool GetAuthoritativeInput(Input& out)
 {
     // Generation first and last — see CommitInput. Anything but an exact match
@@ -766,11 +874,17 @@ void RenderSettings()
     ImGui::PushItemWidth(180.f);
 
     float range = GetRangeTiles();
-    if (ImGui::SliderFloat("Range (tiles)##kaRange", &range, 1.f, 40.f, "%.1f"))
+    if (ImGui::SliderFloat("Range cap (tiles)##kaRange", &range, 0.f, 40.f,
+                           range <= 0.f ? "auto (weapon range)" : "%.1f"))
         SetRangeTiles(range);
     ImGui::SameLine(); ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Absolute selection radius around the reference point.\nIndependent of weapon range.");
+        ImGui::SetTooltip("0 = AUTO: select inside the range your WEAPON actually has\n"
+                          "(derived from the calibrated projectile properties).\n\n"
+                          "A non-zero value can only SHRINK that radius, never extend it:\n"
+                          "the server validates hits against its own position for you, so\n"
+                          "no amount of shot-packet spoofing gives you extra reach — it\n"
+                          "only produces locks whose hit claims get refused.");
 
     float standoff = GetStandoffTiles();
     if (ImGui::SliderFloat("Standoff (tiles)##kaStandoff", &standoff, 0.05f, 1.5f, "%.2f"))
@@ -779,13 +893,6 @@ void RenderSettings()
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Tiles the shot origin is backed off the target, along the shot angle.");
 
-    float maxOffset = GetMaxOffsetTiles();
-    if (ImGui::SliderFloat("Max offset (tiles)##kaMaxOffset", &maxOffset, 1.f, 40.f, "%.1f"))
-        SetMaxOffsetTiles(maxOffset);
-    ImGui::SameLine(); ImGui::TextDisabled("(?)");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Hard cap: an origin further than this from the player is refused\nand the shot is left alone.");
-
     ImGui::PopItemWidth();
 
     bool driveAim = IsDriveAimAngle();
@@ -793,10 +900,10 @@ void RenderSettings()
         SetDriveAimAngle(driveAim);
     ImGui::SameLine(); ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Also points the SHOT ANGLE at the locked target, on top of moving\n"
-                          "the shot origin. The bullet still leaves your real position, so\n"
-                          "the server's own simulation of the shot agrees it hit — which a\n"
-                          "displaced origin does not.\n\n"
+        ImGui::SetTooltip("Points the SHOT ANGLE at the locked target. The bullet still\n"
+                          "leaves your real position, so the server's own simulation of\n"
+                          "the shot agrees it hit — this is the half of killaura that\n"
+                          "actually works.\n\n"
                           "While killaura is armed this overrides auto-aim's own target.\n"
                           "Off = killaura is origin-only, as it was before.");
 
@@ -822,6 +929,19 @@ void RenderSettings()
     } else {
         ImGui::TextDisabled("disarmed");
     }
+
+    // The uncalibrated case is a REFUSAL, not a bug — say so out loud rather
+    // than leaving "disarmed" to look like a broken feature.
+    const WeaponProfile& wp = WeaponCalibrator::GetProfile();
+    if (!wp.isResolved) {
+        ImGui::TextColored(ImVec4(1.f, 0.75f, 0.35f, 1.f),
+            "weapon not calibrated — fire one shot to arm");
+    } else {
+        ImGui::TextDisabled("selecting within %.1f tiles (weapon %.1f%s)",
+            static_cast<double>(GetEffectiveRangeTiles()),
+            static_cast<double>(wp.rangeTiles),
+            GetRangeTiles() > 0.f ? ", capped" : "");
+    }
 }
 
 void RenderOverlay(float camX, float camY, float angle, float zoom, float cx, float cy)
@@ -841,7 +961,9 @@ void RenderOverlay(float camX, float camY, float angle, float zoom, float cx, fl
     if (st.px == 0.f && st.py == 0.f) return;   // no player position published yet
 
     const bool  atMouse = (s_modeInt.load(std::memory_order_relaxed) == 1);
-    const float rangeT  = s_rangeTiles.load(std::memory_order_relaxed);
+    // The radius the last armed tick SELECTED on, not the user's cap — the cap
+    // is 0 by default and drawing a 0-tile ring would hide the lock entirely.
+    const float rangeT  = s_effRangeTiles.load(std::memory_order_relaxed);
     if (!std::isfinite(rangeT) || rangeT <= 0.f) return;
 
     // The ring is centred on the SELECTION reference point, not blindly on the

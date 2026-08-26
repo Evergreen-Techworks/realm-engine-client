@@ -61,8 +61,12 @@ modes/KillAura.cpp:181            → TargetSelector::SelectKillAura(...)
 modes/AutoFire.cpp:113,155,162    → ShootRuntime::EnsureResolved /
                                     TryComputeShootAngle / CallShootWithAngle
 modes/AutoAim.cpp:67,103,115      → AimHooks::SetTarget / AimHooks::Install
-movement/dodge/ProjectileTracking.cpp:230 → KillAura::GetAuthoritativeInput(...)
 ```
+
+`movement/dodge/ProjectileTracking.cpp` used to call
+`KillAura::GetAuthoritativeInput(...)` to arm the local-bullet displacement. That
+hook is deleted and the call with it, so the origin now leaves the DLL only over
+the `aim` IPC payload — see the measured-result block atop `modes/KillAura.cpp`.
 
 ## Entry points
 

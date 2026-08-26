@@ -23,11 +23,18 @@ struct Config {
     int32_t        lockedEnemyId        = -1;    // used when mode == Locked
     const int32_t* skipObjTypes         = nullptr; // optional phase-skip list
     int            skipObjCount         = 0;
-    // Absolute selection radius in tiles. 0 = off (weapon-derived range, the
-    // pre-existing behavior). When > 0 it REPLACES the weapon-derived maxRange
-    // for both player-ref and mouse-ref modes. Killaura sets this so it can
-    // select past weapon range; nothing else sets it.
-    float          overrideRangeTiles   = 0.f;
+    // Selection-radius CAP in tiles. 0 = no cap (the weapon-derived range
+    // stands). When > 0 it can only SHRINK maxRange, never extend it — the same
+    // shrink-only semantics `mouseBoundingRange` above already uses. Killaura
+    // sets this; nothing else does.
+    //
+    // It USED to REPLACE the weapon-derived range, and killaura pinned it at a
+    // flat 16 tiles. That let killaura lock targets the player could not
+    // actually reach, and the hit claims for those shots were refused — the
+    // server validates a hit against ITS OWN position for us, so no amount of
+    // shot-packet spoofing extends reach. See the measured-results comment at
+    // the top of KillAura.cpp.
+    float          maxRangeCapTiles     = 0.f;
 };
 
 struct Result {
@@ -48,14 +55,22 @@ Result Select(const Config& cfg,
 // Killaura selection. Thin wrapper over Select():
 //   atMouse == false -> reference point is the player
 //   atMouse == true  -> reference point is the mouse world position
-// `rangeTiles` is an ABSOLUTE radius around the reference point (not weapon
-// range). `forcedEnemyId != 0` pins the choice to that object id and disables
-// the no-health-bar filter, so a breakable wall can be targeted (plan 89).
+// `rangeCapTiles` is a SHRINK-ONLY cap on the weapon-derived selection radius;
+// 0 = auto, i.e. the weapon's own range stands. It can never extend reach.
+// `forcedEnemyId != 0` pins the choice to that object id and disables the
+// no-health-bar filter, so a breakable wall can be targeted (plan 89).
 // Reads the current EnemyTracker snapshot — call after EnemyTracker::Tick().
-Result SelectKillAura(bool atMouse, float rangeTiles,
+Result SelectKillAura(bool atMouse, float rangeCapTiles,
                       float playerX, float playerY,
                       int32_t forcedEnemyId,
                       const WeaponProfile& weapon);
+
+// The selection radius SelectKillAura will ACTUALLY filter on for `weapon`
+// under `capTiles` (0 = auto). Exposed so killaura's retention drop radius and
+// its lock-overlay rings come from the SAME number the selector uses instead of
+// a second copy of the weapon-range formula — a mismatch there is what makes a
+// lock ring lie about where the lock will be dropped.
+float KillAuraSelectionRangeTiles(const WeaponProfile& weapon, float capTiles);
 
 // Read-only view of the priority tier Select() would file `objType` under on
 // the killaura path — LOWER rank wins, matching the quest > normal > fallback

@@ -6,7 +6,6 @@
 #include "features/combat/autoaim/modes/AutoFire.h"
 #include "features/combat/autoaim/modes/AutoBreakWalls.h"
 #include "features/projectiles/ShotOrigin.h"
-#include "features/projectiles/ShotOriginHook.h"
 #include "AutoNexus.h"
 #include "LocalPlayer.h"
 #include "ProjectileTracking.h"
@@ -84,7 +83,8 @@ void Render()
     ImGui::EndDisabled();
     if (magnetAimOn)
         ImGui::TextDisabled("Manual spawn offset is overridden while Magnet Aim is enabled.");
-    ImGui::TextDisabled("Killaura is independent of this: it moves the spawned bullet itself.");
+    ImGui::TextDisabled("Killaura no longer touches the local bullet — it drives the aim");
+    ImGui::TextDisabled("angle and the outbound shot origin only.");
     ImGui::TextDisabled("Vanilla ~0.3; at 0.3 the hook skips retargeting (no extra trig).");
 
     const char* originName = "?";
@@ -96,20 +96,10 @@ void Render()
     }
     ImGui::TextDisabled("Local spawn origin: %s", originName);
 
-    // Killaura no longer shows up as a spawn "origin" — it moves the bullet from
-    // the entity position setter instead (features/projectiles/ShotOriginHook.h).
-    // rewrites is the number that matters: arms without rewrites means killaura
-    // is aiming but the bullet is not being moved, so nothing takes damage.
-    const ShotOriginHook::Stats ka = ShotOriginHook::GetStats();
-    ImGui::TextDisabled("Killaura origin hook: %s  arms=%u rewrites=%u drops=%u",
-                        ka.installed ? "INSTALLED" : (ka.refused ? "REFUSED" : "not installed"),
-                        ka.arms, ka.rewrites, ka.drops);
-    // staleInputs = local shots left vanilla because no CURRENT authoritative
-    // origin existed; gen = the generation the LAST local rewrite used. Compare
-    // gen against the `gen=` on the proxy log's [Killaura] diag line, which is
-    // the generation the OUTBOUND rewrite used — a large gap is the two rewrites
-    // disagreeing about where the shot started.
-    ImGui::TextDisabled("  staleInputs=%u  lastGen=%u", ka.staleInputs, ka.lastGeneration);
+    // The killaura local-bullet origin hook USED to report its arms/rewrites/
+    // drops counters here. It is gone (see the measured-result block at the top
+    // of KillAura.cpp): killaura's remaining counters are the ENEMYHIT / rewrite
+    // tallies on the client side, in the proxy log's `[Killaura] diag` line.
     ImGui::Checkbox("Debug: weapon range ring + last spawn dot##muzzleDbg", &g_muzzleWeaponRangeDebug);
     ImGui::TextDisabled("Uses AutoAim range + last local SpawnProjectile world position.");
 

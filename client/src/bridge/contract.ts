@@ -64,7 +64,7 @@ export const DLL_FEATURE_KEYS = [
   'cameraZoomActive', 'cameraZoomValue', 'clientClassType', 'clientDefense',
   'clientSpeed', 'colliderEnabled', 'colliderMultiplier', 'dodgeHitScale',
   'followEntityActive', 'followEntityName', 'internalUnloadDll',
-  'killauraEnabled', 'killauraMaxOffsetTiles', 'killauraMode',
+  'killauraEnabled', 'killauraMode',
   'killauraRangeTiles', 'killauraStandoffTiles', 'pjdodgeDebugOverlay',
   'pjdodgeHitScale', 'pjdodgeHorizonMs', 'pjdodgeLeadMs', 'pjdodgeLockFollow',
   'pjdodgePredictionAccuracy', 'pjdodgeSafeWalk', 'pjdodgeSpeedScale', 'playerColliderSceneReset',

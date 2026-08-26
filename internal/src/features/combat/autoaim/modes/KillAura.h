@@ -1,12 +1,11 @@
 #pragma once
 #include <cstdint>
 
-// KillAura — redirects where an ALREADY-FIRED shot originates so it lands on a
-// chosen target. It never pulls the trigger. Two coordinated consumers use the
-// origin this module computes:
-//   * the LOCAL bullet spawn (plan 87) so the game's own collision fires ENEMYHIT
-//   * the OUTBOUND PLAYERSHOOT.projectilePosition (client proxy, plan 86) so the
-//     server's simulation agrees
+// KillAura — picks a target, drives the SHOT ANGLE at it, and solves a shot
+// origin for the OUTBOUND PLAYERSHOOT rewrite (client proxy, plan 86). It never
+// pulls the trigger and it no longer moves the local bullet: see the
+// measured-results comment at the top of KillAura.cpp for why the local
+// displacement was removed and why range cannot be extended by spoofing.
 // Owns no hook. Ticked from CombatTAB::Tick on the render thread.
 namespace KillAura {
 
@@ -17,16 +16,28 @@ void Tick();
 
 void  SetEnabled(bool on);            bool  IsEnabled();
 void  SetMode(Mode m);                Mode  GetMode();
-void  SetRangeTiles(float t);         float GetRangeTiles();       // clamp [1, 40], default 16
+
+// Selection-range CAP, in tiles. 0 = AUTO, the default: killaura selects inside
+// the range the WEAPON actually has (TargetSelector derives it from the
+// calibrated projectile properties). A non-zero value is clamped to [1, 40] and
+// can only SHRINK that radius — it can never extend it, because reach is not
+// something the client gets to claim (see KillAura.cpp).
+//
+// The client plugin's `rangeTiles` setting MUST default to 0 too:
+// syncControlState() pushes it on every enable/settings change, so a mismatched
+// client default silently overrides this one.
+void  SetRangeTiles(float t);         float GetRangeTiles();       // 0 = auto, else clamp [1, 40]
 void  SetStandoffTiles(float t);      float GetStandoffTiles();    // clamp [0.05, 1.5], default 0.35
-void  SetMaxOffsetTiles(float t);     float GetMaxOffsetTiles();   // clamp [1, 40], default 12
+
+// The selection radius the LAST tick actually used (weapon range under the cap),
+// or 0 before the first armed tick. Read-only; the overlay and the Combat-tab
+// readout use it so they cannot disagree with the selector.
+float GetEffectiveRangeTiles();
 
 // Drive the SHOT ANGLE at the selected target, not just the shot origin.
 // Defaults ON — it is the only half of this feature the server can be made to
-// agree with (the origin displacement makes the server's own simulation of the
-// shot disagree with the client's damage claim; an angle change does not,
-// because the bullet still leaves the player's real position). Turning it off
-// leaves killaura origin-only, which is what it was before.
+// agree with, because the bullet still leaves the player's real position.
+// Turning it off leaves killaura origin-only, which is what it was before.
 // See AutoAim::SetKillAuraAimOverride for the killaura-vs-AutoAim precedence.
 void  SetDriveAimAngle(bool on);      bool  IsDriveAimAngle();
 
@@ -50,24 +61,22 @@ struct State {
 State GetState();
 
 // ── The ONE authoritative killaura input ─────────────────────────────────────
-// The shot origin used to be computed TWICE, independently: once inside the
-// projectile-spawn detour (a live ComputeShotOrigin call) and once in the client
-// proxy from a separately-published aim sample. Nothing forced the two to agree,
-// so the LOCAL bullet could be moved to one point while the server was told a
-// different one — the client then claimed a hit the server's own simulation of
-// the shot never produced, and refused it (visible damage that reverts).
-//
-// So the origin is now computed EXACTLY ONCE per refresh, inside Tick, from the
+// The shot origin is computed EXACTLY ONCE per refresh, inside Tick, from the
 // very same (target, player, standoff) values that refresh is committing, and
-// stamped with a monotonically increasing GENERATION. Every consumer reads THAT
-// value — nobody recomputes it. `ComputeShotOrigin` is deliberately no longer
-// part of this interface: a second way to obtain an origin is the bug.
+// stamped with a monotonically increasing GENERATION. The origin travels to its
+// consumer over the `aim` IPC payload (PublishNow) — nobody recomputes it.
+// `ComputeShotOrigin` is deliberately not part of this interface: a second way
+// to obtain an origin is the bug that produced hit claims the server had no
+// reason to believe.
 //
-// The two consumers still SAMPLE it at different latencies (the local bullet
-// reads it in-process; the outbound rewrite reads it across the IPC pipe), so
-// they can legitimately hold different generations. That gap is exactly what
-// `generation` makes measurable — see the [ShotOriginHook] trace line and the
-// [Killaura] diag line in the proxy log.
+// ORPHANED as of the local-displacement removal: the in-process consumer was
+// ProjectileTracking's spawn detour, which armed ShotOriginHook to move the
+// LOCAL bullet. That hook is gone (see KillAura.cpp), so `Input`,
+// `GetAuthoritativeInput` and the seqlock behind them currently have NO caller —
+// the surviving consumer, the outbound PLAYERSHOOT rewrite, reads the origin off
+// the IPC payload instead. Kept rather than deleted because the generation
+// seqlock is the only mechanism that can hand a torn-free origin to a second
+// in-process consumer, and removing it is outside the change that orphaned it.
 struct Input {
     float    ox = 0.f, oy = 0.f;   // ABSOLUTE world tiles — the shot origin
     float    angleRad = 0.f;       // the angle the origin was solved at
@@ -76,11 +85,12 @@ struct Input {
     uint32_t stampMs = 0;          // GetTickCount64() low 32 bits at publish
 };
 
-// Reads the ONE authoritative input. Returns false — leaving `out` untouched —
-// when killaura is not armed, when the refresh that produced this sample refused
-// an origin (the standoff/maxOffset caps), when a refresh landed mid-read, or
-// when the sample is older than the freshness window (~50 ms; Tick refreshes at
-// up to ~125 Hz, so a current sample is always far inside it).
+// Reads the ONE authoritative input. Currently has no caller — see above.
+// Returns false — leaving `out` untouched — when killaura is not armed, when the
+// refresh that produced this sample refused an origin (the standoff/offset
+// caps), when a refresh landed mid-read, or when the sample is older than the
+// freshness window (~50 ms; Tick refreshes at up to ~125 Hz, so a current sample
+// is always far inside it).
 //
 // Callers MUST fail closed on false and leave the shot vanilla. Rewriting from a
 // value the server was never told is strictly worse than not rewriting.

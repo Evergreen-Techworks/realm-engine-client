@@ -110,7 +110,6 @@ namespace {
                                                                         : KillAura::Mode::AtTarget)),
             FH_FLOAT("killauraRangeTiles",     KillAura::SetRangeTiles),
             FH_FLOAT("killauraStandoffTiles",  KillAura::SetStandoffTiles),
-            FH_FLOAT("killauraMaxOffsetTiles", KillAura::SetMaxOffsetTiles),
             FH_BOOL ("killauraOverlayEnabled", KillAura::SetOverlayEnabled),
             FH_BOOL ("killauraDriveAimEnabled", KillAura::SetDriveAimAngle),
             FH_BOOL("autoFireEnabled", AutoFire::SetEnabled),

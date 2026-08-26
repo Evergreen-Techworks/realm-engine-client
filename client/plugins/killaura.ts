@@ -6,10 +6,12 @@ import { sendDllFeature, getDllAim, getDllAimAgeMs, RuntimeScheduler } from './a
  *
  * The DLL picks the target, SOLVES THE SHOT ORIGIN ONCE, and publishes both over
  * the named pipe (DllAimBus) stamped with a generation. This plugin rewrites the
- * OUTGOING `PLAYERSHOOT.projectilePosition` to that published origin so the
- * *server's* simulation of the shot starts where the DLL already put the local
- * bullet. The local bullet origin is the DLL's job (plan 87) — nothing here pulls
- * a trigger or blocks a packet.
+ * OUTGOING `PLAYERSHOOT.projectilePosition` to that published origin. It is now
+ * the ONLY consumer of that origin: the DLL-side hook that displaced the LOCAL
+ * bullet was deleted after it was measured to buy no extra reach while making
+ * the at-range hit claims less plausible (see the measured-result block at the
+ * top of internal/src/features/combat/autoaim/modes/KillAura.cpp). Nothing here
+ * pulls a trigger or blocks a packet.
  *
  * `spoofPlayerPosition` (default ON) additionally rewrites `playerPosition` to
  * the same origin, so the frame is INTERNALLY consistent ("I am at B and my shot
@@ -116,7 +118,6 @@ export function register(ctx: PluginContext) {
     sendDllFeature('killauraMode', modeIdx());
     sendDllFeature('killauraRangeTiles', ctx.getSetting<number>('rangeTiles'));
     sendDllFeature('killauraStandoffTiles', ctx.getSetting<number>('standoffTiles'));
-    sendDllFeature('killauraMaxOffsetTiles', ctx.getSetting<number>('maxOffsetTiles'));
     sendDllFeature('killauraEnabled', ctx.enabled);
   }
 
@@ -133,14 +134,22 @@ export function register(ctx: PluginContext) {
   });
 
   ctx.registerSetting('rangeTiles', {
-    label: 'Target range (tiles)',
-    // 16 to match the DLL default (KillAura.cpp s_rangeTiles). These MUST agree:
-    // syncControlState() sends killauraRangeTiles on every enable/settings change,
-    // so a stale 8 here would silently override the DLL's 16 on every connect and
-    // re-create the short-range target flapping this default was raised to fix.
+    label: 'Target range CAP (tiles) — 0 = auto = your weapon\'s real range',
+    /**
+     * 0 = AUTO, matching the DLL default (KillAura.cpp `s_rangeTiles`). These MUST
+     * agree: syncControlState() sends killauraRangeTiles on every enable/settings
+     * change, so a stale non-zero default here would silently override the DLL's
+     * auto on every connect — which is exactly the bug this replaces (a flat 16
+     * that REPLACED the weapon-derived radius and locked targets out of reach).
+     *
+     * A non-zero value can only SHRINK the weapon's range, never extend it. The
+     * server validates hits against its OWN position for you, maintained from the
+     * MOVE stream, so extra reach is not something the shot packet can claim —
+     * see the measured-result block at the top of KillAura.cpp.
+     */
     type: 'number',
-    value: 16,
-    min: 1,
+    value: 0,
+    min: 0,
     max: 30,
     step: 0.5,
   }, (val: number) => {
@@ -158,39 +167,38 @@ export function register(ctx: PluginContext) {
     sendDllFeature('killauraStandoffTiles', val);
   });
 
-  ctx.registerSetting('maxOffsetTiles', {
-    label: 'Max origin offset (tiles)',
-    type: 'number',
-    value: 12,
-    min: 0,
-    max: 30,
-    step: 0.5,
-  }, (val: number) => {
-    sendDllFeature('killauraMaxOffsetTiles', val);
-  });
+  // `maxOffsetTiles` USED to be a user setting here (and a `killauraMaxOffsetTiles`
+  // feature key). It is gone from both sides: the cap is now DERIVED in the DLL
+  // from the selection radius it is meant to bound (KillAura.cpp,
+  // kKaOriginCapMarginTiles) and published on the aim payload, so the two can no
+  // longer disagree. As a user slider at 12 against a 16-tile selection radius it
+  // refused every origin for a target 12-16 tiles out — measured staleSkips=291
+  // against rewrites=81. The re-check below still uses the published value.
 
-  // DEFAULT OFF as of 2026-08-24 — this rewrite gets you DISCONNECTED.
+  // HISTORY, and why the default is still OFF.
   //
-  // Measured, 3 for 3 in %TEMP%\realm-engine-proxy.log: every time this armed,
-  // the server sent FAILURE (errorId=0, empty errorMessage) and dropped the
-  // connection ~1.4s later — log lines 2249->2250, 2272->2273, 2368->2369. The
-  // packet itself is fine (the serialize round-trip guard below verifies it is
-  // byte-identical); the server rejects the CONTENT. It validates the shot
-  // origin against the player's real position, and this moves it up to
-  // maxOffsetTiles (default 12) away, versus vanilla's ~0.3.
+  // 2026-08-24 — measured 3 for 3 in %TEMP%\realm-engine-proxy.log: every time
+  // this armed, the server sent FAILURE (errorId=0, empty errorMessage) and
+  // dropped the connection ~1.4s later — log lines 2249->2250, 2272->2273,
+  // 2368->2369. The packet itself was fine (the serialize round-trip guard below
+  // verifies it is byte-identical); the server rejected the CONTENT, a frame
+  // claiming "I am at A, my bullet started 12 tiles away at B".
   //
-  // The plan that introduced this (docs/plans/84-overview.md) argued killaura
-  // needed BOTH an outbound rewrite and a local-bullet rewrite. Re-reading it:
-  // the "(A) alone is not enough" half was evidence-backed (o3-helper.ts blocks
-  // ENEMYHIT to stop damage, proving the client is what deals damage), but the
-  // "(C) alone is not enough" half was a hedge — "the hit CAN be rejected" —
-  // never verified. ENEMYHIT is client->server, so the local-bullet rewrite
-  // (ShotOrigin, DLL side) may well be sufficient on its own: the bullet
-  // actually reaches the enemy, the client claims the hit, and the server sees
-  // an entirely ordinary PLAYERSHOOT originating at the player.
+  // 2026-08-25 — that is FIXED. With `spoofPlayerPosition` ON (below), which
+  // rewrites BOTH fields into a self-consistent frame, the same session measured
+  // 81/81 rewrites ACCEPTED and zero FAILURE. The disconnect is not a reason to
+  // leave this off any more.
   //
-  // So: local-only is the default. Turning this ON re-enables the outbound
-  // rewrite for experimentation ONLY — expect to be disconnected.
+  // What it still does NOT buy is RANGE. Enemies die when the player is adjacent
+  // and not at range, which says the server validates ENEMYHIT against its OWN
+  // position for us — maintained from the MOVE stream — not against the position
+  // the shot packet claims. Our claimed position is accepted-but-not-
+  // authoritative, so this rewrite changes where the server thinks the bullet
+  // started without changing what it will accept as a hit.
+  //
+  // Left DEFAULT OFF pending an explicit decision: it is measurably safe now, but
+  // it is also not yet measurably useful, and it is the one thing here that
+  // touches outbound traffic.
   ctx.registerSetting('rewriteOutbound', {
     label: 'Rewrite outbound shot origin (DISCONNECTS — experimental)',
     type: 'boolean',
@@ -239,10 +247,8 @@ export function register(ctx: PluginContext) {
   // damage. Damage in RotMG is client-claimed (ENEMYHIT, client->server), so
   // there are exactly two worlds and this counter separates them:
   //   sent > 0  -> the client IS claiming hits; the SERVER is rejecting them
-  //   sent == 0 -> the client never registered a collision, so moving the
-  //                bullet's rendered position did not move the game's own hit
-  //                test (it likely derives position from the projectile's
-  //                internal start+angle+elapsed rather than the rendered one).
+  //   sent == 0 -> the client never registered a collision at all, so the bullet
+  //                is not reaching the enemy and nothing downstream can help.
   // `blocked` counts hits some other plugin suppressed (o3-helper does this
   // inside the O3 Sanctuary) so a suppressed hit can never be mistaken for a
   // hit that was never claimed.
@@ -353,13 +359,11 @@ export function register(ctx: PluginContext) {
       enemyHitsBlocked: stats.enemyHitsBlocked,
       refused: armState === 'refused',
       aimAgeMs: getDllAimAgeMs(),
-      // The generation the LAST outbound rewrite used. Its counterpart is `gen=`
-      // on the DLL trace log's [ShotOriginHook] "REWRITTEN" line, which is the
-      // generation the LOCAL bullet rewrite used. The two consumers sample the
-      // same published value at different latencies, so they will not always be
-      // equal — but a LARGE, GROWING gap means the server is being told an origin
-      // from a refresh the local bullet never used, which is the divergence that
-      // makes the server refuse the hit claim.
+      // The generation the LAST outbound rewrite used. It is now the ONLY
+      // consumer of the published origin (the DLL-side local-bullet rewrite that
+      // used to carry its own `gen=` in the trace log is deleted), so this is a
+      // freshness readout rather than a divergence check: a `gen` that stops
+      // moving while `rewrites` climbs would mean the publisher has stalled.
       gen: stats.lastGen,
       staleSkips: stats.staleSkips,
     };
@@ -394,7 +398,7 @@ export function register(ctx: PluginContext) {
         + ` enemyHitsSent=${diag.enemyHitsSent} enemyHitsBlocked=${diag.enemyHitsBlocked}`
         + ` aimAgeMs=${diag.aimAgeMs} gen=${diag.gen} staleSkips=${diag.staleSkips}`
         + (diag.rewrites > 0 && diag.enemyHitsSent === 0
-            ? '  <-- bullets moved but the client NEVER claimed a hit'
+            ? '  <-- shots rewritten but the client NEVER claimed a hit'
             : ''));
     }
   });

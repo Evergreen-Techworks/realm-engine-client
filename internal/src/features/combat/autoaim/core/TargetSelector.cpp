@@ -33,6 +33,16 @@ static bool IsFallbackType(int32_t t) {
     return false;
 }
 
+// The weapon's own selection radius, before any lead bias or cap. Factored out
+// of Select() so KillAuraSelectionRangeTiles() cannot drift from the number
+// Select() actually filters on. The 15.0 fallback covers a profile whose
+// rangeTiles is a placeholder or nonsense; callers that must not act on a
+// placeholder check WeaponProfile::isResolved themselves.
+static float WeaponSelectionRange(const WeaponProfile& weapon)
+{
+    return (weapon.rangeTiles > 2.f) ? weapon.rangeTiles : 15.f;
+}
+
 struct TierState {
     float   bestDist = 0.f;
     int32_t bestHp   = -1;
@@ -107,12 +117,14 @@ Result Select(const Config& cfg,
         if (mx != 0.f || my != 0.f) { refX = mx; refY = my; }
     }
 
-    const float weaponRange = (weapon.rangeTiles > 2.f) ? weapon.rangeTiles : 15.f;
-    float maxRange = weaponRange + cfg.rangeLeadBias;
+    float maxRange = WeaponSelectionRange(weapon) + cfg.rangeLeadBias;
     if (useMouseRef && cfg.mouseBoundingEnabled && cfg.mouseBoundingRange > 0.f
         && cfg.mouseBoundingRange < maxRange)
         maxRange = cfg.mouseBoundingRange;
-    if (cfg.overrideRangeTiles > 0.f) maxRange = cfg.overrideRangeTiles;
+    // SHRINK-ONLY, same shape as the mouse bound above: a cap may pull the
+    // radius in, never push it out past what the weapon can actually reach.
+    if (cfg.maxRangeCapTiles > 0.f && cfg.maxRangeCapTiles < maxRange)
+        maxRange = cfg.maxRangeCapTiles;
     const float maxRangeSq = maxRange * maxRange;
 
     // ── Four-tier accumulation ───────────────────────────────────────────────
@@ -181,7 +193,7 @@ Result Select(const Config& cfg,
     return r;
 }
 
-Result SelectKillAura(bool atMouse, float rangeTiles,
+Result SelectKillAura(bool atMouse, float rangeCapTiles,
                       float playerX, float playerY,
                       int32_t forcedEnemyId,
                       const WeaponProfile& weapon)
@@ -195,7 +207,7 @@ Result SelectKillAura(bool atMouse, float rangeTiles,
     // A forced target may be a breakable wall (noHealthBar) — do not filter it.
     cfg.ignoreWalls          = (forcedEnemyId == 0);
     cfg.mouseBoundingEnabled = false;
-    cfg.overrideRangeTiles   = (rangeTiles > 0.f) ? rangeTiles : 0.f;
+    cfg.maxRangeCapTiles     = (rangeCapTiles > 0.f) ? rangeCapTiles : 0.f;
 
     Result r = Select(cfg, playerX, playerY, 0.f, 0.f, weapon);
     // Select()'s Locked branch falls through to normal selection when the lock
@@ -203,6 +215,17 @@ Result SelectKillAura(bool atMouse, float rangeTiles,
     // forced killaura target must be reported as GONE, never silently swapped
     // for a live enemy the user never chose.
     if (forcedEnemyId != 0 && (!r.found || r.enemyId != forcedEnemyId)) return {};
+    return r;
+}
+
+float KillAuraSelectionRangeTiles(const WeaponProfile& weapon, float capTiles)
+{
+    // A default Config carries the SAME rangeLeadBias SelectKillAura leaves in
+    // place (it overrides only mode/filters/cap), so reading it back here is
+    // what keeps this in lockstep with Select() rather than restating 1.0.
+    const Config defaults;
+    float r = WeaponSelectionRange(weapon) + defaults.rangeLeadBias;
+    if (capTiles > 0.f && capTiles < r) r = capTiles;
     return r;
 }
 
