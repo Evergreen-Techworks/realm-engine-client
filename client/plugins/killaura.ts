@@ -9,7 +9,13 @@ import { sendDllFeature, getDllAim, getDllAimAgeMs, RuntimeScheduler } from './a
  * OUTGOING `PLAYERSHOOT.projectilePosition` to that published origin so the
  * *server's* simulation of the shot starts where the DLL already put the local
  * bullet. The local bullet origin is the DLL's job (plan 87) — nothing here pulls
- * a trigger, blocks a packet, or lies about `playerPosition`.
+ * a trigger or blocks a packet.
+ *
+ * `spoofPlayerPosition` (default ON) additionally rewrites `playerPosition` to
+ * the same origin, so the frame is INTERNALLY consistent ("I am at B and my shot
+ * started at B") instead of self-contradictory ("I am at A, my shot started at
+ * B"). Turning it OFF reproduces the old, measured-to-disconnect behaviour. See
+ * the long comment on that setting for the cross-packet caveat.
  *
  * IT DOES NOT COMPUTE AN ORIGIN. It used to: it re-derived one from
  * `tx - cos(angle) * standoff` off an aim sample up to 250 ms stale, while the
@@ -21,6 +27,11 @@ import { sendDllFeature, getDllAim, getDllAimAgeMs, RuntimeScheduler } from './a
  * beyond the DLL's hard cap, or a packet whose serialize round-trip is not
  * byte-identical all forward the shot completely unchanged.
  */
+// Vanilla muzzle offset: a real shot spawns this far from the player centre along
+// the fire angle. Mirrors StateManager.ts:225 (which back-derives the player
+// position from the packet using the same 0.3) and the DLL's kMuzzleMinTiles.
+const kVanillaMuzzleTiles = 0.3;
+
 export function register(ctx: PluginContext) {
   ctx.name = 'Killaura';
   ctx.category = 'combat';
@@ -29,6 +40,13 @@ export function register(ctx: PluginContext) {
 
   const stats = {
     rewrites: 0,
+    /**
+     * Of `rewrites`, how many ALSO rewrote `playerPosition` (the consistent-frame
+     * variant). `rewrites - rewritesBoth` is the count that went out in the old
+     * projectilePosition-only shape, so a log line read after the fact says which
+     * variant was actually armed when the server did or did not drop us.
+     */
+    rewritesBoth: 0,
     enemyHitsSent: 0,
     enemyHitsBlocked: 0,
     /** Shots forwarded unchanged because no non-stale authoritative origin was held. */
@@ -179,6 +197,38 @@ export function register(ctx: PluginContext) {
     value: false,
   });
 
+  // The A/B knob for the "consistent frame" hypothesis. Only has any effect
+  // while `rewriteOutbound` is ON.
+  //
+  //   ON  (default) — PLAYERSHOOT goes out with BOTH `projectilePosition` and
+  //                   `playerPosition` set to the DLL's solved origin: "I am
+  //                   standing at B and my shot started at B." Nothing inside
+  //                   the packet contradicts itself, so the server's own
+  //                   simulation starts the bullet where we claim, from a
+  //                   position we also claim to occupy.
+  //   OFF           — only `projectilePosition` is rewritten. This is the exact
+  //                   shape that was measured to DISCONNECT 4/4 times: the frame
+  //                   says "I am at A, my bullet started 12 tiles away at B",
+  //                   which is trivially self-contradictory. Leave it OFF only
+  //                   to reproduce that baseline.
+  //
+  // CAVEAT, UNTESTED, READ BEFORE TRUSTING THE ON PATH: internal consistency is
+  // not the only consistency the server can check. MOVE (id 62) is sent by the
+  // game client every tick and carries LocationRecord{time,x,y} samples of the
+  // player's REAL position; the server also runs its own authoritative position
+  // for us and echoes it back in NEWTICK (and rubberbands us to it — see the
+  // header comment on player-noclip.ts). Nothing on the killaura path touches
+  // MOVE. So with this ON the stream reads: MOVE "I am at A" (5x/sec) … PLAYERSHOOT
+  // "I am at B, up to maxOffsetTiles away" … MOVE "I am at A" again. That is a
+  // per-shot teleport out and back, which is at least as detectable as the
+  // self-contradiction it removes and is a well-known ban heuristic. It is
+  // shipped as a toggle because a real in-game result beats this reasoning.
+  ctx.registerSetting('spoofPlayerPosition', {
+    label: 'Also spoof playerPosition (consistent frame) — OFF = old known-disconnect shape',
+    type: 'boolean',
+    value: true,
+  });
+
   ctx.onEnabledChange(() => {
     syncControlState();
   });
@@ -244,6 +294,36 @@ export function register(ctx: PluginContext) {
     if (!armIfSerializeIsIdentity(packet)) return;
 
     packet.data.projectilePosition = { x: ox, y: oy };
+    // Consistent-frame variant: claim to be standing where the bullet started.
+    // Read AFTER the cap check above, which needs the packet's REAL player
+    // position — moving this line earlier would cap the origin against itself.
+    //
+    // StateManager's own PLAYERSHOOT handler is unaffected either way: it is
+    // registered in StateManager.attach (index.ts:213, before any plugin loads)
+    // and hooks fire in registration order (Proxy.firePacketHooks), so it has
+    // already run on the ORIGINAL values by the time this executes — and it
+    // reads projectilePosition + angle only, never playerPosition.
+    // The packet's OWN fire angle -- the same field the server will use to
+    // simulate this shot, so the muzzle offset below is derived from exactly the
+    // direction the frame declares rather than from our (possibly staler) aim.
+    const shotAngle = packet.data.angle;
+    const spoofPlayer = ctx.getSetting<boolean>('spoofPlayerPosition') !== false
+                     && typeof shotAngle === 'number' && Number.isFinite(shotAngle);
+    if (spoofPlayer) {
+      // NOT `{ x: ox, y: oy }`. Every vanilla PLAYERSHOOT satisfies
+      //     projectilePosition = playerPosition + kVanillaMuzzleTiles * (cos a, sin a)
+      // -- that is the muzzle offset, and it is exactly how our OWN StateManager
+      // back-derives the player position from the packet (StateManager.ts:225).
+      // Writing the origin into both fields would make |proj - player| == 0, which
+      // no real client ever sends: we would have removed one trivially-detectable
+      // inconsistency and introduced another. Claim instead to be standing where a
+      // real player WOULD have to stand for that bullet to spawn where we say.
+      packet.data.playerPosition = {
+        x: ox - Math.cos(shotAngle) * kVanillaMuzzleTiles,
+        y: oy - Math.sin(shotAngle) * kVanillaMuzzleTiles,
+      };
+      stats.rewritesBoth++;
+    }
     packet.modified = true;
     stats.rewrites++;
     stats.lastGen = aim.generation;
@@ -265,6 +345,10 @@ export function register(ctx: PluginContext) {
       armed: armState === 'armed',
       targetId: aim?.targetId ?? 0,
       rewrites: stats.rewrites,
+      /** Rewrites that ALSO spoofed playerPosition (consistent-frame variant). */
+      rewritesBoth: stats.rewritesBoth,
+      /** Which variant is armed right now, so a toggle is visible in the log. */
+      spoofPlayerPosition: ctx.getSetting<boolean>('spoofPlayerPosition') !== false,
       enemyHitsSent: stats.enemyHitsSent,
       enemyHitsBlocked: stats.enemyHitsBlocked,
       refused: armState === 'refused',
@@ -295,12 +379,18 @@ export function register(ctx: PluginContext) {
     // gen moves in lockstep with rewrites (already keyed), and staleSkips ticks
     // on every shot fired while unarmed — keying on it would turn a steady
     // "enabled but no target" session into one log line every second.
+    // `spoofPlayerPosition` IS in the change key (unlike gen/staleSkips): it only
+    // moves when the user flips the A/B toggle, and the whole point of the line
+    // is to say which variant was armed when the connection did or did not drop.
+    // `rewritesBoth` is printed but not keyed — it moves in lockstep with
+    // `rewrites` whenever the toggle is ON, which is already keyed.
     const key = `${diag.armed}|${diag.refused}|${diag.targetId}|${diag.rewrites}`
-              + `|${diag.enemyHitsSent}|${diag.enemyHitsBlocked}`;
+              + `|${diag.enemyHitsSent}|${diag.enemyHitsBlocked}|${diag.spoofPlayerPosition}`;
     if (key !== lastDiagKey) {
       lastDiagKey = key;
       ctx.log(`diag armed=${diag.armed} refused=${diag.refused}`
         + ` target=${diag.targetId} rewrites=${diag.rewrites}`
+        + ` rewritesBoth=${diag.rewritesBoth} spoofPlayerPos=${diag.spoofPlayerPosition}`
         + ` enemyHitsSent=${diag.enemyHitsSent} enemyHitsBlocked=${diag.enemyHitsBlocked}`
         + ` aimAgeMs=${diag.aimAgeMs} gen=${diag.gen} staleSkips=${diag.staleSkips}`
         + (diag.rewrites > 0 && diag.enemyHitsSent === 0

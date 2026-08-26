@@ -76,4 +76,80 @@ describe('PLAYERSHOOT projectilePosition rewrite', () => {
     expect(back.data.projectilePosition.x).toBeCloseTo(111.5, 5);
     expect(back.data.projectilePosition.y).toBeCloseTo(222.25, 5);
   });
+
+  // The consistent-frame variant (killaura's `spoofPlayerPosition`): BOTH
+  // Location fields are set to the DLL's solved origin, so the frame says "I am
+  // standing at B and my shot started at B" instead of contradicting itself.
+  // Same obligation as above — the re-encode must move those two fields' bytes
+  // and NOTHING else.
+  describe('rewriting BOTH Location fields', () => {
+    const ORIGIN = { x: 111.5, y: 222.25 };
+
+    /** Byte indices that differ from `original` after applying `mutate`. */
+    function diffAfter(original: Buffer, mutate: (p: any) => void): number[] {
+      const parsed = factory.createFromBytes(original);
+      mutate(parsed);
+      parsed.modified = true;
+      const rewritten = factory.serialize(parsed);
+      expect(rewritten.length).toBe(original.length);
+      const out: number[] = [];
+      for (let i = 0; i < original.length; i++) {
+        if (original[i] !== rewritten[i]) out.push(i);
+      }
+      return out;
+    }
+
+    it('touches exactly the union of the two fields\' byte windows', () => {
+      const original = buildPlayerShoot();
+
+      // Derive each field's byte window EMPIRICALLY by rewriting it alone, so
+      // this test never hardcodes the PLAYERSHOOT layout (which is exactly the
+      // thing that drifts).
+      const projOnly = diffAfter(original, (p) => { p.data.projectilePosition = { ...ORIGIN }; });
+      const playerOnly = diffAfter(original, (p) => { p.data.playerPosition = { ...ORIGIN }; });
+      const both = diffAfter(original, (p) => {
+        p.data.projectilePosition = { ...ORIGIN };
+        p.data.playerPosition = { ...ORIGIN };
+      });
+
+      // Each single-field rewrite stays inside ONE 8-byte window (two float32).
+      for (const set of [projOnly, playerOnly]) {
+        expect(set.length).toBeGreaterThan(0);
+        expect(set.length).toBeLessThanOrEqual(8);
+        expect(set[set.length - 1] - set[0]).toBeLessThanOrEqual(7);
+      }
+      // The two fields are distinct regions — no overlap.
+      const projSet = new Set(projOnly);
+      expect(playerOnly.some((i) => projSet.has(i))).toBe(false);
+
+      // And rewriting both changes exactly those two regions and nothing else:
+      // no collateral byte anywhere in the packet.
+      const expected = [...projOnly, ...playerOnly].sort((a, b) => a - b);
+      expect(both).toEqual(expected);
+    });
+
+    it('re-parses with both positions spoofed and every other field intact', () => {
+      const original = buildPlayerShoot();
+      const parsed = factory.createFromBytes(original);
+      parsed.data.projectilePosition = { ...ORIGIN };
+      parsed.data.playerPosition = { ...ORIGIN };
+      parsed.modified = true;
+
+      const back = factory.createFromBytes(factory.serialize(parsed));
+      expect(back.name).toBe('PLAYERSHOOT');
+      expect(back.isDefined).toBe(true);
+      expect(back.data.time).toBe(123456);
+      expect(back.data.shotId).toBe(4242);
+      expect(back.data.containerType).toBe(1234);
+      expect(back.data.attackIndex).toBe(2);
+      expect(back.data.angle).toBeCloseTo(1.25, 5);
+      expect(back.data.bulletId).toBe(7);
+      expect(back.data.unknownShort).toBe(-3);
+      // The frame is now internally consistent: both Locations are the origin.
+      expect(back.data.projectilePosition.x).toBeCloseTo(ORIGIN.x, 5);
+      expect(back.data.projectilePosition.y).toBeCloseTo(ORIGIN.y, 5);
+      expect(back.data.playerPosition.x).toBeCloseTo(ORIGIN.x, 5);
+      expect(back.data.playerPosition.y).toBeCloseTo(ORIGIN.y, 5);
+    });
+  });
 });
