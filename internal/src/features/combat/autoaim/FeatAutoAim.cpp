@@ -16,6 +16,7 @@ static bool  s_noclipEnabled       = false;
 static bool  s_shootInvulnerable   = false;
 static bool  s_prioritizeBosses    = false;
 static bool  s_ignoreWalls         = true;
+static bool  s_ignoreScenery       = true;
 static bool  s_reverseCultStaff    = true;
 static bool  s_offsetColossusSword = false;
 static bool  s_shootWhileStealthed = true;
@@ -38,6 +39,7 @@ void Tick(bool /*menuOpen*/)
     s_shootInvulnerable   = AutoAim::IsShootInvulnerable();
     s_prioritizeBosses    = AutoAim::IsPrioritizeBosses();
     s_ignoreWalls         = AutoAim::IsIgnoreWalls();
+    s_ignoreScenery       = AutoAim::IsIgnoreScenery();
     s_reverseCultStaff    = AutoAim::IsReverseCultStaff();
     s_offsetColossusSword = AutoAim::IsOffsetColossusSword();
     s_shootWhileStealthed = AutoAim::IsShootWhileStealthed();
@@ -112,6 +114,8 @@ void Render()
 
     if (ImGui::Checkbox("Ignore walls / no-HP-bar##aaIgnoreWalls", &s_ignoreWalls))
         AutoAim::SetIgnoreWalls(s_ignoreWalls);
+    if (ImGui::Checkbox("Ignore walls / breakables##aaIgnoreScenery", &s_ignoreScenery))
+        AutoAim::SetIgnoreScenery(s_ignoreScenery);
     ImGui::SameLine(); ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Skip destructible walls and similar (ObjectProperties.noHealthBar).");

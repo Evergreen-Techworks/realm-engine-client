@@ -35,6 +35,10 @@ bool IsPrioritizeBosses();
 
 void SetIgnoreWalls(bool on);
 bool IsIgnoreWalls();
+// Static, non-shooting objects (walls, breakable trees, crates). They pass the
+// noHealthBar test, so they need their own filter.
+void SetIgnoreScenery(bool on);
+bool IsIgnoreScenery();
 
 void SetShootWhileStealthed(bool on);
 bool IsShootWhileStealthed();

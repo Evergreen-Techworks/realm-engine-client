@@ -78,6 +78,12 @@ export interface NearestEnemyFilter {
   hpMax?: number;
   hpUnder?: number;
   hpOver?: number;
+  /** Skip enemies whose MAX HP is below this. Filters trash mobs by tier. */
+  maxHpMin?: number;
+  /** Skip enemies whose MAX HP is above this. */
+  maxHpMax?: number;
+  /** Skip breakable scenery: blocks a square and has no projectiles of its own. */
+  excludeScenery?: boolean;
   maxDistance?: number;
   /** Skip entities whose last update is older than this many ms (drops ghosts
    * that despawned or left view without a removedObjs). */
@@ -143,6 +149,34 @@ export class GameWorldState {
       maxHp,
       hpPct: hp / Math.max(1, maxHp),
     };
+  }
+
+  /**
+   * Walls, breakable trees and crates carry the `<Enemy>` tag and a health bar,
+   * so category alone cannot tell them from a mob. What separates them is that
+   * they block a square and never shoot.
+   */
+  private isScenery(gameData: GameDataLoader, objectType: number): boolean {
+    const def = gameData.getObject(objectType);
+    if (!def) return false;
+    return def.occupySquare && def.projectiles.size === 0;
+  }
+
+  private passesEnemyFilter(
+    gameData: GameDataLoader,
+    candidate: { hp: number; maxHp: number; dist: number; objectType: number },
+    filter?: NearestEnemyFilter,
+  ): boolean {
+    if (!filter) return true;
+    if (filter.hpMin != null && candidate.hp < filter.hpMin) return false;
+    if (filter.hpMax != null && candidate.hp > filter.hpMax) return false;
+    if (filter.hpUnder != null && candidate.hp >= filter.hpUnder) return false;
+    if (filter.hpOver != null && candidate.hp <= filter.hpOver) return false;
+    if (filter.maxHpMin != null && candidate.maxHp < filter.maxHpMin) return false;
+    if (filter.maxHpMax != null && candidate.maxHp > filter.maxHpMax) return false;
+    if (filter.excludeScenery && this.isScenery(gameData, candidate.objectType)) return false;
+    if (filter.maxDistance != null && candidate.dist > filter.maxDistance) return false;
+    return true;
   }
 
   private isLikelyPlayerEntity(gameData: GameDataLoader, e: TrackedEntity): boolean {
@@ -441,14 +475,7 @@ export class GameWorldState {
       const candidate = this.buildEnemyCandidate(gameData, e, origin);
       if (!candidate) continue;
 
-      if (filter) {
-        if (filter.hpMin != null && candidate.hp < filter.hpMin) continue;
-        if (filter.hpMax != null && candidate.hp > filter.hpMax) continue;
-        if (filter.hpUnder != null && candidate.hp >= filter.hpUnder) continue;
-        if (filter.hpOver != null && candidate.hp <= filter.hpOver) continue;
-      }
-
-      if (filter?.maxDistance != null && candidate.dist > filter.maxDistance) continue;
+      if (!this.passesEnemyFilter(gameData, candidate, filter)) continue;
       if (!best || candidate.dist < best.dist) {
         best = {
           objectId: candidate.objectId,
@@ -479,14 +506,7 @@ export class GameWorldState {
       const candidate = this.buildEnemyCandidate(gameData, e, origin);
       if (!candidate) continue;
 
-      if (filter) {
-        if (filter.hpMin != null && candidate.hp < filter.hpMin) continue;
-        if (filter.hpMax != null && candidate.hp > filter.hpMax) continue;
-        if (filter.hpUnder != null && candidate.hp >= filter.hpUnder) continue;
-        if (filter.hpOver != null && candidate.hp <= filter.hpOver) continue;
-      }
-
-      if (filter?.maxDistance != null && candidate.dist > filter.maxDistance) continue;
+      if (!this.passesEnemyFilter(gameData, candidate, filter)) continue;
       if (!best) {
         best = candidate;
         continue;
@@ -516,13 +536,7 @@ export class GameWorldState {
       if (excludeObjectId != null && e.objectId === excludeObjectId) continue;
       const candidate = this.buildEnemyCandidate(gameData, e, origin);
       if (!candidate) continue;
-      if (filter) {
-        if (filter.hpMin != null && candidate.hp < filter.hpMin) continue;
-        if (filter.hpMax != null && candidate.hp > filter.hpMax) continue;
-        if (filter.hpUnder != null && candidate.hp >= filter.hpUnder) continue;
-        if (filter.hpOver != null && candidate.hp <= filter.hpOver) continue;
-      }
-      if (filter?.maxDistance != null && candidate.dist > filter.maxDistance) continue;
+      if (!this.passesEnemyFilter(gameData, candidate, filter)) continue;
       matches.push(candidate);
     }
     matches.sort((a, b) => a.dist - b.dist);

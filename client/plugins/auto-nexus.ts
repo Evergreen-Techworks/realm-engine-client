@@ -90,6 +90,10 @@ interface NexusState {
   heldTimers:   ReturnType<typeof setTimeout>[];
   /** Trailing window of server HP loss no prediction accounted for. */
   unattributed: UnattributedSample[];
+  /** Repeat-ESCAPE timer, armed after the first escape until the map changes. */
+  escapeRetry:  ReturnType<typeof setInterval> | null;
+  /** How many ESCAPEs have gone out for the current escape attempt. */
+  escapeCount:  number;
 }
 
 interface UnattributedSample {
@@ -170,6 +174,18 @@ export function register(ctx: PluginContext) {
   let drawOverlay          = false; // DrawOverlay
 
   // ── Lethal PLAYERHIT hold ──────────────────────────────────────────────
+  // A forecast that only trips at PredictedAutoNexusHealth is strictly more
+  // permissive than the reactive threshold: a shot taking you from 40% to 12%
+  // clears a 10% predicted bar while blowing straight past a 25% force bar. With
+  // this on, the forecast trips at whichever bar is higher.
+  let predictedUsesForceThreshold = true; // PredictedUsesForceThreshold
+
+  // A single ESCAPE that the server drops or that races a stun leaves the run
+  // dead with the plugin believing it escaped. Repeat until the map actually
+  // changes (MAPINFO clears nexusSent and disarms this).
+  let escapeRetryCount      = 4;   // EscapeRetryCount
+  let escapeRetryIntervalMs = 400; // EscapeRetryIntervalMs
+
   let holdLethalHits  = true; // HoldLethalPlayerHit
   let lethalHoldMs    = 100;  // LethalHoldTime
   let lethalCushionHp = 10;    // LethalCushionHealth
@@ -200,6 +216,21 @@ export function register(ctx: PluginContext) {
     label: 'Predicted Nexus Time',
     type: 'range', value: predictedNexusTimeMs, min: 0, max: 1000, step: 10,
   }, (v: number) => { predictedNexusTimeMs = v; pushDllSettings(); });
+
+  ctx.registerSetting('PredictedUsesForceThreshold', {
+    label: 'Predict Against Force Threshold',
+    type: 'boolean', value: predictedUsesForceThreshold,
+  }, (v: boolean) => { predictedUsesForceThreshold = v === true; });
+
+  ctx.registerSetting('EscapeRetryCount', {
+    label: 'Escape Retries', advanced: true,
+    type: 'range', value: escapeRetryCount, min: 0, max: 10, step: 1,
+  }, (v: number) => { escapeRetryCount = Math.max(0, Math.min(10, Math.trunc(Number(v) || 0))); });
+
+  ctx.registerSetting('EscapeRetryIntervalMs', {
+    label: 'Escape Retry Interval', advanced: true,
+    type: 'range', value: escapeRetryIntervalMs, min: 100, max: 2000, step: 50,
+  }, (v: number) => { escapeRetryIntervalMs = Math.max(100, Math.min(2000, Math.trunc(Number(v) || 400))); });
 
   ctx.registerSetting('IncludeGroundTicks', {
     label: 'Include Ground Ticks', type: 'boolean', value: includeGroundTicks,
@@ -275,6 +306,7 @@ export function register(ctx: PluginContext) {
         pendingAoes: [],
         predicted: [], predictedRecovery: 0, heldTimers: [],
         unattributed: [],
+        escapeRetry: null, escapeCount: 0,
       };
       states.set(client, s);
     }
@@ -397,6 +429,16 @@ export function register(ctx: PluginContext) {
     return Math.min(margin, state.maxHp * UNATTRIBUTED_MAX_FRACTION);
   }
 
+  /**
+   * HP at or below which the forecast trips. The predicted bar alone can sit
+   * under the reactive bar, so honour whichever is higher when configured.
+   */
+  function predictedTripHp(state: NexusState): number {
+    const predictedHp = predictedNexusPct * 0.01 * state.maxHp;
+    if (!predictedUsesForceThreshold) return predictedHp;
+    return Math.max(predictedHp, effectiveThresholdHp(state));
+  }
+
   function baseThresholdHp(state: NexusState): number {
     return nexusThresholdPct * 0.01 * state.maxHp;
   }
@@ -409,6 +451,12 @@ export function register(ctx: PluginContext) {
   ctx.registerCleanup(() => {
     for (const timer of liveHeldTimers) clearTimeout(timer);
     liveHeldTimers.clear();
+  });
+
+  const liveEscapeTimers = new Set<ReturnType<typeof setInterval>>();
+  ctx.registerCleanup(() => {
+    for (const timer of liveEscapeTimers) clearInterval(timer);
+    liveEscapeTimers.clear();
   });
 
   function clearHeldTimers(state: NexusState): void {
@@ -429,7 +477,9 @@ export function register(ctx: PluginContext) {
   }
 
   ctx.on('clientDisconnected', (client) => {
-    clearHeldTimers(getState(client));
+    const state = getState(client);
+    clearHeldTimers(state);
+    disarmEscapeRetry(state);
     if (activeClient === client) activeClient = null;
   });
 
@@ -479,9 +529,43 @@ export function register(ctx: PluginContext) {
         + (body ? `\n${body}` : ''));
     }
 
+    sendEscape(client, state);
+    armEscapeRetry(client, state);
+  }
+
+  function sendEscape(client: ClientConnection, state: NexusState): void {
     const escape = ctx.createPacket('ESCAPE');
     escape.modified = true;
     client.sendToServer(escape);
+    state.escapeCount++;
+  }
+
+  /**
+   * Keep sending ESCAPE until the server actually moves us. MAPINFO clears
+   * `nexusSent` and calls `disarmEscapeRetry`, so arriving in the nexus is what
+   * stops this; the retry cap only bounds the case where the connection is gone.
+   */
+  function armEscapeRetry(client: ClientConnection, state: NexusState): void {
+    disarmEscapeRetry(state);
+    if (escapeRetryCount <= 0) return;
+    state.escapeRetry = setInterval(() => {
+      if (!state.nexusSent || !client.connected) { disarmEscapeRetry(state); return; }
+      if (state.escapeCount > escapeRetryCount) {
+        ctx.log(`ESCAPE unanswered after ${state.escapeCount} sends, giving up`);
+        disarmEscapeRetry(state);
+        return;
+      }
+      ctx.log(`ESCAPE not acknowledged, resending (${state.escapeCount})`);
+      sendEscape(client, state);
+    }, escapeRetryIntervalMs);
+    liveEscapeTimers.add(state.escapeRetry);
+  }
+
+  function disarmEscapeRetry(state: NexusState): void {
+    if (!state.escapeRetry) return;
+    clearInterval(state.escapeRetry);
+    liveEscapeTimers.delete(state.escapeRetry);
+    state.escapeRetry = null;
   }
 
   function describeLedger(state: NexusState): string {
@@ -614,6 +698,8 @@ export function register(ctx: PluginContext) {
     const state   = getState(client);
     state.inSafeZone = SAFE_ZONE_MAPS.has(mapName);
     state.nexusSent  = false;
+    state.escapeCount = 0;
+    disarmEscapeRetry(state);
     state.serverHp   = 0;
     state.pendingHeal = 0;
     state.pendingAoes   = [];
@@ -629,7 +715,7 @@ export function register(ctx: PluginContext) {
 
   ctx.hookPacket('CREATESUCCESS', (client) => {
     const existing = states.get(client);
-    if (existing) clearHeldTimers(existing);
+    if (existing) { clearHeldTimers(existing); disarmEscapeRetry(existing); }
     states.delete(client);
   }, { prepend: true });
 
@@ -640,9 +726,15 @@ export function register(ctx: PluginContext) {
     if (nexusPrologue(client, state)) { packet.send = false; return; }
     if (state.nexusSent) { packet.send = false; return; }
 
-    state.maxHp    = pd.maxHealth; //Actual Max HP
-    state.defense  = pd.defense; //Actual Def
-    state.vitality = pd.vitality; //Actual Vit
+    // effectiveMaxHealth, not maxHealth: stat 3 is the gearless base, so the bare
+    // read understated max HP by every point of gear and exalt HP. That shrank
+    // the absolute nexus threshold (a % of maxHp) and made clientHp clamp to the
+    // wrong ceiling, which is how a run could end below the configured %.
+    // Defense stays on the base stat: StateManager's calibration check is still
+    // the arbiter of whether stat 21 is base or already effective.
+    state.maxHp    = pd.effectiveMaxHealth;
+    state.defense  = pd.defense;
+    state.vitality = pd.effectiveVitality;
 
     const serverHp     = pd.health > 0 ? pd.health : state.maxHp;
     const prevServerHp = state.serverHp;
@@ -1043,6 +1135,7 @@ export function register(ctx: PluginContext) {
     ordered.sort((a, b) => a.tHitMs - b.tHitMs);
 
     const spentBullets = pendingBulletKeys(state);
+    const tripHp = predictedTripHp(state);
 
     let hp = clientHp(state);
     let resolved = 0;
@@ -1066,7 +1159,7 @@ export function register(ctx: PluginContext) {
           known: true,
           applies: [],
         });
-        if (tripIndex < 0 && hp / state.maxHp * 100 <= predictedNexusPct) {
+        if (tripIndex < 0 && hp <= tripHp) {
           tripIndex  = incoming.length - 1;
           hpAtTrip   = hp;
           tripReason = `predicted: standing on damaging ground in ${Math.round(ev.tHitMs)}ms `
@@ -1125,7 +1218,7 @@ export function register(ctx: PluginContext) {
         applies: mitigationEffects,
       });
 
-      if (tripIndex < 0 && hp / state.maxHp * 100 <= predictedNexusPct) {
+      if (tripIndex < 0 && hp <= tripHp) {
         tripIndex  = incoming.length - 1;
         hpAtTrip   = hp;
         tripReason = `predicted: ${bulletCount} bullet(s) in ${Math.round(ev.tHitMs)}ms `

@@ -147,6 +147,26 @@ export class PlayerData {
     return this.backpackTier >= 16;
   }
 
+  /**
+   * True max HP as the in-game bar shows it. `maxHealth` is stat 3, the gearless
+   * base; the combined gear+exalt boost is stat 46, which is split here into
+   * `healthBonus` (gear) and `exaltedMaxHP` (exalt). Reading the bare base makes
+   * every HP ratio read high, so thresholds never trip when they should.
+   */
+  get effectiveMaxHealth(): number {
+    return this.maxHealth + this.healthBonus + Math.max(0, this.exaltedMaxHP);
+  }
+
+  /** True max MP, same base + gear + exalt split as `effectiveMaxHealth`. */
+  get effectiveMaxMana(): number {
+    return this.maxMana + this.manaBonus + Math.max(0, this.exaltedMaxMP);
+  }
+
+  /** True VIT (base + gear + exalt), for HP regen prediction. */
+  get effectiveVitality(): number {
+    return this.vitality + this.vitalityBonus + Math.max(0, this.exaltedVitality);
+  }
+
   private applyGearBonusesFromWireMinusExalt(): void {
     if (this._wireHpBoost !== null) {
       this.healthBonus = PlayerData.gearOnlyFromCombined(this._wireHpBoost, this.exaltedMaxHP);

@@ -119,6 +119,8 @@ uint32_t OP_ProtSink      = 0x6F5;
 uint32_t OP_Flying        = 0x6FC;
 uint32_t OP_ConnectT      = 0x784;
 uint32_t OP_Projectiles   = 0x1C0;
+uint32_t OP_HasProj       = 0x714;
+uint32_t OP_NumProj       = 0x76C;
 
 uint32_t PP_Id              = 0x164;
 uint32_t PP_Lifetime        = 0x160;
@@ -353,6 +355,8 @@ static Entry s_entries[] = {
     { "ObjectProperties", { "flying" },                              1, 0,     &OP_Flying,         false },
     { "ObjectProperties", { "connectType" },                         1, 0,     &OP_ConnectT,       false },
     { "ObjectProperties", { "Projectiles", "projectiles" },          2, 0,     &OP_Projectiles,    false },
+    { "ObjectProperties", { "hasProjectiles" },                      1, 0,     &OP_HasProj,        false },
+    { "ObjectProperties", { "numProjectiles" },                      1, 0,     &OP_NumProj,        false },
 
     // ── ProjectileProperties (real names, no shift) ───────────────────────
     { "ProjectileProperties", { "Id",         "id" },                2, 0,     &PP_Id,              false },

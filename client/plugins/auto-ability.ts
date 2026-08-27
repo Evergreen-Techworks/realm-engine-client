@@ -42,6 +42,8 @@ export function register(ctx: PluginContext) {
   let mpFloorPct = 85;
   let safeZonePause = true;
   let abilityRange = 12;
+  let minTargetMaxHp = 1000;
+  let skipScenery = true;
   let selfIntervalMs = DEFAULT_SELF_INTERVAL_MS;
   let targetIntervalMs = DEFAULT_TARGET_INTERVAL_MS;
 
@@ -63,6 +65,16 @@ export function register(ctx: PluginContext) {
     label: 'Aimed range (tiles)',
     type: 'range', value: 12, min: 3, max: 30, step: 1,
   }, (v: number) => { abilityRange = Math.max(3, Math.min(30, Math.trunc(Number(v) || 12))); });
+
+  ctx.registerSetting('minTargetMaxHp', {
+    label: 'Min target max HP',
+    type: 'number', value: 1000, min: 0, max: 200000, step: 250,
+  }, (v: number) => { minTargetMaxHp = Math.max(0, Math.trunc(Number(v) || 0)); });
+
+  ctx.registerSetting('skipScenery', {
+    label: 'Skip walls / breakables',
+    type: 'boolean', value: true,
+  }, (v: boolean) => { skipScenery = v === true; });
 
   const clampInterval = (v: number, fallback: number) =>
     Math.max(MIN_INTERVAL_MS, Math.min(MAX_INTERVAL_MS, Math.trunc(Number(v) || fallback)));
@@ -140,16 +152,33 @@ export function register(ctx: PluginContext) {
     // pos {0,0} before first update looks like cheating to the server.
     if (pd.pos.x === 0 && pd.pos.y === 0) return;
 
+    const ws = ctx.getWorldState(client);
+    const gd = ctx.gameData;
+    if (!ws || !gd) return;
+
     if (isSelf) {
+      // A self-buff burns the same MP whether anything worth buffing for is
+      // nearby or not, so hold it behind the same target test the aimed classes
+      // use rather than casting into an empty room.
+      const nearby = ws.getNearestEnemy(gd, pd.pos, {
+        maxDistance: abilityRange,
+        maxStaleMs: TARGET_MAX_STALE_MS,
+        maxHpMin: minTargetMaxHp > 0 ? minTargetMaxHp : undefined,
+        excludeScenery: skipScenery,
+      });
+      if (!nearby) return;
       sendUseAbility(client, pd.pos, itemType);
       nextAllowedAt.set(client, now + selfIntervalMs);
     } else {
-      const ws = ctx.getWorldState(client);
-      const gd = ctx.gameData;
-      if (!ws || !gd) return;
+      // Without a floor on the target's max HP this fires at every rat in the
+      // realm and the MP is gone before anything worth spending it on shows up.
+      // The floor is on MAX HP, not current, so a boss already worn down still
+      // qualifies.
       const enemy = ws.getNearestEnemy(gd, pd.pos, {
         maxDistance: abilityRange,
         maxStaleMs: TARGET_MAX_STALE_MS,
+        maxHpMin: minTargetMaxHp > 0 ? minTargetMaxHp : undefined,
+        excludeScenery: skipScenery,
       });
       if (!enemy) return;
       sendUseAbility(client, { x: enemy.x, y: enemy.y }, itemType);

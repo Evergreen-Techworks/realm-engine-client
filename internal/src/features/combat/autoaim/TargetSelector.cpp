@@ -78,6 +78,7 @@ Result Select(const Config& cfg,
         for (const EnemyTracker::Entry& e : snap) {
             if (e.id != cfg.lockedEnemyId) continue;
             if (cfg.ignoreWalls && !e.hasHealthBar) break;
+            if (cfg.ignoreScenery && e.isScenery) break;
             if (e.isInvulnerable && !cfg.shootInvulnerable) break;
 
             Result r;
@@ -124,6 +125,7 @@ Result Select(const Config& cfg,
 
         // Soft filters
         if (cfg.ignoreWalls && !e.hasHealthBar) goto next_entry;
+        if (cfg.ignoreScenery && e.isScenery) goto next_entry;
         if (e.isInvulnerable && !cfg.shootInvulnerable) goto next_entry;
 
         {

@@ -22,6 +22,9 @@ static const uint32_t& kOffObjProps      = RuntimeOffsets::ObjProps;
 static const uint32_t& kOffOpIsEnemy     = RuntimeOffsets::OP_IsEnemy;
 static const uint32_t& kOffOpNoHealthBar = RuntimeOffsets::OP_NoHealthBar;
 static const uint32_t& kOffOpInvincElem  = RuntimeOffsets::OP_InvincibleElem;
+static const uint32_t& kOffOpIsStatic    = RuntimeOffsets::OP_IsStatic;
+static const uint32_t& kOffOpHasProj     = RuntimeOffsets::OP_HasProj;
+static const uint32_t& kOffOpNumProj     = RuntimeOffsets::OP_NumProj;
 static const uint32_t& kOffObjType       = RuntimeOffsets::ObjType;
 static const uint32_t& kOffWmDict        = RuntimeOffsets::WM_AllDict;
 
@@ -145,7 +148,7 @@ static bool SehReadLocalKlassAndPos(void* local, float* outX, float* outY, uint6
 struct CandidateOut {
     int32_t id, objType, hp, maxHp;
     float   x, y;
-    bool    isInvulnerable, hasHealthBar;
+    bool    isInvulnerable, hasHealthBar, isScenery;
     void*   ptr;
 };
 
@@ -174,6 +177,18 @@ static bool SehReadCandidate(uint8_t* entry, void* local, uint64_t localKlass, C
 
         // noHealthBar (walls/destructibles) — stored as metadata, not hard-rejected
         const uint8_t noHB = *reinterpret_cast<uint8_t*>(op + kOffOpNoHealthBar);
+
+        // Breakable scenery reads as an enemy and carries a health bar, so the
+        // noHealthBar test alone lets walls and trees through. What actually
+        // separates them from a mob is that they never move and never shoot.
+        bool scenery = false;
+        if (kOffOpIsStatic != 0 && *reinterpret_cast<uint8_t*>(op + kOffOpIsStatic)) {
+            const bool hasProj = kOffOpHasProj != 0
+                && *reinterpret_cast<uint8_t*>(op + kOffOpHasProj) != 0;
+            const bool numProj = kOffOpNumProj != 0
+                && *reinterpret_cast<int32_t*>(op + kOffOpNumProj) > 0;
+            scenery = !hasProj && !numProj;
+        }
 
         // XML <Invincible/> — reject if InvincibleElement pointer exists (regardless of string)
         void* invPtr = *reinterpret_cast<void**>(op + kOffOpInvincElem);
@@ -214,6 +229,7 @@ static bool SehReadCandidate(uint8_t* entry, void* local, uint64_t localKlass, C
         out.y             = ey2;
         out.isInvulnerable = isInvuln;
         out.hasHealthBar  = (noHB == 0);
+        out.isScenery     = scenery;
         out.ptr           = entity;
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -303,6 +319,7 @@ void Tick()
         e.maxHp          = cand.maxHp;
         e.isInvulnerable = cand.isInvulnerable;
         e.hasHealthBar   = cand.hasHealthBar;
+        e.isScenery      = cand.isScenery;
         e.ptr            = cand.ptr;
 
         // Populate velocity from the just-updated map

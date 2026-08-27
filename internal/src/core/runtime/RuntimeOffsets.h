@@ -303,6 +303,11 @@ namespace RuntimeOffsets {
     // to derive weapon range without waiting for the player's first
     // shot. Same no-shift path as the other OP fields.
     extern uint32_t OP_Projectiles; // "Projectiles"              fallback 0x1C0
+    // "hasProjectiles" / "numProjectiles": whether this object type can shoot at
+    // all. A static object that cannot shoot is scenery (wall, breakable tree,
+    // crate), which auto-aim skips separately from the noHealthBar test.
+    extern uint32_t OP_HasProj;     // "hasProjectiles"           fallback 0x714
+    extern uint32_t OP_NumProj;     // "numProjectiles"           fallback 0x76C
 
     // ── ProjectileProperties (real field names, no shift) ────────────────────
     extern uint32_t PP_Id;              // "Id"                fallback 0x164

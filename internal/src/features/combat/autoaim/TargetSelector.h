@@ -17,6 +17,10 @@ struct Config {
     bool           shootInvulnerable    = false;
     bool           prioritizeBosses     = true;
     bool           ignoreWalls          = true;  // skip noHealthBar entities
+    // Skip static objects that cannot shoot: walls, breakable trees, crates.
+    // They are tagged as enemies and do have health bars, so ignoreWalls misses
+    // them and the aim snaps to whatever scenery happens to be closest.
+    bool           ignoreScenery        = true;
     float          rangeLeadBias        = 1.0f;  // extra tiles past weapon range
     bool           mouseBoundingEnabled = false;
     float          mouseBoundingRange   = 8.0f;
