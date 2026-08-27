@@ -98,6 +98,47 @@ export class LootCatalog {
     }
   }
 
+  /**
+   * The numeric tiers that actually exist in game data for a gear category,
+   * ascending. Drives the tier dropdowns, so the UI only ever offers tiers the
+   * game really ships: abilities stop at T10 with no T9, rings stop at T7, and
+   * nothing anywhere reaches the T20 the old numeric input allowed.
+   */
+  tiersFor(category: GearCategory): number[] {
+    const seen = new Set<number>();
+    for (const info of this.items.values()) {
+      if (info.tier == null) continue;
+      if (getGearCategory(info.slotType) !== category) continue;
+      seen.add(info.tier);
+    }
+    return [...seen].sort((a, b) => a - b);
+  }
+
+  /** The numeric tiers that exist for one specific slot type, ascending. */
+  tiersForSlot(slotType: number): number[] {
+    const seen = new Set<number>();
+    for (const info of this.items.values()) {
+      if (info.tier == null || info.slotType !== slotType) continue;
+      seen.add(info.tier);
+    }
+    return [...seen].sort((a, b) => a - b);
+  }
+
+  /**
+   * Gear slot types that actually carry tiered items, ascending. Drives the
+   * per-item-type overrides, so a slot with nothing but UTs never gets a
+   * pointless tier dropdown.
+   */
+  tieredGearSlotTypes(): number[] {
+    const seen = new Set<number>();
+    for (const info of this.items.values()) {
+      if (info.tier == null) continue;
+      if (getGearCategory(info.slotType) == null) continue;
+      seen.add(info.slotType);
+    }
+    return [...seen].sort((a, b) => a - b);
+  }
+
   /** Display name for a bag object type (world name, else hex id). */
   getBagDisplayName(objectType: number): string {
     return this.worldName(objectType) ?? `0x${objectType.toString(16)}`;

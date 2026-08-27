@@ -11,8 +11,13 @@ import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { PluginContext } from '../../src/plugins/PluginContext.js';
+import type { LootCatalog, GearCategory } from './catalog.js';
+import { getGearCategory } from './catalog.js';
 import { minEnchantSelectToCount } from './items.js';
 import {
+  TIER_NEVER,
+  FALLBACK_TIER_RANGE,
+  slotTypeName,
   DEFAULT_MIN_WEAPON_TIER,
   DEFAULT_MIN_ABILITY_TIER,
   DEFAULT_MIN_ARMOR_TIER,
@@ -42,6 +47,12 @@ export class AutoLootSettings {
   minAbilityTier = DEFAULT_MIN_ABILITY_TIER;
   minArmorTier = DEFAULT_MIN_ARMOR_TIER;
   minRingTier = DEFAULT_MIN_RING_TIER;
+  /**
+   * Per-slot-type overrides, keyed by slot type. A slot absent from this map
+   * inherits its category threshold, which is what the "Use category setting"
+   * option in each per-item-type dropdown selects.
+   */
+  readonly minTierBySlot = new Map<number, number>();
 
   // Loot toggles
   lootUTs = true;
@@ -132,17 +143,93 @@ export class AutoLootSettings {
 
   // ─── Dashboard registration ─────────────────────────────────────────────────
 
-  register(): void {
+  /**
+   * Tier dropdown options for one list of tiers. The tiers come from the loaded
+   * catalog, so the menu offers exactly what the game ships: abilities stop at
+   * T10 and skip T9, rings stop at T7. The old numeric input allowed 0-20
+   * uniformly, most of which matched nothing.
+   */
+  private tierOptions(tiers: number[], inheritLabel?: string): { label: string; value: string }[] {
+    const list = tiers.length > 0 ? tiers : FALLBACK_TIER_RANGE;
+    const top = list[list.length - 1];
+    const options = inheritLabel ? [{ label: inheritLabel, value: 'inherit' }] : [];
+    for (const t of list) {
+      const label = t === list[0] ? `T${t} and up (everything)`
+        : t === top ? `T${t} only`
+        : `T${t} and up`;
+      options.push({ label, value: String(t) });
+    }
+    options.push({ label: 'Never loot', value: 'off' });
+    return options;
+  }
+
+  /**
+   * Turn a dropdown value into a threshold. Values above the category's real top
+   * tier become TIER_NEVER, which is also where a legacy saved value of 20 lands,
+   * so the old "park it at 20 to disable" habit keeps working.
+   */
+  private parseTier(raw: unknown, tiers: number[]): number {
+    const text = String(raw ?? '').trim().toLowerCase();
+    if (text === 'off' || text === '') return TIER_NEVER;
+    const n = Math.trunc(Number(text));
+    if (!Number.isFinite(n)) return TIER_NEVER;
+    const list = tiers.length > 0 ? tiers : FALLBACK_TIER_RANGE;
+    if (n > list[list.length - 1]) return TIER_NEVER;
+    return Math.max(0, n);
+  }
+
+  /** Nearest offered tier at or above `preferred`, so a default always maps to a real option. */
+  private defaultTierValue(tiers: number[], preferred: number): string {
+    const list = tiers.length > 0 ? tiers : FALLBACK_TIER_RANGE;
+    const hit = list.find((t) => t >= preferred);
+    return String(hit ?? list[list.length - 1]);
+  }
+
+  register(catalog: LootCatalog): void {
     const ctx = this.ctx;
 
-    const tierSetting = (key: string, label: string, get: () => number, set: (v: number) => void) => {
-      ctx.registerSetting(key, { label, type: 'number', value: get(), min: 0, max: 20, step: 1 },
-        (value: number) => set(clamp(Math.trunc(Number(value) || 0), 0, 20)));
+    const tierSetting = (
+      key: string, label: string, tiers: number[], preferred: number, set: (v: number) => void,
+    ) => {
+      set(this.parseTier(this.defaultTierValue(tiers, preferred), tiers));
+      ctx.registerSetting(key, {
+        label, type: 'select',
+        value: this.defaultTierValue(tiers, preferred),
+        options: this.tierOptions(tiers),
+      }, (value: string) => set(this.parseTier(value, tiers)));
     };
-    tierSetting('minWeaponTier', 'Min Weapon Tier', () => this.minWeaponTier, (v) => { this.minWeaponTier = v; });
-    tierSetting('minAbilityTier', 'Min Ability Tier', () => this.minAbilityTier, (v) => { this.minAbilityTier = v; });
-    tierSetting('minArmorTier', 'Min Armor Tier', () => this.minArmorTier, (v) => { this.minArmorTier = v; });
-    tierSetting('minRingTier', 'Min Ring Tier', () => this.minRingTier, (v) => { this.minRingTier = v; });
+
+    const categories: [GearCategory, string, string, number, (v: number) => void][] = [
+      ['weapon',  'minWeaponTier',  'Min Weapon Tier',  DEFAULT_MIN_WEAPON_TIER,  (v) => { this.minWeaponTier = v; }],
+      ['ability', 'minAbilityTier', 'Min Ability Tier', DEFAULT_MIN_ABILITY_TIER, (v) => { this.minAbilityTier = v; }],
+      ['armor',   'minArmorTier',   'Min Armor Tier',   DEFAULT_MIN_ARMOR_TIER,   (v) => { this.minArmorTier = v; }],
+      ['ring',    'minRingTier',    'Min Ring Tier',    DEFAULT_MIN_RING_TIER,    (v) => { this.minRingTier = v; }],
+    ];
+    for (const [category, key, label, preferred, set] of categories) {
+      tierSetting(key, label, catalog.tiersFor(category), preferred, set);
+    }
+
+    // Per-item-type overrides. One dropdown per gear slot that actually carries
+    // tiered items, each defaulting to its category threshold so the simple
+    // four-category view stays the whole story until someone opts out of it.
+    for (const slotType of catalog.tieredGearSlotTypes()) {
+      const category = getGearCategory(slotType);
+      if (category == null) continue;
+      const tiers = catalog.tiersForSlot(slotType);
+      ctx.registerSetting(`minTierSlot${slotType}`, {
+        label: `  ${slotTypeName(slotType)} tier`,
+        advanced: true,
+        type: 'select',
+        value: 'inherit',
+        options: this.tierOptions(tiers, `Use ${category} setting`),
+      }, (value: string) => {
+        if (String(value ?? '').trim().toLowerCase() === 'inherit') {
+          this.minTierBySlot.delete(slotType);
+          return;
+        }
+        this.minTierBySlot.set(slotType, this.parseTier(value, tiers));
+      });
+    }
 
     const boolSetting = (
       key: string, label: string, get: () => boolean, set: (v: boolean) => void, advanced = false,

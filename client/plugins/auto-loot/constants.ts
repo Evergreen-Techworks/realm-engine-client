@@ -4,6 +4,18 @@
 export type PermanentStatKey = 'attack' | 'defense' | 'speed' | 'dexterity' | 'vitality' | 'wisdom';
 
 // ─── Default tier thresholds ───────────────────────────────────────────────────
+/**
+ * Threshold meaning "never loot this category". Higher than any real tier, so
+ * the plain `tier >= threshold` comparison in LootRules keeps working unchanged.
+ * Also where a legacy saved value above the category's real top tier lands, which
+ * preserves the old trick of parking the numeric input at 20 to switch a
+ * category off.
+ */
+export const TIER_NEVER = 9999;
+
+/** Tiers offered when game data is unavailable and nothing can be derived. */
+export const FALLBACK_TIER_RANGE = Array.from({ length: 15 }, (_, i) => i);
+
 export const DEFAULT_MIN_WEAPON_TIER = 11;
 export const DEFAULT_MIN_ABILITY_TIER = 6;
 export const DEFAULT_MIN_ARMOR_TIER = 11;
@@ -54,6 +66,26 @@ export const PUBLIC_BAG_TYPES = new Set<number>([
 export const MULTITOOL_BIG_BAG_SIZE = 175;
 
 // ─── Slot type buckets ─────────────────────────────────────────────────────────
+/**
+ * Slot type -> display name. Verified against the shipped objects.xml by sampling
+ * item names per slot (slot 1 is Short Sword / Broad Sword / Saber, slot 30 is
+ * Slashing Sheath / Timber Sheath, and so on). Anything not listed falls back to
+ * "Slot N", so a slot type added by a future build still renders.
+ */
+export const SLOT_TYPE_NAMES: Readonly<Record<number, string>> = {
+  1: 'Sword', 2: 'Dagger', 3: 'Bow', 4: 'Tome', 5: 'Shield',
+  6: 'Leather Armor', 7: 'Heavy Armor', 8: 'Wand', 9: 'Ring', 10: 'Consumable',
+  11: 'Spell', 12: 'Seal', 13: 'Cloak', 14: 'Robe', 15: 'Quiver',
+  16: 'Helm', 17: 'Staff', 18: 'Poison', 19: 'Skull', 20: 'Trap',
+  21: 'Orb', 22: 'Prism', 23: 'Scepter', 24: 'Katana', 25: 'Star',
+  26: 'Egg', 27: 'Wakizashi', 28: 'Lute', 29: 'Mace', 30: 'Sheath',
+  31: 'Sigil',
+};
+
+export function slotTypeName(slotType: number): string {
+  return SLOT_TYPE_NAMES[slotType] ?? `Slot ${slotType}`;
+}
+
 export const WEAPON_SLOT_TYPES = new Set<number>([1, 2, 3, 8, 17, 24]);
 export const ABILITY_SLOT_TYPES = new Set<number>([4, 5, 11, 12, 13, 15, 16, 18, 19, 20, 21, 22, 23, 25, 27, 28, 29, 30, 31]);
 export const ARMOR_SLOT_TYPES = new Set<number>([6, 7, 14]);
