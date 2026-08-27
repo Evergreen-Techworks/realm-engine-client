@@ -219,7 +219,7 @@ void ApplyDodgeModeWithEnter(DodgeMode nextMode)
 // ─────────────────────────────────────────────────────────────────────────────
 static constexpr uint32_t kOffObjProps1      = 0x18;   // KJMONHENJEN.OBAKMCCDBJA
 static constexpr uint32_t kOffObjProps2      = 0x1C8;  // LKHPPBEGNOM.KKENJFFDMPO
-static constexpr uint32_t kOffCollisionMult  = 0x780;  // ObjectProperties.collisionRadiusMultiplier
+static constexpr uint32_t kOffCollisionMult  = 0x798;  // ObjectProperties.collisionRadiusMultiplier (was 0x780 pre-6.13)
 
 // Native speed mult: HBEAKBIHANL KDAJOMOFMJB via il2cpp_field_get_offset; optional UI scale in ProjectileTracking.
 static float g_flashSpeedMulUi = 1.f;

@@ -55,9 +55,10 @@ const PACKET_DEFINITIONS_JSON = readFileSync(join(DATA_DIR, 'packet-definitions.
 const STAT_TYPES_JSON = readFileSync(join(DATA_DIR, 'stat-types.json'), 'utf8');
 const SERVERS_JSON = readFileSync(join(DATA_DIR, 'servers.json'), 'utf8');
 
-const EXCLUDED_PLUGINS = new Set([
-  'auto-drink',    // directory plugin (plugins/auto-drink/), excluded from prod for now
-]);
+// Plugins excluded from every build. auto-drink used to be listed here while
+// directory-plugin bundling was new; it bundles correctly and is the client's
+// only autopot now that auto-nexus has dropped its own drink path.
+const EXCLUDED_PLUGINS = new Set([]);
 const ADMIN_ONLY_PLUGINS = new Set([
   'auto-ability.ts',
   'packet-logger.ts',

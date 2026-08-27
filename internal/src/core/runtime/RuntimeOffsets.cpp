@@ -32,52 +32,57 @@ uint32_t HP          = 0x20C;
 uint32_t MaxHP       = 0x208;
 uint32_t Defense     = 0x210;
 uint32_t PlayerIGN   = 0x178;
-// COHCKAPOLCA dump 0x248 on LKHPPBEGNOM (not 0x218 — that is HMMHAKPBEDK). +0x50 ACTK => 0x298.
+// COHCKAPOLCA dump 0x250 on LKHPPBEGNOM. +0x50 ACTK => 0x2A0.
 // AV on PMMFLLAIPGN is handled gracefully: AutoAim SEH catches it and returns false (untargetable).
 // PMMFLLAIPGN that AV are treated as targetable (correct fallback — assume no immunity).
-uint32_t MoConditions = 0x298;
-// ECGPFJKCCAN — Vector2 velocity. 0 = unresolved; AutoAim falls back to history.
-uint32_t MoVelocity   = 0;
+uint32_t MoConditions = 0x2A0;
+// ECGPFJKCCAN - Vector2 velocity (6.13.0.1.0 dump 0x278 + kActk = 0x2C8).
+// A 0 here means unresolved, in which case AutoAim falls back to position history.
+uint32_t MoVelocity   = 0x2C8;
 // KKENJFFDMPO — LKHPPBEGNOM ObjectProperties alias. Runtime metadata resolves this at 0x1C8.
 uint32_t MoObjectProps = 0x1C8;
 // GGBCADDBAPN — player collision ObjectProperties used by the C# working implementation.
-// Generated/inherited player layout resolves this at 0x2F0; unlike the stat fields above,
+// Generated/inherited player layout resolves this at 0x2F8; unlike the stat fields above,
 // runtime evidence shows this ObjectProperties pointer is not ACTK-shifted.
-uint32_t PlayerCollisionProps = 0x2F0;
+uint32_t PlayerCollisionProps = 0x2F8;
+// Projectile tuning multipliers on LKHPPBEGNOM, consumed by WeaponCalibrator.
+uint32_t Mo_ProjSpeedMul    = 0x188;   // KFBOONBAFAC
+uint32_t Mo_ProjLifetimeMul = 0x18C;   // CCPNMNIOMED
 
-uint32_t Tex1              = 0x4C4;
-uint32_t Tex2              = 0x538;
-uint32_t CurMP             = 0x54C;
-uint32_t MaxMP             = 0x548;
-// DAGEMHFLJLK — groundDamageImmune bool (dump 0x458 / runtime 0x4A8). NOT ability cooldown.
-uint32_t GroundDmgImmune   = 0x4A8;
-// BINDBHJLPMG — invincible bool (dump 0x459 / runtime 0x4A9). Short-duration hit invulnerability.
-uint32_t LocalInvincible   = 0x4A9;
-// PPBLNMIMIFP — abilityReady bool (dump 0x515 / runtime 0x565). True when ability can fire.
-uint32_t AbilityReady      = 0x565;
-// CGCMALPMMJL — bool moving (dump 0x448 / runtime 0x498).
-uint32_t Player_Moving     = 0x498;
-// BHJFNEAHAOE — float moveDirX (dump 0x478 / runtime 0x4C8).
-uint32_t Player_MoveDirX   = 0x4C8;
-// GDNEBFDDDKM — float moveDirY (dump 0x47C / runtime 0x4CC).
-uint32_t Player_MoveDirY   = 0x4CC;
-// BHJFNEAHAOE — float SPD stat (dump 0x478 / runtime 0x478, no ACTK shift).
+uint32_t Tex1              = 0x4CC;
+uint32_t Tex2              = 0x54C;
+uint32_t CurMP             = 0x5B4;
+uint32_t MaxMP             = 0x5B0;
+// DAGEMHFLJLK - groundDamageImmune bool (dump 0x460 / runtime 0x4B0). NOT ability cooldown.
+uint32_t GroundDmgImmune   = 0x4B0;
+// BINDBHJLPMG - invincible bool (dump 0x461 / runtime 0x4B1). Short-duration hit invulnerability.
+uint32_t LocalInvincible   = 0x4B1;
+// PPBLNMIMIFP - abilityReady bool (dump 0x52D / runtime 0x57D). True when ability can fire.
+uint32_t AbilityReady      = 0x57D;
+// CGCMALPMMJL - bool moving (dump 0x450 / runtime 0x4A0).
+uint32_t Player_Moving     = 0x4A0;
+// BHJFNEAHAOE - float moveDirX (dump 0x480 / runtime 0x4D0).
+uint32_t Player_MoveDirX   = 0x4D0;
+// GDNEBFDDDKM - float moveDirY (dump 0x484 / runtime 0x4D4).
+uint32_t Player_MoveDirY   = 0x4D4;
+// BHJFNEAHAOE - float SPD stat (dump 0x480 / runtime 0x480, no ACTK shift).
 // PlayerTAB and TestTAB read this without shift for the move-speed formula.
-uint32_t Player_Spd        = 0x478;
+// NOTE: no s_entries row -> never self-heals; refresh by hand each game patch.
+uint32_t Player_Spd        = 0x480;
 
 // ApplicationManager → WorldManager field offset.
 // Set by GameState.cpp type-scan (immune to backing-field name obfuscation).
 uint32_t AppMgr_WorldMgr   = 0xC0;
 
 uint32_t WM_Local    = 0x48;
-uint32_t WM_AllDict  = 0xB0;
-uint32_t WM_MapDictA = 0xB8;
-uint32_t WM_MapDictB = 0xC0;
-uint32_t WM_KjmonList= 0xE8;
-uint32_t WM_TileArr  = 0x58;
-uint32_t WM_TileList = 0x60;
-uint32_t WM_TickId   = 0xD8;   // FIAJOKGHGGK — world tick counter UInt32
-uint32_t WM_TickId2  = 0xDC;   // HOMNPDGNOMO — secondary tick UInt32
+uint32_t WM_AllDict  = 0xC0;
+uint32_t WM_MapDictA = 0xC8;
+uint32_t WM_MapDictB = 0xD0;
+uint32_t WM_KjmonList= 0xF8;
+uint32_t WM_TileArr  = 0x68;
+uint32_t WM_TileList = 0x70;
+uint32_t WM_TickId   = 0xE8;   // FIAJOKGHGGK - world tick counter UInt32
+uint32_t WM_TickId2  = 0xEC;   // HOMNPDGNOMO - secondary tick UInt32
 
 uint32_t TileX       = 0x38;
 uint32_t TileY       = 0x3C;
@@ -97,39 +102,40 @@ uint32_t OP_IdStr         = 0x38;
 uint32_t OP_NoCover       = 0x98;
 // InvincibleElement string pointer — non-null iff XML <Invincible/> is set.
 // dump 0x450 + 0x10 IL2CPP object header = 0x460.
-uint32_t OP_InvincibleElem= 0x460;
+uint32_t OP_InvincibleElem= 0x468;
 uint32_t OP_NoWallRpt     = 0x210;
-uint32_t OP_OccupySq      = 0x69A;
-uint32_t OP_FullOcc       = 0x6D1;
-uint32_t OP_EnemyOcc      = 0x6D2;
+uint32_t OP_OccupySq      = 0x6B2;
+uint32_t OP_FullOcc       = 0x6E9;
+uint32_t OP_EnemyOcc      = 0x6EA;
 // isEnemy verified at 0x6D1 against the live client (upstream offset update);
 // our il2cpp-types.h dump still shows 0x6C9 — dump is stale for this region.
-uint32_t OP_IsEnemy       = 0x6D1;
-uint32_t OP_IsStatic      = 0x6D3;
-uint32_t OP_BlockProj     = 0x6D4;
+uint32_t OP_IsEnemy       = 0x6E1;
+uint32_t OP_IsStatic      = 0x6EB;
+uint32_t OP_BlockProj     = 0x6EC;
 // noHealthBar bool — true when the entity type has no visible HP bar. dump 0x6C6 + 0x10 = 0x6D6.
-uint32_t OP_NoHealthBar   = 0x6D6;
-uint32_t OP_ProtGnd       = 0x6DC;
-uint32_t OP_ProtSink      = 0x6DD;
-uint32_t OP_Flying        = 0x6E4;
-uint32_t OP_ConnectT      = 0x754;
+uint32_t OP_NoHealthBar   = 0x6EE;
+uint32_t OP_ProtGnd       = 0x6F4;
+uint32_t OP_ProtSink      = 0x6F5;
+uint32_t OP_Flying        = 0x6FC;
+uint32_t OP_ConnectT      = 0x784;
 uint32_t OP_Projectiles   = 0x1C0;
 
-uint32_t PP_Lifetime        = 0x158;
-uint32_t PP_Speed           = 0x160;
-uint32_t PP_IsWavy          = 0x164;
-uint32_t PP_IsBoomerang     = 0x165;
-uint32_t PP_IsParametric    = 0x168;
-uint32_t PP_HasCustomHitbox = 0x16D;
-uint32_t PP_LaserDist       = 0x170;
-uint32_t PP_SpeedClamp      = 0x174;
-uint32_t PP_AccelDelay      = 0x178;
-uint32_t PP_Acceleration    = 0x17C;
-uint32_t PP_AccelerationInv = 0x180;
-uint32_t PP_IsAccel         = 0x184;
-uint32_t PP_UseAccel        = 0x185;   // 1 byte after IsAccel — adjacent bool pair
-uint32_t PP_VelocityChangeRate = 0x188;
-uint32_t PP_VelocityChangeRateInv = 0x18C;
+uint32_t PP_Id              = 0x164;
+uint32_t PP_Lifetime        = 0x160;
+uint32_t PP_Speed           = 0x168;
+uint32_t PP_IsWavy          = 0x16C;
+uint32_t PP_IsBoomerang     = 0x16D;
+uint32_t PP_IsParametric    = 0x170;
+uint32_t PP_HasCustomHitbox = 0x175;
+uint32_t PP_LaserDist       = 0x178;
+uint32_t PP_SpeedClamp      = 0x17C;
+uint32_t PP_AccelDelay      = 0x180;
+uint32_t PP_Acceleration    = 0x184;
+uint32_t PP_AccelerationInv = 0x188;
+uint32_t PP_IsAccel         = 0x18C;
+uint32_t PP_UseAccel        = 0x198;   // 1 byte after IsAccel - adjacent bool pair
+uint32_t PP_VelocityChangeRate = 0x190;
+uint32_t PP_VelocityChangeRateInv = 0x194;
 uint32_t PP_Magnitude       = 0x19C;
 uint32_t PP_Frequency       = 0x1A0;
 uint32_t PP_Amplitude       = 0x1A4;
@@ -143,9 +149,9 @@ uint32_t PP_CircleTurnDelay       = 0xF0;
 uint32_t PP_TurnAcceleration      = 0xDC;
 uint32_t PP_TurnAccelDelay        = 0xE0;
 uint32_t PP_TurnClamp             = 0xE4;
-uint32_t PP_TurnAccelInv          = 0x1AC;
-uint32_t PP_IsTurning             = 0x1B0;
-uint32_t PP_IsTurningDelayed      = 0x1B2;
+uint32_t PP_TurnAccelInv          = 0x1B4;
+uint32_t PP_IsTurning             = 0x1B8;
+uint32_t PP_IsTurningDelayed      = 0x1BA;
 
 uint32_t Hbeak_ProjRadius         = 0x1D4;  // HHFDCMIIIHF — collision radius T on projectile instance
 uint32_t Hbeak_ProjPropsPtr       = 0x118;  // FOMOIBCKIFP — per-shot ProjectileProperties override
@@ -153,7 +159,7 @@ uint32_t Hbeak_Angle              = 0x148;  // FFFFKPDHEFP — spawn angle Singl
 uint32_t Hbeak_InstanceDamage     = 0x174;  // DBNNDLKNECM — per-instance damage Int32
 uint32_t Hbeak_SpawnAgeMs         = 0x16C;  // GLEGBLDBOJF — spawn-age ms (path anchoring / expiry)
 uint32_t PP_CustomHitbox          = 0x148;  // "CustomHitbox" — ProjectileCustomHitbox* reference
-uint32_t PP_IsArmorPiercing       = 0x138;  // "IsArmorPiercing"
+uint32_t PP_IsArmorPiercing       = 0x174;  // "IsArmorPiercing"
 uint32_t CH_OffsetX               = 0x10;   // "offsetX" — custom hitbox X offset Single
 uint32_t CH_OffsetY               = 0x14;   // "offsetY" — custom hitbox Y offset Single
 uint32_t VH_SpriteShader          = 0x60;   // "spriteShader" — SpriteShader on ViewHandler
@@ -169,9 +175,9 @@ uint32_t Player_FacingAngle  = 0x22C;
 // (all parent ACTK shifts already baked into the dump layout).
 uint32_t Gjj_OriginX    = 0x370;  // ICODPOCLEEL.x (was "GuiCanvasSwitcher" decoy pre-2026-08 build)
 uint32_t Gjj_OriginY    = 0x374;  // ICODPOCLEEL.y (= OriginX+4)
-uint32_t Gjj_DestX      = 0x370;  // IAJJLFBDJGE.x
-uint32_t Gjj_DestY      = 0x374;  // IAJJLFBDJGE.y (= DestX+4)
-uint32_t Gjj_DurationMs = 0x388;  // EAICINLCCJK
+uint32_t Gjj_DestX      = 0x378;  // IAJJLFBDJGE.x
+uint32_t Gjj_DestY      = 0x37C;  // IAJJLFBDJGE.y (= DestX+4)
+uint32_t Gjj_DurationMs = 0x390;  // EAICINLCCJK
 
 // ── FHOHCELBPDO visual throwable ─────────────────────────────────────────
 // Origin is PosX/PosY (inherited from BMO base). No ACTK shift for LKFFPGONEOB.
@@ -276,24 +282,26 @@ static Entry s_entries[] = {
     { "LKHPPBEGNOM", { "ECGPFJKCCAN" },                           1, kActk, &MoVelocity,    false },
     { "LKHPPBEGNOM", { "KKENJFFDMPO" },                           1, 0,     &MoObjectProps, false },
     { "LKHPPBEGNOM", { "GGBCADDBAPN" },                           1, 0,     &PlayerCollisionProps, false },
+    { "LKHPPBEGNOM", { "KFBOONBAFAC" },                           1, 0,     &Mo_ProjSpeedMul,    false },
+    { "LKHPPBEGNOM", { "CCPNMNIOMED" },                           1, 0,     &Mo_ProjLifetimeMul, false },
 
     // ── FKALGHJIADI (+0x50 ACTK for own fields) ───────────────────────────
     { "FKALGHJIADI", { "HCMECDPHEMC" },                              1, kActk, &Tex1,          false },
     { "FKALGHJIADI", { "HKPOMIBEGPK" },                              1, kActk, &Tex2,          false },
     { "FKALGHJIADI", { "FMHMGKEPIDN" },                              1, kActk, &CurMP,              false },
     { "FKALGHJIADI", { "NEDCKPIIIPN" },                              1, kActk, &MaxMP,              false },
-    // DAGEMHFLJLK = groundDamageImmune (dump 0x458 / runtime 0x4A8)
+    // DAGEMHFLJLK = groundDamageImmune (dump 0x460 / runtime 0x4B0)
     // This doesn't seem to work. I do not believe this is labeled correctly.
     { "FKALGHJIADI", { "DAGEMHFLJLK" },                              1, kActk, &GroundDmgImmune,    false },
-    // BINDBHJLPMG = invincible bool (dump 0x459 / runtime 0x4A9) — per FKALGHJIADI_mapped.txt
+    // BINDBHJLPMG = invincible bool (dump 0x461 / runtime 0x4B1) - per FKALGHJIADI_mapped.txt
     { "FKALGHJIADI", { "BINDBHJLPMG" },                              1, kActk, &LocalInvincible,    false },
-    // PPBLNMIMIFP = abilityReady bool (dump 0x515 / runtime 0x565) — the correct ability gate
+    // PPBLNMIMIFP = abilityReady bool (dump 0x52D / runtime 0x57D) - the correct ability gate
     { "FKALGHJIADI", { "PPBLNMIMIFP" },                              1, kActk, &AbilityReady,       false },
-    // CGCMALPMMJL = bool moving (dump 0x448 / runtime 0x498)
+    // CGCMALPMMJL = bool moving (dump 0x450 / runtime 0x4A0)
     { "FKALGHJIADI", { "CGCMALPMMJL" },                              1, kActk, &Player_Moving,      false },
-    // BHJFNEAHAOE = float moveDirX (dump 0x478 / runtime 0x4C8)
+    // BHJFNEAHAOE = float moveDirX (dump 0x480 / runtime 0x4D0)
     { "FKALGHJIADI", { "BHJFNEAHAOE" },                              1, kActk, &Player_MoveDirX,    false },
-    // GDNEBFDDDKM = float moveDirY (dump 0x47C / runtime 0x4CC)
+    // GDNEBFDDDKM = float moveDirY (dump 0x484 / runtime 0x4D4)
     { "FKALGHJIADI", { "GDNEBFDDDKM" },                              1, kActk, &Player_MoveDirY,    false },
 
     // ── HJMBOMEHGDJ WorldManager (no shift) ──────────────────────────────
@@ -347,6 +355,7 @@ static Entry s_entries[] = {
     { "ObjectProperties", { "Projectiles", "projectiles" },          2, 0,     &OP_Projectiles,    false },
 
     // ── ProjectileProperties (real names, no shift) ───────────────────────
+    { "ProjectileProperties", { "Id",         "id" },                2, 0,     &PP_Id,              false },
     { "ProjectileProperties", { "Lifetime",   "lifetime" },          2, 0,     &PP_Lifetime,        false },
     { "ProjectileProperties", { "ProjectileSpeed", "Speed" },        2, 0,     &PP_Speed,           false },
     { "ProjectileProperties", { "IsWavy",     "Wavy" },              2, 0,     &PP_IsWavy,          false },
@@ -450,9 +459,9 @@ static FieldInfoEntry s_fieldInfoEntries[] = {
     { "LKHPPBEGNOM", "HODJPKFINKF", &FI_Defense,            false },
     { "FKALGHJIADI", "FMHMGKEPIDN", &FI_CurMP,              false },
     { "FKALGHJIADI", "NEDCKPIIIPN", &FI_MaxMP,              false },
-    // PPBLNMIMIFP = bool abilityReady (dump 0x515 / runtime 0x565)
+    // PPBLNMIMIFP = bool abilityReady (dump 0x52D / runtime 0x57D)
     { "FKALGHJIADI", "PPBLNMIMIFP", &FI_AbilityReady,       false },
-    // BINDBHJLPMG = bool invincible (dump 0x459 / runtime 0x4A9) — short-duration hit immunity
+    // BINDBHJLPMG = bool invincible (dump 0x461 / runtime 0x4B1) - short-duration hit immunity
     { "FKALGHJIADI", "BINDBHJLPMG", &FI_LocalInvincible,    false },
     { "KJMONHENJEN", "HFDNHJFNEKA", &FI_ObjType,            false },
 };
@@ -470,9 +479,14 @@ static constexpr int kFIEntryCount =
 //   - Class-name dedup: entries are grouped by class, so we cache the last
 //     FindClassLoose result and reuse it for consecutive same-class entries
 //     instead of calling FindClassLoose once per entry.
-//   - Rename timeout: if a class is still missing 5 s after first call, we
-//     mark its entries done (accepting fallbacks) so we stop scanning metadata
-//     every frame for a name that BeeByte has likely renamed.
+//   - Two-stage timeout. A missing class is not necessarily a rename: IL2CPP
+//     registers types lazily, so the gameplay-object classes (HBEAKBIHANL,
+//     GJJCEFJMNMK, FHOHCELBPDO) do not exist on the login screen where the
+//     5 s clock runs. Giving up there marked them STALE for the session, which
+//     made BootGate fail-close AoeTracking and ProjectileTracking.
+//     A class that resolves but whose field name is missing is a real rename
+//     and settles at kGiveUpMs. A class that is still missing keeps retrying
+//     (throttled to kClassRetryMs) until kClassGiveUpMs.
 
 static bool      s_allDone             = false;
 static bool      s_giveUpFired         = false;
@@ -480,8 +494,18 @@ static char      s_unresolvedClassNames[512] = {};
 static ULONGLONG s_firstCallTick       = 0;
 static constexpr ULONGLONG kGiveUpMs   = 5000ULL;
 
+// Lazily-registered classes get far longer than the boot deadline, retried at
+// a low rate so we are not calling FindClassLoose every frame for 5 minutes.
+static constexpr ULONGLONG kClassGiveUpMs = 300000ULL;  // 5 min hard stop
+static constexpr ULONGLONG kClassRetryMs  = 1000ULL;    // 1 Hz re-lookup
+static ULONGLONG s_nextClassRetryTick     = 0;
+static bool      s_bootSettled            = false;
+static uint32_t  s_lateResolveGen         = 0;
+
 bool HasGivenUp() { return s_giveUpFired; }
 bool AllResolved() { return s_allDone; }
+bool BootSettled() { return s_allDone || s_bootSettled; }
+uint32_t LateResolveGeneration() { return s_lateResolveGen; }
 
 const char* GetUnresolvedClassNames()  { return s_unresolvedClassNames; }
 
@@ -562,10 +586,21 @@ void EnsureAll()
 
     const ULONGLONG now = GetTickCount64();
     if (s_firstCallTick == 0) s_firstCallTick = now;
-    const bool giveUp = (now - s_firstCallTick) >= kGiveUpMs;
+    const ULONGLONG elapsed = now - s_firstCallTick;
 
-    // First time give-up fires: collect unique unresolved class names before marking done.
-    if (giveUp && !s_giveUpFired) {
+    // Boot deadline: settles renamed FIELDS and releases BootGate. Class deadline:
+    // the hard stop for classes that never registered at all.
+    const bool giveUp     = elapsed >= kGiveUpMs;
+    const bool hardGiveUp = elapsed >= kClassGiveUpMs;
+    if (giveUp) s_bootSettled = true;
+
+    // Past the boot deadline the only work left is re-looking-up missing classes,
+    // so throttle it instead of hammering metadata every frame.
+    const bool retryDue = !giveUp || (now >= s_nextClassRetryTick);
+    if (retryDue) s_nextClassRetryTick = now + kClassRetryMs;
+
+    // First time the hard stop fires: collect unique unresolved class names.
+    if (hardGiveUp && !s_giveUpFired) {
         s_giveUpFired = true;
         const char* lastCls = nullptr;
         for (int i = 0; i < kEntryCount; ++i) {
@@ -591,8 +626,8 @@ void EnsureAll()
         Entry& e = s_entries[i];
         if (e.done) continue;
 
-        if (giveUp) {
-            // Accept fallback value; stop retrying this entry.
+        if (hardGiveUp) {
+            // Class never registered at all. Accept fallback; stop retrying.
             DBG_FILE_LOG("[RuntimeOffsets] " << e.className << "::"
                 << (e.tryCount ? e.tryNames[0] : "?")
                 << " GIVE UP after timeout — keeping fallback 0x"
@@ -601,6 +636,10 @@ void EnsureAll()
             e.done = true;
             continue;
         }
+
+        // Not the hard stop yet: this entry is still genuinely pending. Skip the
+        // metadata lookup on throttled frames, but keep it out of s_allDone.
+        if (!retryDue) { anyPending = true; continue; }
 
         // Reuse cached class pointer when consecutive entries share a class name.
         Il2CppClass* klass;
@@ -612,7 +651,13 @@ void EnsureAll()
             lastClass     = klass;
         }
 
-        if (!klass) { anyPending = true; continue; }
+        if (!klass) {
+            // Lazily-registered type that has not been instantiated yet. Stay
+            // Pending (BootGate does not treat Pending as stale) and retry.
+            s_entryState[i] = OffsetState::Pending;
+            anyPending = true;
+            continue;
+        }
 
         // Class found: attempt field resolution, then mark done regardless.
         FieldInfo* found = nullptr;
@@ -632,6 +677,9 @@ void EnsureAll()
             *e.outPtr = resolved;
             s_entryState[i] = (resolved == fallback) ? OffsetState::ResolvedMatch
                                                      : OffsetState::ResolvedShifted;
+            // Resolved after BootGate already audited -> ask it to re-audit so a
+            // fail-closed feature gate can reopen.
+            if (giveUp) ++s_lateResolveGen;
         } else {
             DBG_FILE_LOG("[RuntimeOffsets] " << e.className << "::"
                 << (e.tryCount ? e.tryNames[0] : "?")
@@ -649,7 +697,10 @@ void EnsureAll()
         FieldInfoEntry& fe = s_fieldInfoEntries[i];
         if (fe.done) continue;
 
-        if (giveUp) { fe.done = true; continue; }
+        // Same two-stage rule as the offset pass: only the hard stop finalizes,
+        // and throttle re-lookups once past the boot deadline.
+        if (hardGiveUp) { fe.done = true; continue; }
+        if (!retryDue)  { anyPending = true; continue; }
 
         Il2CppClass* klass;
         if (fe.className == lastClassName) {
@@ -664,6 +715,7 @@ void EnsureAll()
 
         FieldInfo* f = FindFieldOnHierarchy(klass, fe.fieldName);
         if (f) *fe.out = f;
+        if (f && giveUp) ++s_lateResolveGen;
         fe.done = true;
     }
 

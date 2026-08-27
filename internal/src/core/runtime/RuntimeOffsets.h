@@ -34,6 +34,14 @@ namespace RuntimeOffsets {
     // (happy path, before the timeout) or was given up (stale path, at the
     // timeout). The single "name pass is done" signal the BootGate audits on.
     bool AllResolved();
+    /// True once the boot deadline has passed: every renamed-field verdict is in
+    /// and BootGate may proceed, even if a lazily-registered class is still
+    /// pending. Use this, not AllResolved(), to gate boot progress.
+    bool BootSettled();
+    /// Bumped whenever an entry resolves AFTER the boot deadline (a lazily
+    /// registered class finally appeared). BootGate re-audits when it changes so
+    /// a fail-closed feature gate can reopen.
+    uint32_t LateResolveGeneration();
     // Comma-separated class names that could not be resolved before give-up.
     // Empty string if every class resolved successfully.
     const char* GetUnresolvedClassNames();
@@ -120,13 +128,17 @@ namespace RuntimeOffsets {
     extern uint32_t Defense;    // HODJPKFINKF   fallback 0x210
     extern uint32_t PlayerIGN;  // DPGEBOCBKEF   fallback 0x178  (below ACTK point, no shift)
     // MapObject (LKHPPBEGNOM) UInt32[] — first two elements = 64-bit status bitmask (offset_map.md)
-    extern uint32_t MoConditions; // COHCKAPOLCA   fallback 0x298 (dump 0x248 + ACTK 0x50)
+    extern uint32_t MoConditions; // COHCKAPOLCA   fallback 0x2A0 (dump 0x248 + ACTK 0x50)
     // ECGPFJKCCAN — Vector2 velocity stored on LKHPPBEGNOM (and all PMMFLLAIPGN/enemy subclasses).
     // vx = *(entity + MoVelocity), vy = *(entity + MoVelocity + 4).
     // Fallback 0 = not yet resolved; AutoAim will fall back to position-history velocity.
-    extern uint32_t MoVelocity;   // ECGPFJKCCAN   fallback 0
+    extern uint32_t MoVelocity;   // ECGPFJKCCAN   fallback 0x2C8
     extern uint32_t MoObjectProps; // KKENJFFDMPO   fallback 0x1C8 (runtime metadata, no ACTK shift)
-    extern uint32_t PlayerCollisionProps; // GGBCADDBAPN fallback 0x2F0 (not ACTK-shifted)
+    // Projectile tuning multipliers on MapObject, read by WeaponCalibrator.
+    // Both are plain floats below the ACTK expansion point (no shift).
+    extern uint32_t Mo_ProjSpeedMul;    // KFBOONBAFAC   fallback 0x188
+    extern uint32_t Mo_ProjLifetimeMul; // CCPNMNIOMED   fallback 0x18C
+    extern uint32_t PlayerCollisionProps; // GGBCADDBAPN fallback 0x2F8 (not ACTK-shifted)
 
     // ── ConditionEffects — bitmask values matching DIA4A SDK.h / Flash client layout ─────────────
     // COHCKAPOLCA UInt32[2] encodes a 64-bit bitmask split across 31-bit words.
@@ -210,10 +222,10 @@ namespace RuntimeOffsets {
     bool MapObjectConditionsMakeUntargetable(uint32_t word0, uint32_t word1);
 
     // ── FKALGHJIADI own fields (+0x50 ACTK) ─────────────────────────────────
-    extern uint32_t Tex1;             // HCMECDPHEMC   fallback 0x4C4
-    extern uint32_t Tex2;             // HKPOMIBEGPK   fallback 0x538
-    extern uint32_t CurMP;            // FMHMGKEPIDN   fallback 0x54C
-    extern uint32_t MaxMP;            // NEDCKPIIIPN   fallback 0x548
+    extern uint32_t Tex1;             // HCMECDPHEMC   fallback 0x4CC
+    extern uint32_t Tex2;             // HKPOMIBEGPK   fallback 0x54C
+    extern uint32_t CurMP;            // FMHMGKEPIDN   fallback 0x5B4
+    extern uint32_t MaxMP;            // NEDCKPIIIPN   fallback 0x5B0
     // DAGEMHFLJLK — bool groundDamageImmune (dump 0x458 / runtime 0x4A8).
     // Kept for potential use (e.g. skip nexus on ground tile damage); NOT ability cooldown.
     extern uint32_t GroundDmgImmune;
@@ -240,14 +252,14 @@ namespace RuntimeOffsets {
 
     // ── HJMBOMEHGDJ WorldManager (no shift) ─────────────────────────────────
     extern uint32_t WM_Local;       // OCLNLBHDEFK   fallback 0x48
-    extern uint32_t WM_AllDict;     // DFALIKKKGLI   fallback 0xB0
-    extern uint32_t WM_MapDictA;    // KHIHFNACEKJ   fallback 0xB8
-    extern uint32_t WM_MapDictB;    // CIOIHEOEAEB   fallback 0xC0
-    extern uint32_t WM_KjmonList;   // ONABHKFOJNE   fallback 0xE8
-    extern uint32_t WM_TileArr;     // NOJEHIAOAJM   fallback 0x58
-    extern uint32_t WM_TileList;    // IMAOBDCMPHC   fallback 0x60
-    extern uint32_t WM_TickId;      // FIAJOKGHGGK   fallback 0xD8  (world tick counter UInt32)
-    extern uint32_t WM_TickId2;     // HOMNPDGNOMO   fallback 0xDC  (secondary tick UInt32)
+    extern uint32_t WM_AllDict;     // DFALIKKKGLI   fallback 0xC0
+    extern uint32_t WM_MapDictA;    // KHIHFNACEKJ   fallback 0xC8
+    extern uint32_t WM_MapDictB;    // CIOIHEOEAEB   fallback 0xD0
+    extern uint32_t WM_KjmonList;   // ONABHKFOJNE   fallback 0xF8
+    extern uint32_t WM_TileArr;     // NOJEHIAOAJM   fallback 0x68
+    extern uint32_t WM_TileList;    // IMAOBDCMPHC   fallback 0x70
+    extern uint32_t WM_TickId;      // FIAJOKGHGGK   fallback 0xE8  (world tick counter UInt32)
+    extern uint32_t WM_TickId2;     // HOMNPDGNOMO   fallback 0xEC  (secondary tick UInt32)
 
     // ── BGAIOPJMHLO tile instance (no shift) ────────────────────────────────
     extern uint32_t TileX;          // CLFEOFKBNEJ   fallback 0x38
@@ -270,21 +282,21 @@ namespace RuntimeOffsets {
     extern uint32_t OP_NoCover;         // "NoCoverElement"           fallback 0x98
     // "InvincibleElement" — XML <Invincible/> string field. Non-null pointer = entity is
     // permanently invincible (no runtime condition bit required). dump 0x450 + 0x10 = 0x460.
-    extern uint32_t OP_InvincibleElem;  // "InvincibleElement"        fallback 0x460
+    extern uint32_t OP_InvincibleElem;  // "InvincibleElement"        fallback 0x468
     extern uint32_t OP_NoWallRpt;   // "NoWallTextureRepeat..."   fallback 0x210
-    extern uint32_t OP_OccupySq;    // "occupySquare"             fallback 0x69A
-    extern uint32_t OP_FullOcc;     // "fullOccupy"               fallback 0x6D1
-    extern uint32_t OP_EnemyOcc;    // "enemyOccupySquare"        fallback 0x6D2
-    extern uint32_t OP_IsEnemy;     // "isEnemy"                  fallback 0x6D1 (live-client verified; stale dump said 0x6C9)
-    extern uint32_t OP_IsStatic;    // "isStatic"                 fallback 0x6D3
-    extern uint32_t OP_BlockProj;   // "blockProjectiles"         fallback 0x6D4
+    extern uint32_t OP_OccupySq;    // "occupySquare"             fallback 0x6B2
+    extern uint32_t OP_FullOcc;     // "fullOccupy"               fallback 0x6E9
+    extern uint32_t OP_EnemyOcc;    // "enemyOccupySquare"        fallback 0x6EA
+    extern uint32_t OP_IsEnemy;     // "isEnemy"                  fallback 0x6E1 (live-client verified; stale dump said 0x6C9)
+    extern uint32_t OP_IsStatic;    // "isStatic"                 fallback 0x6EB
+    extern uint32_t OP_BlockProj;   // "blockProjectiles"         fallback 0x6EC
     // "noHealthBar" — true when the entity type has no visible HP bar. Enemies with this set
     // are not attackable characters and should be skipped. dump 0x6C6 + 0x10 = 0x6D6.
-    extern uint32_t OP_NoHealthBar;     // "noHealthBar"              fallback 0x6D6
-    extern uint32_t OP_ProtGnd;     // "protectFromGroundDamage"  fallback 0x6DC
-    extern uint32_t OP_ProtSink;    // "protectFromSink"          fallback 0x6DD
-    extern uint32_t OP_Flying;      // "flying"                   fallback 0x6E4
-    extern uint32_t OP_ConnectT;    // "connectType"              fallback 0x754
+    extern uint32_t OP_NoHealthBar;     // "noHealthBar"              fallback 0x6EE
+    extern uint32_t OP_ProtGnd;     // "protectFromGroundDamage"  fallback 0x6F4
+    extern uint32_t OP_ProtSink;    // "protectFromSink"          fallback 0x6F5
+    extern uint32_t OP_Flying;      // "flying"                   fallback 0x6FC
+    extern uint32_t OP_ConnectT;    // "connectType"              fallback 0x784
     // "Projectiles" — ProjectileProperties[] array pointer on item
     // ObjectProperties. For weapon items, [0] is the primary
     // projectile from which passive consumers can read speed/lifetime
@@ -293,25 +305,26 @@ namespace RuntimeOffsets {
     extern uint32_t OP_Projectiles; // "Projectiles"              fallback 0x1C0
 
     // ── ProjectileProperties (real field names, no shift) ────────────────────
-    extern uint32_t PP_Lifetime;        // "Lifetime"          fallback 0x158
-    extern uint32_t PP_Speed;           // "ProjectileSpeed"   fallback 0x160
-    extern uint32_t PP_IsWavy;          // "IsWavy"            fallback 0x164
-    extern uint32_t PP_IsBoomerang;     // "IsBoomerang"       fallback 0x165
-    extern uint32_t PP_IsParametric;    // "IsParametric"      fallback 0x168
-    extern uint32_t PP_HasCustomHitbox; // "HasCustomHitbox"   fallback 0x16D
-    extern uint32_t PP_LaserDist;       // "LaserDistance"     fallback 0x170
-    extern uint32_t PP_SpeedClamp;      // SpeedClampValue, SpeedClamp, …  fallback 0x174
-    extern uint32_t PP_AccelDelay;      // AccelerationDelayValue, AccelDelay, …  fallback 0x178
-    extern uint32_t PP_Acceleration;    // AccelerationValue, Acceleration, …    fallback 0x17C
-    extern uint32_t PP_AccelerationInv; // AccelerationInv                      fallback 0x180
-    extern uint32_t PP_IsAccel;         // IsAccelerating (type-level "can accelerate") fallback 0x184
-    extern uint32_t PP_UseAccel;        // UseAcceleration (per-shot "DO accelerate") fallback 0x185
-    extern uint32_t PP_VelocityChangeRate; // VelocityChangeRate               fallback 0x188
-    extern uint32_t PP_VelocityChangeRateInv; // VelocityChangeRateInv         fallback 0x18C
-    extern uint32_t PP_Magnitude;       // "Magnitude"         fallback 0x194
-    extern uint32_t PP_Frequency;       // "Frequency"         fallback 0x198
-    extern uint32_t PP_Amplitude;       // "Amplitude"         fallback 0x19C
-    extern uint32_t PP_HasCustomAmplitude; // "HasCustomAmplitude" fallback 0x1A0 — if true, wavy uses Amplitude/Frequency fields instead of hardcoded π/64
+    extern uint32_t PP_Id;              // "Id"                fallback 0x164
+    extern uint32_t PP_Lifetime;        // "Lifetime"          fallback 0x160
+    extern uint32_t PP_Speed;           // "ProjectileSpeed"   fallback 0x168
+    extern uint32_t PP_IsWavy;          // "IsWavy"            fallback 0x16C
+    extern uint32_t PP_IsBoomerang;     // "IsBoomerang"       fallback 0x16D
+    extern uint32_t PP_IsParametric;    // "IsParametric"      fallback 0x170
+    extern uint32_t PP_HasCustomHitbox; // "HasCustomHitbox"   fallback 0x175
+    extern uint32_t PP_LaserDist;       // "LaserDistance"     fallback 0x178
+    extern uint32_t PP_SpeedClamp;      // SpeedClampValue, SpeedClamp, ...  fallback 0x17C
+    extern uint32_t PP_AccelDelay;      // AccelerationDelayValue, AccelDelay, ...  fallback 0x180
+    extern uint32_t PP_Acceleration;    // AccelerationValue, Acceleration, ...    fallback 0x184
+    extern uint32_t PP_AccelerationInv; // AccelerationInv                      fallback 0x188
+    extern uint32_t PP_IsAccel;         // IsAccelerating (type-level "can accelerate") fallback 0x18C
+    extern uint32_t PP_UseAccel;        // UseAcceleration (per-shot "DO accelerate") fallback 0x198
+    extern uint32_t PP_VelocityChangeRate; // VelocityChangeRate               fallback 0x190
+    extern uint32_t PP_VelocityChangeRateInv; // VelocityChangeRateInv         fallback 0x194
+    extern uint32_t PP_Magnitude;       // "Magnitude"         fallback 0x19C
+    extern uint32_t PP_Frequency;       // "Frequency"         fallback 0x1A0
+    extern uint32_t PP_Amplitude;       // "Amplitude"         fallback 0x1A4
+    extern uint32_t PP_HasCustomAmplitude; // "HasCustomAmplitude" fallback 0x1A8 - if true, wavy uses Amplitude/Frequency fields instead of hardcoded π/64
     extern uint32_t PP_CollMult;           // "CollisionMult"              fallback 0xC0
     extern uint32_t PP_TurnRate;           // "ProjectileTurnRate"         fallback 0xD4
     extern uint32_t PP_TurnRateDelay;      // "ProjectileTurnRateDelay"    fallback 0xD8 — seconds; normalize ×1000
@@ -321,9 +334,9 @@ namespace RuntimeOffsets {
     extern uint32_t PP_TurnAcceleration;   // "TurnAcceleration"           fallback 0xDC — boomerang turn accel rate
     extern uint32_t PP_TurnAccelDelay;     // "TurnAccelerationDelay"      fallback 0xE0 — time (sec) before boomerang kicks in
     extern uint32_t PP_TurnClamp;          // "TurnClamp"                  fallback 0xE4 — target turn rate for boomerang
-    extern uint32_t PP_TurnAccelInv;       // "TurnAccelerationInv"        fallback 0x1AC — threshold scale for boomerang
-    extern uint32_t PP_IsTurning;          // "IsTurning"                  fallback 0x1B0
-    extern uint32_t PP_IsTurningDelayed;   // "IsTurningDelayed"           fallback 0x1B2 — uses TurnRateDelay before arc
+    extern uint32_t PP_TurnAccelInv;       // "TurnAccelerationInv"        fallback 0x1B4 - threshold scale for boomerang
+    extern uint32_t PP_IsTurning;          // "IsTurning"                  fallback 0x1B8
+    extern uint32_t PP_IsTurningDelayed;   // "IsTurningDelayed"           fallback 0x1BA - uses TurnRateDelay before arc
 
     // HBEAKBIHANL — HHFDCMIIIHF (projRadius / Chebyshev T half-edge at runtime). Resolved via IL2CPP;
     // BeeByte name first; fallback 0x1D4 matches Il2CppInspector dump.
@@ -337,7 +350,7 @@ namespace RuntimeOffsets {
 
     // ── ProjectileProperties continued ───────────────────────────────────────
     extern uint32_t PP_CustomHitbox;       // "CustomHitbox"  fallback 0x148  (ProjectileCustomHitbox* reference)
-    extern uint32_t PP_IsArmorPiercing;    // "IsArmorPiercing"  fallback 0x138
+    extern uint32_t PP_IsArmorPiercing;    // "IsArmorPiercing"  fallback 0x174
 
     // ── ProjectileCustomHitbox (real field names, no shift) ──────────────────
     extern uint32_t CH_OffsetX;    // "offsetX"      fallback 0x10
@@ -355,11 +368,11 @@ namespace RuntimeOffsets {
     // ── GJJCEFJMNMK throwable entity (all parent ACTK shifts already baked into dump) ──
     // Fields live in the subclass region beyond LKHPPBEGNOM's shifted zone;
     // il2cpp_field_get_offset returns the runtime-ready value directly (actkShift=0).
-    extern uint32_t Gjj_OriginX;    // "GuiCanvasSwitcher".x   fallback 0x368
-    extern uint32_t Gjj_OriginY;    // "GuiCanvasSwitcher".y   fallback 0x36C (= OriginX+4)
-    extern uint32_t Gjj_DestX;      // "IAJJLFBDJGE".x         fallback 0x370
-    extern uint32_t Gjj_DestY;      // "IAJJLFBDJGE".y         fallback 0x374 (= DestX+4)
-    extern uint32_t Gjj_DurationMs; // "EAICINLCCJK" int       fallback 0x388
+    extern uint32_t Gjj_OriginX;    // "GuiCanvasSwitcher".x   fallback 0x370
+    extern uint32_t Gjj_OriginY;    // "GuiCanvasSwitcher".y   fallback 0x374 (= OriginX+4)
+    extern uint32_t Gjj_DestX;      // "IAJJLFBDJGE".x         fallback 0x378
+    extern uint32_t Gjj_DestY;      // "IAJJLFBDJGE".y         fallback 0x37C (= DestX+4)
+    extern uint32_t Gjj_DurationMs; // "EAICINLCCJK" int       fallback 0x390
 
     // ── FHOHCELBPDO visual throwable (LKFFPGONEOB base — no ACTK shift) ─────
     // Origin is inherited PosX/PosY from the BMO base (= RuntimeOffsets::PosX/PosY).

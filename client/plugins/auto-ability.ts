@@ -8,8 +8,13 @@ const ABILITY_SLOT = 1;
 // Self-buffs last a few seconds and have a usage cooldown; re-casting every
 // tick spams past that cooldown and eventually crashes the game. Fixed
 // intervals avoid it without per-item cooldown bookkeeping.
-const SELF_INTERVAL_MS = 2500;
-const TARGET_INTERVAL_MS = 1000;
+// Defaults for the configurable fire intervals. These are the minimum gap
+// between casts, not the item's real cooldown; there is no per-item cooldown
+// bookkeeping, so setting them too low spams the server.
+const DEFAULT_SELF_INTERVAL_MS = 2500;
+const DEFAULT_TARGET_INTERVAL_MS = 1000;
+const MIN_INTERVAL_MS = 250;
+const MAX_INTERVAL_MS = 10000;
 const MANUAL_PAUSE_MS = 3000;
 // Drop targets that haven't updated recently so we don't fire at a ghost
 // (a despawned/out-of-view enemy that auto-aim already ignores).
@@ -37,6 +42,8 @@ export function register(ctx: PluginContext) {
   let mpFloorPct = 85;
   let safeZonePause = true;
   let abilityRange = 12;
+  let selfIntervalMs = DEFAULT_SELF_INTERVAL_MS;
+  let targetIntervalMs = DEFAULT_TARGET_INTERVAL_MS;
 
   const safeZone = new WeakMap<ClientConnection, boolean>();
   const nextAllowedAt = new WeakMap<ClientConnection, number>();
@@ -56,6 +63,21 @@ export function register(ctx: PluginContext) {
     label: 'Aimed range (tiles)',
     type: 'range', value: 12, min: 3, max: 30, step: 1,
   }, (v: number) => { abilityRange = Math.max(3, Math.min(30, Math.trunc(Number(v) || 12))); });
+
+  const clampInterval = (v: number, fallback: number) =>
+    Math.max(MIN_INTERVAL_MS, Math.min(MAX_INTERVAL_MS, Math.trunc(Number(v) || fallback)));
+
+  ctx.registerSetting('targetIntervalMs', {
+    label: 'Aimed cooldown (ms)',
+    type: 'number', value: DEFAULT_TARGET_INTERVAL_MS,
+    min: MIN_INTERVAL_MS, max: MAX_INTERVAL_MS, step: 50,
+  }, (v: number) => { targetIntervalMs = clampInterval(v, DEFAULT_TARGET_INTERVAL_MS); });
+
+  ctx.registerSetting('selfIntervalMs', {
+    label: 'Self-cast cooldown (ms)',
+    type: 'number', value: DEFAULT_SELF_INTERVAL_MS,
+    min: MIN_INTERVAL_MS, max: MAX_INTERVAL_MS, step: 50,
+  }, (v: number) => { selfIntervalMs = clampInterval(v, DEFAULT_SELF_INTERVAL_MS); });
 
   function isMovementAbility(itemType: number): boolean {
     if (itemType <= 0) return false;
@@ -105,7 +127,12 @@ export function register(ctx: PluginContext) {
 
     const itemType = pd.inventory?.[ABILITY_SLOT] ?? -1;
     if (itemType <= 0 || isMovementAbility(itemType)) return;
-    if (pd.maxMana <= 0 || (pd.mana / pd.maxMana) * 100 < mpFloorPct) return;
+    // maxMana is the gearless base (StatType.MaxMP); add the gear bonus for the
+    // true max, as auto-drink does. Using the bare base makes the ratio exceed
+    // 100% on any MP gear, so the floor never held and this fired every interval
+    // at 0 MP, which the server closes the connection over.
+    const trueMaxMana = pd.maxMana + pd.manaBonus;
+    if (trueMaxMana <= 0 || (pd.mana / trueMaxMana) * 100 < mpFloorPct) return;
 
     const now = Date.now();
     if (now < (nextAllowedAt.get(client) ?? 0)) return;
@@ -115,7 +142,7 @@ export function register(ctx: PluginContext) {
 
     if (isSelf) {
       sendUseAbility(client, pd.pos, itemType);
-      nextAllowedAt.set(client, now + SELF_INTERVAL_MS);
+      nextAllowedAt.set(client, now + selfIntervalMs);
     } else {
       const ws = ctx.getWorldState(client);
       const gd = ctx.gameData;
@@ -126,7 +153,7 @@ export function register(ctx: PluginContext) {
       });
       if (!enemy) return;
       sendUseAbility(client, { x: enemy.x, y: enemy.y }, itemType);
-      nextAllowedAt.set(client, now + TARGET_INTERVAL_MS);
+      nextAllowedAt.set(client, now + targetIntervalMs);
     }
   });
 

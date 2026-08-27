@@ -11,11 +11,15 @@
 
 namespace {
 
-// Player character projectile tuning fields (RE'd offsets, not yet in RuntimeOffsets)
-static constexpr uint32_t kOffCharSpeedMul    = 0x188;
-static constexpr uint32_t kOffCharLifetimeMul = 0x18C;
-static constexpr uint32_t kOffCharRangeMul    = 0x6B8;
-static constexpr uint32_t kOffProjId          = 0x15C;
+// Projectile tuning fields come from the self-healing RuntimeOffsets table.
+// They used to be hardcoded here and rotted every patch: the reads returned
+// garbage, clamp1() folded the multipliers back to 1.0, and Recalculate()
+// bailed before setting isResolved, so the profile fell back to default
+// range/speed.
+//
+// The range multiplier has no known offset on 6.13.0.1.0 (the old 0x6B8 is an
+// object reference, not a float) so it stays pinned at 1.0 until the field is
+// identified live via Test -> UnityExplorer.
 
 static inline bool AddrOk(const void* p) {
     const uintptr_t a = reinterpret_cast<uintptr_t>(p);
@@ -30,14 +34,12 @@ static bool ReadPlayerTuners(void* local, float& outSpeedMul, float& outLifetime
     if (!AddrOk(local)) return false;
     __try {
         uint8_t* p = reinterpret_cast<uint8_t*>(local);
-        outSpeedMul    = *reinterpret_cast<float*>(p + kOffCharSpeedMul);
-        outLifetimeMul = *reinterpret_cast<float*>(p + kOffCharLifetimeMul);
+        outSpeedMul    = *reinterpret_cast<float*>(p + RuntimeOffsets::Mo_ProjSpeedMul);
+        outLifetimeMul = *reinterpret_cast<float*>(p + RuntimeOffsets::Mo_ProjLifetimeMul);
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 
+    // See the note above: no known offset for the range multiplier on this build.
     outRangeMul = 1.f;
-    __try {
-        outRangeMul = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(local) + kOffCharRangeMul);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
 
     auto clamp1 = [](float v) { return (std::isfinite(v) && v > 0.f && v < 100.f) ? v : 1.f; };
     outSpeedMul    = clamp1(outSpeedMul);
@@ -118,7 +120,7 @@ void OnProjectileSpawn(void* projProps, void* localPlayer)
     // Read projId immediately while the pointer is hot.
     __try {
         s_profile.projId = *reinterpret_cast<int32_t*>(
-            reinterpret_cast<uint8_t*>(projProps) + kOffProjId);
+            reinterpret_cast<uint8_t*>(projProps) + RuntimeOffsets::PP_Id);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         s_profile.projId = 0;
     }

@@ -2,7 +2,7 @@
 // game data (spritesheet.xml + atlas images). Extracted from DevServer; collaborates
 // via injected deps (publicDir, getRotmgPath, getExtractorGameDataPath).
 import http from 'http';
-import sharp from 'sharp';
+import sharp, { type Metadata as SharpMetadata } from 'sharp';
 import { XMLParser } from 'fast-xml-parser';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, dirname, resolve } from 'path';
@@ -290,7 +290,7 @@ export class WikiSpriteService {
     const atlasPath = this.findCaseInsensitiveDrawingsPng(imagesDir, atlasBase);
     if (!atlasPath) return false;
 
-    let meta: sharp.Metadata;
+    let meta: SharpMetadata;
     try {
       meta = await sharp(atlasPath).metadata();
     } catch {

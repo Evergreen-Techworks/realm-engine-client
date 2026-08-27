@@ -71,12 +71,19 @@ static constexpr float kDedupTolSq = 0.01f;  // (0.1 tile)^2
 // than chip the player.
 static constexpr float kDefaultAoeRadiusTiles = 3.5f;
 
-// HJMBOMEHGDJ::CGBILOJJPEI — ShowEffect packet handler (RVA 0x180B33560).
+// HJMBOMEHGDJ::<ShowEffect handler> - the packet-11 (ShowEffect) callback.
 // Catches THROW(4), NOVA(5), CIRCLE_TELEGRAPH(23), AoE(39) effect types.
-// x64 ABI: rcx=this (HJMBOMEHGDJ*), rdx=COEFCBBIBMC* msg, r8=MethodInfo*
+// x64 ABI: rcx=this (HJMBOMEHGDJ*), rdx=msg, r8=MethodInfo*
+//
+// BeeByte renames this every build, so try the known names newest-first.
+// 6.13.0.1.0: NKCFKIEHJGP, identified by its "ERROR: Unknown Effect type: {0}"
+// literal and its registration for packet ID 11. Its parameter is declared as
+// the IncomingMessage base (OODFCLBKDJJ) but the instance is always a
+// COEFCBBIBMC, so the detour's field reads are unchanged.
+// Pre-6.13 builds: CGBILOJJPEI(COEFCBBIBMC*).
 static constexpr const char* kShowEffectClass      = "HJMBOMEHGDJ";
-static constexpr const char* kShowEffectMethod     = "CGBILOJJPEI";
-static constexpr int         kShowEffectParamCount = 1;  // (COEFCBBIBMC* msg)
+static constexpr const char* kShowEffectMethods[]  = { "NKCFKIEHJGP", "CGBILOJJPEI" };
+static constexpr int         kShowEffectParamCount = 1;  // (msg)
 
 // COEFCBBIBMC ShowEffect packet field offsets — resolved at runtime via RuntimeOffsets.
 
@@ -829,7 +836,12 @@ static bool HookShowEffectPath()
             "{\"class\":\"HJMBOMEHGDJ\"}");
         return false;
     }
-    const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, kShowEffectMethod, kShowEffectParamCount);
+    const MethodInfo* mi = nullptr;
+    for (const char* name : kShowEffectMethods) {
+        mi = il2cpp_class_get_method_from_name(klass, name, kShowEffectParamCount);
+        if (mi && mi->methodPointer) break;
+        mi = nullptr;
+    }
     if (!mi || !mi->methodPointer) {
         AgentLogAoe("H1", "AoeTracking.cpp:HookShowEffectPath", "no_method",
             mi ? "{\"methodPointer\":0}" : "{\"methodInfo\":0}");

@@ -49,6 +49,7 @@ constexpr int kFeatureCount = static_cast<int>(sizeof(kFeatures) / sizeof(kFeatu
 State s_state = State::WaitingForMetadata;
 bool  s_anchorStale[kAnchorCount] = {};
 bool  s_audited      = false;
+uint32_t s_lastLateGen = 0;   // LateResolveGeneration() as of the last audit
 bool  s_liveAudited  = false;
 char  s_status[128]  = "Initializing\xE2\x80\xA6";
 
@@ -129,26 +130,41 @@ bool LiveReauditIfNeeded() {
 State Tick() {
     RuntimeOffsets::EnsureAll();
 
+    // BootSettled(), not AllResolved(): the gameplay-object classes are
+    // registered lazily and do not exist on the login screen where the resolve
+    // deadline runs, so waiting on them here stalls boot. Proceed, then
+    // re-audit in Ready once they appear.
     switch (s_state) {
     case State::WaitingForMetadata:
         SetStatus("Resolving offsets\xE2\x80\xA6");
-        if (RuntimeOffsets::AllResolved())
+        if (RuntimeOffsets::BootSettled())
             EnterState(State::Auditing, "Checking for game changes\xE2\x80\xA6");
         break;
 
     case State::Resolving:
-        if (RuntimeOffsets::AllResolved())
+        if (RuntimeOffsets::BootSettled())
             EnterState(State::Auditing, "Checking for game changes\xE2\x80\xA6");
         break;
 
     case State::Auditing:
         Audit();
+        s_lastLateGen = RuntimeOffsets::LateResolveGeneration();
         EnterState(State::Ready, AnyCriticalStale() ? "Ready (degraded)" : "Ready");
         break;
 
-    case State::Ready:
+    case State::Ready: {
+        // A class still pending at boot has now resolved -> re-audit so the
+        // anchors it owns can clear and their fail-closed features can arm.
+        const uint32_t gen = RuntimeOffsets::LateResolveGeneration();
+        if (gen != s_lastLateGen) {
+            s_lastLateGen = gen;
+            Audit();
+            SetStatus(AnyCriticalStale() ? "Ready (degraded)" : "Ready");
+            break;
+        }
         LiveReauditIfNeeded();
         break;
+    }
     }
     return s_state;
 }

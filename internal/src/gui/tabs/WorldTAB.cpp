@@ -2219,11 +2219,13 @@ static bool SehReadStringField(void* wm, uint32_t fieldOffset, char* buf, int bu
     return true;
 }
 
-// Probes known HJMBOMEHGDJ (WorldManager) string fields in order:
-//   0x1E0 = AINOLPMCJIK (public), 0x1C0 = OEHNFKAGPDD, 0x108 = PICNEHLAODO
+// Probes known HJMBOMEHGDJ (WorldManager) string fields in order.
+// 6.13.0.1.0 layout (these are the only three string fields on the class):
+//   0x1F8 = AINOLPMCJIK (public), 0x1D0 = OEHNFKAGPDD, 0x118 = PICNEHLAODO
+// They were 0x1E0 / 0x1C0 / 0x108 before 6.13; refresh from the dump each patch.
 static bool SehCallAndReadMapString(void* wm, uintptr_t /*base*/, char* buf, int bufLen)
 {
-    static const uint32_t kOffsets[] = { 0x1E0, 0x1C0, 0x108 };
+    static const uint32_t kOffsets[] = { 0x1F8, 0x1D0, 0x118 };
 
     for (int i = 0; i < 3; i++) {
         char tmp[128] = {};

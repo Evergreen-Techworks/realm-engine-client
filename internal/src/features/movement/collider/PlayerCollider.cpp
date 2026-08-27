@@ -8,7 +8,9 @@
 namespace PlayerCollider {
 namespace {
 
-constexpr uint32_t kOffCollisionMultiplierFallback = 0x780;
+// 6.13.0.1.0: ObjectProperties.collisionRadiusMultiplier sits at 0x798 (0x780 is
+// now the hasTopAnimation bool). Only used until the by-name resolve below wins.
+constexpr uint32_t kOffCollisionMultiplierFallback = 0x798;
 constexpr size_t kMaxObjectPropertiesTargets = 3;
 constexpr size_t kMaxEntityCandidates = 2;
 

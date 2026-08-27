@@ -8,11 +8,13 @@
       // Application-specific types
       #include "il2cpp-types.h"
 
-      // Missing typedefs not emitted by Il2CppInspector for this Unity version.
-      // Do not delete: il2cpp-types.h defines Il2CppGCHandles (plural, a struct),
-      // never Il2CppGCHandle, and never Il2CppAndroidUpStateFunc.
+      // Shims for typedefs older Il2CppInspector builds did not emit.
+      // Il2CppInspectorPro >= 1.6.x emits both itself, so redeclaring them is a
+      // C2040/C2116 error. Define this macro if you dump with an older version.
+      #ifdef RE_IL2CPP_LEGACY_GCHANDLE_TYPEDEFS
       typedef uint32_t Il2CppGCHandle;             // GC handle is a uint32 token
       typedef void (*Il2CppAndroidUpStateFunc)(bool); // Android network state callback
+      #endif
 
       // IL2CPP APIs
       #define DO_API(r, n, p) extern r (*n) p
