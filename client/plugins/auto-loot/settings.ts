@@ -17,6 +17,12 @@ import { minEnchantSelectToCount } from './items.js';
 import {
   TIER_NEVER,
   FALLBACK_TIER_RANGE,
+  DEFAULT_PICKUP_INTERVAL_MS,
+  MIN_PICKUP_INTERVAL_MS,
+  MAX_PICKUP_INTERVAL_MS,
+  DEFAULT_MAX_LOOT_ACTIONS_PER_SEC,
+  MIN_MAX_LOOT_ACTIONS_PER_SEC,
+  MAX_MAX_LOOT_ACTIONS_PER_SEC,
   slotTypeName,
   DEFAULT_MIN_WEAPON_TIER,
   DEFAULT_MIN_ABILITY_TIER,
@@ -53,6 +59,10 @@ export class AutoLootSettings {
    * option in each per-item-type dropdown selects.
    */
   readonly minTierBySlot = new Map<number, number>();
+
+  // Send pacing
+  pickupIntervalMs = DEFAULT_PICKUP_INTERVAL_MS;
+  maxLootActionsPerSec = DEFAULT_MAX_LOOT_ACTIONS_PER_SEC;
 
   // Loot toggles
   lootUTs = true;
@@ -244,6 +254,28 @@ export class AutoLootSettings {
     boolSetting('lootStatPotions', 'Loot Stat Pots', () => this.lootStatPotions, (v) => { this.lootStatPotions = v; });
     boolSetting('autodrinkStatPots', 'Autodrink Stat Pots (USEITEM from bag, 0,0 - no loot)',
       () => this.autodrinkStatPots, (v) => { this.autodrinkStatPots = v; }, true);
+
+    ctx.registerSetting('pickupIntervalMs', {
+      label: 'Pickup interval (ms)', advanced: true,
+      type: 'number', value: this.pickupIntervalMs,
+      min: MIN_PICKUP_INTERVAL_MS, max: MAX_PICKUP_INTERVAL_MS, step: 50,
+    }, (v: number) => {
+      this.pickupIntervalMs = clamp(
+        Math.trunc(Number(v) || DEFAULT_PICKUP_INTERVAL_MS),
+        MIN_PICKUP_INTERVAL_MS, MAX_PICKUP_INTERVAL_MS,
+      );
+    });
+
+    ctx.registerSetting('maxLootActionsPerSec', {
+      label: 'Max loot actions / sec', advanced: true,
+      type: 'range', value: this.maxLootActionsPerSec,
+      min: MIN_MAX_LOOT_ACTIONS_PER_SEC, max: MAX_MAX_LOOT_ACTIONS_PER_SEC, step: 1,
+    }, (v: number) => {
+      this.maxLootActionsPerSec = clamp(
+        Math.trunc(Number(v) || DEFAULT_MAX_LOOT_ACTIONS_PER_SEC),
+        MIN_MAX_LOOT_ACTIONS_PER_SEC, MAX_MAX_LOOT_ACTIONS_PER_SEC,
+      );
+    });
 
     ctx.registerSetting('minEnchant', {
       label: 'Min enchant (non-potions)', advanced: true,

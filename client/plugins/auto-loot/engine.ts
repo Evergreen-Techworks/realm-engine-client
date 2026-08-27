@@ -9,7 +9,7 @@ import type { ClientConnection } from '../../src/proxy/ClientConnection.js';
 import type { TrackedEntity } from '../../src/state/GameWorldState.js';
 import type { AutoLootSettings } from './settings.js';
 import { LootCatalog } from './catalog.js';
-import { StateStore, cleanupReservations, clearPendingDest, makeBagSlotKey, type AutoLootState } from './state.js';
+import { StateStore, cleanupReservations, clearPendingDest, lootActionBudget, makeBagSlotKey, type AutoLootState } from './state.js';
 import { LootRules, shouldSkipMap } from './loot-rules.js';
 import { BagScanner, getBagItemId, entityDistance } from './bags.js';
 import { shouldSkipAutodrinkClassCap, isHpOrMpPotion } from './items.js';
@@ -26,6 +26,7 @@ import {
 } from './inventory.js';
 import {
   PICKUP_INTERVAL_MS,
+  BAG_SLOT_SETTLE_MS,
   RETRY_ITEM_AFTER_MS,
   PENDING_DEST_TIMEOUT_MS,
   DEST_SLOT_RESERVE_MS,
@@ -80,8 +81,10 @@ export class LootEngine {
       if (entityDistance(playerPos, bag) > ON_TOP_DISTANCE) continue;
       onBag = true;
       if (this.bags.shouldDelayPublicBag(bag, state, now)) continue;
-      // First pickup on a bag is immediate; later ones are spaced by PICKUP_INTERVAL_MS.
-      if ((now - state.lastPickupAt) < PICKUP_INTERVAL_MS) continue;
+      // First pickup on a bag is immediate; later ones are spaced by the
+      // configured interval, floored at PICKUP_INTERVAL_MS.
+      const spacing = Math.max(PICKUP_INTERVAL_MS, this.settings.pickupIntervalMs);
+      if ((now - state.lastPickupAt) < spacing) continue;
       if (this.processBag(client, state, bag, destination, now)) return;
     }
 
@@ -98,6 +101,10 @@ export class LootEngine {
 
     this.resolvePending(client, state, now);
     if (state.pendingDestSlotId != null) return false;
+    // Hard ceiling on loot packets per second, independent of the per-bag spacing
+    // and the pending-destination gate. Those two are both released early on a
+    // stale read, so neither bounds the sustained rate on its own.
+    if (lootActionBudget(state, now, this.settings.maxLootActionsPerSec) <= 0) return false;
 
     for (const [key, attemptedAt] of state.recentAttempts.entries()) {
       if ((now - attemptedAt) >= RETRY_ITEM_AFTER_MS) state.recentAttempts.delete(key);
@@ -199,6 +206,7 @@ export class LootEngine {
     this.diag(`SEND autodrink USEITEM bag#${bag.objectId} slot=${bagSlot} item=${this.itemLabel(itemId)}`);
     sendUseItemFromBag(this.ctx, client, bag, bagSlot, itemId);
     state.lastPickupAt = now;
+    state.recentActions.push(now);
     state.recentAttempts.set(attemptKey, now);
     return true;
   }
@@ -225,6 +233,7 @@ export class LootEngine {
 
     const isHpMp = isHpOrMpPotion(itemId);
     state.lastPickupAt = now;
+    state.recentActions.push(now);
     state.pendingDestSlotId = destination.packetSlotId;
     state.pendingDestQuantity = expectedQuantity;
     state.pendingPotionItemId = isHpMp ? itemId : null;
@@ -236,9 +245,17 @@ export class LootEngine {
       state.manualPotionPacketBlockUntil = Math.max(state.manualPotionPacketBlockUntil, now + blockMs);
     }
 
+    // Reserve the destination and retire the bag slot for every swap, not just
+    // potions and quickslots. Ordinary gear used to get neither, so once the
+    // pending-destination gate released on timeout the same free slot could be
+    // targeted twice and the same bag slot swapped twice, both of which the
+    // server treats as invalid inventory operations.
     if (isHpMp || isQuickslotPacketSlot(destination.packetSlotId)) {
       state.reservedDestSlots.set(destination.packetSlotId, now + DEST_SLOT_RESERVE_MS);
       state.consumedBagSlots.set(makeBagSlotKey(bag, bagSlot, itemId), now + BAG_SLOT_CONSUME_MS);
+    } else {
+      state.reservedDestSlots.set(destination.packetSlotId, now + PENDING_DEST_TIMEOUT_MS);
+      state.consumedBagSlots.set(makeBagSlotKey(bag, bagSlot, itemId), now + BAG_SLOT_SETTLE_MS);
     }
     return true;
   }

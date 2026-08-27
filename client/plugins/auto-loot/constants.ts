@@ -24,6 +24,25 @@ export const DEFAULT_MIN_RING_TIER = 6;
 // ─── Timing / loop tuning ──────────────────────────────────────────────────────
 /** Spacing between *consecutive* pickups/drinks; the first pickup on a bag is immediate. */
 export const PICKUP_INTERVAL_MS = 250;
+/** Configurable spacing between pickups; PICKUP_INTERVAL_MS is the floor. */
+export const DEFAULT_PICKUP_INTERVAL_MS = 400;
+export const MIN_PICKUP_INTERVAL_MS = 250;
+export const MAX_PICKUP_INTERVAL_MS = 2000;
+/**
+ * Ceiling on loot packets per second. INVENTORYSWAP is a rare, user-driven
+ * packet in the real client, and a sustained stream of them is what the server
+ * closes the connection over.
+ */
+export const DEFAULT_MAX_LOOT_ACTIONS_PER_SEC = 3;
+export const MIN_MAX_LOOT_ACTIONS_PER_SEC = 1;
+export const MAX_MAX_LOOT_ACTIONS_PER_SEC = 8;
+/**
+ * How long a bag slot stays off-limits after a swap is sent for it. Bag contents
+ * arrive as entity stats and lag the swap by a tick or more, so without this the
+ * same item can be swapped again after `RETRY_ITEM_AFTER_MS` even though it was
+ * already taken, which the server sees as an invalid inventory operation.
+ */
+export const BAG_SLOT_SETTLE_MS = 3000;
 export const RETRY_ITEM_AFTER_MS = 1500;
 export const PENDING_DEST_TIMEOUT_MS = 1200;
 export const DEST_SLOT_RESERVE_MS = 30000;
