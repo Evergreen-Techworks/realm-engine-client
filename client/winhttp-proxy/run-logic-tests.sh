@@ -4,7 +4,14 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p .testbuild
+
 g++ -std=c++17 -Wall -Wextra -Werror -O0 -g \
     src/splash_logic.cpp tests/splash_logic_tests.cpp \
     -o .testbuild/splash_logic_tests
+
+g++ -std=c++17 -Wall -Wextra -Werror -O0 -g \
+    src/il2cpp_min.cpp tests/il2cpp_min_tests.cpp \
+    -o .testbuild/il2cpp_min_tests
+
 ./.testbuild/splash_logic_tests
+./.testbuild/il2cpp_min_tests
