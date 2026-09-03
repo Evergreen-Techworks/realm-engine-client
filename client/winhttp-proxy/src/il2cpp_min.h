@@ -27,6 +27,7 @@ struct Api {
     const void* (*class_get_method_from_name)(void* klass,
                                               const char* name,
                                               int argc)                  = nullptr;
+    void (*thread_detach)(void* thread)                                  = nullptr;
     bool ready = false;
 };
 

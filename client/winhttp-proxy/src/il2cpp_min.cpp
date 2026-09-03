@@ -22,6 +22,7 @@ const char* const kRequiredSymbols[] = {
     "il2cpp_field_get_name",
     "il2cpp_field_get_offset",
     "il2cpp_class_get_method_from_name",
+    "il2cpp_thread_detach",
 };
 constexpr std::size_t kRequiredSymbolCount =
     sizeof(kRequiredSymbols) / sizeof(kRequiredSymbols[0]);
@@ -58,6 +59,7 @@ bool LoadApi(Api& out, ProcResolver resolve, void* user)
     out.field_get_name             = reinterpret_cast<decltype(out.field_get_name)>(slots[i++]);
     out.field_get_offset           = reinterpret_cast<decltype(out.field_get_offset)>(slots[i++]);
     out.class_get_method_from_name = reinterpret_cast<decltype(out.class_get_method_from_name)>(slots[i++]);
+    out.thread_detach              = reinterpret_cast<decltype(out.thread_detach)>(slots[i++]);
 
     out.ready = true;
     return true;

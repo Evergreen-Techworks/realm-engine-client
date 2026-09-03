@@ -41,7 +41,7 @@ static void test_required_symbols_are_declared()
     std::size_t count = 0;
     const char* const* symbols = il2cppmin::RequiredSymbols(count);
     CHECK(symbols != nullptr);
-    CHECK(count == 12);
+    CHECK(count == 13);
 
     bool sawDomainGet = false;
     bool sawMethodFromName = false;
