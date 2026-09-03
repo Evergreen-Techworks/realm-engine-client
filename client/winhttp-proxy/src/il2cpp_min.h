@@ -15,7 +15,11 @@ using ProcResolver = void* (*)(const char* symbol, void* user);
 struct Api {
     void* (*domain_get)()                                                = nullptr;
     void* (*thread_attach)(void* domain)                                 = nullptr;
-    void** (*domain_get_assemblies)(void* domain, std::size_t* count)    = nullptr;
+    // NOT il2cpp_domain_get_assemblies: the shipping GameAssembly.dll's export
+    // table (371 exports, dumped and checked) does not contain it, so requiring
+    // it made LoadApi fail closed forever. domain_assembly_open IS exported and
+    // gets us the one image we care about ("Assembly-CSharp") directly.
+    void* (*domain_assembly_open)(void* domain, const char* name)        = nullptr;
     void* (*assembly_get_image)(void* assembly)                          = nullptr;
     std::size_t (*image_get_class_count)(void* image)                    = nullptr;
     void* (*image_get_class)(void* image, std::size_t index)             = nullptr;

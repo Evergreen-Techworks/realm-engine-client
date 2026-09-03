@@ -12,7 +12,7 @@ static DWORD WINAPI InitThread(LPVOID) {
     return 0;
 }
 
-BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID /*reserved*/) {
+BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
     switch (reason) {
         case DLL_PROCESS_ATTACH: {
             DisableThreadLibraryCalls(hinst);
@@ -22,6 +22,14 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID /*reserved*/) {
             break;
         }
         case DLL_PROCESS_DETACH:
+            // reserved != NULL means the process is terminating: the loader
+            // will not run any more code and the address space is about to go
+            // away. MinHook's teardown does CreateToolhelp32Snapshot +
+            // HeapAlloc + SuspendThread, all of it under the loader lock and
+            // against threads that may already be dead. Skip it and let the
+            // process die. (Only reserved == NULL - a real FreeLibrary - is
+            // worth unhooking for.)
+            if (reserved) break;
             splashbypass::Remove();
             RemoveConnectHook();
             break;

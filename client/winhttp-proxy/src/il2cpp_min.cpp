@@ -12,7 +12,7 @@ namespace {
 const char* const kRequiredSymbols[] = {
     "il2cpp_domain_get",
     "il2cpp_thread_attach",
-    "il2cpp_domain_get_assemblies",
+    "il2cpp_domain_assembly_open",
     "il2cpp_assembly_get_image",
     "il2cpp_image_get_class_count",
     "il2cpp_image_get_class",
@@ -49,7 +49,7 @@ bool LoadApi(Api& out, ProcResolver resolve, void* user)
     std::size_t i = 0;
     out.domain_get                 = reinterpret_cast<decltype(out.domain_get)>(slots[i++]);
     out.thread_attach              = reinterpret_cast<decltype(out.thread_attach)>(slots[i++]);
-    out.domain_get_assemblies      = reinterpret_cast<decltype(out.domain_get_assemblies)>(slots[i++]);
+    out.domain_assembly_open       = reinterpret_cast<decltype(out.domain_assembly_open)>(slots[i++]);
     out.assembly_get_image         = reinterpret_cast<decltype(out.assembly_get_image)>(slots[i++]);
     out.image_get_class_count      = reinterpret_cast<decltype(out.image_get_class_count)>(slots[i++]);
     out.image_get_class            = reinterpret_cast<decltype(out.image_get_class)>(slots[i++]);

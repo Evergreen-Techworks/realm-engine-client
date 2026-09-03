@@ -62,12 +62,28 @@ Required exports:
 
 ```
 il2cpp_domain_get                 il2cpp_thread_attach
-il2cpp_domain_get_assemblies      il2cpp_assembly_get_image
+il2cpp_domain_assembly_open       il2cpp_assembly_get_image
 il2cpp_image_get_class_count      il2cpp_image_get_class
 il2cpp_class_get_name             il2cpp_class_get_fields
 il2cpp_class_get_field_from_name  il2cpp_field_get_name
 il2cpp_field_get_offset           il2cpp_class_get_method_from_name
+il2cpp_thread_detach
 ```
+
+> **Correction (post-implementation review).** This list originally named
+> `il2cpp_domain_get_assemblies`. It is **not exported** by the shipping
+> `GameAssembly.dll` — the PE export table was dumped directly and checked:
+> 371 exports, `il2cpp_domain_get_assemblies` absent, `il2cpp_domain_assembly_open`
+> present, and all twelve other required symbols present. Because the shim's
+> `LoadApi` is all-or-nothing, requiring the missing export made the feature fail
+> *closed*: the bootstrap would poll for 30 s and exit, and the splash would always
+> play. The design now opens the single assembly it needs by name
+> (`il2cpp_domain_assembly_open(domain, "Assembly-CSharp")`) instead of enumerating
+> the domain. That is also strictly cheaper: `SplashScreenScript` is game code, so
+> scanning only `Assembly-CSharp` drops the walk from the whole type universe to a
+> few thousand types and stops forcing `Class::Init` across `mscorlib` and
+> `UnityEngine.*` during boot. If `domain_assembly_open` returns null for
+> `Assembly-CSharp`, we fail open — there is no fallback to full enumeration.
 
 Opaque pointer types only (`void*` / forward-declared structs). If any lookup returns
 null, the module reports "unavailable" and the feature disables itself.
@@ -139,7 +155,19 @@ Inside the detour (main thread, instance in hand):
    convention in `internal/src/core/runtime/Il2CppResolver.h:7`.
 4. Write `0.0f` to each of the `_size` elements.
 5. Call the original `Update`.
-6. Unhook after the first pass that successfully zeroes a non-empty list.
+6. Latch the detour to a no-op after the first pass that successfully zeroes a
+   non-empty list.
+
+> **Deliberate divergence (post-implementation review).** This step originally read
+> "unhook after the first successful pass". The implementation does **not** unhook:
+> it sets a `g_done` flag so the detour becomes a straight pass-through to the
+> original `Update`. `MH_DisableHook` suspends every other thread and `HeapAlloc`s
+> while they are suspended, and calling it from inside the detour that is currently
+> executing on the hooked target risks deadlock and stack corruption. The hook is
+> instead removed on `DLL_PROCESS_DETACH` (and skipped entirely when the process is
+> terminating). The residual cost is one predictable-branch call per frame on a
+> scene that is about to end. Code and doc agree on this now; do not "fix" the code
+> back to a self-unhook.
 
 Zeroing durations is chosen over forcing the state machine to a terminal index: it is the
 softest intervention that still collects the whole idle-time win, and if it mis-fires the
@@ -159,7 +187,7 @@ DLL_PROCESS_ATTACH (winhttp.dll)
               └─ detour  [MAIN THREAD, __this valid, fields deserialized]
                    ├─ zero every float in timeForLogo._items
                    ├─ call original Update
-                   └─ unhook once a non-empty list has been zeroed
+                   └─ latch to a no-op once a non-empty list has been zeroed
 ```
 
 ## Error handling
