@@ -3,6 +3,7 @@
 
 #include "forwarders.g.h"
 #include "connect_hook.h"
+#include "splash_bypass.h"
 
 static DWORD WINAPI InitThread(LPVOID) {
     // This whole thing is just to forward traffic to 127.0.0.1:2050 
@@ -17,9 +18,11 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID /*reserved*/) {
             DisableThreadLibraryCalls(hinst);
             HANDLE t = CreateThread(nullptr, 0, InitThread, nullptr, 0, nullptr);
             if (t) CloseHandle(t);
+            splashbypass::Install();
             break;
         }
         case DLL_PROCESS_DETACH:
+            splashbypass::Remove();
             RemoveConnectHook();
             break;
         default:

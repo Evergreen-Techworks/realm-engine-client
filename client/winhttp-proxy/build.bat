@@ -17,7 +17,7 @@ if /I not "%VSCMD_ARG_TGT_ARCH%"=="x64" (
 )
 
 set MH=..\..\internal\vendor\minhook
-set SRC=src\dllmain.cpp src\connect_hook.cpp
+set SRC=src\dllmain.cpp src\connect_hook.cpp src\splash_logic.cpp src\il2cpp_min.cpp src\splash_bypass.cpp
 set MHSRC=%MH%\hook.c %MH%\buffer.c %MH%\trampoline.c %MH%\hde\hde64.c
 
 cl /nologo /LD /O2 /MT /W3 /EHsc ^
