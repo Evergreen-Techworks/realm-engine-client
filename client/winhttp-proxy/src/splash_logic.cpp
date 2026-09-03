@@ -19,4 +19,23 @@ bool MatchesSplashSignature(const char* const* fieldNames, std::size_t count)
     return true;
 }
 
+std::int32_t ZeroFloatList(void* listObject, const ListFloatLayout& layout)
+{
+    if (!listObject) return 0;
+
+    auto* base = static_cast<unsigned char*>(listObject);
+
+    void* items = *reinterpret_cast<void**>(base + layout.itemsOffset);
+    if (!items) return 0;
+
+    const std::int32_t size = *reinterpret_cast<const std::int32_t*>(base + layout.sizeOffset);
+    if (size <= 0 || size > kMaxPlausibleLogoCount) return 0;
+
+    auto* data = reinterpret_cast<float*>(
+        static_cast<unsigned char*>(items) + layout.arrayDataOffset);
+    for (std::int32_t i = 0; i < size; ++i) data[i] = 0.0f;
+
+    return size;
+}
+
 } // namespace splash
