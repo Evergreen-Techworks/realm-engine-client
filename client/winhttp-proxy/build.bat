@@ -25,7 +25,7 @@ cl /nologo /LD /O2 /MT /W3 /EHsc /std:c++17 ^
    /I src /I "%MH%" ^
    %SRC% %MHSRC% ^
    /Fewinhttp.dll ^
-   /link /DLL ws2_32.lib
+   /link /DLL ws2_32.lib user32.lib
 
 if errorlevel 1 (
     echo [build] FAILED.

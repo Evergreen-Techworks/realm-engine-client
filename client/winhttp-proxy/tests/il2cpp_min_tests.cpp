@@ -41,17 +41,21 @@ static void test_required_symbols_are_declared()
     std::size_t count = 0;
     const char* const* symbols = il2cppmin::RequiredSymbols(count);
     CHECK(symbols != nullptr);
-    CHECK(count == 13);
+    CHECK(count == 15);
 
     bool sawDomainGet = false;
     bool sawMethodFromName = false;
+    bool sawRuntimeInvoke = false;
     for (std::size_t i = 0; i < count; ++i) {
         if (std::strcmp(symbols[i], "il2cpp_domain_get") == 0) sawDomainGet = true;
         if (std::strcmp(symbols[i], "il2cpp_class_get_method_from_name") == 0)
             sawMethodFromName = true;
+        if (std::strcmp(symbols[i], "il2cpp_runtime_invoke") == 0)
+            sawRuntimeInvoke = true;
     }
     CHECK(sawDomainGet);
     CHECK(sawMethodFromName);
+    CHECK(sawRuntimeInvoke);
 }
 
 static void test_load_succeeds_when_every_symbol_resolves()

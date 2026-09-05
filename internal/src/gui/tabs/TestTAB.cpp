@@ -1167,12 +1167,15 @@ void TestTAB::SetBotWalkTarget(float worldX, float worldY, bool active)
         g_walkX        = worldX;
         g_walkY        = worldY;
         g_walkActive   = true;
-        // Feed the DangerPlanner as an external goal override so the planner
-        // prefers this target over WASD/idle cell selection while dodging.
+        // Keep the legacy planner override for older movement modes, and feed
+        // the dedicated walk-goal channel consumed by the unified UDodge
+        // waypoint planner. SDK navigation enters native movement here.
         DangerPlanner::SetExternalGoal(worldX, worldY);
+        DangerPlanner::SetWalkGoal(worldX, worldY);
     } else {
         g_walkActive = false;
         DangerPlanner::ClearExternalGoal();
+        DangerPlanner::ClearWalkGoal();
     }
 }
 

@@ -30,6 +30,7 @@
 #include "RePP.h"
 #include "PJDodge.h"
 #include "features/movement/udodge/UDodge.h"
+#include "features/movement/udodge/UDodgeSensors.h"
 #include "SpeedHack.h"
 #include <string>
 #include <cctype>
@@ -105,6 +106,7 @@ namespace {
             FH_INT("autoAimMode", FeatureState::SetAutoAimMode),
             FH_BOOL("autoAimPrioritizeBosses", AutoAim::SetPrioritizeBosses),
             FH_BOOL("autoAimIgnoreWalls", AutoAim::SetIgnoreWalls),
+            FH_BOOL("autoAimIgnoreScenery", AutoAim::SetIgnoreScenery),
             FH("killauraEnabled",        KillAura::SetEnabled(f.Bool())),
             FH("killauraMode",           KillAura::SetMode(f.Int() == 1 ? KillAura::Mode::AtMouse
                                                                         : KillAura::Mode::AtTarget)),
@@ -113,6 +115,15 @@ namespace {
             FH_BOOL ("killauraOverlayEnabled", KillAura::SetOverlayEnabled),
             FH_BOOL ("killauraDriveAimEnabled", KillAura::SetDriveAimAngle),
             FH_BOOL("autoFireEnabled", AutoFire::SetEnabled),
+            FH("scriptEnemyLockId", {
+                const int32_t id = f.Int();
+                DangerPlanner::SetEnemyLock(id);
+                AutoAim::SetLockTarget(id > 0 ? id : -1);
+            }),
+            FH("scriptCombatTargetId", {
+                const int32_t id = f.Int();
+                AutoAim::SetLockTarget(id > 0 ? id : -1);
+            }),
             FH("autoFireHotkey",       AutoFire::SetHotkeyVk(ResolveHotkeyVkInternal(f.value))),
             FH_BOOL ("autoBreakWallsEnabled",    AutoBreakWalls::SetEnabled),
             FH_FLOAT("autoBreakWallsProbeTiles", AutoBreakWalls::SetProbeTiles),
@@ -267,7 +278,14 @@ namespace {
             FH_INT("udodgeStandOnType", UDodge::SetStandOnType),
             FH_FLOAT("udodgeOrbitRange", UDodge::SetOrbitRange),
             FH_FLOAT("udodgePlanRadius", UDodge::SetPlanRadius),
-            FH_INT_BOOL("udodgeDrawPath", UDodge::SetDrawPath)
+            FH_INT_BOOL("udodgeDrawPath", UDodge::SetDrawPath),
+            FH_INT_BOOL("udodgeMoveEnvelope", UDodge::SetMoveEnvelope),
+            FH_INT_BOOL("udodgeMoveEnvelopeArmed", UDodge::SetMoveEnvelopeArmed),
+            FH_FLOAT("udodgeServerPositionError", UDodge::SetServerPositionError),
+            FH_FLOAT("udodgeServerAnchorX", UDodge::SetServerAnchorX),
+            FH_FLOAT("udodgeServerAnchorY", UDodge::SetServerAnchorY),
+            FH_INT_BOOL("udodgeServerAnchorValid", UDodge::SetServerAnchorValid),
+            FH_TEXT("udodgePacketShot", UDodge::Sensors::RecordPacketShot)
         };
         return ApplyFeatureTable(f, h, sizeof(h) / sizeof(h[0]));
     }

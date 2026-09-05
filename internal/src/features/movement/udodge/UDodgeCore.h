@@ -146,8 +146,8 @@ struct Ctx {
     int   trust[kMaxProjectiles];
 };
 // Ctx is a STACK LOCAL in Solver::Solve and in UDodge.cpp's per-frame step
-// re-validation (the worker pathfinder keeps a static). 14,692 bytes at
-// kMaxProjectiles = 96 — keep it well inside a stack frame's budget; if this
+// re-validation (the worker pathfinder keeps a static). About 29 KB at
+// kMaxProjectiles = 192 — keep it inside a stack frame's budget; if this
 // starts approaching the ceiling, the arrays are what to shrink, not the horizon.
 static_assert(sizeof(Ctx) <= 32768, "Temporal::Ctx must stay small enough to be a stack local in Solve()");
 
@@ -160,14 +160,56 @@ void SampleLane(const LaneThreat& L, Vec2* outPos);
 // cullCenter/cullTiles are PARAMETERS — the solver culls relative to the player
 // (kUTemporalCullTiles), the pathfinder relative to the grid center (window
 // extent + margin) so a far-side-of-disk lane survives (see plan 72).
-void Build(const DangerMap& map, float hitScale, Vec2 cullCenter,
+void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2 cullCenter,
            float cullTiles, Ctx& out);
 
 // Bullet position at arbitrary t within the march grid (clamped to [0,horizon]).
 Vec2 BulletPosAt(const Ctx& c, int li, float tMs);
 
-// Query A (solver): the player walks STRAIGHT from `player` to P at `speed`
-// (tiles/ms), arriving at tArrive, then holds at P; clear at every march step?
+// Sentinel: nothing hits the player anywhere inside the scanned window. LARGE
+// POSITIVE on purpose — `std::min(ttd, kHorizonMs)` and every "later is safer"
+// comparison then work with no special case, and a caller that forgets the
+// sentinel errs toward "clear for a long time is BETTER", never toward admitting
+// danger (the admission test is `ttd < window`, which a huge value cannot pass).
+constexpr float kNoDanger = kHugeClearance;
+
+// Query A (solver), GRADIENT form: the earliest time (ms from now) at which the
+// player is hit, given they walk STRAIGHT from `player` to P at `speed` (tiles/ms),
+// arriving at tArrive, then hold at P. kNoDanger when nothing reaches them inside
+// the scanned window.
+//
+// This is the SAME march the bool PathClear always ran — same kinematics, same
+// arrival split, same fast-lane half-steps, same speed-scaled arrival pad, same
+// Ctx::trust traced-path floor — with the loops flipped to STEPS-outer /
+// LANES-inner so the first violation found is the EARLIEST one in time rather
+// than merely the first lane that happens to violate. Same early exit, same work,
+// strictly more information (and the player-path breakpoints now hoist out of the
+// lane loop, which the old shape recomputed per lane).
+//
+// `scanUntilMs` bounds the march (clamped to [0, kHorizonMs]); the answer is
+// "clear through scanUntilMs", so a caller that only needs a yes/no over a short
+// window pays only for that window. TRANSIT is always inside it — the caller
+// derives the window from the walk (see DwellClear).
+//
+// CONSERVATIVE BY CONSTRUCTION: the value returned is the START of the march step
+// (or the lane's trusted end) that contains the violation, i.e. a LOWER BOUND on
+// the real time-to-danger. It can under-state durability, never over-state it.
+float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P,
+                   float scanUntilMs = kHorizonMs);
+
+// The dwell-window end for the same walk: transit (always checked) plus `dwellMs`
+// past arrival, clamped to the horizon. This is the window PathClear tests.
+float DwellWindowMs(Vec2 player, float speed, Vec2 P, float dwellMs = kUDwellMs);
+
+// True when a time-to-danger already obtained from TimeToDanger() clears that
+// dwell window — the exact admission test PathClear performs, exposed so a caller
+// that wants BOTH the gradient and the yes/no pays for ONE march instead of two.
+bool DwellClear(Vec2 player, float speed, Vec2 P, float timeToDangerMs,
+                float dwellMs = kUDwellMs);
+
+// Query A (solver), BOOL form — unchanged contract, now a thin wrapper over the
+// gradient: the player walks STRAIGHT from `player` to P at `speed` (tiles/ms),
+// arriving at tArrive, then holds at P; clear at every march step?
 // TRANSIT is always checked over the FULL horizon. DWELL (the hold at P) is only
 // checked for `dwellMs` past arrival — see kUDwellMs for why the dodge does not
 // have to promise a full horizon of stillness. Pass kHorizonMs to opt out and get
@@ -175,9 +217,25 @@ Vec2 BulletPosAt(const Ctx& c, int li, float tMs);
 bool PathClear(const Ctx& c, Vec2 player, float speed, Vec2 P,
                float dwellMs = kUDwellMs);
 
+// ── EVIDENCE HORIZON (keeps Ctx::trust from INFLATING a durability score) ───
+// The time (ms) past which this context stops being evidence for EVERY lane: the
+// earliest trusted end over all lanes, or kHorizonMs when every lane is traced to
+// the horizon (the overwhelmingly common case — lanes are traced by TIME, see
+// kLaneCoverMs). Past a lane's trusted end the queries fall back to the honest
+// present-tense floor (TracedPathClear), which is the right ADMISSION answer but
+// says nothing about the shot's future beyond the trace: a candidate merely clear
+// of a truncated lane's traced path must NOT be scored as "clear for 800 ms".
+// A ranking caller therefore caps the durability it reads at this value; it can
+// only LOWER a score, never raise one, so it cannot weaken any safety test.
+float EvidenceHorizonMs(const Ctx& c);
+
 // Query B (pathfinder edge relaxation): standing at B, is every bullet clear
 // over the arrival window [tA, tB] (swept)?
 bool ArrivalClear(const Ctx& c, Vec2 B, float tA, float tB);
+// Transit-time safety for a player moving linearly A->B during [tA,tB].
+// Unlike ArrivalClear, this does not pretend the player occupies B for the
+// entire edge window.
+bool EdgeClear(const Ctx& c, Vec2 A, Vec2 B, float tA, float tB);
 
 } // namespace Temporal
 

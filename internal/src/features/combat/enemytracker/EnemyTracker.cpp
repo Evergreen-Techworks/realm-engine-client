@@ -122,7 +122,7 @@ static bool SehReadLocalKlassAndPos(void* local, float* outX, float* outY, uint6
 struct CandidateOut {
     int32_t id, objType, hp, maxHp;
     float   x, y;
-    bool    isInvulnerable, hasHealthBar;
+    bool    isInvulnerable, hasHealthBar, isScenery;
     void*   ptr;
 };
 
@@ -148,13 +148,17 @@ static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t loc
 
         // noHealthBar (walls/destructibles) — stored as metadata, not hard-rejected
         const uint8_t noHB = *reinterpret_cast<uint8_t*>(op + RuntimeOffsets::OP_NoHealthBar);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        const bool isStatic = *reinterpret_cast<uint8_t*>(op + RuntimeOffsets::OP_IsStatic) != 0; // raw-access-ok: guarded by shared SEH
+        void* projectiles = *reinterpret_cast<void**>(op + RuntimeOffsets::OP_Projectiles); // raw-access-ok: guarded by shared SEH
+        const uintptr_t projectileCount = Mem::AddrOk(projectiles)
+            ? *reinterpret_cast<uintptr_t*>(reinterpret_cast<uint8_t*>(projectiles) + 0x18) : 0; // Il2CppArray::max_length
 
-        // XML <Invincible/> — reject if InvincibleElement pointer exists (regardless of string)
+        // XML <Invincible/> is targeting metadata, not an enemy-classification
+        // failure. Keep the entity in the shared snapshot so dodge/projectile
+        // ownership still sees invincible phases and environmental shooters;
+        // combat consumers already filter Entry::isInvulnerable as appropriate.
         void* invPtr = *reinterpret_cast<void**>(op + RuntimeOffsets::OP_InvincibleElem);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
-        if (invPtr && Mem::AddrOk(invPtr))
-            return false;
-
-        bool isInvuln = false;
+        bool isInvuln = invPtr && Mem::AddrOk(invPtr);
 
         const int32_t hp    = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::HP);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         const int32_t maxHp = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::MaxHP);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
@@ -177,11 +181,13 @@ static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t loc
                 return false;
         }
 
-        // Runtime condition check (stasis / runtime invincible)
+        // Runtime stasis/invincible is likewise a soft targetability property.
+        // Dropping it here made the entity disappear from uDodge's blocker and
+        // shooter model. Mark it invulnerable and let each combat mode decide.
         uint32_t cond0 = 0, cond1 = 0;
         const bool condOk = RuntimeOffsets::TryReadMapObjectConditions(entity, &cond0, &cond1);
         if (condOk && (cond0 | cond1) && RuntimeOffsets::MapObjectConditionsMakeUntargetable(cond0, cond1))
-            return false;
+            isInvuln = true;
 
         const float ex2 = *reinterpret_cast<float*>(ent + RuntimeOffsets::PosX);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         const float ey2 = *reinterpret_cast<float*>(ent + RuntimeOffsets::PosY);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
@@ -196,6 +202,7 @@ static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t loc
         out.y             = ey2;
         out.isInvulnerable = isInvuln;
         out.hasHealthBar  = (noHB == 0);
+        out.isScenery     = isStatic && projectileCount == 0;
         out.ptr           = entity;
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -260,6 +267,7 @@ void Tick()
         e.maxHp          = cand.maxHp;
         e.isInvulnerable = cand.isInvulnerable;
         e.hasHealthBar   = cand.hasHealthBar;
+        e.isScenery      = cand.isScenery;
         e.ptr            = cand.ptr;
 
         // Populate velocity from the just-updated map

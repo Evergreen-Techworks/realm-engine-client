@@ -26,6 +26,8 @@ struct SafetyState {
     uint32_t tickId         = 0;       // freshness / staleness guard for the consumer
     float    moveVx         = 0.f;     // udodge's committed next-move velocity (tiles/ms);
     float    moveVy         = 0.f;     // 0 = holding. AutoNexus predicts the player along this.
+    bool     serverAnchorValid = false;
+    float    serverX = 0.f, serverY = 0.f; // last position emitted in outbound MOVE
 };
 SafetyState GetSafetyState();
 
@@ -69,5 +71,13 @@ void  SetStandOnType(int t);          int   GetStandOnType();
 void  SetOrbitRange(float t);         float GetOrbitRange();   // tiles; 0 = auto
 void  SetPlanRadius(float cells);     float GetPlanRadius();   // grid cells [8,40]
 void  SetDrawPath(bool en);           bool  GetDrawPath();     // route overlay
+// MOVE-envelope backend. `armed` is asserted by the proxy only while its
+// outgoing MOVE clamp is installed. Uncertainty is desired-vs-sent distance.
+void  SetMoveEnvelope(bool en);        bool  GetMoveEnvelope();
+void  SetMoveEnvelopeArmed(bool armed);
+void  SetServerPositionError(float tiles);
+void  SetServerAnchorX(float x);
+void  SetServerAnchorY(float y);
+void  SetServerAnchorValid(bool valid);
 
 } // namespace UDodge

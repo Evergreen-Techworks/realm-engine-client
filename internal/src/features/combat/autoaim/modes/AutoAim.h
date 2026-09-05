@@ -58,6 +58,9 @@ bool IsPrioritizeBosses();
 void SetIgnoreWalls(bool on);
 bool IsIgnoreWalls();
 
+void SetIgnoreScenery(bool on);
+bool IsIgnoreScenery();
+
 void SetShootWhileStealthed(bool on);
 bool IsShootWhileStealthed();
 

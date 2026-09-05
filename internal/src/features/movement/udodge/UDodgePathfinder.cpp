@@ -146,6 +146,8 @@ bool EnemyBlockedLocal(const DangerMap& m, Vec2 p)
 {
     for (int i = 0; i < m.enemyCount; ++i) {
         const EnemyBlocker& e = m.enemies[i];
+        // Physical body only, matching Core::EnemyBlocked — the keep-out gap is a
+        // scoring preference, not a traversal veto (see the note there).
         if (Len(Sub(p, e.pos)) < e.radius + kUPlayerHalf) return true;
     }
     return false;
@@ -201,6 +203,12 @@ struct Ctx {
     const PlannerSnapshot* s = nullptr;
     MapInput mi{};            // .env NULL, .map aliases the plain snapshot copy — plain-data only
     bool  diskActive = false;
+    // A locked approach is a durable TOPOLOGY route: walls, enemy bodies and
+    // active zones shape it, while the immediate solver handles moving bullets.
+    // Otherwise every new shot rewrites the entire approach before it can be
+    // consumed and the player never commits into weapon range.
+    bool  strategicLockRoute = false;
+    bool  preferRetreat = false; // breadcrumb is active only when forward topology is closed
     Vec2  diskCenter{};
     float diskLimit = 0.f;    // weaponRange + slack (annulus OUTER radius)
     float diskInner = 0.f;    // annulus INNER radius (0 = no inner gate). GOAL-only: cells inside
@@ -209,6 +217,37 @@ struct Ctx {
                               // PlannerSnapshot::speed — finding K)
     int   prevGoalCell = -1;  // last tick's committed goal cell (plan 76 goal hysteresis; -1 = none/off-grid)
 };
+
+// Is there a body-width continuation in the hemisphere AWAY from the breadcrumb?
+// This is deliberately projectile-blind: near-dodge handles moving shots. We are
+// answering only whether the dungeon topology actually permits forward progress.
+bool ForwardTopologyOpen(const Ctx& c)
+{
+    if (!c.s->retreatValid) return true;
+    const Vec2 forward = Normalize(Sub(c.s->player, c.s->retreatPos));
+    if (LenSq(forward) < 1e-6f) return true;
+    constexpr float cs[5] = { 1.f, 0.70710678f, 0.70710678f, 0.f, 0.f };
+    constexpr float sn[5] = { 0.f, 0.70710678f, -0.70710678f, 1.f, -1.f };
+    for (int k = 0; k < 5; ++k) {
+        const Vec2 dir{ forward.x * cs[k] - forward.y * sn[k],
+                        forward.x * sn[k] + forward.y * cs[k] };
+        bool clear = true;
+        for (float d = 0.5f; d <= 1.5f; d += 0.5f) {
+            const Vec2 p = Add(c.s->player, Mul(dir, d));
+            const int gx = static_cast<int>(std::lround((p.x - c.s->grid.center.x) /
+                                                        kUPathCellTiles)) + kR;
+            const int gy = static_cast<int>(std::lround((p.y - c.s->grid.center.y) /
+                                                        kUPathCellTiles)) + kR;
+            if (GridBlocked(c.s->grid, c.s->settings.safeWalk, gx, gy) ||
+                EnemyBlockedLocal(c.s->map, p) ||
+                ZoneBlockedLocal(c.s->map, c.s->player, p)) {
+                clear = false; break;
+            }
+        }
+        if (clear) return true;
+    }
+    return false;
+}
 
 // ANNULUS gate: a valid GOAL cell keeps the boss hittable (≤ diskLimit) AND is
 // not point-blank (≥ diskInner). Gates only the GOAL sets (s_goal / the temporal
@@ -240,7 +279,9 @@ void EvalCell(const Ctx& c, int idx, int gx, int gy)
         s_eval[idx] = 1;
         return;
     }
-    const float safety = Core::PointSafety(c.mi, w);
+    const float safety = c.strategicLockRoute
+        ? kUDurablePocketMargin
+        : Core::PointSafety(c.mi, w);
     s_safe[idx] = safety;
     s_goal[idx] = (safety >= kUDurablePocketMargin && GoalGateOk(c, w)) ? 1 : 0;
     s_tgoal[idx] = 0;                                  // set lazily, only if the pass tests it
@@ -333,6 +374,7 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
 
     int found = -1;
     float foundCost = 0.f;
+    float foundRetreatDist = kHugeClearance;
     bool  foundPending = false;   // finding G-2: the incumbent goal sits in a telegraphed disc
     float cost; int cur;
     while (HeapPop(cost, cur)) {
@@ -352,7 +394,13 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
         }
 
         if (cur != start && s_eval[cur] == 2 && s_goal[cur]) {
-            if (found < 0) { found = cur; foundCost = cost; foundPending = s_pend[cur] != 0; }
+            const Vec2 goalWorld = CellWorld(center, cgx, cgy);
+            const float retreatDist = c.s->retreatValid
+                ? Len(Sub(goalWorld, c.s->retreatPos)) : kHugeClearance;
+            if (found < 0) {
+                found = cur; foundCost = cost; foundPending = s_pend[cur] != 0;
+                foundRetreatDist = retreatDist;
+            }
             else if (foundPending && !s_pend[cur]) {
                 // FINDING G-2: the incumbent goal sits in a telegraphed (unarmed)
                 // disc and this one does not. A pending zone is COST-ONLY and must
@@ -360,20 +408,33 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
                 // a clean cell reached inside the detour budget is strictly better
                 // than committing to the centre of a bomb we would have to flee.
                 found = cur; foundCost = cost; foundPending = false;
+                foundRetreatDist = retreatDist;
+            } else if (c.preferRetreat &&
+                       (s_pend[cur] == 0 || foundPending) &&
+                       cost <= foundCost + kURetreatGoalDetourMs &&
+                       retreatDist + kUPathCellTiles < foundRetreatDist) {
+                // Two corridor directions can expose equally valid pockets. Spend
+                // a bounded detour to choose the one toward ground we traversed,
+                // instead of fleeing deeper into the room or a dead end.
+                found = cur;
+                foundRetreatDist = retreatDist;
             }
             // Normally exit at the soonest durable goal. But keep popping when
             // (a) a previous goal is being tracked for hysteresis — its arrival may
             // still be within kURouteGoalHystMs — or (b) the goal we have is
             // pending-tainted and the detour budget has not run out yet.
-            if ((c.prevGoalCell < 0 || prevGoalIdx >= 0) && !foundPending) break;
+            if ((c.prevGoalCell < 0 || prevGoalIdx >= 0) && !foundPending &&
+                !c.preferRetreat) break;
         }
         // Once the best goal is known, stop as soon as no unpopped cell can still
         // improve on it (Dijkstra pops in increasing time): the prev goal's
         // hysteresis window, or — for a pending-tainted goal — the detour budget we
         // are willing to spend to reach a clean one instead.
         if (found >= 0) {
-            const float budget = foundPending
+            float budget = foundPending
                 ? std::max(kURouteGoalHystMs, kUPathPendingDetourMs) : kURouteGoalHystMs;
+            if (c.preferRetreat)
+                budget = std::max(budget, kURetreatGoalDetourMs);
             if (cost > foundCost + budget) break;
         }
 
@@ -441,8 +502,10 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
             // SPEED-AWARE GATE: only walk into B if the player, arriving at tB
             // (having left cur at s_cost[cur]), is clear of every bullet there.
             const Vec2 wB = CellWorld(center, nx, ny);
+            const Vec2 wA = CellWorld(center, cgx, cgy);
             float tArr = tB;
-            if (!Core::Temporal::ArrivalClear(s_tctx, wB, s_cost[cur], tB)) {
+            if (!c.strategicLockRoute &&
+                !Core::Temporal::EdgeClear(s_tctx, wA, wB, s_cost[cur], tB)) {
                 // ── BOUNDED WAIT EDGE (finding F) ───────────────────────────
                 // Leaving NOW walks into a bullet. Try leaving one or two temporal
                 // slices later instead — "stand here, let the wall pass, then go".
@@ -457,7 +520,7 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
                 int w = 1;
                 for (; w <= waitSlices; ++w) {
                     const float d = static_cast<float>(w) * kUTemporalStepMs;
-                    if (Core::Temporal::ArrivalClear(s_tctx, wB, s_cost[cur] + d, tB + d)) break;
+                    if (Core::Temporal::EdgeClear(s_tctx, wA, wB, s_cost[cur] + d, tB + d)) break;
                 }
                 if (w > waitSlices) continue;   // no admissible departure delay — edge stays blocked
                 tArr = tB + static_cast<float>(w) * kUTemporalStepMs;
@@ -498,9 +561,13 @@ void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, Pla
     c.mi.settings = s.settings;
     c.mi.map      = &s.map;     // plain-data alias; .env stays NULL
     c.diskActive  = diskActive;
+    c.strategicLockRoute = diskActive;
     c.diskCenter  = s.lockPos;
     c.diskLimit   = s.weaponRangeTiles + kUInRangeSlack;
     c.diskInner   = s.innerStandoffTiles;   // annulus inner radius (goal-only gate)
+    c.preferRetreat = !diskActive && s.retreatValid && !ForwardTopologyOpen(c);
+    out.retreatValid = c.preferRetreat;
+    out.retreatPos = s.retreatPos;
     // PLAYER SPEED enters here — the edge-cost scale that turns the distance grid
     // into an ARRIVAL-TIME grid. FINDING K: this used to be derived from
     // moveBudget (= in.stepTiles), which equals speed × kServerTickSec ONLY while
@@ -644,6 +711,7 @@ void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, Pla
     out.stepTarget = stepTarget;
     out.stepDir    = Normalize(Sub(stepTarget, s.player));
     if (LenSq(out.stepDir) < 1e-6f) out.found = false;   // degenerate first step — no usable route
+
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -706,23 +774,42 @@ bool NavHeapPop(float& cost, int& idx)
     return true;
 }
 
-// A nav cell is blocked by a wall (grid bit0), by SINK/WATER ground (grid bit2),
-// or by an enemy body. The player's OWN cell (start) is never treated as blocked so
-// we can always route out of one — including out of the middle of a lake, where
-// every neighbour is water: the search then reaches nothing, ComputeNav's
-// target == start branch fires and the driver steers straight at the goal, so a
-// player already in the water is never stranded by this rule.
-// Water is HARD here and only here. It used to be the soft bit1 hazard cost
-// (kUNavHazardCost = 6/cell), which any shoreline detour longer than ~6 tiles lost
-// to — so walk-to routed straight through deep water the player cannot cross. The
-// DODGE grid is untouched: it never sees the water bit (FillOccGrid masks bit0),
-// so the immediate solver may still cross water to escape a shot.
+// A nav cell is blocked by a wall (grid bit0) or an enemy body. The player's OWN
+// cell (start) is never treated as blocked so we can always route out of one.
+//
+// SINK ground (bit2 — shallow water, quicksand, honey) is deliberately NOT a wall
+// here; it is priced at kUNavSinkCost per cell in the search below. It was briefly
+// hard-blocked to stop walk-to "swimming the lake", but that over-corrected: of the
+// game's Sink tiles, 208 are perfectly walkable — plain "Water" and "Shallow Water"
+// included, carrying only a 0.25-0.75 speed multiplier — and just 27 are genuinely
+// impassable. Those 27 also carry <NoWalk>, so WorldTAB's blockedMap already makes
+// them bit0 walls, exactly like any other unwalkable tile. Hard-blocking bit2 on top
+// therefore bought no real protection and cost the planner every shoreline, ford and
+// puddle in the game, which is why the player would not set foot in ankle-deep water.
+// The DODGE grid is untouched either way: FillOccGrid masks bit0 only, so the
+// immediate solver may still cross water to escape a shot.
 bool NavBlocked(const PlannerSnapshot& in, int gx, int gy, bool isStart)
 {
     if (gx < 0 || gx >= kNS || gy < 0 || gy >= kNS) return true;
     if (isStart) return false;
-    if (in.navGrid.flags[NavIdx(gx, gy)] & 0x5) return true;   // bit0 wall | bit2 water
+    if (in.navGrid.flags[NavIdx(gx, gy)] & 0x1) return true;   // bit0 wall (bit2 sink = COST, not a wall)
     return EnemyBlockedLocal(in.map, NavCellWorld(in.navGrid.center, gx, gy));
+}
+
+// Does this cell touch a square the server has NOT streamed yet (nav grid bit3)?
+// That is the EXPLORATION boundary: standing there streams the next ring of map in,
+// so the following re-plan can carry the route further toward the goal. FillNavGrid
+// folds bit3 into bit0 so the A* never routes INTO void, but the bit itself survives
+// — which is what lets the frontier test below tell "the map continues here" apart
+// from "this is a wall".
+bool NavTouchesVoid(const PlannerSnapshot& in, int gx, int gy)
+{
+    for (int d = 0; d < 8; ++d) {
+        const int nx = gx + kDx[d], ny = gy + kDy[d];
+        if (nx < 0 || nx >= kNS || ny < 0 || ny >= kNS) continue;
+        if (in.navGrid.flags[NavIdx(nx, ny)] & 0x8) return true;
+    }
+    return false;
 }
 
 float NavOctile(int ax, int ay, int bx, int by)
@@ -773,13 +860,26 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
 
     int   bestCell = start;                 // closest-to-goal free cell reached (partial fallback)
     float bestH    = NavOctile(startGx, startGy, goalGx, goalGy);
-    // Frontier partial: among reached cells that sit on the WINDOW EDGE (where the
-    // reachable area continues past the search bound toward unexplored space), the
-    // one nearest the goal. Heading here walks the player ALONG a wall/coast toward
-    // an opening as the window re-centers — instead of jamming into the interior
-    // dead-end closest to the goal (min-h over ALL cells), which is what stuck us on
-    // walls and made it take the long way. Falls back to bestCell only when the
-    // reachable area is fully enclosed (no edge reached).
+    // Frontier partial: among reached cells where THE REACHABLE AREA CONTINUES —
+    // either past the search bound (the window edge) or into map the server has not
+    // streamed yet (NavTouchesVoid) — the one nearest the goal. Heading here walks
+    // the player ALONG a wall/coast toward an opening as the window re-centers —
+    // instead of jamming into the interior dead-end closest to the goal (min-h over
+    // ALL cells), which is what stuck us on walls and made it take the long way.
+    // Falls back to bestCell only when the reachable area is fully enclosed.
+    //
+    // The VOID half is not optional. Unstreamed squares are hard-blocked, so in a
+    // Realm the reachable set is a ~20-tile streamed disc around the player plus the
+    // corridor they already walked. Nothing forward can touch a 72-tile window edge;
+    // the only cells that can are ones on the OLD trail, BEHIND the player. With the
+    // window edge as the sole frontier test, every partial re-plan (and a partial
+    // re-plans the instant its route is consumed) therefore turned the player around
+    // and marched them back down their own trail — the far side of the window scored
+    // as "the frontier" even though it sits ~90 tiles FARTHER from the goal than the
+    // forward exploration boundary does. Counting void-adjacent cells puts the real
+    // frontier — the leading edge of the streamed map — back in the running, where
+    // min-h picks it. A fully streamed map (dungeon/Nexus) has no void, so the
+    // wall-hugging behaviour this rule was written for is unchanged there.
     int   bestFrontier = -1;
     float bestFrontierH = 1e30f;
     int   pops     = 0;
@@ -794,7 +894,8 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
         const int cgx = cur % kNS, cgy = cur / kNS;
         const float h = NavOctile(cgx, cgy, goalGx, goalGy);
         if (h < bestH) { bestH = h; bestCell = cur; }
-        if (cur != start && (cgx == 0 || cgx == kNS - 1 || cgy == 0 || cgy == kNS - 1) &&
+        const bool onWindowEdge = (cgx == 0 || cgx == kNS - 1 || cgy == 0 || cgy == kNS - 1);
+        if (cur != start && (onWindowEdge || NavTouchesVoid(in, cgx, cgy)) &&
             h < bestFrontierH) { bestFrontierH = h; bestFrontier = cur; }
         if (cur == goalIdx) { reached = true; break; }
 
@@ -814,6 +915,14 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
             // way out (so a lava-floored arena never boxes the planner in). Water
             // (bit2) is NOT here: it is impassable and handled in NavBlocked.
             if (in.navGrid.flags[nidx] & 0x2) step += kUNavHazardCost;
+            // Sink/slow ground (shallow water, quicksand, honey): a COST, not a wall.
+            // It used to be hard-blocked alongside walls, which made the planner refuse
+            // to set foot in ankle-deep water — 208 of the game's Sink tiles are
+            // walkable (plain "Water" and "Shallow Water" among them) and only the 27
+            // that ALSO carry <NoWalk> are truly impassable, which blockedMap already
+            // catches as bit0. Costing it keeps the coast-hugging preference without
+            // fencing the player out of water they can simply wade across.
+            if (in.navGrid.flags[nidx] & 0x4) step += kUNavSinkCost;
             const float ng   = s_navG[cur] + step;
             if (!s_navSeen[nidx] || ng < s_navG[nidx]) {
                 s_navSeen[nidx] = 1; s_navClosed[nidx] = 0;
@@ -915,7 +1024,7 @@ static void ComputeDodge(const PlannerSnapshot& in, PlanResult& out)
     // arrival-time safety gate is cheap per candidate edge. Plain-data — reuses the
     // lane pointTimesMs already in the snapshot's DangerMap copy; no IL2CPP. Culled
     // relative to the grid center (window extent + margin) — see plan 72.
-    Core::Temporal::Build(in.map, in.settings.hitScale, in.grid.center,
+    Core::Temporal::Build(in.map, in.settings.hitScale, in.settings.positionUncertainty, in.grid.center,
                           kUPathMaxRadCells * kUPathCellTiles + kUTemporalCullTiles,
                           s_tctx);
 

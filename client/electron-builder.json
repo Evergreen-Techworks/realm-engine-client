@@ -31,7 +31,8 @@
     },
     { "from": "assets", "to": "assets" },
     { "from": "dist/public", "to": "src/dashboard/public" },
-    { "from": "packages/sdk", "to": "sdk" }
+    { "from": "packages/sdk", "to": "sdk" },
+    { "from": "script-packages", "to": "script-packages" }
   ],
   "asar": true,
   "asarUnpack": [
@@ -41,7 +42,7 @@
     "electron/native/build/Release/*.node"
   ],
   "win": {
-    "icon": "assets/app-icon.png",
+    "icon": "assets/app-icon.ico",
     "target": [
       { "target": "nsis", "arch": ["x64"] },
       { "target": "portable", "arch": ["x64"] }
@@ -52,6 +53,9 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": "always",
     "createStartMenuShortcut": true,
-    "shortcutName": "Realm Engine"
+    "shortcutName": "Realm Engine",
+    "installerIcon": "assets/app-icon.ico",
+    "uninstallerIcon": "assets/app-icon.ico",
+    "installerHeaderIcon": "assets/app-icon.ico"
   }
 }

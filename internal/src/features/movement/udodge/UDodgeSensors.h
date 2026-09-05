@@ -3,6 +3,11 @@
 
 namespace UDodge { namespace Sensors {
 
+// Short-lived ENEMYSHOOT recovery records from the proxy. Runtime projectiles
+// remain authoritative and suppress matching provisional lanes.
+void RecordPacketShot(const char* encoded);
+void ClearPacketShots();
+
 // Host environment probes (match the Env fn-pointer signatures).
 bool IsHazardAt(float worldX, float worldY);
 bool CanOccupy(float worldX, float worldY, bool safeWalk);

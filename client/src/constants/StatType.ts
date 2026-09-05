@@ -35,6 +35,7 @@ export const StatType = {
   NameStat: 31,
   Texture2: 33,
   Credits: 34,
+  PortalPlayerCount: 36,
   AccountId: 38,
   CurrentFame: 39,
   /** Combined gear + exalt max-HP boost (subtract `WireExaltMaxHP` 111 for gear-only). */

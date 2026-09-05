@@ -42,7 +42,7 @@ std::atomic<bool>  g_debugWeights{ false };
 // Per-phase perf timing (QueryPerformanceCounter probes in Tick). Pure developer
 // diagnostics — default OFF so shipped Release play pays nothing; a developer
 // flips it on via SetDiagTiming to measure. Gates PhaseTimer + the 120-tick log.
-std::atomic<bool>  g_diagTiming{ true };   // TEMP: default ON to capture the perf baseline
+std::atomic<bool>  g_diagTiming{ false };  // developer-only probes/logging; OFF in normal play
 std::atomic<bool>  g_lockFollow{ false };
 std::atomic<bool>  g_followLantern{ false };
 std::atomic<bool>  g_autopilot{ false };   // autopilot auto-lock (default OFF)
@@ -54,6 +54,11 @@ std::atomic<int>   g_standOnType{ 0 };
 std::atomic<float> g_orbitRange{ 0.f };    // boss orbit standoff (tiles); 0 = auto
 std::atomic<float> g_planRadius{ 20.f };   // planner window radius (grid cells) [8,40]
 std::atomic<bool>  g_drawPath{ true };     // draw the plan-60 route overlay
+std::atomic<bool>  g_moveEnvelope{ true }; // him-style local desired / clamped MOVE split
+std::atomic<bool>  g_moveEnvelopeArmed{ false }; // proxy confirms outbound clamp is installed
+std::atomic<float> g_serverPositionError{ 0.f }; // desired position ahead of last sent MOVE
+std::atomic<float> g_serverAnchorX{ 0.f }, g_serverAnchorY{ 0.f };
+std::atomic<bool>  g_serverAnchorValid{ false };
 
 // Last-resort signal for AutoNexus (plan 77). Written at the end of Tick, read
 // via GetSafetyState from AutoNexus's poll thread. g_enabled (above) carries the
@@ -96,12 +101,17 @@ struct NavCache {
     bool partial = false;        // route only reaches toward the goal (needs extending near its end)
 };
 NavCache g_navCache;
+// Distance-sampled dungeon breadcrumbs. Global (rather than Tick-local statics)
+// so realm/location transitions can invalidate them explicitly.
+Vec2 g_trail[16]{};       // newest at [0]
+int  g_trailCount = 0;
 constexpr float kNavGoalMoveTiles = 3.0f;   // goal moved this far → re-plan
 constexpr float kNavDeviateTiles  = 5.0f;   // player pushed this far off the route → re-plan
 constexpr float kNavEndTiles      = 3.0f;   // within this of the route's end → consumed → re-plan
 // Per-tick safe-position solver result — game-thread-owned, cached for one
 // server tick and re-validated (or re-solved) every frame (plan 64).
 Solver::SolveResult g_solve;
+uint32_t            g_solveSeq = 0;
 // Latest grid route from the async worker (plan 65). Game-thread-owned cache,
 // refreshed from Worker::TryGetLatestPlan when the worker isn't busy; consumed by
 // the solver as a lookahead bias. g_lastPubSeq is the newest snapshot sequence we
@@ -183,6 +193,7 @@ Settings ReadSettings()
     const float stepT = g_stepTiles.load(std::memory_order_relaxed);
     s.stepTiles    = stepT <= 0.f ? 0.f : Clamp(stepT, 0.4f, 3.f);
     s.hitScale     = Clamp(g_hitScale.load(std::memory_order_relaxed), 0.25f, 2.5f);
+    s.positionUncertainty = Clamp(g_serverPositionError.load(std::memory_order_relaxed), 0.f, 0.35f);
     s.reactMargin  = Clamp(g_reactMargin.load(std::memory_order_relaxed), 0.05f, 2.0f);
     s.safeWalk     = g_safeWalk.load(std::memory_order_relaxed);
     s.speedScale   = g_speedScale.load(std::memory_order_relaxed);
@@ -247,8 +258,11 @@ void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls)
     if (rebuildWalls) {
         const float originX = player.x - static_cast<float>(R) * kUPathCellTiles;
         const float originY = player.y - static_cast<float>(R) * kUPathCellTiles;
+        // Fold hazards into this same bulk tile-map pass. The former per-cell
+        // live query below performed up to 2401 lookups (and hundreds of raw game
+        // calls) per publish, which was a major game-thread FPS regression.
         WorldTAB::CopyBoxBlocked(originX, originY, S, kUPathCellTiles,
-                                 kUOccPlayerHalfEdge, /*foldHazard=*/false, wallScratch);
+                                 kUOccPlayerHalfEdge, /*foldHazard=*/true, wallScratch);
     }
 
     for (int gy = 0; gy < S; ++gy) {
@@ -258,12 +272,10 @@ void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls)
             if (rebuildWalls) {
                 if (wallScratch[i] & 0x1) f |= 0x1;
                 else                      f &= static_cast<uint8_t>(~0x1);
+                if (wallScratch[i] & 0x8) f |= 0x1; // unstreamed/void is a hard boundary
+                if (wallScratch[i] & 0x2) f |= 0x2;
+                else                      f &= static_cast<uint8_t>(~0x2);
             }
-            // HAZARD bit1 stays per-cell via the cheap per-tick hazard memo.
-            const float wx = player.x + static_cast<float>(gx - R) * kUPathCellTiles;
-            const float wy = player.y + static_cast<float>(gy - R) * kUPathCellTiles;
-            if (Sensors::IsHazardAt(wx, wy)) f |= 0x2;
-            else                             f &= static_cast<uint8_t>(~0x2);
         }
     }
 }
@@ -287,6 +299,8 @@ void FillNavGrid(Path::NavGrid& grid, Vec2 player, bool safeWalk)
     const float originY = player.y - static_cast<float>(kUNavRadCells) * kUNavCellTiles;
     WorldTAB::CopyBoxBlocked(originX, originY, kUNavSide, kUNavCellTiles,
                              kUOccPlayerHalfEdge, /*foldHazard=*/safeWalk, grid.flags);
+    for (int i = 0; i < kUNavCells; ++i)
+        if (grid.flags[i] & 0x8) grid.flags[i] |= 0x1; // never A* into blank map void
 }
 
 // Follow the cached nav route: project the player onto the polyline, then place the
@@ -396,12 +410,14 @@ void SetEnabled(bool enabled)
         g_solve = Solver::SolveResult{};
         g_route = Path::PlanResult{};
         g_lastPubSeq = 0;
+        g_solveSeq = 0;
         // Clear the AutoNexus last-resort signal (plan 77): udodge is no longer
         // handling anything, so it must not report itself as covering the player.
         g_udExposed.store(false, std::memory_order_relaxed);
         g_udStandClr.store(1e9f, std::memory_order_relaxed);
         g_udMoveVx.store(0.f, std::memory_order_relaxed);
         g_udMoveVy.store(0.f, std::memory_order_relaxed);
+        g_serverAnchorValid.store(false, std::memory_order_release);
         PublishDebug(DebugSnapshot{});
     }
 }
@@ -417,6 +433,9 @@ SafetyState GetSafetyState()
     s.tickId         = g_udSafetyTick.load(std::memory_order_relaxed);
     s.moveVx         = g_udMoveVx.load(std::memory_order_relaxed);
     s.moveVy         = g_udMoveVy.load(std::memory_order_relaxed);
+    s.serverAnchorValid = g_serverAnchorValid.load(std::memory_order_acquire);
+    s.serverX        = g_serverAnchorX.load(std::memory_order_relaxed);
+    s.serverY        = g_serverAnchorY.load(std::memory_order_relaxed);
     return s;
 }
 
@@ -436,11 +455,24 @@ NavWedge GetNavWedge()
 void OnEnter()
 {
     ProjectileTracking::Install();   // sensors need the projectile hook
-    Worker::Start();                 // async grid-pathfinder worker (plan 65)
+    // A completed result from the previous realm is still valid plain data as far
+    // as the worker handoff knows. Flush both pending/latest slots by restarting
+    // the worker before accepting any route in the new location.
+    Worker::Stop();
+    Worker::Start();
     g_state.Reset();
     g_solve = Solver::SolveResult{};
     g_route = Path::PlanResult{};
+    g_navCache = NavCache{};
+    g_trailCount = 0;
+    for (Vec2& p : g_trail) p = {};
+    // Every one of these stores world coordinates/object ids and is therefore
+    // location-scoped. Never carry a click/follow/lock waypoint across a realm.
+    DangerPlanner::ClearWalkGoal();
+    DangerPlanner::ClearFollowPlayer();
+    DangerPlanner::ClearEnemyLock();
     g_lastPubSeq = 0;
+    g_solveSeq = 0;
     // Reset the AutoNexus last-resort signal (plan 77) on (re)entry.
     g_udExposed.store(false, std::memory_order_relaxed);
     g_udStandClr.store(1e9f, std::memory_order_relaxed);
@@ -558,13 +590,34 @@ void Tick(void* player, float px, float py, float dt)
     const int32_t followId = DangerPlanner::GetFollowPlayer();
     if (followId != 0 && !walkActive && !wasdActive) {
         static ULONGLONG s_lastFollowMs = 0;
+        static ULONGLONG s_followMissSinceMs = 0;
+        static int32_t   s_lastFollowId = 0;
         static float     s_fpx = 0.f, s_fpy = 0.f;
         static bool      s_fpOk = false;
         const ULONGLONG  nowFollow = GetTickCount64();
+        if (followId != s_lastFollowId) {
+            s_lastFollowId = followId;
+            s_followMissSinceMs = 0;
+            s_fpOk = false;
+        }
         if (nowFollow - s_lastFollowMs >= 50ULL) {   // 20 Hz resolve
             s_lastFollowMs = nowFollow;
-            s_fpOk = EnemyTracker::ResolveObjectPos(followId, s_fpx, s_fpy);
-            if (!s_fpOk) DangerPlanner::ClearFollowPlayer();   // left view / despawned
+            float liveX = 0.f, liveY = 0.f;
+            if (EnemyTracker::ResolveObjectPos(followId, liveX, liveY)) {
+                s_fpx = liveX; s_fpy = liveY;
+                s_fpOk = true;
+                s_followMissSinceMs = 0;
+            } else {
+                // A world-dict refresh can transiently miss an otherwise-live
+                // player. Keep both the target id and last-known position instead
+                // of permanently cancelling /follow on one failed 20-Hz lookup.
+                if (s_followMissSinceMs == 0) s_followMissSinceMs = nowFollow;
+                if (nowFollow - s_followMissSinceMs > 3000ULL) {
+                    s_fpOk = false;
+                    DangerPlanner::ClearFollowPlayer();
+                    s_lastFollowId = 0;
+                }
+            }
         }
         if (s_fpOk) {
             const float tox = s_fpx - px, toy = s_fpy - py;
@@ -589,8 +642,15 @@ void Tick(void* player, float px, float py, float dt)
         const float lookahead = std::max(b, 1.f) * kUNavLookaheadBudgets;
         float dev = 0.f; bool nearEnd = false;
         navStep = NavStepFromCache(g_navCache, in.player, lookahead, dev, nearEnd);
+        const bool goalMoved = g_navCache.valid &&
+            LenSq(Sub(wg, g_navCache.goal)) > kNavGoalMoveTiles * kNavGoalMoveTiles;
+        // Never take even one more step along the previous waypoint's corridor.
+        // It may point directly behind the player after a quest/portal handoff.
+        if (goalMoved) {
+            g_navCache.valid = false;
+            navStep = wg;
+        }
         navReplan = !g_navCache.valid
-            || LenSq(Sub(wg, g_navCache.goal)) > kNavGoalMoveTiles * kNavGoalMoveTiles  // goal moved
             || dev > kNavDeviateTiles                                                   // pushed off the route
             || (nearEnd && g_navCache.partial)                                          // consumed a partial route → extend
             || (nearEnd && LenSq(Sub(in.player, wg)) > kNavEndTiles * kNavEndTiles);    // at route end but not the goal
@@ -659,13 +719,15 @@ void Tick(void* player, float px, float py, float dt)
         // across classes) with an absolute tile floor.
         const float innerStandoff = std::max(kUInnerStandoffMinTiles,
                                              weaponRange * kUInnerStandoffFrac);
+        const float engagementRange = std::max(innerStandoff + kUDurablePocketMargin,
+                                               weaponRange - kUEngagementRangeInset);
         // The orbit standoff POINT must sit inside the annulus [innerStandoff,
         // weaponRange], so clamp it above the inner radius (with a small margin)
         // and never past weapon range — the soft goal never aims point-blank.
         float standoff = settings.orbitRange > 0.f
             ? settings.orbitRange : weaponRange * 0.85f;
         standoff = std::clamp(standoff, innerStandoff + kUDurablePocketMargin,
-                              std::max(innerStandoff + kUDurablePocketMargin, weaponRange));
+                              engagementRange);
         const Vec2 fromLock = Sub(in.player, g_map.lockPos);
         const float dist = Len(fromLock);
         if (dist > 1e-3f) {
@@ -678,7 +740,7 @@ void Tick(void* player, float px, float py, float dt)
         // innerStandoff, and biases dodges to keep the annulus.
         goal.fromLock = true;
         goal.lockPos  = g_map.lockPos;
-        goal.maxRange = weaponRange;      // annulus OUTER radius (still-hittable boundary)
+        goal.maxRange = engagementRange;  // inset outer radius: shots connect reliably
         goal.innerStandoff = innerStandoff; // annulus INNER radius (never fight point-blank)
     }
 
@@ -694,7 +756,28 @@ void Tick(void* player, float px, float py, float dt)
     static int      s_pubFrame    = 0;
     const bool tickChanged      = tickOk && tick != s_lastPubTick;
     const bool throttleFallback = !tickOk && ((s_pubFrame++ % 12) == 0);
-    if (tickChanged || throttleFallback) {
+    if (rebuilt || tickChanged || throttleFallback) {
+        // Distance-sampled breadcrumbs preserve the corridor used to enter a room.
+        // One older point inside the local planner window is enough to disambiguate
+        // "run back" from "go deeper" without turning the trail into a hard goal.
+        if (g_trailCount == 0 || Len(Sub(in.player, g_trail[0])) > 20.f) {
+            g_trail[0] = in.player;
+            g_trailCount = 1;            // initial sample or realm teleport
+        } else if (Len(Sub(in.player, g_trail[0])) >= 0.75f) {
+            const int lim = std::min(g_trailCount, 15);
+            for (int i = lim; i > 0; --i) g_trail[i] = g_trail[i - 1];
+            g_trail[0] = in.player;
+            g_trailCount = std::min(g_trailCount + 1, 16);
+        }
+        bool retreatValid = false;
+        Vec2 retreatPos{};
+        for (int i = 1; i < g_trailCount; ++i) {
+            const float d = Len(Sub(in.player, g_trail[i]));
+            if (d >= 1.5f && d <= 8.f) {
+                retreatValid = true;
+                retreatPos = g_trail[i]; // oldest/farthest breadcrumb still local
+            }
+        }
         // Publish is tick-gated, so re-rasterize walls each publish (once per tick,
         // ~5 Hz). REGION #2: when locked on a boss, CENTER the search grid on the
         // BOSS so the whole in-range disk (every spot from which the boss is still
@@ -737,6 +820,8 @@ void Tick(void* player, float px, float py, float dt)
         s_snap.settings         = settings;
         s_snap.goalActive       = goal.active;
         s_snap.goalPos          = goal.pos;
+        s_snap.goalWalkTo       = goal.walkTo;
+        s_snap.playerOnHazard   = in.playerOnHazard;
         s_snap.hasLock          = goal.fromLock;
         s_snap.lockPos          = goal.lockPos;
         s_snap.weaponRangeTiles = goal.fromLock ? goal.maxRange : 0.f;
@@ -747,6 +832,8 @@ void Tick(void* player, float px, float py, float dt)
         // below, after this publish block), so this is exactly last tick's committed goal.
         s_snap.prevGoalValid    = g_route.found;
         s_snap.prevGoalPos      = g_route.goalPos;
+        s_snap.retreatValid     = retreatValid;
+        s_snap.retreatPos       = retreatPos;
         s_snap.map              = g_map;    // plain-data danger copy (lanes/zones/enemies)
         // Navigation (walk-to): only ask the worker to (re)plan — and only pay the
         // large nav-grid rasterize — when a re-plan is actually triggered (navReplan).
@@ -769,11 +856,29 @@ void Tick(void* player, float px, float py, float dt)
 
     // Refresh the cached route when the worker isn't busy (non-blocking — keeps the
     // last route on contention / cold start).
-    Path::PlanResult fresh{};
-    if (Worker::TryGetLatestPlan(fresh)) {
-        g_route = fresh;
+    Worker::Result fresh{};
+    bool rejectedFreshWalk = false;
+    if (Worker::TryGetLatest(fresh)) {
+        const bool seqFresh = fresh.plan.forSeq != 0 && g_lastPubSeq >= fresh.plan.forSeq
+            && (g_lastPubSeq - fresh.plan.forSeq) <= kUPlanMaxStaleSeq;
+        const bool walkMatches = fresh.walkActive == walkActive
+            && (!walkActive || LenSq(Sub(fresh.walkGoal, Vec2{walkX, walkY})) <= 0.25f * 0.25f);
+        const float maxOriginDrift = std::max(3.f, b * 2.f);
+        const bool originFresh = LenSq(Sub(fresh.snapshotPlayer, in.player))
+            <= maxOriginDrift * maxOriginDrift;
+        const bool acceptFresh = seqFresh && walkMatches && originFresh;
+        if (acceptFresh) {
+            g_route = fresh.plan;
+            g_solve = fresh.solve;
+            g_solveSeq = fresh.plan.forSeq;
+        } else {
+            rejectedFreshWalk = walkActive;
+            DBG_FILE_LOG("[UDodge] Discard stale worker result seq=" << fresh.plan.forSeq
+                << " latest=" << g_lastPubSeq << " walkMatch=" << walkMatches
+                << " originFresh=" << originFresh);
+        }
         static int s_wpN = 0;
-        if ((s_wpN++ % 120) == 0)
+        if (acceptFresh && (s_wpN++ % 120) == 0)
             DBG_FILE_LOG("[UDodge] Worker route seq=" << g_route.forSeq
                 << " found=" << g_route.found << " len=" << g_route.waypoints
                 << " gridR=" << g_route.radiusCells << " pops=" << g_route.pops
@@ -795,12 +900,28 @@ void Tick(void* player, float px, float py, float dt)
         // Only updates when the worker actually ran the nav A* (navFound) — which is
         // only when we requested a re-plan (navActive), so the cache holds the last
         // committed route until the next trigger.
-        if (g_route.navFound && g_route.navWptCount >= 2) {
+        if (acceptFresh && g_route.navFound && g_route.navWptCount >= 2) {
             g_navCache.valid   = true;
             g_navCache.goal    = { walkX, walkY };
             g_navCache.n       = std::min(g_route.navWptCount, kMaxNavWpts);
             for (int i = 0; i < g_navCache.n; ++i) g_navCache.wpts[i] = g_route.navWpts[i];
             g_navCache.partial = g_route.navPartial;
+        } else if (acceptFresh && g_route.navPops > 0 &&
+                   g_route.navWptCount < 2 && !g_route.navArrived) {
+            // DEADLOCK GUARD. The A* ran (navPops > 0) and came back with no usable
+            // route — ComputeNav's `target == start` branch, i.e. nothing reachable
+            // beat the player's own cell. The cache is (correctly) not updated with a
+            // 1-point route, but leaving the OLD one valid is a trap: the player is
+            // standing on its far end, so NavStepFromCache hands back that end point,
+            // goal.pos lands within kUWalkArriveTiles of the player, the solver's
+            // `repositionToward` goes false and it HOLDS (NO-MOVE kind=0). Holding
+            // means the map never streams, so the next A* returns the same dead
+            // result — a permanent stall that only broke when the walk goal itself
+            // moved kNavGoalMoveTiles (for a committed quest target: minutes, or
+            // never). Dropping the cache falls through to `navStep = wg` below,
+            // steering straight at the raw goal exactly as on a cold start; moving
+            // streams new map and the A* recovers on its own.
+            g_navCache.valid = false;
         }
     }
 
@@ -813,14 +934,17 @@ void Tick(void* player, float px, float py, float dt)
         routeForSolve = g_route;
     }
 
-    // ── Solve once per server tick ──────────────────────────────────────────
-    // A rebuild means the tick id changed or a structural projectile change forced
-    // it — re-solve then and cache; between ticks the cached target is held and
-    // merely re-validated + walked below.
-    if (rebuilt) {
+    // A cold/late worker must not stall navigation or leave an old absolute
+    // target behind the player. The expensive grid search stays asynchronous;
+    // this is only the small live safety solver, at server-tick cadence.
+    if (walkActive && tickChanged && (!g_navCache.valid || rejectedFreshWalk)) {
         PhaseTimer _p(g_tSolve);
         Solver::Solve(in, b, goal, routeForSolve, g_state, g_solve);
     }
+
+    // Normal temporal solving is performed with the path search on the worker.
+    // The game thread keeps only the emergency same-frame re-solve below when a
+    // live re-anchor invalidates the worker's already-published target.
 
     const float frameMs = Clamp(dt * 1000.f, 1.f, 250.f);
     Vec2 moveTarget = in.player;
@@ -849,8 +973,9 @@ void Tick(void* player, float px, float py, float dt)
         const bool enemyClearNow = (g_solve.kind == Solver::SolveKind::Fallback)
             ? !Core::EnemyBlocked(in, g_solve.target)
             : !Core::EnemyPathBlocked(in, in.player, g_solve.target);
+        const bool occupancyClearNow = OccupancyPathClear(in, in.player, g_solve.target);
         bool targetOk;
-        if (!enemyClearNow) {
+        if (!enemyClearNow || !occupancyClearNow) {
             targetOk = false;
         } else if (g_solve.kind == Solver::SolveKind::Fallback || g_solve.prePosition) {
             // Fix C (plan 78): a pre-position/fallback step is deliberately
@@ -861,7 +986,7 @@ void Tick(void* player, float px, float py, float dt)
             // sliding onto the threaded path went uncaught until the next tick. The
             // ctx is rebuilt from the re-anchored map (cheap; shared Core::Temporal).
             Core::Temporal::Ctx ctx;
-            Core::Temporal::Build(*in.map, in.settings.hitScale, in.player,
+            Core::Temporal::Build(*in.map, in.settings.hitScale, in.settings.positionUncertainty, in.player,
                                   kUTemporalCullTiles, ctx);
             // Zone floor first: Temporal is lane-only, so a bomb that armed since the
             // solve would not invalidate the target on its own. This is the per-frame
@@ -939,6 +1064,11 @@ void Tick(void* player, float px, float py, float dt)
                         : 0.f)
                 << " pocketDist=" << g_solve.pocketDist
                 << " tempLanes=" << (int)g_solve.tempLanes
+                // Temporal durability of the chosen target (0 = clears the dwell
+                // window and no more, 1 = clear through the whole horizon).
+                << " dur=" << g_solve.targetDurability
+                << " envelope=" << (g_moveEnvelopeArmed.load(std::memory_order_relaxed) ? 1 : 0)
+                << " srvErr=" << in.settings.positionUncertainty
                 // Smoothing diagnostics: dot of the route step vs the previous
                 // committed heading (1=same, -1=reversal), and whether the
                 // anti-oscillation guard damped a hard route reversal this tick.
@@ -959,7 +1089,12 @@ void Tick(void* player, float px, float py, float dt)
     // Computed once here (unconditional): it feeds both the debug snapshot below
     // and the AutoNexus last-resort signal at the end of Tick (plan 77), which
     // must be published even when the debug overlay is off.
-    const float standClr = Core::PointSafety(in, in.player);
+    float standClr = Core::PointSafety(in, in.player);
+    if (g_serverAnchorValid.load(std::memory_order_acquire)) {
+        const Vec2 serverPos{ g_serverAnchorX.load(std::memory_order_relaxed),
+                              g_serverAnchorY.load(std::memory_order_relaxed) };
+        standClr = std::min(standClr, Core::PointSafety(in, serverPos));
+    }
 
     if (settings.debugOverlay) {
         PhaseTimer _p(g_tDebug);
@@ -974,6 +1109,9 @@ void Tick(void* player, float px, float py, float dt)
         }
         d.solveKind = static_cast<uint8_t>(g_solve.kind);
         d.player = in.player;
+        d.serverAnchorValid = g_serverAnchorValid.load(std::memory_order_acquire);
+        d.serverAnchor = { g_serverAnchorX.load(std::memory_order_relaxed),
+                           g_serverAnchorY.load(std::memory_order_relaxed) };
         d.intentDir = goal.active ? Normalize(Sub(goal.pos, in.player)) : Vec2{};
         d.moveTarget = g_solve.shouldMove ? g_solve.target : in.player;
         d.overrideActive = g_solve.shouldMove;
@@ -1182,5 +1320,17 @@ void  SetPlanRadius(float cells) { g_planRadius.store(Clamp(cells, 8.f, 40.f), s
 float GetPlanRadius() { return g_planRadius.load(std::memory_order_relaxed); }
 void  SetDrawPath(bool en) { g_drawPath.store(en, std::memory_order_relaxed); }
 bool  GetDrawPath() { return g_drawPath.load(std::memory_order_relaxed); }
+void  SetMoveEnvelope(bool en) { g_moveEnvelope.store(en, std::memory_order_relaxed); }
+bool  GetMoveEnvelope() { return g_moveEnvelope.load(std::memory_order_relaxed); }
+void  SetMoveEnvelopeArmed(bool armed) {
+    g_moveEnvelopeArmed.store(armed, std::memory_order_release);
+    if (!armed) g_serverPositionError.store(0.f, std::memory_order_relaxed);
+}
+void  SetServerPositionError(float tiles) {
+    g_serverPositionError.store(Clamp(tiles, 0.f, 0.35f), std::memory_order_relaxed);
+}
+void  SetServerAnchorX(float x) { if (std::isfinite(x)) g_serverAnchorX.store(x, std::memory_order_relaxed); }
+void  SetServerAnchorY(float y) { if (std::isfinite(y)) g_serverAnchorY.store(y, std::memory_order_relaxed); }
+void  SetServerAnchorValid(bool valid) { g_serverAnchorValid.store(valid, std::memory_order_release); }
 
 } // namespace UDodge

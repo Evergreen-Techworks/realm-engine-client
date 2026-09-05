@@ -8,6 +8,8 @@
 static DWORD WINAPI InitThread(LPVOID) {
     // This whole thing is just to forward traffic to 127.0.0.1:2050 
     // so that we can intercept the packets before sending them to the server.
+    // Avoid MinHook's thread suspension while Unity is inside il2cpp_init.
+    Sleep(3000);
     InstallConnectHook();
     return 0;
 }

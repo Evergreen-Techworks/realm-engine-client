@@ -17,6 +17,7 @@ struct Config {
     bool           shootInvulnerable    = false;
     bool           prioritizeBosses     = true;
     bool           ignoreWalls          = true;  // skip noHealthBar entities
+    bool           ignoreScenery        = true;  // skip static non-shooting breakables
     float          rangeLeadBias        = 1.0f;  // extra tiles past weapon range
     bool           mouseBoundingEnabled = false;
     float          mouseBoundingRange   = 8.0f;

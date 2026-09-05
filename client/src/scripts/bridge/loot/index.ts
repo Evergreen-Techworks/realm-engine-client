@@ -53,6 +53,18 @@ const STAT_POTION_IDS = new Set<number>([
   9064, 9065, 9066, 9067, 9068, 9069,
 ]);
 
+type PotStat = 'attack' | 'defense' | 'speed' | 'dexterity' | 'vitality' | 'wisdom' | 'maxHitPoints' | 'maxMagicPoints';
+const POT_STAT = new Map<number, PotStat>([
+  [2593, 'attack'], [5465, 'attack'], [9064, 'attack'],
+  [2591, 'defense'], [5466, 'defense'], [9065, 'defense'],
+  [2592, 'speed'], [5467, 'speed'], [9066, 'speed'],
+  [2636, 'dexterity'], [5470, 'dexterity'], [9069, 'dexterity'],
+  [2613, 'vitality'], [5468, 'vitality'], [9067, 'vitality'],
+  [2612, 'wisdom'], [5469, 'wisdom'], [9068, 'wisdom'],
+  [2793, 'maxHitPoints'], [5471, 'maxHitPoints'], [9070, 'maxHitPoints'],
+  [2794, 'maxMagicPoints'], [5472, 'maxMagicPoints'], [9071, 'maxMagicPoints'],
+]);
+
 const WEAPON_SLOT_TYPES = new Set<number>([1, 2, 3, 8, 17, 24]);
 const ABILITY_SLOT_TYPES = new Set<number>([4, 5, 11, 12, 13, 15, 16, 18, 19, 20, 21, 22, 23, 25, 27, 28, 29, 30, 31]);
 const ARMOR_SLOT_TYPES = new Set<number>([6, 7, 14]);
@@ -82,6 +94,17 @@ function getGearCategory(slotType: number): GearCategory | null {
   if (ARMOR_SLOT_TYPES.has(slotType)) return 'armor';
   if (RING_SLOT_TYPES.has(slotType)) return 'ring';
   return null;
+}
+
+function gearSlotIndex(category: GearCategory): number {
+  return category === 'weapon' ? 0 : category === 'ability' ? 1 : category === 'armor' ? 2 : 3;
+}
+
+function gearRank(info: ItemInfo | undefined): number {
+  if (!info) return -1;
+  if (info.isUT) return 1000;
+  if (info.isST) return 900;
+  return info.tier ?? -1;
 }
 
 // ─── ItemInfo catalog ────────────────────────────────────────────────────────
@@ -353,22 +376,36 @@ export function install(deps: BridgeDeps): void {
   }
 
   // ─── Bag queries ────────────────────────────────────────────────────────────
-  loot.getBags = () => Array.from(activeBags.values());
+  const liveBag = (bag: LootBag): LootBag | null => {
+    const entity = deps.worldState.getEntity(bag.objectId);
+    if (!entity) return null;
+    const items: LootItem[] = [];
+    for (let slot = 0; slot < 8; slot++) {
+      const objectType = Number(entity.stats?.[String(StatType.Inventory0 + slot)] ?? -1);
+      if (objectType <= 0) continue;
+      items.push({ objectType, slotIndex: slot, itemName: deps.gameData.getObject(objectType)?.id });
+    }
+    return { ...bag, position: { x: entity.pos.x, y: entity.pos.y }, items };
+  };
+  const liveBags = () => Array.from(activeBags.values())
+    .map(liveBag).filter((bag): bag is LootBag => bag != null);
+
+  loot.getBags = liveBags;
 
   loot.getNearbyBags = (radius = 5) => {
     const pd = deps.clientRef.current?.playerData;
-    if (!pd) return Array.from(activeBags.values());
+    if (!pd) return liveBags();
     const { x: px, y: py } = pd.pos;
-    return Array.from(activeBags.values()).filter(
+    return liveBags().filter(
       (b) => Math.hypot(b.position.x - px, b.position.y - py) <= radius,
     );
   };
 
   loot.getBagsByRarity = (rarity) =>
-    Array.from(activeBags.values()).filter((b) => b.rarity === rarity);
+    liveBags().filter((b) => b.rarity === rarity);
 
   loot.getBagsContaining = (objectType) =>
-    Array.from(activeBags.values()).filter((b) => b.items.some((i) => i.objectType === objectType));
+    liveBags().filter((b) => b.items.some((i) => i.objectType === objectType));
 
   // ─── Events ─────────────────────────────────────────────────────────────────
   loot.onBagDropped = (handler) => register('bagDropped', handler);
@@ -500,4 +537,69 @@ export function install(deps: BridgeDeps): void {
   loot.isHpPot = (objectType) => HP_POTION_IDS.has(objectType);
   loot.isMpPot = (objectType) => MP_POTION_IDS.has(objectType);
   loot.isLifeManaPot = (objectType) => LIFE_MANA_POTION_IDS.has(objectType);
+
+  loot.isUsefulStatPot = (objectType) => {
+    const c = deps.clientRef.current;
+    if (!c) return false;
+    const caps = deps.gameData.getPlayerClassStatMaxes(c.playerData.classType);
+    if (!caps) return false;
+    const base: Record<PotStat, number> = {
+      attack: c.playerData.attack, defense: c.playerData.defense,
+      speed: c.playerData.speed, dexterity: c.playerData.dexterity,
+      vitality: c.playerData.vitality, wisdom: c.playerData.wisdom,
+      maxHitPoints: c.playerData.maxHealth - c.playerData.healthBonus - c.playerData.exaltedMaxHP,
+      maxMagicPoints: c.playerData.maxMana - c.playerData.manaBonus - c.playerData.exaltedMaxMP,
+    };
+    const cap: Record<PotStat, number> = {
+      attack: caps.attack, defense: caps.defense, speed: caps.speed, dexterity: caps.dexterity,
+      vitality: caps.hpRegen, wisdom: caps.mpRegen,
+      maxHitPoints: caps.maxHitPoints, maxMagicPoints: caps.maxMagicPoints,
+    };
+    if (objectType === 5094) {
+      return (['attack', 'defense', 'speed', 'dexterity', 'vitality', 'wisdom'] as PotStat[])
+        .some((key) => base[key] < cap[key]);
+    }
+    const key = POT_STAT.get(objectType);
+    return key != null && base[key] < cap[key];
+  };
+
+  loot.isEquipmentUpgrade = (objectType) => {
+    const c = deps.clientRef.current;
+    const candidate = catalog.get(objectType);
+    const category = candidate ? getGearCategory(candidate.slotType) : null;
+    if (!c || !candidate || !category) return false;
+    const equippedType = Number(c.playerData.inventory[gearSlotIndex(category)] ?? -1);
+    if (equippedType <= 0) return true;
+    const equipped = catalog.get(equippedType);
+    // Exact SlotType compatibility prevents, for example, a sword replacing a wand.
+    if (!equipped || equipped.slotType !== candidate.slotType) return false;
+    return gearRank(candidate) > gearRank(equipped);
+  };
+
+  loot.getEquipmentSlot = (objectType) => {
+    const info = catalog.get(objectType);
+    const category = info ? getGearCategory(info.slotType) : null;
+    return category ? gearSlotIndex(category) : -1;
+  };
+
+  loot.equipFromBag = (bag, slotIndex) => {
+    const c = deps.clientRef.current;
+    if (!c?.connected) return false;
+    const itemId = getCurrentBagSlotItem(deps, bag.objectId, slotIndex);
+    if (!loot.isEquipmentUpgrade(itemId)) return false;
+    const info = catalog.get(itemId);
+    const category = info ? getGearCategory(info.slotType) : null;
+    if (!category) return false;
+    const equipSlot = gearSlotIndex(category);
+    try {
+      sendInventorySwap(c, deps, bag.objectId, slotIndex, itemId, {
+        packetSlotId: equipSlot,
+        currentObjectType: Number(c.playerData.inventory[equipSlot] ?? -1),
+      });
+      return true;
+    } catch (err) {
+      Logger.warn('BridgeLoot', `equipFromBag failed: ${(err as Error).message}`);
+      return false;
+    }
+  };
 }

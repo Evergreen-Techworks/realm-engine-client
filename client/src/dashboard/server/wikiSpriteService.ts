@@ -2,7 +2,7 @@
 // game data (spritesheet.xml + atlas images). Extracted from DevServer; collaborates
 // via injected deps (publicDir, getRotmgPath, getExtractorGameDataPath).
 import http from 'http';
-import sharp, { type Metadata } from 'sharp';
+import sharp from 'sharp';
 import { XMLParser } from 'fast-xml-parser';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, dirname, resolve } from 'path';
@@ -27,6 +27,21 @@ interface WikiSpriteSheetCache {
 
 export class WikiSpriteService {
   private wikiSpriteSheetCache: WikiSpriteSheetCache | null = null;
+  /**
+   * Most-recently-used atlas, decoded once to raw pixels. Sprite requests arrive in
+   * bursts from the same atlas, so a single slot turns an 8192x4096 PNG decode per
+   * request into a memory slice. Re-decoded when the file mtime changes.
+   */
+  private atlasRawCache: {
+    path: string;
+    mtimeMs: number;
+    data: Buffer;
+    width: number;
+    height: number;
+    channels: number;
+  } | null = null;
+  /** Cropped sprite PNGs keyed by atlas path + frame rect. Entries are a few hundred bytes. */
+  private spriteOutCache = new Map<string, Buffer>();
 
   constructor(
     private readonly publicDir: string,
@@ -37,6 +52,38 @@ export class WikiSpriteService {
   /** Clear the cached spritesheet (called when game data is reloaded). */
   resetCache(): void {
     this.wikiSpriteSheetCache = null;
+    this.atlasRawCache = null;
+    this.spriteOutCache.clear();
+  }
+
+  /** Decode an atlas to raw pixels, reusing the cached decode when the file is unchanged. */
+  private async loadAtlasRaw(atlasPath: string): Promise<{
+    data: Buffer; width: number; height: number; channels: number;
+  } | null> {
+    let mtimeMs = 0;
+    try {
+      mtimeMs = statSync(atlasPath).mtimeMs;
+    } catch {
+      return null;
+    }
+    const hit = this.atlasRawCache;
+    if (hit && hit.path === atlasPath && hit.mtimeMs === mtimeMs) return hit;
+    try {
+      const { data, info } = await sharp(atlasPath).raw().toBuffer({ resolveWithObject: true });
+      // Switching atlases drops the previous decode; sprite requests cluster by atlas.
+      this.atlasRawCache = {
+        path: atlasPath,
+        mtimeMs,
+        data,
+        width: info.width,
+        height: info.height,
+        channels: info.channels,
+      };
+      this.spriteOutCache.clear();
+      return this.atlasRawCache;
+    } catch {
+      return null;
+    }
   }
 
   /** Case-insensitive `name.png` lookup under a Drawings-style directory (Windows-friendly). */
@@ -290,28 +337,18 @@ export class WikiSpriteService {
     const atlasPath = this.findCaseInsensitiveDrawingsPng(imagesDir, atlasBase);
     if (!atlasPath) return false;
 
-    let meta: Metadata;
-    try {
-      meta = await sharp(atlasPath).metadata();
-    } catch {
-      return false;
-    }
-    const iw = meta.width ?? 0;
-    const ih = meta.height ?? 0;
+    const atlas = await this.loadAtlasRaw(atlasPath);
+    if (!atlas) return false;
     if (
       frame.x < 0 ||
       frame.y < 0 ||
-      frame.x + frame.w > iw ||
-      frame.y + frame.h > ih
+      frame.x + frame.w > atlas.width ||
+      frame.y + frame.h > atlas.height
     ) {
       return false;
     }
 
-    try {
-      const buf = await sharp(atlasPath)
-        .extract({ left: frame.x, top: frame.y, width: frame.w, height: frame.h })
-        .png()
-        .toBuffer();
+    const sendPng = (buf: Buffer): void => {
       res.writeHead(200, {
         'Content-Type': 'image/png',
         'Cache-Control': 'public, max-age=86400',
@@ -319,6 +356,24 @@ export class WikiSpriteService {
         'X-Wiki-Sprite-Cropped': '1',
       });
       res.end(buf);
+    };
+
+    const key = `${frame.x},${frame.y},${frame.w},${frame.h}`;
+    const cached = this.spriteOutCache.get(key);
+    if (cached) {
+      sendPng(cached);
+      return true;
+    }
+
+    try {
+      const buf = await sharp(atlas.data, {
+        raw: { width: atlas.width, height: atlas.height, channels: atlas.channels as 1 | 2 | 3 | 4 },
+      })
+        .extract({ left: frame.x, top: frame.y, width: frame.w, height: frame.h })
+        .png()
+        .toBuffer();
+      this.spriteOutCache.set(key, buf);
+      sendPng(buf);
       return true;
     } catch (err) {
       Logger.warn('DevServer', `Game Wiki extractor crop failed: ${(err as Error).message}`);

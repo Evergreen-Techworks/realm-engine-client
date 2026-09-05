@@ -102,6 +102,7 @@ static std::unordered_map<uint32_t, bool>  s_blockedMap;    // present = movemen
 static std::unordered_map<uint32_t, bool>  s_fullOccupyMap; // present = tile has FullOccupy entity (for sub-tile neighbour check)
 static std::unordered_map<uint32_t, bool>  s_damagingMap;  // present = tile deals damage (minDmg/maxDmg > 0)
 static std::unordered_map<uint32_t, bool>  s_sinkMap;      // present = sink/sinking ground (water) — nav treats as impassable, the dodge does not
+static std::unordered_map<uint32_t, bool>  s_knownTileMap; // present = streamed map square; absence is void/out-of-bounds
 static std::unordered_map<uint32_t, int>   s_tileMaxDmgMap; // value = tile maxDmg (damaging tiles only)
 static std::unordered_map<uint32_t, float> s_tileSpeedMap; // value = XML speed multiplier (non-zero tiles only)
 static std::mutex s_tileMapMutex;
@@ -118,6 +119,7 @@ static void RebuildBlockedMap()
     std::unordered_map<uint32_t, bool> fullOccupyMap;
     std::unordered_map<uint32_t, bool> damagingMap;
     std::unordered_map<uint32_t, bool> sinkMap;
+    std::unordered_map<uint32_t, bool> knownTileMap;
     std::unordered_map<uint32_t, int>  tileMaxDmgMap;
     std::unordered_map<uint32_t, float> tileSpeedMap;
 
@@ -125,11 +127,13 @@ static void RebuildBlockedMap()
     fullOccupyMap.reserve(g_entities.size());
     damagingMap.reserve(g_tiles.size());
     sinkMap.reserve(g_tiles.size());
+    knownTileMap.reserve(g_tiles.size());
     tileMaxDmgMap.reserve(g_tiles.size());
     tileSpeedMap.reserve(g_tiles.size());
 
     for (const WorldTile& t : g_tiles) {
         uint32_t k = BlockedKey(t.tileX, t.tileY);
+        knownTileMap[k] = true;
         // Only truly impassable tiles go in the blocked map — damage tiles are
         // physically walkable (the game triggers damage from player centre, not hitbox).
         // 0x1aa1 is 'EH Secret Floor', the proxy safewalk replacement tile.
@@ -180,6 +184,17 @@ static void RebuildBlockedMap()
     // check (isValidPosition section B: fractional-position constraints on
     // adjacent tiles).
     for (const WorldEntity& e : g_entities) {
+        // Some dungeon floor traps (notably Mountain Temple spikes) are map
+        // OBJECTS, not damaging ground tiles, so square damage is zero and the
+        // ordinary tile hazard map cannot see them. Their XML identity is stable;
+        // fold spike objects into safe-walk's damaging set at their occupied tile.
+        // This is avoidance only, not a physical wall, so emergency escape remains
+        // possible when safeWalk is disabled/already standing on the hazard.
+        if (std::strstr(e.objName, "Spike") || std::strstr(e.objName, "spike")) {
+            const int tx = static_cast<int>(floorf(e.x));
+            const int ty = static_cast<int>(floorf(e.y));
+            damagingMap[BlockedKey(tx, ty)] = true;
+        }
         if (e.objConds & (OCOND_OCCUPY_SQ | OCOND_FULL_OCC | OCOND_ENEMY_OCC)) {
             int tx = static_cast<int>(floorf(e.x));
             int ty = static_cast<int>(floorf(e.y));
@@ -197,6 +212,7 @@ static void RebuildBlockedMap()
     s_fullOccupyMap.swap(fullOccupyMap);
     s_damagingMap.swap(damagingMap);
     s_sinkMap.swap(sinkMap);
+    s_knownTileMap.swap(knownTileMap);
     s_tileMaxDmgMap.swap(tileMaxDmgMap);
     s_tileSpeedMap.swap(tileSpeedMap);
 }
@@ -2273,6 +2289,9 @@ namespace WorldTAB {
                 for (int tx = x0; tx <= x1; ++tx) {
                     for (int ty = y0; ty <= y1; ++ty) {
                         const uint32_t k = BlockedKey(tx, ty);
+                        // Missing streamed squares are map void/boundary, not open
+                        // floor. Autonomous pathing must never route into them.
+                        if (s_knownTileMap.count(k) == 0) { f |= 0x8; continue; }
                         if (s_blockedMap.count(k) != 0) { f |= 0x1; continue; }
                         if (foldHazard && s_damagingMap.count(k) != 0) { f |= 0x2; }
                         if (s_sinkMap.count(k) != 0)                   { f |= 0x4; }

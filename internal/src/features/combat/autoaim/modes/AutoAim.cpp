@@ -27,6 +27,7 @@ static std::atomic<int32_t> s_lockedEnemyId{ -1 };
 static std::atomic<bool>    s_shootInvulnerable{ false };
 static std::atomic<bool>    s_prioritizeBosses{ false };
 static std::atomic<bool>    s_ignoreWalls{ true };
+static std::atomic<bool>    s_ignoreScenery{ true };
 static std::atomic<bool>    s_shootWhileStealthed{ true };
 static std::atomic<bool>    s_mouseBoundingEnabled{ true };
 static std::atomic<float>   s_mouseBoundingRange{ 2.f };
@@ -85,6 +86,7 @@ static void RunTick()
     cfg.shootInvulnerable    = s_shootInvulnerable.load(std::memory_order_relaxed);
     cfg.prioritizeBosses     = s_prioritizeBosses.load(std::memory_order_relaxed);
     cfg.ignoreWalls          = s_ignoreWalls.load(std::memory_order_relaxed);
+    cfg.ignoreScenery        = s_ignoreScenery.load(std::memory_order_relaxed);
     cfg.rangeLeadBias        = s_rangeLeadBias.load(std::memory_order_relaxed);
     cfg.mouseBoundingEnabled = s_mouseBoundingEnabled.load(std::memory_order_relaxed);
     cfg.mouseBoundingRange   = s_mouseBoundingRange.load(std::memory_order_relaxed);
@@ -171,6 +173,9 @@ bool IsPrioritizeBosses()            { return s_prioritizeBosses.load(std::memor
 
 void SetIgnoreWalls(bool on)         { s_ignoreWalls.store(on, std::memory_order_relaxed); }
 bool IsIgnoreWalls()                 { return s_ignoreWalls.load(std::memory_order_relaxed); }
+
+void SetIgnoreScenery(bool on)       { s_ignoreScenery.store(on, std::memory_order_relaxed); }
+bool IsIgnoreScenery()               { return s_ignoreScenery.load(std::memory_order_relaxed); }
 
 void SetShootWhileStealthed(bool on) { s_shootWhileStealthed.store(on, std::memory_order_relaxed); }
 bool IsShootWhileStealthed()         { return s_shootWhileStealthed.load(std::memory_order_relaxed); }

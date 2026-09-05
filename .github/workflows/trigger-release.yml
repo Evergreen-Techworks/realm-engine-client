@@ -1,0 +1,88 @@
+name: Trigger desktop release build
+
+# This repo is where the desktop client is developed, but it cannot build its
+# own installer: SETUP.md strips the il2cpp headers (~94 MB) and game XML
+# (~85 MB) from the tree, and `npm run build:native` needs the headers to
+# compile internal/. So a push here hands the build off to the PRIVATE repo
+# (Evergreen-Techworks/realm-engine), whose release-client.yml checks THIS
+# commit out, overlays the stripped artifacts, builds the NSIS installer,
+# uploads it to the API, and cuts the archive release back on this repo.
+#
+# Required secret:
+#   RELEASE_DISPATCH_TOKEN   PAT (fine-grained or classic) with write access to
+#                            Actions/Contents on Evergreen-Techworks/realm-engine.
+#                            GITHUB_TOKEN cannot reach another repository, so a
+#                            PAT is unavoidable here.
+#
+# To build without pushing, run the private repo's "Build + publish desktop
+# client release" workflow from its Actions tab — it defaults to this repo's
+# main and takes a `client_ref` input for anything else.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # The build inputs. Docs/CI-only changes shouldn't spend 40 minutes of
+      # Windows runner time or burn a version number.
+      - "client/**"
+      - "internal/**"
+      - "sdk/**"
+      - ".github/workflows/trigger-release.yml"
+  workflow_dispatch:
+
+# One dispatch at a time. The private workflow serializes builds on its own
+# concurrency group anyway, so racing dispatches would just queue there — but
+# cancelling superseded ones here means a burst of pushes triggers the newest
+# tree rather than a backlog of stale builds.
+concurrency:
+  group: trigger-release
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch build to the private repo
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.RELEASE_DISPATCH_TOKEN }}
+          script: |
+            if (!process.env.HAS_TOKEN) {
+              core.setFailed(
+                'RELEASE_DISPATCH_TOKEN is not set — add a PAT with Actions write ' +
+                'on Evergreen-Techworks/realm-engine, or run that repo\'s ' +
+                '"Build + publish desktop client release" workflow manually.'
+              );
+              return;
+            }
+            // Pass the commits along: the private repo builds this SHA but has
+            // no way to read this push's messages, and they become the release
+            // changelog. Trim to the subject lines and cap the list — the
+            // dispatch payload is limited to 64 KB.
+            const commits = (context.payload.commits || [])
+              .map(c => ({ message: String(c.message).split('\n')[0].slice(0, 200) }))
+              .slice(-30);
+            await github.rest.repos.createDispatchEvent({
+              owner: 'Evergreen-Techworks',
+              repo: 'realm-engine',
+              event_type: 'client-push',
+              client_payload: {
+                sha: context.sha,
+                ref: context.ref,
+                commits,
+              },
+            });
+            core.info(`Dispatched client-push for ${context.sha} (${commits.length} commits)`);
+        env:
+          HAS_TOKEN: ${{ secrets.RELEASE_DISPATCH_TOKEN }}
+
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "## Desktop release build dispatched"
+            echo ""
+            echo "Commit \`${GITHUB_SHA}\` was handed to the private repo's release workflow."
+            echo ""
+            echo "Watch it: https://github.com/Evergreen-Techworks/realm-engine/actions/workflows/release-client.yml"
+          } >> "$GITHUB_STEP_SUMMARY"

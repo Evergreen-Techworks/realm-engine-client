@@ -9,10 +9,10 @@ import type { ClientConnection } from '../api.js';
 import type { TrackedEntity } from '../api.js';
 import type { AutoLootSettings } from './settings.js';
 import { LootCatalog } from './catalog.js';
-import { StateStore, cleanupReservations, clearPendingDest, makeBagSlotKey, type AutoLootState } from './state.js';
+import { StateStore, cleanupReservations, clearPendingDest, lootActionBudget, makeBagSlotKey, type AutoLootState } from './state.js';
 import { LootRules, shouldSkipMap } from './loot-rules.js';
 import { BagScanner, getBagItemId, entityDistance } from './bags.js';
-import { shouldSkipAutodrinkClassCap, isHpOrMpPotion } from './items.js';
+import { shouldSkipAutodrinkClassCap, shouldSkipPermanentPotionClassCap, isHpOrMpPotion } from './items.js';
 import {
   isQuickslotPacketSlot,
   readQuickSlot,
@@ -26,11 +26,13 @@ import {
 } from './inventory.js';
 import {
   PICKUP_INTERVAL_MS,
+  BAG_SLOT_SETTLE_MS,
   RETRY_ITEM_AFTER_MS,
   PENDING_DEST_TIMEOUT_MS,
   DEST_SLOT_RESERVE_MS,
   BAG_SLOT_CONSUME_MS,
   ON_TOP_DISTANCE,
+  BAG_CONTACT_SETTLE_MS,
   STATIONARY_TICK_LIMIT,
   MOVEMENT_EPSILON,
   QUICKSLOT_PACKET_BASE,
@@ -76,13 +78,30 @@ export class LootEngine {
     this.logPeriodicDiag(client, state, bags, destination, now, playerPos);
 
     let onBag = false;
+    const touchingBagIds = new Set<number>();
     for (const bag of bags) {
       if (entityDistance(playerPos, bag) > ON_TOP_DISTANCE) continue;
       onBag = true;
+      touchingBagIds.add(bag.objectId);
+      const contactSince = state.bagContactSince.get(bag.objectId);
+      if (contactSince == null) {
+        state.bagContactSince.set(bag.objectId, now);
+        continue;
+      }
+      // Require a second, settled position observation. This prevents an
+      // immediate swap while uDodge is merely crossing the bag at speed, which
+      // can disagree with the server's authoritative interaction position.
+      if ((now - contactSince) < BAG_CONTACT_SETTLE_MS) continue;
       if (this.bags.shouldDelayPublicBag(bag, state, now)) continue;
-      // First pickup on a bag is immediate; later ones are spaced by PICKUP_INTERVAL_MS.
-      if ((now - state.lastPickupAt) < PICKUP_INTERVAL_MS) continue;
+      // First pickup on a bag is immediate; later ones use the configured,
+      // server-safe spacing from PR #58.
+      const spacing = Math.max(PICKUP_INTERVAL_MS, this.settings.pickupIntervalMs);
+      if ((now - state.lastPickupAt) < spacing) continue;
       if (this.processBag(client, state, bag, destination, now)) return;
+    }
+
+    for (const bagId of state.bagContactSince.keys()) {
+      if (!touchingBagIds.has(bagId)) state.bagContactSince.delete(bagId);
     }
 
     // Off all bags: clear the spacing cooldown so the next bag we step on loots at once.
@@ -98,6 +117,7 @@ export class LootEngine {
 
     this.resolvePending(client, state, now);
     if (state.pendingDestSlotId != null) return false;
+    if (lootActionBudget(state, now, this.settings.maxLootActionsPerSec) <= 0) return false;
 
     for (const [key, attemptedAt] of state.recentAttempts.entries()) {
       if ((now - attemptedAt) >= RETRY_ITEM_AFTER_MS) state.recentAttempts.delete(key);
@@ -150,6 +170,14 @@ export class LootEngine {
       const itemId = getBagItemId(bag, bagSlot);
       if (itemId <= 0 || !this.isSlotEligible(state, bag, bagSlot, itemId, now)) continue;
 
+      // Never pick up or drink a permanent potion whose matching base stat is
+      // already capped. This applies even when the autodrink toggle is off.
+      const gameData = this.ctx.gameData;
+      if (gameData && shouldSkipPermanentPotionClassCap(
+        client.playerData.classType, client.playerData, itemId,
+        (ct) => gameData.getPlayerClassStatMaxes(ct),
+      )) continue;
+
       if (this.settings.autodrinkStatPots && STAT_POTION_IDS.has(itemId)) {
         if (this.handleAutodrink(client, state, bag, bagSlot, itemId, now)) return true;
         continue;
@@ -199,6 +227,7 @@ export class LootEngine {
     this.diag(`SEND autodrink USEITEM bag#${bag.objectId} slot=${bagSlot} item=${this.itemLabel(itemId)}`);
     sendUseItemFromBag(this.ctx, client, bag, bagSlot, itemId);
     state.lastPickupAt = now;
+    state.recentActions.push(now);
     state.recentAttempts.set(attemptKey, now);
     return true;
   }
@@ -225,6 +254,7 @@ export class LootEngine {
 
     const isHpMp = isHpOrMpPotion(itemId);
     state.lastPickupAt = now;
+    state.recentActions.push(now);
     state.pendingDestSlotId = destination.packetSlotId;
     state.pendingDestQuantity = expectedQuantity;
     state.pendingPotionItemId = isHpMp ? itemId : null;
@@ -239,6 +269,9 @@ export class LootEngine {
     if (isHpMp || isQuickslotPacketSlot(destination.packetSlotId)) {
       state.reservedDestSlots.set(destination.packetSlotId, now + DEST_SLOT_RESERVE_MS);
       state.consumedBagSlots.set(makeBagSlotKey(bag, bagSlot, itemId), now + BAG_SLOT_CONSUME_MS);
+    } else {
+      state.reservedDestSlots.set(destination.packetSlotId, now + PENDING_DEST_TIMEOUT_MS);
+      state.consumedBagSlots.set(makeBagSlotKey(bag, bagSlot, itemId), now + BAG_SLOT_SETTLE_MS);
     }
     return true;
   }

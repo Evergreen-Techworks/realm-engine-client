@@ -45,7 +45,35 @@ using UpdateFn = void (*)(void* self, void* method);
 UpdateFn g_realUpdate  = nullptr;
 void*    g_updateTarget = nullptr;
 volatile LONG g_hookInstalled = 0;
+volatile LONG g_resolving = 0;
 volatile LONG g_done          = 0;
+HWND g_unityWindow = nullptr;
+UINT_PTR g_dispatchTimer = 0;
+DWORD g_dispatchStart = 0;
+
+// Temporary one-run instrumentation. Keep observing after the durations have
+// been zeroed: the interesting question is which state still changes (or gets
+// stuck) between the last logo and scene activation.
+constexpr DWORD kTraceWindowMs = 20000;
+constexpr LONG  kMaxTraceChanges = 256;
+DWORD g_firstUpdateTick = 0;
+LONG  g_updateCount = 0;
+LONG  g_traceChanges = 0;
+
+struct SplashSnapshot {
+    std::int32_t logoIndexA;
+    std::int32_t logoIndexB;
+    float timerA;
+    float timerB;
+    bool flagA;
+    bool flagB;
+    std::int32_t possibleCount;
+    std::int32_t displayCount;
+    std::int32_t durationCount;
+};
+
+SplashSnapshot g_lastSnapshot{};
+bool g_haveSnapshot = false;
 
 // Written by the bootstrap thread, read by the detour on the main thread.
 void* volatile        g_splashClass        = nullptr;
@@ -79,10 +107,91 @@ void Emit(const char* msg, bool hasValue, long value)
     buf[n++] = '\n';
     buf[n]   = '\0';
     OutputDebugStringA(buf);
+
+    // Also append to a file, so a crash can be diagnosed without attaching a
+    // debugger. Opened and closed per line on purpose: a fatal error in the
+    // game process must not lose the last message to an unflushed buffer.
+    char path[MAX_PATH];
+    if (GetEnvironmentVariableA("LOCALAPPDATA", path, MAX_PATH)) {
+        const char* tail = "\\splash-bypass.log";
+        int i = 0; while (path[i]) ++i;
+        for (const char* t = tail; *t && i < MAX_PATH - 1; ++t) path[i++] = *t;
+        path[i] = '\0';
+        HANDLE h = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            DWORD written = 0;
+            WriteFile(h, buf, static_cast<DWORD>(n), &written, nullptr);
+            FlushFileBuffers(h);
+            CloseHandle(h);
+        }
+    }
 }
 
 void LogMsg(const char* msg)             { Emit(msg, false, 0); }
 void LogVal(const char* msg, long value) { Emit(msg, true, value); }
+
+std::int32_t ReadListSize(void* list)
+{
+    if (!list) return -1;
+    return *reinterpret_cast<const std::int32_t*>(
+        static_cast<const unsigned char*>(list) +
+        splash::kDefaultListFloatLayout.sizeOffset);
+}
+
+bool SameSnapshot(const SplashSnapshot& a, const SplashSnapshot& b)
+{
+    return a.logoIndexA == b.logoIndexA && a.logoIndexB == b.logoIndexB &&
+           a.timerA == b.timerA && a.timerB == b.timerB &&
+           a.flagA == b.flagA && a.flagB == b.flagB &&
+           a.possibleCount == b.possibleCount &&
+           a.displayCount == b.displayCount &&
+           a.durationCount == b.durationCount;
+}
+
+void TraceSnapshot(void* self)
+{
+    const DWORD now = GetTickCount();
+    if (!g_firstUpdateTick) g_firstUpdateTick = now;
+    const LONG update = InterlockedIncrement(&g_updateCount);
+    if (now - g_firstUpdateTick > kTraceWindowMs ||
+        g_traceChanges >= kMaxTraceChanges) return;
+
+    // Verified SplashScreenScript layout relative to timeForLogo:
+    // possibleSplashscreens/list -16, logosToDisplay/list -8,
+    // then Sprite* +8, int/int +16/+20, float/float +24/+28,
+    // bool/bool +32/+33. Using the resolved serialized field as the anchor
+    // survives changes to the MonoBehaviour base layout.
+    auto* anchor = static_cast<unsigned char*>(self) + g_timeForLogoOffset;
+    SplashSnapshot s{};
+    s.possibleCount = ReadListSize(*reinterpret_cast<void**>(anchor - 16));
+    s.displayCount  = ReadListSize(*reinterpret_cast<void**>(anchor - 8));
+    s.durationCount = ReadListSize(*reinterpret_cast<void**>(anchor));
+    s.logoIndexA = *reinterpret_cast<std::int32_t*>(anchor + 16);
+    s.logoIndexB = *reinterpret_cast<std::int32_t*>(anchor + 20);
+    s.timerA = *reinterpret_cast<float*>(anchor + 24);
+    s.timerB = *reinterpret_cast<float*>(anchor + 28);
+    s.flagA = *reinterpret_cast<bool*>(anchor + 32);
+    s.flagB = *reinterpret_cast<bool*>(anchor + 33);
+
+    if (g_haveSnapshot && SameSnapshot(s, g_lastSnapshot)) return;
+    g_lastSnapshot = s;
+    g_haveSnapshot = true;
+    InterlockedIncrement(&g_traceChanges);
+
+    LogVal("trace change # = ", g_traceChanges);
+    LogVal("trace elapsed_ms = ", static_cast<long>(now - g_firstUpdateTick));
+    LogVal("trace Update # = ", update);
+    LogVal("trace possibleSplashscreens count = ", s.possibleCount);
+    LogVal("trace logosToDisplay count = ", s.displayCount);
+    LogVal("trace timeForLogo count = ", s.durationCount);
+    LogVal("trace int +16 = ", s.logoIndexA);
+    LogVal("trace int +20 = ", s.logoIndexB);
+    LogVal("trace float +24 x1000 = ", static_cast<long>(s.timerA * 1000.0f));
+    LogVal("trace float +28 x1000 = ", static_cast<long>(s.timerB * 1000.0f));
+    LogVal("trace bool +32 = ", s.flagA ? 1 : 0);
+    LogVal("trace bool +33 = ", s.flagB ? 1 : 0);
+}
 
 // Collects field names for `klass` and asks the pure matcher.
 bool ClassLooksLikeSplash(void* klass)
@@ -145,28 +254,36 @@ void* FindSplashClass(void* domain)
 
 void __cdecl HookedUpdate(void* self, void* method)
 {
-    if (self && !g_done) {
+    if (self) {
         // Raw dereferences only — no IL2CPP API calls inside the guard.
         __try {
             // Il2CppObject begins with Il2CppClass* klass. Confirm this really
             // is the class we resolved before writing anything: SEH catches a
             // fault, not a successful write into the wrong object.
             if (*reinterpret_cast<void* const*>(self) == g_splashClass) {
-                auto* list = *reinterpret_cast<void**>(
-                    static_cast<unsigned char*>(self) + g_timeForLogoOffset);
-                const std::int32_t zeroed =
-                    splash::ZeroFloatList(list, splash::kDefaultListFloatLayout);
-                if (zeroed > 0) {
-                    // Deliberately does not unhook here: the design doc says to
-                    // unhook once a non-empty list has been zeroed, but
-                    // MH_DisableHook suspends threads and HeapAllocs while they
-                    // are suspended, and self-unhooking from inside the
-                    // executing detour risks deadlock and corrupting this
-                    // thread's own stack. g_done latches this to a no-op
-                    // instead; Remove() (DLL_PROCESS_DETACH) cleans up at exit.
-                    // Do not "fix" this into a self-unhook.
-                    InterlockedExchange(&g_done, 1);
-                    LogVal("bypassed: timeForLogo entries zeroed = ", zeroed);
+                // The trace established that +28 is the live fade countdown
+                // (0.976 -> 0.622 over ~2.6 s) left untouched by timeForLogo.
+                // Collapse it every frame until the controller advances.
+                auto* anchor = static_cast<unsigned char*>(self) +
+                               g_timeForLogoOffset;
+                *reinterpret_cast<float*>(anchor + 28) = 0.0f;
+                if (!g_done) {
+                    auto* list = *reinterpret_cast<void**>(
+                        static_cast<unsigned char*>(self) + g_timeForLogoOffset);
+                    const std::int32_t zeroed =
+                        splash::ZeroFloatList(list, splash::kDefaultListFloatLayout);
+                    if (zeroed > 0) {
+                        // Deliberately does not unhook here: the design doc says to
+                        // unhook once a non-empty list has been zeroed, but
+                        // MH_DisableHook suspends threads and HeapAllocs while they
+                        // are suspended, and self-unhooking from inside the
+                        // executing detour risks deadlock and corrupting this
+                        // thread's own stack. g_done latches this to a no-op
+                        // instead; Remove() (DLL_PROCESS_DETACH) cleans up at exit.
+                        // Do not "fix" this into a self-unhook.
+                        InterlockedExchange(&g_done, 1);
+                        LogVal("bypassed: timeForLogo entries zeroed = ", zeroed);
+                    }
                 }
             }
         } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -192,22 +309,12 @@ void* ReadMethodPointer(const void* method)
     }
 }
 
-bool ResolveAndHook(void* domain, DWORD start)
+bool ResolveAndHook(void* domain)
 {
-    // 3. Resolve the class. Classes load lazily, so retry — never cache a miss.
-    void* klass = nullptr;
-    for (;;) {
-        klass = FindSplashClass(domain);
-        if (klass) break;
-
-        const DWORD elapsed = GetTickCount() - start;
-        if (elapsed > kGiveUpMs) {
-            LogMsg(g_sawImage ? "give up: SplashScreenScript not found in Assembly-CSharp"
-                              : "give up: Assembly-CSharp never opened");
-            return false;
-        }
-        Sleep(elapsed < kClassPollFastWindowMs ? kPollMs : kClassPollSlowMs);
-    }
+    // Called from a Unity-owned thread. Never sleep here: if metadata is not
+    // ready yet, the runtime-invoke trigger will try again on a later call.
+    void* klass = FindSplashClass(domain);
+    if (!klass) return false;
 
     // 4. Field offset + Update. "Update" survives Beebyte; the siblings do not.
     void* field = g_api.class_get_field_from_name(klass, "timeForLogo");
@@ -257,47 +364,50 @@ bool ResolveAndHook(void* domain, DWORD start)
     return true;
 }
 
+BOOL CALLBACK FindUnityWindow(HWND hwnd, LPARAM param)
+{
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid != GetCurrentProcessId()) return TRUE;
+    if (GetWindow(hwnd, GW_OWNER) != nullptr) return TRUE;
+    *reinterpret_cast<HWND*>(param) = hwnd;
+    return FALSE;
+}
+
+void CALLBACK UnityTimerProc(HWND hwnd, UINT, UINT_PTR timerId, DWORD)
+{
+    if (g_hookInstalled || GetTickCount() - g_dispatchStart > kGiveUpMs) {
+        KillTimer(hwnd, timerId);
+        g_dispatchTimer = 0;
+        return;
+    }
+
+    if (InterlockedCompareExchange(&g_resolving, 1, 0) != 0) return;
+    if (il2cppmin::LoadApiFromGameAssembly(g_api)) {
+        // This callback is dispatched by Unity's own window message pump, so
+        // IL2CPP sees a runtime-owned thread rather than our CreateThread worker.
+        void* domain = g_api.domain_get();
+        if (domain) ResolveAndHook(domain);
+    }
+    InterlockedExchange(&g_resolving, 0);
+}
+
 DWORD WINAPI BootstrapThread(LPVOID)
 {
     const DWORD start = GetTickCount();
-
-    // 1. Wait for GameAssembly.dll and a full IL2CPP export set.
-    while (!il2cppmin::LoadApiFromGameAssembly(g_api)) {
-        if (GetTickCount() - start > kGiveUpMs) {
-            LogMsg("give up: GameAssembly.dll absent or export set incomplete");
-            return 0;
-        }
-        Sleep(kPollMs);
+    while (!g_unityWindow && GetTickCount() - start <= kGiveUpMs) {
+        EnumWindows(&FindUnityWindow, reinterpret_cast<LPARAM>(&g_unityWindow));
+        if (!g_unityWindow) Sleep(kPollMs);
     }
-    LogMsg("IL2CPP exports loaded");
+    if (!g_unityWindow) { LogMsg("give up: Unity window not found"); return 0; }
 
-    // 2. Wait for a live domain, then attach so class enumeration is legal.
-    void* domain = nullptr;
-    while (!(domain = g_api.domain_get())) {
-        if (GetTickCount() - start > kGiveUpMs) {
-            LogMsg("give up: no IL2CPP domain");
-            return 0;
-        }
-        Sleep(kPollMs);
-    }
-
-    // A null attach means IL2CPP does not know this thread. Enumerating
-    // metadata from it would drive GC-allocating Class::Init from a thread the
-    // GC cannot see — a crash path, and the one place this module could break
-    // its own fail-open promise. Do nothing instead.
-    void* thread = g_api.thread_attach(domain);
-    if (!thread) {
-        LogMsg("give up: il2cpp_thread_attach returned null");
-        return 0;
-    }
-    LogMsg("domain attached");
-
-    ResolveAndHook(domain, start);
-
-    // Always detach: a give-up or a resolution failure must not leave this
-    // thread registered-but-dead with IL2CPP's GC — a later GC walking its
-    // stack is a crash long after boot, which "never crash" forbids.
-    g_api.thread_detach(thread);
+    // SetTimer with a real HWND dispatches TimerProc from the thread that owns
+    // that window. No IL2CPP call and no code patch occurs on this worker.
+    g_dispatchStart = GetTickCount();
+    g_dispatchTimer = SetTimer(g_unityWindow, 0x52454C4D, 250,
+                               &UnityTimerProc);
+    LogMsg(g_dispatchTimer ? "Unity-thread timer scheduled"
+                           : "give up: SetTimer failed");
     return 0;
 }
 
@@ -311,9 +421,12 @@ void Install()
 
 void Remove()
 {
-    if (InterlockedCompareExchange(&g_hookInstalled, 0, 1) != 1) return;
-    MH_DisableHook(g_updateTarget);
-    MH_RemoveHook(g_updateTarget);
+    if (InterlockedCompareExchange(&g_hookInstalled, 0, 1) == 1) {
+        MH_DisableHook(g_updateTarget);
+        MH_RemoveHook(g_updateTarget);
+    }
+    if (g_dispatchTimer && g_unityWindow)
+        KillTimer(g_unityWindow, g_dispatchTimer);
 }
 
 } // namespace splashbypass

@@ -127,35 +127,24 @@ function findMSBuild() {
 
 const msbuild = findMSBuild();
 if (!msbuild) {
-  console.error('[build-prod] ERROR: MSBuild not found. Install Visual Studio 2022 or 2026 (any edition) or Build Tools.');
-  console.error('[build-prod] Alternatively, run this script from a Developer Command Prompt.');
-  process.exit(1);
-}
-log(`Using MSBuild: ${msbuild}`);
-
-try {
-  // /t:Rebuild (not incremental): guarantees the shipped DLL matches this exact
-  // source tree rather than a stale incremental object. 10 min: a clean full
-  // compile of the DLL (~7000+ functions) can exceed the old 2-minute cap,
-  // especially on CI or after node-gyp wipes caches.
-  execSync(
-    `${msbuild} "${DLL_SLN}" /t:Rebuild /p:Configuration=Release /p:Platform=x64 /m /v:minimal`,
-    { stdio: 'inherit', timeout: 600000 }
-  );
-} catch (err) {
-  console.error('[build-prod] ERROR: MSBuild failed.');
-  process.exit(1);
+  const existingDll = DLL_BUILD_CANDIDATES.find((p) => existsSync(p) && statSync(p).size > 0);
+  if (existingDll) log(`MSBuild unavailable; using prebuilt native DLL: ${existingDll}`);
+  else log('MSBuild unavailable; building the cross-platform client without a native DLL.');
+} else {
+  log(`Using MSBuild: ${msbuild}`);
+  try {
+    execSync(
+      `${msbuild} "${DLL_SLN}" /t:Rebuild /p:Configuration=Release /p:Platform=x64 /m /v:minimal`,
+      { stdio: 'inherit', timeout: 600000 }
+    );
+  } catch (err) {
+    console.error('[build-prod] ERROR: MSBuild failed.');
+    process.exit(1);
+  }
 }
 
 const dllBuilt = DLL_BUILD_CANDIDATES.find((p) => existsSync(p));
-if (!dllBuilt) {
-  console.error(
-    `[build-prod] ERROR: DLL not found after build. Looked in:\n  ${DLL_BUILD_CANDIDATES.join('\n  ')}`
-  );
-  process.exit(1);
-}
-
-log(`DLL built: ${fileSize(dllBuilt)}`);
+if (dllBuilt) log(`DLL built / staged: ${fileSize(dllBuilt)}`);
 
 // ── Step 4: Ship DLL (plain — open source) ───────────────────────────────────
 
@@ -164,10 +153,10 @@ log(`DLL built: ${fileSize(dllBuilt)}`);
 // decryption step or embedded key is needed. When the .vcxproj already emits
 // into assets/ the "copy" is a no-op (self-copy would throw), so skip it.
 mkdirSync(join(ROOT, 'assets'), { recursive: true });
-if (resolve(dllBuilt) !== resolve(DLL_DEST)) {
+if (dllBuilt && resolve(dllBuilt) !== resolve(DLL_DEST)) {
   copyFileSync(dllBuilt, DLL_DEST);
   log(`DLL copied → assets/realm-engine.dll (${fileSize(DLL_DEST)})`);
-} else {
+} else if (existsSync(DLL_DEST)) {
   log(`DLL already in assets/realm-engine.dll (${fileSize(DLL_DEST)})`);
 }
 

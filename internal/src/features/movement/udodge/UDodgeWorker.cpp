@@ -36,8 +36,9 @@ uint32_t                 g_seq = 0;            // monotonic publish sequence
 
 // g_planMutex guards the latest plan handed worker → game.
 std::mutex               g_planMutex;
-Path::PlanResult         g_latestPlan;
+Result                   g_latest;
 bool                     g_havePlan = false;
+CoreState                 g_solveState;
 
 void WorkerLoop()
 {
@@ -56,9 +57,46 @@ void WorkerLoop()
         // No lock held during compute. Pure plain-data math — no IL2CPP.
         Path::PlanResult plan{};
         Path::Compute(local, plan);
+
+        MapInput in{};
+        in.player = local.player;
+        in.speed = local.speed;
+        in.stepTiles = local.moveBudget;
+        in.tickId = local.tickId;
+        in.playerOnHazard = local.playerOnHazard;
+        in.settings = local.settings;
+        in.map = &local.map;
+        in.env.occFlags = local.grid.flags;
+        in.env.occCenter = local.grid.center;
+        in.env.occSide = kUPathMaxSide;
+        in.env.occRadius = kUPathMaxRadCells;
+        in.env.occCellTiles = kUPathCellTiles;
+
+        Solver::Goal goal{};
+        goal.active = local.goalActive;
+        goal.pos = local.goalPos;
+        goal.walkTo = local.goalWalkTo;
+        // Path::Compute may have produced a brand-new navigation corridor from
+        // this snapshot. Solve against that corridor's immediate step, not the
+        // pre-compute goal submitted by the game thread. Otherwise the overlay
+        // shows a correct cyan path while the yellow committed move follows the
+        // previous/raw goal for another worker cycle.
+        if (goal.walkTo && plan.navFound)
+            goal.pos = plan.navStepTarget;
+        goal.fromLock = local.hasLock;
+        goal.lockPos = local.lockPos;
+        goal.maxRange = local.weaponRangeTiles;
+        goal.innerStandoff = local.innerStandoffTiles;
+
+        Solver::SolveResult solve{};
+        Solver::Solve(in, local.moveBudget, goal, plan, g_solveState, solve);
         {
             std::lock_guard<std::mutex> lk(g_planMutex);
-            g_latestPlan = plan;
+            g_latest.plan = plan;
+            g_latest.solve = solve;
+            g_latest.snapshotPlayer = local.player;
+            g_latest.walkGoal = local.navGoal;
+            g_latest.walkActive = local.goalWalkTo;
             g_havePlan = true;
         }
     }
@@ -74,6 +112,7 @@ void Start()
     g_stop.store(false, std::memory_order_relaxed);
     { std::lock_guard<std::mutex> lk(g_snapMutex); g_haveSnap = false; }
     { std::lock_guard<std::mutex> lk(g_planMutex); g_havePlan = false; }
+    g_solveState.Reset();
     g_thread = std::thread(WorkerLoop);
 }
 
@@ -104,14 +143,15 @@ uint32_t PublishSnapshot(const Path::PlannerSnapshot& snap)
     return seq;
 }
 
-bool TryGetLatestPlan(Path::PlanResult& out)
+bool TryGetLatest(Result& out)
 {
     std::unique_lock<std::mutex> lk(g_planMutex, std::try_to_lock);
     if (!lk.owns_lock())
         return false;   // contention → game thread keeps its own last-known plan
     if (!g_havePlan)
         return false;   // worker still cold — no plan yet
-    out = g_latestPlan;
+    out = g_latest;
+    g_havePlan = false; // consume once; do not overwrite live state every frame
     return true;
 }
 

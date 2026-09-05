@@ -63,6 +63,7 @@ import { InternalBridge } from './bridge/InternalBridge.js';
 import { setDllFeatureSender } from './bridge/DllFeatureBus.js';
 import { Logger } from './util/Logger.js';
 import { ensureRotmgMetadataXml } from './util/ensureRotmgMetadataXml.js';
+import { getRealmengineDataDir } from './util/rotmgAssetExtractor.js';
 import { ensureSdkDeployed } from './util/ensureSdkDeployed.js';
 import { getBakedPacketDefinitions, getBakedServers, getBakedStatTypes } from './config/BakedData.js';
 import {
@@ -192,10 +193,13 @@ async function main() {
   const proxy = new Proxy(packetFactory);
 
   const dataDir = resolve(ROOT, 'data');
+  // Generated game XML belongs in the persistent user cache. In dev mode the
+  // WSL -> Windows mirror removes files that exist only under ROOT/data.
+  const gameDataDir = getRealmengineDataDir();
 
   // 3. Load game data (objects.xml for projectile definitions, tiles.xml for tile damage)
-  const objectsPath = resolve(ROOT, 'data', 'objects.xml');
-  const tilesPath = resolve(ROOT, 'data', 'tiles.xml');
+  const objectsPath = resolve(gameDataDir, 'objects.xml');
+  const tilesPath = resolve(gameDataDir, 'tiles.xml');
   const gameData = new GameDataLoader();
   try {
     gameData.load(objectsPath);
@@ -332,7 +336,7 @@ async function main() {
 
   // 7. Mirror XML + plugin loading in parallel (metadata fetch can be slow if mirrors are down)
   const [metadataResult] = await Promise.all([
-    ensureRotmgMetadataXml(dataDir, {
+    ensureRotmgMetadataXml(gameDataDir, {
       log(level, message) {
         if (level === 'error') Logger.error('Metadata', message);
         else if (level === 'warn') Logger.warn('Metadata', message);

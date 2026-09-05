@@ -22,6 +22,9 @@ import { DebugManager } from '../../util/DebugManager.js';
 import { RuntimeScheduler } from '../../util/RuntimeScheduler.js';
 import { injectDll } from '../../native/injector.js';
 import { getRealmengineDataDir, getRealmengineDocumentsDir } from '../../util/rotmgAssetExtractor.js';
+import { extractGameXmls } from '../../util/rotmgAssetExtractor.js';
+import { extractLocalGameAssets } from '../../util/rotmgLocalExtractor.js';
+import { ensureRotmgMetadataXml } from '../../util/ensureRotmgMetadataXml.js';
 import { FameTracker } from './FameTracker.js';
 import { TradeSession } from './TradeSession.js';
 import {
@@ -475,6 +478,43 @@ export class DevServer {
       () => this.getRotmgPath(),
       () => this.getRunningRotmgExaltProcessCount() > 0,
       (status) => this.broadcastGameUpdateStatus(status),
+      async (gameRoot, buildId) => {
+        const dataDir = getRealmengineDataDir();
+        const configuredData = String(this.config.rotmgExtractorGameDataPath ?? '').trim();
+        const localDataDir = configuredData || join(gameRoot, 'RotMG Exalt_Data');
+
+        Logger.log('GameUpdater', `Refreshing XML metadata from ${localDataDir}...`);
+        try {
+          await extractLocalGameAssets(localDataDir, dataDir);
+        } catch (err) {
+          Logger.warn('GameUpdater', `Local XML extraction failed: ${(err as Error).message}; trying CDN.`);
+          await extractGameXmls(dataDir);
+        }
+
+        // Auxiliary metadata is not always embedded in the same Unity TextAssets.
+        // Force a mirror recheck when the game build changes, but do not discard
+        // already-good local files if a mirror lacks an optional document.
+        await ensureRotmgMetadataXml(dataDir, {
+          force: true,
+          log(level, message) {
+            if (level === 'error') Logger.error('GameUpdater', message);
+            else if (level === 'warn') Logger.warn('GameUpdater', message);
+            else Logger.log('GameUpdater', message);
+          },
+        });
+
+        if (!this.gameData) return;
+        const objectsPath = join(dataDir, 'objects.xml');
+        const tilesPath = join(dataDir, 'tiles.xml');
+        if (!existsSync(objectsPath) || !existsSync(tilesPath)) {
+          throw new Error('objects.xml or tiles.xml was not produced');
+        }
+        this.gameData.load(objectsPath);
+        this.gameData.loadTiles(tilesPath);
+        this.gameWikiCatalogJson = null;
+        this.wikiSprites.resetCache();
+        Logger.log('GameUpdater', `Game data hot-reloaded for ${buildId}.`);
+      },
     );
 
     // Packet Lab — captures undefined packets for live analysis
@@ -593,6 +633,7 @@ export class DevServer {
     this.injectorDllPath = dllPath;
     this.injectorExePath = injectorPath;
   }
+
 
   private async tryInjectDll(): Promise<void> {
     if (this.dllInjected) return;

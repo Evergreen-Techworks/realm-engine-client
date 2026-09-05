@@ -1,5 +1,6 @@
 #pragma once
 #include "UDodgePathfinder.h"
+#include "UDodgeSolver.h"
 
 // UDodge pathfinder worker (plan 65) — the background thread that runs the grid
 // Dijkstra (Path::Compute) decoupled from render/update frame rate. Rebuilt fresh
@@ -14,6 +15,14 @@
 // immediate micro-dodge stays the safety floor even when the route is stale.
 namespace UDodge { namespace Worker {
 
+struct Result {
+    Path::PlanResult plan{};
+    Solver::SolveResult solve{};
+    Vec2 snapshotPlayer{};
+    Vec2 walkGoal{};
+    bool walkActive = false;
+};
+
 void Start();  // idempotent; spawns the worker thread (double-start guarded)
 void Stop();   // joins the worker thread; idempotent (safe if never started)
 
@@ -24,6 +33,6 @@ uint32_t PublishSnapshot(const Path::PlannerSnapshot& snap);
 
 // Worker → game thread. Non-blocking: returns false on contention or when no plan
 // has been produced yet; the game thread then keeps its own last-known plan.
-bool TryGetLatestPlan(Path::PlanResult& out);
+bool TryGetLatest(Result& out);
 
 } } // namespace UDodge::Worker

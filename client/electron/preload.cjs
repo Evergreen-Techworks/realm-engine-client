@@ -1,5 +1,22 @@
 const { contextBridge, ipcRenderer } = require('electron');
-const { IPC } = require('./ipc-channels.cjs');
+
+// Channel names come from main.cjs via `webPreferences.additionalArguments`,
+// NOT `require('./ipc-channels.cjs')`: this preload runs sandboxed (Electron's
+// default), and a sandboxed preload can only require `electron` and a couple of
+// Node polyfills. Requiring a local file throws, the whole preload dies, and
+// `window.electronAPI` silently never exists — which reads downstream as the
+// titlebar window buttons vanishing and every Steam/RotMG/instance-host call
+// going dead. ipc-channels.cjs stays the single source of truth; main.cjs is
+// unsandboxed, so it requires the module and forwards the map here.
+const IPC_ARG_PREFIX = '--ipc-channels=';
+const ipcArg = (process.argv || []).find((a) => a.startsWith(IPC_ARG_PREFIX));
+if (!ipcArg) {
+  throw new Error(
+    'preload: missing ' + IPC_ARG_PREFIX + ' argument — the BrowserWindow must pass ' +
+    "additionalArguments: ['--ipc-channels=' + JSON.stringify(IPC)]"
+  );
+}
+const IPC = Object.freeze(JSON.parse(ipcArg.slice(IPC_ARG_PREFIX.length)));
 
 contextBridge.exposeInMainWorld('electronAPI', {
   minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),

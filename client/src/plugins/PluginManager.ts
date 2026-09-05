@@ -140,6 +140,7 @@ export class PluginManager {
   private loadedPlugins = new Map<string, LoadedPlugin>();
   private bundledWatcher: any = null;
   private userWatcher: any = null;
+  private reloadTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private gameData?: GameDataLoader;
   private worldState?: GameWorldState;
   private projectileTracker?: ProjectileTracker;
@@ -438,7 +439,12 @@ export class PluginManager {
    * `idOverride` is the plugin id when it can't be derived from the filename —
    * e.g. directory plugins use the folder name, not `index`.
    */
-  async loadPlugin(filePath: string, source: PluginSource = 'bundled', idOverride?: string): Promise<void> {
+  async loadPlugin(
+    filePath: string,
+    source: PluginSource = 'bundled',
+    idOverride?: string,
+    hotReload = false,
+  ): Promise<void> {
     const id = idOverride ?? stripPluginExt(basename(filePath));
 
     try {
@@ -447,10 +453,34 @@ export class PluginManager {
         await this.unloadPlugin(id);
       }
 
-      // Dynamic import with cache busting for hot-reload
+      // A query string only invalidates the entry module; Node keeps every
+      // transitive import cached. Directory plugins therefore used to reload
+      // index.ts while silently retaining stale engine/constants/etc modules.
+      // For a watched bundled-plugin change, bundle the complete reachable
+      // graph into one fresh data URL so every local helper is the new version.
       const absPath = resolve(filePath);
-      const fileUrl = pathToFileURL(absPath).href + `?t=${Date.now()}`;
-      const module = await import(fileUrl);
+      let module: any;
+      if (hotReload && source === 'bundled') {
+        const esbuild = await import('esbuild');
+        const result = await esbuild.build({
+          entryPoints: [absPath],
+          bundle: true,
+          write: false,
+          platform: 'node',
+          target: 'node20',
+          format: 'esm',
+          treeShaking: true,
+          external: ['koffi', 'sharp', 'electron'],
+          logLevel: 'silent',
+        });
+        const code = result.outputFiles[0]?.text;
+        if (!code) throw new Error(`Hot-reload bundle for ${id} produced no output`);
+        const dataUrl = `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
+        module = await import(dataUrl);
+      } else {
+        const fileUrl = pathToFileURL(absPath).href + `?t=${Date.now()}`;
+        module = await import(fileUrl);
+      }
 
       if (typeof module.register !== 'function') {
         Logger.warn('PluginManager', `Plugin ${id} has no register() export, skipping`);
@@ -552,18 +582,27 @@ export class PluginManager {
       awaitWriteFinish: { stabilityThreshold: 500 },
     });
 
-    watcher.on('change', async (filePath: string) => {
+    const scheduleReload = (target: { id: string; entryPath: string }, reason: string) => {
+      const key = `${source}:${target.id}`;
+      const previous = this.reloadTimers.get(key);
+      if (previous) clearTimeout(previous);
+      this.reloadTimers.set(key, setTimeout(async () => {
+        this.reloadTimers.delete(key);
+        Logger.log('PluginManager', `${reason}: ${target.id}, reloading...`);
+        await this.loadPlugin(target.entryPath, source, target.id, true);
+      }, 75));
+    };
+
+    watcher.on('change', (filePath: string) => {
       const target = this.resolveWatchedPlugin(dir, filePath, exts);
       if (!target) return;
-      Logger.log('PluginManager', `Plugin changed: ${target.id}, reloading...`);
-      await this.loadPlugin(target.entryPath, source, target.id);
+      scheduleReload(target, 'Plugin changed');
     });
 
-    watcher.on('add', async (filePath: string) => {
+    watcher.on('add', (filePath: string) => {
       const target = this.resolveWatchedPlugin(dir, filePath, exts);
       if (!target) return;
-      Logger.log('PluginManager', `New plugin: ${target.id}, loading...`);
-      await this.loadPlugin(target.entryPath, source, target.id);
+      scheduleReload(target, 'New plugin');
     });
 
     watcher.on('unlink', async (filePath: string) => {
@@ -579,7 +618,7 @@ export class PluginManager {
       // if its entry survives, otherwise unload it entirely.
       const id = segments[0];
       const entryPath = this.findDirPluginEntry(join(dir, id), exts);
-      if (entryPath) await this.loadPlugin(entryPath, source, id);
+      if (entryPath) await this.loadPlugin(entryPath, source, id, true);
       else await this.unloadPlugin(id);
     });
 
@@ -587,6 +626,8 @@ export class PluginManager {
   }
 
   stopWatching(): void {
+    for (const timer of this.reloadTimers.values()) clearTimeout(timer);
+    this.reloadTimers.clear();
     this.bundledWatcher?.close();
     this.bundledWatcher = null;
     this.userWatcher?.close();

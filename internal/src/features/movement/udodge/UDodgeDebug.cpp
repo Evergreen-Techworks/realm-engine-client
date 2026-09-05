@@ -331,6 +331,15 @@ void Render(const DebugSnapshot& snap,
     // move budget). The chosen target always lies within it.
     DrawWorldCircle(d, cam, snap.player, snap.stepTiles, IM_COL32(80, 180, 255, 110), 1.5f);
 
+    // Server-visible collision anchor. When it separates from the live local
+    // pose, show the hidden path AutoNexus and the server must still protect.
+    if (snap.serverAnchorValid && Len(Sub(snap.serverAnchor, snap.player)) > 0.02f) {
+        DrawLine(d, cam, snap.serverAnchor, snap.player, IM_COL32(255, 80, 220, 210), 2.f);
+        DrawWorldCircle(d, cam, snap.serverAnchor, kUPlayerHalf,
+                        IM_COL32(255, 80, 220, 235), 2.5f);
+        DrawDot(d, cam, snap.serverAnchor, 4.f, IM_COL32(255, 80, 220, 235));
+    }
+
     // Goal marker (lock standoff / WASD intent), when a soft goal is active.
     if (snap.hasLockTarget) {
         DrawWorldCircle(d, cam, snap.lockTarget, 0.4f, IM_COL32(255, 70, 70, 200), 2.f);

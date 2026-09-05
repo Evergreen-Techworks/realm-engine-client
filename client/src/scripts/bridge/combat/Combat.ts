@@ -3,6 +3,7 @@ import type { Enemy } from '@realmengine/sdk';
 import type { ClientConnection } from '../../../proxy/ClientConnection.js';
 import type { BridgeDeps } from '../BridgeDeps.js';
 import { warnUnimplemented } from '../stubWarn.js';
+import { sendDllFeature } from '../../../bridge/DllFeatureBus.js';
 
 const HISTORY_MS = 60 * 60 * 1000; // keep up to 1 hour of events
 
@@ -51,6 +52,13 @@ export class BridgeCombat {
       aimTarget = null;
       autoAimEnabled = false;
     }
+
+    Combat.setAutoFire = (enabled: boolean): boolean => {
+      return sendDllFeature('autoFireEnabled', !!enabled);
+    };
+    Combat.setKillAura = (enabled: boolean): boolean => {
+      return sendDllFeature('killauraEnabled', !!enabled);
+    };
 
     function resolveAimPoint(client: ClientConnection): { x: number; y: number } | null {
       if (!autoAimEnabled || !aimTarget) return null;
@@ -128,9 +136,10 @@ export class BridgeCombat {
     Combat.aimAt = (target: number | { objectId: number }) => {
       const objectId = normalizeObjectId(target);
       if (objectId == null) return false;
-      aimTarget = { kind: 'object', objectId };
-      autoAimEnabled = true;
-      return true;
+      // AutoAim-only lock. KillAura chooses independently; UDodge receives its
+      // boss lock through Dodge.lockEnemy after navigation reaches the area.
+      clearAim();
+      return sendDllFeature('scriptCombatTargetId', objectId);
     };
     Combat.aimAtPosition = (_x: number, _y: number) => {
       const x = finiteNumber(_x);
@@ -142,9 +151,11 @@ export class BridgeCombat {
     };
     Combat.stopAiming = () => {
       clearAim();
+      sendDllFeature('scriptCombatTargetId', 0);
     };
     Combat.autoAimOff = () => {
       clearAim();
+      sendDllFeature('scriptCombatTargetId', 0);
     };
     Combat.useAbility = () => {
       warnUnimplemented('Combat.useAbility');

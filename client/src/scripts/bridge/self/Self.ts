@@ -243,6 +243,7 @@ export class BridgeSelf {
       const def = deps.gameData.getObject(p.classType);
       return def?.displayId || def?.id || String(p.classType);
     };
+    Self.getLevel = () => playerData(deps)?.level ?? 0;
     Self.isDead = () => {
       const p = playerData(deps);
       return p?.hasConditionEffect('Dead') ?? false;

@@ -56,6 +56,11 @@ export function register(ctx: PluginContext) {
     /** Generation of the origin the LAST outbound rewrite used. See the diag line. */
     lastGen: 0,
   };
+  // The server validates ENEMYHIT against its MOVE-authoritative player
+  // position. Displacing only the shot frame can produce a local collision that
+  // the server rejects (the visible "ghost hit"). Keep production killaura
+  // angle-only; retain the old setting solely for config compatibility.
+  const serverValidOriginRewrite = false;
 
   /**
    * Freshness bound for the aim sample, in ms of LOCAL RECEIVE time.
@@ -200,7 +205,7 @@ export function register(ctx: PluginContext) {
   // it is also not yet measurably useful, and it is the one thing here that
   // touches outbound traffic.
   ctx.registerSetting('rewriteOutbound', {
-    label: 'Rewrite outbound shot origin (DISCONNECTS — experimental)',
+    label: 'Legacy shot-origin rewrite (disabled: causes ghost hits)',
     type: 'boolean',
     value: false,
   });
@@ -266,6 +271,7 @@ export function register(ctx: PluginContext) {
   // ORIGINAL value — running after it is what keeps that inference honest.
   ctx.hookPacket('PLAYERSHOOT', (_client, packet) => {
     if (!ctx.enabled) return;
+    if (!serverValidOriginRewrite) return;
     if (!ctx.getSetting<boolean>('rewriteOutbound')) return;
     if (!packet.isDefined) return;                       // unknown shape -> never touch
 

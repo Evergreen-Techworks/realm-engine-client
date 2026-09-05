@@ -10,11 +10,6 @@
 </head>
 <body>
   <!-- View-as override banner — visible only when admin is previewing as another user -->
-  <div id="view-as-banner" class="view-as-banner" style="display:none;">
-    <span class="view-as-banner-icon">🔍</span>
-    <span>Viewing as: <strong id="view-as-banner-label">—</strong></span>
-    <button id="view-as-banner-reset" type="button" class="view-as-banner-reset">Reset</button>
-  </div>
 
   <!-- Custom titlebar (doubles as drag region in Electron) -->
   <header id="titlebar">
@@ -222,31 +217,52 @@
     <div id="content-area">
       <div id="launcher-topbar" aria-label="Quick navigation">
         <div class="launcher-quick-group">
-          <button type="button" class="launcher-quick-btn launcher-quick-btn--primary" data-launcher-tab="accounts">
-            <span class="launcher-quick-icon">A</span>
-            <span class="launcher-quick-label">Quick Launch</span>
-          </button>
+          <!-- Split launch control: the left half launches the selected
+               account, the caret opens the account + server picker. -->
+          <div id="launch-split" class="launch-split">
+            <button type="button" id="launch-split-main" class="launch-split-main">
+              <span class="launch-split-glyph" aria-hidden="true">&#9654;</span>
+              <span class="launch-split-text">
+                <span id="launch-split-account" class="launch-split-account">Pick an account</span>
+                <span id="launch-split-server" class="launch-split-server"></span>
+              </span>
+            </button>
+            <button type="button" id="launch-split-caret" class="launch-split-caret"
+                    aria-haspopup="true" aria-expanded="false" aria-controls="launch-menu"
+                    aria-label="Choose account and server">
+              <span class="launch-split-chevron" aria-hidden="true"></span>
+            </button>
+            <div id="launch-menu" class="launch-menu" role="dialog" aria-label="Launch settings" hidden>
+              <div class="launch-menu-head">Account</div>
+              <div id="launch-menu-accounts" class="launch-menu-accounts"></div>
+              <div class="launch-menu-head">Server</div>
+              <select id="launch-menu-server" class="launch-menu-server" aria-label="Server to connect to"></select>
+              <p id="launch-menu-note" class="launch-menu-note">Saved to the account.</p>
+              <button type="button" id="launch-menu-go" class="launch-menu-go">
+                <span aria-hidden="true">&#9654;</span> Launch
+              </button>
+            </div>
+          </div>
           <button type="button" class="launcher-quick-btn" data-launcher-tab="plugins">Plugins</button>
         </div>
       </div>
       <div id="content-tabs">
         <button class="content-tab active" data-tab="home" data-icon="H" data-label="Home" data-i18n="tab.home">Home</button>
         <button class="content-tab" data-tab="plugins" data-icon="P" data-label="Plugins" data-i18n="tab.plugins">Plugins</button>
-        <button class="content-tab" data-tab="hotkeys" data-icon="K" data-label="Hotkeys">Hotkeys</button>
         <button class="content-tab" data-tab="accounts" data-icon="A" data-label="Accounts" data-i18n="tab.accounts">Accounts</button>
-        <button class="content-tab admin-only" data-tab="logs" data-icon="L" data-label="Logs" data-i18n="tab.logs">Logs</button>
         <button class="content-tab" data-tab="damage" data-icon="D" data-label="Damage Sniffer" data-i18n="tab.damage">Damage Sniffer</button>
-        <button class="content-tab admin-only" data-tab="internal" data-icon="DLL" data-label="Internal">Internal</button>
+        <button class="content-tab" data-tab="scripts" data-icon="S" data-label="Scripts" data-i18n="tab.scripts">Scripts</button>
         <div class="content-tabs-section-label dev-only" id="content-tabs-dev-label" data-i18n="tab.developer">DEV</div>
+        <button class="content-tab dev-only" data-tab="internal" data-icon="DLL" data-label="Internal">Internal</button>
+        <button class="content-tab dev-only" data-tab="logs" data-icon="L" data-label="Logs" data-i18n="tab.logs">Logs</button>
         <button class="content-tab dev-only" data-tab="api" data-icon="{}" data-label="API" data-i18n="tab.api">API</button>
         <button class="content-tab dev-only" data-tab="objects" data-icon="O" data-label="Objects" data-i18n="tab.objects">Objects</button>
         <button class="content-tab dev-only" data-tab="tilemap" data-icon="T" data-label="Tilemap" data-i18n="tab.tilemap">Tilemap</button>
         <button class="content-tab dev-only" data-tab="game-wiki" data-icon="W" data-label="Game Wiki" data-i18n="tab.gameWiki">Game Wiki</button>
         <button class="content-tab dev-only" data-tab="nearby" data-icon="N" data-label="Nearby Players" data-i18n="tab.nearby">Nearby Players</button>
-        <button class="content-tab admin-only" data-tab="packet-lab" data-icon="PK" data-label="Packet Lab">Packet Lab <span id="lab-tab-badge" class="lab-tab-badge hidden">0</span></button>
-        <button class="content-tab admin-only" data-tab="multibox" data-icon="M" data-label="Multibox" data-i18n="tab.multibox">Multibox</button>
-        <button class="content-tab admin-only" data-tab="mem-helper" data-icon="CPU" data-label="Mem Helper" data-i18n="tab.memHelper">Mem Helper</button>
-        <button class="content-tab dev-only" data-tab="scripts" data-icon="S" data-label="Scripts" data-i18n="tab.scripts">Scripts</button>
+        <button class="content-tab dev-only" data-tab="packet-lab" data-icon="PK" data-label="Packet Lab">Packet Lab <span id="lab-tab-badge" class="lab-tab-badge hidden">0</span></button>
+        <button class="content-tab dev-only" data-tab="multibox" data-icon="M" data-label="Multibox" data-i18n="tab.multibox">Multibox</button>
+        <button class="content-tab dev-only" data-tab="mem-helper" data-icon="CPU" data-label="Mem Helper" data-i18n="tab.memHelper">Mem Helper</button>
       </div>
 
       <div id="tab-home" class="tab-panel active">
@@ -446,6 +462,7 @@
             <div id="plugin-sidebar-list" class="plugin-sidebar-list" role="listbox" aria-label="Plugin list" data-i18n-aria-label="plugins.list.aria"></div>
           </aside>
           <main id="plugin-hub-main" class="plugin-hub-main">
+            <div id="plugin-hotkey-status" class="plugin-hotkey-status" aria-live="polite"></div>
             <div id="plugin-detail" class="plugin-detail">
               <div class="plugin-detail-loading">
                 <div class="plugin-loading-spinner"></div>
@@ -455,34 +472,6 @@
           </main>
         </div>
       </div>
-
-      <div id="tab-hotkeys" class="tab-panel" style="display:none;">
-        <div class="hotkeys-page">
-          <div class="hotkeys-toolbar">
-            <div>
-              <h2 class="hotkeys-title">Plugin Hotkeys</h2>
-              <p class="hotkeys-subtitle">Bind a key to toggle each plugin while the game window is focused.</p>
-            </div>
-            <input type="search" id="hotkeys-search" class="hotkeys-search" placeholder="Search plugins..." autocomplete="off" spellcheck="false" aria-label="Search plugin hotkeys">
-          </div>
-          <div id="hotkeys-status" class="hotkeys-status" aria-live="polite"></div>
-          <div class="hotkeys-table-wrap">
-            <table class="hotkeys-table">
-              <thead>
-                <tr>
-                  <th>Plugin</th>
-                  <th>Category</th>
-                  <th>Status</th>
-                  <th>Hotkey</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="hotkeys-table-body"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
 
       <div id="tab-accounts" class="tab-panel" style="display:none;">
         <!-- Empty-state setup (shown when zero accounts) -->
@@ -633,9 +622,6 @@
             <input id="accounts-search" class="accounts-search" type="text" placeholder="Search alias, email, server..." data-i18n-placeholder="accounts.search.placeholder" />
             <div id="accounts-count" class="accounts-count">0 accounts</div>
           </div>
-          <div class="accounts-toolbar-actions">
-            <button id="accounts-launch-btn" class="setting-btn" data-i18n="btn.launch">Launch</button>
-          </div>
         </div>
         <div id="accounts-layout" class="accounts-layout">
           <div class="accounts-list-panel">
@@ -672,186 +658,97 @@
                 <span class="accounts-editor-display-sub" id="accounts-editor-display-sub"></span>
               </div>
               <div class="accounts-editor-tabs">
-                <button type="button" class="accounts-editor-tab active" data-editor-tab="credentials">Credentials</button>
-                <button type="button" class="accounts-editor-tab" data-editor-tab="automation">Automation</button>
-                <button type="button" class="accounts-editor-tab" data-editor-tab="overview">Overview</button>
+                <button type="button" class="accounts-editor-tab active" data-editor-tab="overview">Overview</button>
+                <button type="button" class="accounts-editor-tab" data-editor-tab="credentials">Credentials</button>
               </div>
             </div>
 
             <!-- Credentials tab -->
-            <div id="accounts-login-section" class="accounts-editor-tab-panel">
+            <div id="accounts-login-section" class="accounts-editor-tab-panel" style="display:none;">
+              <div class="acct-form">
 
-              <div class="acct-section">
-                <div class="acct-section-head"><span class="acct-section-title">Identity</span></div>
-                <div class="accounts-row">
-                  <div class="accounts-field">
-                    <label for="accounts-alias" data-i18n="accounts.label.alias">Alias</label>
-                    <input type="text" id="accounts-alias" placeholder="Display name" autocomplete="off" spellcheck="false" data-i18n-placeholder="accounts.placeholder.alias">
-                  </div>
-                  <div class="accounts-field">
-                    <label for="accounts-server" data-i18n="accounts.label.server">Server</label>
-                    <select id="accounts-server"></select>
+                <div class="acct-row">
+                  <label class="acct-row-label" for="accounts-alias" data-i18n="accounts.label.alias">Alias</label>
+                  <div class="acct-row-control">
+                    <input type="text" id="accounts-alias" class="acct-input acct-input--short" placeholder="Display name" autocomplete="off" spellcheck="false" data-i18n-placeholder="accounts.placeholder.alias">
+                    <p class="acct-row-hint">Names this account in the list and on the launch button.</p>
                   </div>
                 </div>
-                <div class="accounts-steam-toggle-row">
-                  <div class="accounts-steam-toggle-copy">
-                    <span>I sign in to RotMG with Steam</span>
-                    <span>Use GUID + Deca-issued Steam secret instead of email/password.</span>
+
+                <div class="acct-row">
+                  <label class="acct-row-label" for="accounts-server" data-i18n="accounts.label.server">Server</label>
+                  <div class="acct-row-control">
+                    <select id="accounts-server" class="acct-input acct-input--short"></select>
                   </div>
-                  <label class="toggle-switch">
-                    <input type="checkbox" id="accounts-is-steam">
-                    <span class="toggle-slider"></span>
-                  </label>
+                </div>
+
+                <div class="acct-row">
+                  <span class="acct-row-label">Sign-in</span>
+                  <div class="acct-row-control">
+                    <label class="acct-steam-switch">
+                      <span class="acct-steam-copy">
+                        <span class="acct-steam-name">Sign in through Steam</span>
+                        <span class="acct-steam-desc">Uses a GUID and Deca secret in place of email and password.</span>
+                      </span>
+                      <span class="toggle-switch">
+                        <input type="checkbox" id="accounts-is-steam">
+                        <span class="toggle-slider"></span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="acct-divider"><span>Login</span></div>
+
+                <div id="accounts-steam-import-row" class="acct-row" style="display:none;">
+                  <span class="acct-row-label">Import</span>
+                  <div class="acct-row-control">
+                    <div class="acct-btn-row">
+                      <button type="button" id="accounts-import-launcher-btn" class="setting-btn setting-btn-secondary" title="Pull the GUID and secret currently saved by the official RotMG Exalt Launcher on this PC">From launcher</button>
+                      <button type="button" id="accounts-import-capture-btn" class="setting-btn setting-btn-secondary" title="Import every account the injected DLL has captured — one row per unique GUID">All captured</button>
+                    </div>
+                    <span id="accounts-import-launcher-status" class="acct-row-hint" style="display:none;"></span>
+                    <span id="accounts-import-capture-status" class="acct-row-hint" style="display:none;"></span>
+                  </div>
+                </div>
+
+                <div class="acct-row">
+                  <label class="acct-row-label" id="accounts-email-label" for="accounts-email" data-i18n="accounts.label.email">Email</label>
+                  <div class="acct-row-control">
+                    <input type="text" id="accounts-email" class="acct-input" placeholder="name@example.com" autocomplete="off" spellcheck="false">
+                  </div>
+                </div>
+
+                <div class="acct-row">
+                  <label class="acct-row-label" id="accounts-password-label" for="accounts-password" data-i18n="accounts.label.password">Password</label>
+                  <div class="acct-row-control">
+                    <div class="acct-secret">
+                      <input type="password" id="accounts-password" class="acct-input" autocomplete="new-password" spellcheck="false" data-i18n-placeholder="accounts.placeholder.password">
+                      <button type="button" id="accounts-password-visibility-btn" class="acct-secret-reveal" data-i18n="accounts.btn.show">Show</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="accounts-steam-id-wrap" class="acct-row" style="display:none;">
+                  <span class="acct-row-label"></span>
+                  <div class="acct-row-control">
+                    <details id="accounts-steam-explainer" class="accounts-steam-explainer">
+                <summary>Where do I find the Deca secret?</summary>
+                <div class="steam-explainer-body">
+                  <p><strong>It is not your Steam password.</strong> Deca issues this token the first time you link Steam to RotMG Exalt, and the official launcher caches it on this PC.</p>
+                  <p><strong>Fastest route:</strong> if you have launched RotMG through Steam here, choose <strong>From launcher</strong> above. We read it from <code>HKCU\Software\DECA Live Operations GmbH\RotMG Exalt Launcher\Productionps</code> and decode it.</p>
+                  <p><strong>Several accounts?</strong> Sign each one into the launcher in turn, then choose <strong>All captured</strong>.</p>
+                </div>
+              </details>
+                  </div>
                 </div>
                 <input type="hidden" id="accounts-steam-id">
-                <div id="accounts-steam-id-wrap" style="display:none;">
-                  <details id="accounts-steam-explainer" class="accounts-steam-explainer">
-                    <summary>What is the "Deca Steam Secret"? Why am I being asked for it?</summary>
-                    <div class="steam-explainer-body">
-                      <p><strong>It's not your Steam password.</strong> It's a long-lived token Deca created for you the first time you linked your Steam account to RotMG Exalt. The launcher caches it locally so you only ever go through Steam once.</p>
-                      <p><strong>Fastest way to get it:</strong> if you've launched RotMG via Steam on this PC, click <strong>📥 Import from Launcher</strong> below — we read it from <code>HKCU\\Software\\DECA Live Operations GmbH\\RotMG Exalt Launcher\\Productionps</code> and base64-decode it.</p>
-                      <p><strong>Multiple accounts?</strong> Sign each one into the launcher in turn (our DLL captures every login). Then click <strong>📥 Import All Captured Accounts</strong>.</p>
-                    </div>
-                  </details>
-                </div>
+
               </div>
-
-              <div class="acct-section">
-                <div class="acct-section-head"><span class="acct-section-title">Login</span></div>
-                <div id="accounts-login-creds" class="accounts-login-creds">
-                  <div id="accounts-steam-creds-label" class="accounts-steam-creds-label" style="display:none;">Steam Credentials</div>
-                  <div id="accounts-steam-import-row" class="accounts-field accounts-import-launcher-row" style="display:none;">
-                    <div class="accounts-import-launcher-btns">
-                      <button type="button" id="accounts-import-launcher-btn" class="setting-btn setting-btn-secondary accounts-import-launcher-btn" title="Pull the GUID + Secret currently saved by the official RotMG Exalt Launcher on this PC">📥 Import from Launcher</button>
-                      <button type="button" id="accounts-import-capture-btn" class="setting-btn setting-btn-secondary accounts-import-launcher-btn" title="Import every account our injected DLL has captured from AppEngineManager.Connect calls — one row per unique GUID">📥 Import All Captured Accounts</button>
-                      <span id="accounts-import-launcher-status" class="accounts-import-status" style="display:none;"></span>
-                      <span id="accounts-import-capture-status" class="accounts-import-status" style="display:none;"></span>
-                    </div>
-                  </div>
-                  <div class="accounts-row">
-                    <div class="accounts-field">
-                      <label id="accounts-email-label" for="accounts-email" data-i18n="accounts.label.email">Email</label>
-                      <input type="text" id="accounts-email" placeholder="name@example.com" autocomplete="off" spellcheck="false">
-                    </div>
-                    <div class="accounts-field">
-                      <label id="accounts-password-label" for="accounts-password" data-i18n="accounts.label.password">Password</label>
-                      <div class="accounts-password-row">
-                        <input type="password" id="accounts-password" autocomplete="new-password" spellcheck="false" data-i18n-placeholder="accounts.placeholder.password">
-                        <button type="button" id="accounts-password-visibility-btn" class="setting-btn setting-btn-secondary accounts-password-toggle" data-i18n="accounts.btn.show">Show</button>
-                      </div>
-                    </div>
-                  </div>
-                  <div id="accounts-steam-id-wrap" style="display:none;">
-                    <details id="accounts-steam-explainer" class="accounts-steam-explainer">
-                      <summary>What is the "Deca Steam Secret"? Why am I being asked for it?</summary>
-                      <div class="steam-explainer-body">
-                        <p><strong>It's not your Steam password.</strong> It's a long-lived token Deca created for you the first time you linked your Steam account to RotMG Exalt. The launcher caches it locally so you only ever go through Steam once.</p>
-                        <p><strong>Fastest way to get it:</strong> if you've launched RotMG via Steam on this PC, click <strong>📥 Import from Launcher</strong> below — we read it from <code>HKCU\\Software\\DECA Live Operations GmbH\\RotMG Exalt Launcher\\Productionps</code> and base64-decode it.</p>
-                        <p><strong>Multiple accounts?</strong> Sign each one into the launcher in turn (our DLL captures every login). Then click <strong>📥 Import All Captured Accounts</strong>.</p>
-                      </div>
-                    </details>
-                  </div>
-                </div>
-              </div>
-
-
             </div><!-- /credentials tab -->
 
-            <!-- Automation tab -->
-            <div id="accounts-muling-section" class="accounts-editor-tab-panel" style="display:none;">
-
-              <div class="acct-section">
-                <div class="acct-section-head"><span class="acct-section-title">Role</span></div>
-                <div class="accounts-field">
-                  <label>Muling Role</label>
-                  <div class="accounts-muling-role-row">
-                    <button type="button" id="accounts-role-none" class="accounts-role-btn" data-role="none">None</button>
-                    <button type="button" id="accounts-role-main" class="accounts-role-btn" data-role="main">Main</button>
-                    <button type="button" id="accounts-role-mule" class="accounts-role-btn" data-role="mule">Mule</button>
-                  </div>
-                </div>
-                <div id="accounts-muling-main-opts" class="accounts-muling-sub" style="display:none;">
-                  <div class="accounts-field">
-                    <label>Items to Mule Off <span class="accounts-muling-hint">sent to mules each run</span></label>
-                    <div class="accounts-pot-row" data-pot-field="mule-off">
-                      <button type="button" class="accounts-pot-btn" data-pot="all">All Pots</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="atk">ATK</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="def">DEF</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="spd">SPD</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="dex">DEX</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="vit">VIT</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="wis">WIS</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="life">LIFE</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="mana">MANA</button>
-                    </div>
-                    <input type="text" id="accounts-muling-items-mule-off" placeholder="Custom item IDs (comma-separated)" spellcheck="false">
-                  </div>
-                </div>
-                <div id="accounts-muling-mule-opts" class="accounts-muling-sub" style="display:none;">
-                  <div class="accounts-field">
-                    <label>Store Mode</label>
-                    <div class="accounts-muling-mode-row">
-                      <button type="button" id="accounts-mode-any" class="accounts-role-btn" data-mode="any">Any Item</button>
-                      <button type="button" id="accounts-mode-specific" class="accounts-role-btn" data-mode="specific">Specific Items</button>
-                    </div>
-                  </div>
-                  <div id="accounts-muling-items-wrap" class="accounts-muling-sub" style="display:none;">
-                    <div class="accounts-field">
-                      <label>Items to Deposit <span class="accounts-muling-hint">into main's vault</span></label>
-                      <div class="accounts-pot-row" data-pot-field="store">
-                        <button type="button" class="accounts-pot-btn" data-pot="all">All Pots</button>
-                        <button type="button" class="accounts-pot-btn" data-pot="atk">ATK</button>
-                        <button type="button" class="accounts-pot-btn" data-pot="def">DEF</button>
-                        <button type="button" class="accounts-pot-btn" data-pot="spd">SPD</button>
-                        <button type="button" class="accounts-pot-btn" data-pot="dex">DEX</button>
-                        <button type="button" class="accounts-pot-btn" data-pot="vit">VIT</button>
-                        <button type="button" class="accounts-pot-btn" data-pot="wis">WIS</button>
-                        <button type="button" class="accounts-pot-btn" data-pot="life">LIFE</button>
-                        <button type="button" class="accounts-pot-btn" data-pot="mana">MANA</button>
-                      </div>
-                      <input type="text" id="accounts-muling-items-store" placeholder="Custom item IDs (comma-separated)" spellcheck="false">
-                    </div>
-                  </div>
-                  <div class="accounts-field">
-                    <label>Receive from Main <span class="accounts-muling-hint">taken from main's vault</span></label>
-                    <div class="accounts-pot-row" data-pot-field="from-main">
-                      <button type="button" class="accounts-pot-btn" data-pot="all">All Pots</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="atk">ATK</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="def">DEF</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="spd">SPD</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="dex">DEX</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="vit">VIT</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="wis">WIS</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="life">LIFE</button>
-                      <button type="button" class="accounts-pot-btn" data-pot="mana">MANA</button>
-                    </div>
-                    <input type="text" id="accounts-muling-items-from-main" placeholder="Custom item IDs (comma-separated)" spellcheck="false">
-                  </div>
-                </div>
-              </div>
-
-              <div class="acct-section">
-                <div class="acct-section-head"><span class="acct-section-title">Proxy</span></div>
-                <div class="accounts-field">
-                  <label for="accounts-proxy">Host:Port <span class="accounts-muling-hint">optional</span></label>
-                  <input type="text" id="accounts-proxy" placeholder="e.g. 127.0.0.1:1080" autocomplete="off" spellcheck="false">
-                </div>
-                <div id="accounts-proxy-auth-wrap" class="accounts-muling-sub" style="display:none;">
-                  <div class="accounts-field">
-                    <label for="accounts-proxy-username">Proxy Username</label>
-                    <input type="text" id="accounts-proxy-username" placeholder="Optional" autocomplete="off" spellcheck="false">
-                  </div>
-                  <div class="accounts-field">
-                    <label for="accounts-proxy-password">Proxy Password</label>
-                    <input type="password" id="accounts-proxy-password" placeholder="Optional" autocomplete="new-password">
-                  </div>
-                </div>
-              </div>
-
-            </div><!-- /automation tab -->
-
             <!-- Overview tab -->
-            <div class="accounts-editor-tab-panel accounts-overview-section" id="accounts-editor-overview-panel" style="display:none;">
+            <div class="accounts-editor-tab-panel accounts-overview-section" id="accounts-editor-overview-panel">
               <div class="accounts-overview-toolbar">
                 <div>
                   <div class="accounts-overview-title" data-i18n="accounts.overview.title">Character Overview</div>
@@ -926,7 +823,7 @@
         </div>
       </div>
 
-      <div id="tab-logs" class="tab-panel admin-only" style="display:none;">
+      <div id="tab-logs" class="tab-panel dev-only" style="display:none;">
         <div class="objects-toolbar">
           <button id="logs-clear-btn" class="setting-btn setting-btn-secondary">Clear Logs</button>
         </div>
@@ -934,7 +831,7 @@
         <div id="logs-empty" class="empty-state">No logs yet.</div>
       </div>
 
-      <div id="tab-packet-lab" class="tab-panel admin-only" style="display:none;">
+      <div id="tab-packet-lab" class="tab-panel dev-only" style="display:none;">
         <div class="lab-subtabs-row">
           <div class="lab-subtabs">
             <button type="button" class="lab-subtab active" data-lab-subtab="working">Working</button>
@@ -999,7 +896,7 @@
         </div>
       </div>
 
-      <div id="tab-multibox" class="tab-panel admin-only multibox-tab coming-soon" data-coming-soon="Coming soon&#10;&#10;Multiboxing is in active development and will be available in a future update." style="display:none;">
+      <div id="tab-multibox" class="tab-panel dev-only multibox-tab coming-soon" data-coming-soon="Coming soon&#10;&#10;Multiboxing is in active development and will be available in a future update." style="display:none;">
         <div class="multibox-toolbar">
           <div class="multibox-toolbar-text">
             <span class="multibox-toolbar-title" data-i18n="multibox.toolbar.title">Multibox layout</span>
@@ -1044,7 +941,7 @@
         </div>
       </div>
 
-      <div id="tab-mem-helper" class="tab-panel admin-only mem-helper-tab" style="display:none;">
+      <div id="tab-mem-helper" class="tab-panel dev-only mem-helper-tab" style="display:none;">
         <div class="mem-helper-live-wrap">
           <div class="mem-helper-live-toolbar">
             <button type="button" class="setting-btn" id="mem-helper-exalt-refresh" data-i18n="memHelper.live.refresh">Refresh</button>
@@ -1312,7 +1209,7 @@
         </div>
       </div>
 
-      <div id="tab-internal" class="tab-panel admin-only" style="display:none;">
+      <div id="tab-internal" class="tab-panel dev-only" style="display:none;">
         <div class="internal-tab">
           <div class="internal-header">
             <span class="internal-title">Internal DLL</span>
@@ -1436,11 +1333,11 @@
         </div>
       </div>
 
-      <div id="tab-api" class="tab-panel" style="display:none;">
+      <div id="tab-api" class="tab-panel dev-only" style="display:none;">
         <iframe class="api-docs-iframe" src="api-docs-tab.html" title="Scripting API reference"></iframe>
       </div>
 
-      <div id="tab-scripts" class="tab-panel dev-only" style="display:none;">
+      <div id="tab-scripts" class="tab-panel" style="display:none;">
         <div id="scripts-sub-local" class="scripts-subpanel">
           <div id="scripts-hub" class="plugin-hub plugin-trainer scripts-workspace" aria-label="Developer scripts">
             <aside id="scripts-hub-sidebar" class="plugin-hub-sidebar">
@@ -1560,14 +1457,14 @@
   </div>
 
   <!-- Sniffer drawer (bottom) -->
-  <div id="sniffer-drawer" class="collapsed">
+  <div id="sniffer-drawer" class="collapsed dev-only">
     <div id="sniffer-header">
       <div class="sniffer-header-left">
         <button id="sniffer-toggle" class="sniffer-toggle-btn">&#9660;</button>
         <span class="sniffer-title">Packet Sniffer</span>
         <span id="sniffer-badge" class="sniffer-badge hidden">0</span>
       </div>
-      <div class="sniffer-header-right admin-only">
+      <div class="sniffer-header-right">
         <span id="pps">0 pkt/s</span>
         <span id="total">0 total</span>
         <button id="btn-pause">Pause</button>
@@ -1577,7 +1474,7 @@
     </div>
 
     <div id="sniffer-body">
-      <div id="sniffer-filters" class="admin-only">
+      <div id="sniffer-filters">
         <div class="filter-row">
           <label><input type="checkbox" id="filter-cs" checked> C&#8594;S</label>
           <label><input type="checkbox" id="filter-sc" checked> S&#8594;C</label>
@@ -1663,8 +1560,7 @@
           <button type="button" class="settings-tab active" data-settings-tab="visual" data-i18n="settings.tab.visual">Visual</button>
           <button type="button" class="settings-tab" data-settings-tab="game" data-i18n="settings.tab.game">Game</button>
           <button type="button" class="settings-tab" data-settings-tab="plugins" data-i18n="settings.tab.plugins">Plugins</button>
-          <button type="button" class="settings-tab hidden" data-settings-tab="developer" id="settings-tab-developer" data-i18n="settings.tab.developer">Developer</button>
-          <button type="button" class="settings-tab hidden" data-settings-tab="admin" id="settings-tab-admin" data-i18n="settings.tab.admin">Admin</button>
+          <button type="button" class="settings-tab" data-settings-tab="developer" id="settings-tab-developer" data-i18n="settings.tab.developer">Developer</button>
         </div>
         <div class="settings-tab-panels">
           <div class="settings-tab-panel active" data-settings-panel="visual">
@@ -1751,6 +1647,40 @@
           <div class="settings-tab-panel" data-settings-panel="game">
             <div class="settings-group">
               <h3>Game</h3>
+              <div class="settings-row">
+                <div class="settings-row-info">
+                  <span class="settings-label">Single Client Only</span>
+                  <span class="settings-desc">Block launching if a RotMG Exalt process is already open.</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="setting-single-client-only">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-info">
+                  <span class="settings-label">Auto-refresh accounts</span>
+                  <span class="settings-desc">How often the Accounts page re-pulls the selected account while you are viewing it. Each refresh is a live call to Deca, so longer intervals are gentler on rate limits.</span>
+                </div>
+                <select id="setting-accounts-refresh-interval" class="settings-select" aria-label="Accounts auto-refresh interval">
+                  <option value="0">Off</option>
+                  <option value="30000">Every 30 seconds</option>
+                  <option value="60000">Every minute</option>
+                  <option value="300000">Every 5 minutes</option>
+                  <option value="900000">Every 15 minutes</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-info">
+                  <span class="settings-label">Account layout</span>
+                  <span class="settings-desc">Single client sidebar, multi-account compact list (MAC), or multibox (MAC-style sidebar; Home tab reserved).</span>
+                </div>
+                <select id="setting-account-layout-mode" class="settings-select account-layout-mode-select" aria-label="Account layout">
+                  <option value="single">Single</option>
+                  <option value="mac">MAC</option>
+                  <option value="multibox">Multibox</option>
+                </select>
+              </div>
               <div class="settings-row settings-row-stacked">
                 <div class="settings-row-info">
                   <span class="settings-label">RotMG Exalt Path</span>
@@ -1805,74 +1735,26 @@
               <div class="settings-row">
                 <div class="settings-row-info">
                   <span class="settings-label">Developer Mode</span>
-                  <span class="settings-desc">Show Objects, Tilemap, Nearby Players, Scripts, and plugin debug controls.</span>
+                  <span class="settings-desc">Show the DEV section: Internal, Logs, API, Objects, Tilemap, Game Wiki, Nearby Players, Scripts, and plugin debug controls.</span>
                 </div>
                 <label class="toggle-switch">
                   <input type="checkbox" id="setting-dev-mode">
                   <span class="toggle-slider"></span>
                 </label>
               </div>
-            </div>
-          </div>
-
-          <div class="settings-tab-panel" data-settings-panel="admin">
-            <div class="settings-group">
-              <h3>Admin Tools</h3>
-              <div class="settings-row">
-                <div class="settings-row-info">
-                  <span class="settings-label">Admin Mode</span>
-                  <span class="settings-desc">Show Logs, Packet Lab, and the Packet Sniffer.</span>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="setting-admin-mode">
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
               <div class="settings-row">
                 <div class="settings-row-info">
                   <span class="settings-label" data-i18n="settings.packetSniffer">Packet Sniffer</span>
-                  <span class="settings-desc" data-i18n="settings.packetSnifferDesc">Show or hide the bottom packet sniffer panel while Admin Mode is on.</span>
+                  <span class="settings-desc" data-i18n="settings.packetSnifferDesc">Show or hide the packet sniffer panel along the bottom.</span>
                 </div>
                 <label class="toggle-switch">
                   <input type="checkbox" id="setting-packet-sniffer-visible" checked>
                   <span class="toggle-slider"></span>
                 </label>
               </div>
-              <div class="settings-row">
-                <div class="settings-row-info">
-                  <span class="settings-label">View as user</span>
-                  <span class="settings-desc">Preview the dashboard as a non-admin user on a specific plan. Resets on reload.</span>
-                </div>
-                <select id="setting-view-as" class="settings-select">
-                  <option value="">Real account</option>
-                  <option value="free">Free user (no admin)</option>
-                  <option value="dodge">Dodge user ($10/mo tier)</option>
-                  <option value="developer">Developer user ($8/mo tier)</option>
-                </select>
-              </div>
-              <div class="settings-row">
-                <div class="settings-row-info">
-                  <span class="settings-label">Single Client Only</span>
-                  <span class="settings-desc">Block launching if a RotMG Exalt process is already open.</span>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="setting-single-client-only">
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-              <div class="settings-row">
-                <div class="settings-row-info">
-                  <span class="settings-label">Account layout</span>
-                  <span class="settings-desc">Single client sidebar, multi-account compact list (MAC), or multibox (MAC-style sidebar; Home tab reserved).</span>
-                </div>
-                <select id="setting-account-layout-mode" class="settings-select account-layout-mode-select" aria-label="Account layout">
-                  <option value="single">Single</option>
-                  <option value="mac">MAC</option>
-                  <option value="multibox">Multibox</option>
-                </select>
-              </div>
             </div>
           </div>
+
         </div>
       </div>
     </div>
@@ -2137,22 +2019,6 @@
 <script src="ws-message-types.js"></script>
 <script type="module" src="app.js"></script>
 
-<!-- Quick Launch account picker popup -->
-<div id="ql-picker" class="ql-picker-overlay" style="display:none;">
-  <div class="ql-picker-backdrop"></div>
-  <div class="ql-picker-panel">
-    <div class="ql-picker-header">
-      <span class="ql-picker-title">Quick Launch — Choose Account</span>
-      <button id="ql-picker-close" class="ql-picker-close" type="button">×</button>
-    </div>
-    <p class="ql-picker-sub">Select an account to bind to the Quick Launch button. Clicking it will instantly launch that account.</p>
-    <div id="ql-picker-list" class="ql-picker-list"></div>
-    <div class="ql-picker-footer">
-      <button id="ql-picker-clear" class="setting-btn setting-btn-secondary" type="button">Clear</button>
-    </div>
-  </div>
-</div>
-
 <!-- Script picker popup -->
 <div id="script-picker-overlay" class="script-picker-overlay hidden" role="dialog" aria-modal="true" aria-label="Select Script">
   <div class="script-picker-backdrop"></div>
@@ -2174,11 +2040,5 @@
   </div>
 </div>
 
-<!-- Quick Launch button right-click context menu -->
-<div id="ql-ctx-menu" class="ql-ctx-menu" style="display:none;" role="menu">
-  <button type="button" class="accounts-ctx-item" data-ql-action="launch">Launch</button>
-  <button type="button" class="accounts-ctx-item" data-ql-action="edit">Edit Account</button>
-  <button type="button" class="accounts-ctx-item accounts-ctx-item--danger" data-ql-action="clear">Clear</button>
-</div>
 </body>
 </html>

@@ -285,17 +285,33 @@ DWORD WINAPI IpcBridgeThread(LPVOID)
         bool sentUnresolvedClasses = false;
 
         while (connected && !s_shutdown) {
-            int readLen = IpcFraming::ReadMessage(hPipe, readBuf, sizeof(readBuf) - 1);
-            if (readLen < 0) {
-                DbgLog("Server disconnected.");
-                connected = false;
-                break;
-            }
-            if (readLen > 0) {
+            // DRAIN the pipe every iteration. This used to read exactly ONE message
+            // per pass, and the pass ends in Sleep(25) — so intake was hard-capped at
+            // ~38 messages/second no matter how many were queued. Every plugin shares
+            // this one lane (the Farmer alone sends walkTargetX/Y/Active at 10 Hz = 30/s,
+            // before auto-dodge's per-MOVE anchor pushes, aim/lock ids, autofire, ...),
+            // so production routinely exceeded the drain rate and the backlog grew
+            // MONOTONICALLY for the whole session: commands were applied tens of
+            // seconds after the script issued them, worsening the longer it ran.
+            // Symptom was "every action takes ~30 s to happen", and it made every
+            // feature look independently broken because they all queue here.
+            // ReadMessage is non-blocking (PeekNamedPipe, returns 0 when empty), so
+            // this terminates as soon as the pipe is dry. The cap only stops a flood
+            // from starving the heartbeat/telemetry writes below.
+            constexpr int kMaxDrainPerIteration = 256;
+            for (int drained = 0; drained < kMaxDrainPerIteration; ++drained) {
+                int readLen = IpcFraming::ReadMessage(hPipe, readBuf, sizeof(readBuf) - 1);
+                if (readLen < 0) {
+                    DbgLog("Server disconnected.");
+                    connected = false;
+                    break;
+                }
+                if (readLen == 0) break;          // pipe empty — nothing more queued
                 readBuf[readLen] = '\0';
                 if (!HandleControlMessage(readBuf, hPipe, msgBuf, sizeof(msgBuf)))
                     DispatchCommand(readBuf);
             }
+            if (!connected) break;
 
             ULONGLONG now = GetTickCount64();
             if (now - s_conn.lastHeartbeatSent >= HEARTBEAT_INTERVAL_MS) {

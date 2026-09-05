@@ -242,6 +242,10 @@ export class GameDataLoader {
 
   load(xmlPath: string): void {
     const xml = readFileSync(xmlPath, 'utf8');
+    // load() is also used after the dashboard game updater refreshes XML.
+    // Remove definitions deleted by a new build instead of retaining stale rows.
+    this.objects.clear();
+    this.objectRawXmlMap.clear();
     const parser = new XMLParser({
       ignoreAttributes: false,
       attributeNamePrefix: '@_',

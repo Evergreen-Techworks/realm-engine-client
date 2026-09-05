@@ -46,6 +46,50 @@ function findPackagedSdkDir(): string | null {
   return null;
 }
 
+function findPackagedScriptsDir(): string | null {
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  const candidates = [
+    resourcesPath ? join(resourcesPath, 'script-packages') : '',
+    join(repoRoot(), 'script-packages'),
+  ].filter(Boolean);
+  return candidates.find((dir) => existsSync(dir)) ?? null;
+}
+
+function deployStarterScripts(realmengineDir: string): void {
+  const sourceRoot = findPackagedScriptsDir();
+  if (!sourceRoot) return;
+  const targetRoot = join(realmengineDir, 'Scripts');
+  mkdirSync(targetRoot, { recursive: true });
+  // One-time migration from the quest-only prototype to the complete Farmer.
+  const legacy = join(targetRoot, 'level-20-quest-farmer');
+  if (existsSync(legacy)) {
+    try {
+      const manifest = JSON.parse(readFileSync(join(legacy, 'realmengine.script.json'), 'utf8'));
+      if (String(manifest?.developer ?? '') === 'Realm Engine') {
+        rmSync(legacy, { recursive: true, force: true });
+      }
+    } catch { /* preserve unknown/user-owned folders */ }
+  }
+  for (const entry of readdirSync(sourceRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const source = join(sourceRoot, entry.name);
+    const target = join(targetRoot, entry.name);
+    // Update Realm Engine's managed starter package, but never replace a
+    // third-party script that happens to use the same folder name.
+    if (existsSync(target)) {
+      try {
+        const manifest = JSON.parse(readFileSync(join(target, 'realmengine.script.json'), 'utf8'));
+        if (String(manifest?.developer ?? '') !== 'Realm Engine') continue;
+        rmSync(target, { recursive: true, force: true });
+      } catch {
+        continue;
+      }
+    }
+    cpSync(source, target, { recursive: true });
+    Logger.log('SDK', `Installed/updated starter script: ${entry.name}`);
+  }
+}
+
 /** Read version from an SDK package.json. */
 function readSdkVersion(sdkDir: string): string {
   try {
@@ -132,6 +176,7 @@ function listInstalledFiles(targetDir: string): string[] {
 export function ensureSdkDeployed(): void {
   const userDir = process.env.USERPROFILE || homedir();
   const realmengineDir = join(userDir, 'Documents', 'Realmengine');
+  deployStarterScripts(realmengineDir);
   const sdkTargetDir = join(realmengineDir, 'node_modules', '@realmengine', 'sdk');
   const versionFilePath = join(realmengineDir, VERSION_FILE);
 

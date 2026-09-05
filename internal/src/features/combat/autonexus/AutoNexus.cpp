@@ -498,6 +498,19 @@ static void RunAutoNexus()
     std::vector<Threat> threats;
 
     PlayerMotion pm = ReadPlayerMotion(lp, cFull);
+    const UDodge::SafetyState udSafety = UDodge::GetSafetyState();
+    PlayerMotion serverPm = pm;
+    const bool hasServerAnchor = udSafety.enabled && udSafety.serverAnchorValid &&
+        std::isfinite(udSafety.serverX) && std::isfinite(udSafety.serverY);
+    if (hasServerAnchor) {
+        serverPm.x = udSafety.serverX;
+        serverPm.y = udSafety.serverY;
+        // The last emitted MOVE point is an authoritative collision anchor.
+        // Do not invent sub-tick velocity beyond it; scanning both this anchor
+        // and the live local trajectory is conservative in both directions.
+        serverPm.vx = 0.f;
+        serverPm.vy = 0.f;
+    }
     const float horizon = std::max(0.f, std::min(kMaxHorizonMs, g_predTimeMs));
 
     const float fieldVx = pm.vx, fieldVy = pm.vy;
@@ -567,7 +580,9 @@ static void RunAutoNexus()
                 if (std::isfinite(spd) && spd > 1e-5f) {
                     const float maxReach = spd * horizon + 4.0f;
                     const float pdx = proj.x - pm.x, pdy = proj.y - pm.y;
-                    if (pdx * pdx + pdy * pdy > maxReach * maxReach)
+                    const float sdx = proj.x - serverPm.x, sdy = proj.y - serverPm.y;
+                    if (pdx * pdx + pdy * pdy > maxReach * maxReach &&
+                        (!hasServerAnchor || sdx * sdx + sdy * sdy > maxReach * maxReach))
                         continue;
                 }
             }
@@ -578,7 +593,11 @@ static void RunAutoNexus()
                 continue;
             }
 
-            const float tHit = FindHitMsUntil(proj, alreadyElapsed, pm, horizon);
+            float tHit = FindHitMsUntil(proj, alreadyElapsed, pm, horizon);
+            if (hasServerAnchor) {
+                const float serverHit = FindHitMsUntil(proj, alreadyElapsed, serverPm, horizon);
+                if (serverHit >= 0.f && (tHit < 0.f || serverHit < tHit)) tHit = serverHit;
+            }
             if (g_debugDraw) CaptureVizPath(proj, alreadyElapsed, tHit >= 0.f);
             if (tHit < 0.f) continue;
 
@@ -634,7 +653,11 @@ static void RunAutoNexus()
             const float ply = pm.y + pm.vy * t;                 // predicted player pos at detonation
             const float dx  = plx - a.destX, dy = ply - a.destY;
             const float rr  = radius + DodgeHit::kPlayerHalf + kNexusHitPadTiles;
-            if (dx * dx + dy * dy > rr * rr) continue;          // player clears the blast — no threat
+            const float splx = serverPm.x + serverPm.vx * t;
+            const float sply = serverPm.y + serverPm.vy * t;
+            const float sdx = splx - a.destX, sdy = sply - a.destY;
+            if (dx * dx + dy * dy > rr * rr &&
+                (!hasServerAnchor || sdx * sdx + sdy * sdy > rr * rr)) continue;
 
             Threat th{};
             th.attackerObjId = static_cast<int32_t>(a.ownerObjId);
@@ -653,7 +676,7 @@ static void RunAutoNexus()
     // Ground damage is a distinct hazard udodge's safeWalk may or may not avoid —
     // it is NEVER gated by the projectile suppression above. Always predict and
     // publish it (with an empty projectile list when suppressed).
-    const GroundThreat ground = PredictGroundDamage(lp, pm, horizon);
+    const GroundThreat ground = PredictGroundDamage(lp, hasServerAnchor ? serverPm : pm, horizon);
 
     PublishThreats(threats, ground);
 }

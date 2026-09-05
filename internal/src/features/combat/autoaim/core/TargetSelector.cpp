@@ -88,6 +88,7 @@ Result Select(const Config& cfg,
         for (const EnemyTracker::Entry& e : snap) {
             if (e.id != cfg.lockedEnemyId) continue;
             if (cfg.ignoreWalls && !e.hasHealthBar) break;
+            if (cfg.ignoreScenery && e.isScenery) break;
             if (e.isInvulnerable && !cfg.shootInvulnerable) break;
 
             Result r;
@@ -137,6 +138,7 @@ Result Select(const Config& cfg,
 
         // Soft filters
         if (cfg.ignoreWalls && !e.hasHealthBar) goto next_entry;
+        if (cfg.ignoreScenery && e.isScenery) goto next_entry;
         if (e.isInvulnerable && !cfg.shootInvulnerable) goto next_entry;
 
         {
@@ -206,6 +208,7 @@ Result SelectKillAura(bool atMouse, float rangeCapTiles,
     cfg.prioritizeBosses     = false;
     // A forced target may be a breakable wall (noHealthBar) — do not filter it.
     cfg.ignoreWalls          = (forcedEnemyId == 0);
+    cfg.ignoreScenery        = (forcedEnemyId == 0);
     cfg.mouseBoundingEnabled = false;
     cfg.maxRangeCapTiles     = (rangeCapTiles > 0.f) ? rangeCapTiles : 0.f;
 

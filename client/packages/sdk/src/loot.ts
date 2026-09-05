@@ -109,6 +109,18 @@ export const loot = {
 
   /** Returns `true` if the objectType is a life or mana potion (permanent stat increase). */
   isLifeManaPot(_objectType: number): boolean { return false; },
+
+  /** True when this potion can still increase one of the current character's base stats. */
+  isUsefulStatPot(_objectType: number): boolean { return false; },
+
+  /** True when this gear is compatible with and ranks above the currently equipped item. */
+  isEquipmentUpgrade(_objectType: number): boolean { return false; },
+
+  /** Equipment destination slot (0 weapon, 1 ability, 2 armor, 3 ring), or -1. */
+  getEquipmentSlot(_objectType: number): number { return -1; },
+
+  /** Equip an upgrade directly from a nearby bag, swapping the old item back into the bag. */
+  equipFromBag(_bag: LootBag, _slotIndex: number): boolean { return false; },
 };
 
 export type { LootBag, LootItem, LootRarity, LootDropEvent, LootItemEvent, PickupOptions } from './types/loot';

@@ -2,6 +2,7 @@
 #include <cstdio>
 
 #include "DirectX.h"
+#include "Il2CppHook.h"
 #include "settings.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/VisualsTAB.h"
@@ -141,6 +142,17 @@ LRESULT __stdcall dWndProc(const HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPa
 
 HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags) {
 	if (g_unloading)
+		return oPresent(__this, SyncInterval, Flags);
+
+	// Register THIS thread with IL2CPP before any Tick below touches managed
+	// state. Present runs on the render thread, which AttachIl2Cpp() (called on
+	// the Run thread at load) never registered — yet GameState::Tick,
+	// HwidCapture::Tick and BootGate::Tick all allocate managed objects. An
+	// allocation from an unregistered thread makes the GC abort the process with
+	// "Fatal error in GC: collecting from unknown thread" on the first frame.
+	// EnsureThreadAttached is thread_local and idempotent: one bool test after
+	// the first call. Fail closed — skip the ticks rather than risk the GC.
+	if (!Il2CppHook::EnsureThreadAttached())
 		return oPresent(__this, SyncInterval, Flags);
 
 	// DEBUG BISECT #2: SpeedHack::Tick lazily installs IL2CPP hooks via

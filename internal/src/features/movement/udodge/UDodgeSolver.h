@@ -100,6 +100,12 @@ struct SolveResult {
     bool      prePosition = false;
     float     pocketDist  = 0.f; // reach to the nearest durable pocket (0 = none, or standing in one)
     uint8_t   tempLanes   = 0;   // relevant bullets fed to the temporal test (post-cull) — diagnostics
+    // TEMPORAL DURABILITY of the chosen target, in [0,1] (kSolveDurableW): 0 = it
+    // clears the dwell window and nothing more, 1 = nothing reaches it anywhere in
+    // the horizon. Diagnostics ONLY — the term that acts on it is a score over the
+    // already-admitted set. Meaningful for a HOLD and for a reflex pick; left 0 by
+    // the pre-position / walk-to / fallback paths, which do not rank candidates.
+    float     targetDurability = 0.f;
     // Pending (telegraphed, unarmed) AoE penetration at the chosen target, in tiles
     // (finding G-2). 0 = clear of every telegraph. Diagnostics ONLY — the term that
     // acts on it is a score penalty over the safe set (kSolvePendingW); a pending

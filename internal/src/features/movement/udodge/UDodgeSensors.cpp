@@ -16,7 +16,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <vector>
+#include <mutex>
+#include <cstdio>
 #include <windows.h>
 
 namespace UDodge { namespace Sensors {
@@ -33,6 +36,17 @@ constexpr float kThreatCullTiles = 16.f;
 // EnemyBlocked and the worker pathfinder's enemy-blocked cells stay consistent
 // (both read EnemyBlocker.radius from this one source).
 constexpr float kEnemyRadius     = 0.8f;
+// Walls / destructibles / scenery are Enemy-CLASS objects (they have HP and can be
+// shot) but they are STATIC MAP GEOMETRY occupying exactly one tile, and WorldTAB
+// already puts them in blockedMap via OCOND_ENEMY_OCC — so the occupancy grid
+// models their true SQUARE footprint. Handing them the mob radius on top modelled a
+// 1-tile pillar as a 0.8 + kUPlayerHalf = 1.0139-tile no-go DISC. Two of them one
+// tile apart have centres 2 tiles apart, putting the gap centre exactly 1.0 from
+// each — inside both discs by 0.0139 of a tile, so a gap the game walks straight
+// through was sealed. A tile-INSCRIBED radius keeps them blocking their own square
+// (the A*-routes-through-walls regression stays fixed) while leaving the walkable
+// tile beside them walkable.
+constexpr float kStaticBlockerRadius = 0.5f;
 constexpr float kAoeCullPad      = 16.f;
 
 // ── AoE arm window ──────────────────────────────────────────────────────────
@@ -91,6 +105,33 @@ bool TryPredict(const WorldProjectile& p, float tMs, float& outX, float& outY)
     if (!IsFinitePoint(x, y)) return false;
     outX = x; outY = y;
     return true;
+}
+
+// Conservative broad phase over the FUTURE planning window. Culling only by the
+// projectile head misses fast shots that start outside 16 tiles but enter the
+// player's neighbourhood during the 800 ms temporal horizon. Bound the maximum
+// approach by the shot's speed and remaining lifetime; acceleration/turning can
+// change direction but cannot make this radial reach test unsafe, so uncertain
+// speed data keeps the shot instead of guessing it away.
+bool CouldReachThreatRegion(const WorldProjectile& p, float playerX, float playerY,
+                            float elapsedMs)
+{
+    const float d = std::sqrt(DistSq(p.x, p.y, playerX, playerY));
+    if (d <= kThreatCullTiles) return true;
+
+    const float speedMul = (IsFinite(p.speedMul) && p.speedMul > 0.f) ? p.speedMul : 1.f;
+    if (!IsFinite(p.speed) || p.speed <= 0.f) return true; // unknown: safety-positive retain
+    float windowMs = kLaneCoverMs;
+    if (IsFinite(p.lifetime) && p.lifetime > 0.f && IsFinite(elapsedMs))
+        windowMs = std::min(windowMs, std::max(0.f, p.lifetime - elapsedMs));
+    float travel = (p.speed / 10000.f) * speedMul * windowMs;
+    if (!IsFinite(travel) || travel < 0.f) return true;
+
+    // Acceleration metadata is not normalized to one universally reliable unit
+    // across all projectile definitions. A modest factor keeps accelerated shots
+    // in the set; the exact positionAt trace performs the real narrow-phase test.
+    if (p.isAccelerating || p.useAccel) travel *= 2.f;
+    return d <= kThreatCullTiles + travel;
 }
 
 // Does this shot follow a NON-LINEAR path? Wavy / parametric / boomerang /
@@ -202,6 +243,99 @@ int CachedAnchorIndex(const WorldProjectile& p, float elapsedMs)
 // sharing is safe.
 std::vector<WorldProjectile> s_projs;
 std::vector<WorldAoe>        s_aoes;
+
+inline bool LaneTraceDone(float pathLen, float laneCap, float tMs);
+void SetInstantSpan(LaneThreat& lane, float laneCap);
+void ReconcileProjectilesThrottled(uint64_t nowMs)
+{
+    static uint64_t s_lastMs = 0;
+    if (nowMs - s_lastMs < 75ULL) return;
+    s_lastMs = nowMs;
+    ProjectileTracking::ReconcileWithLivePool();
+}
+
+struct PacketShot {
+    int32_t owner = 0;
+    int32_t bullet = 0;
+    float x = 0.f, y = 0.f, angle = 0.f;
+    float speed = 0.f, lifetimeMs = 0.f, hitHalf = 0.5f;
+    uint64_t receivedMs = 0;
+};
+constexpr int kMaxPacketShots = 256;
+constexpr uint64_t kPacketRecoveryMs = 750;
+std::mutex s_packetMutex;
+PacketShot s_packetShots[kMaxPacketShots]{};
+int s_packetCount = 0;
+
+bool RuntimeHasShot(const PacketShot& s)
+{
+    for (const WorldProjectile& p : s_projs) {
+        if (!p.valid || static_cast<int32_t>(p.bulletId) != s.bullet) continue;
+        if (p.attackerObjId == s.owner || static_cast<int32_t>(p.ownerObjId) == s.owner)
+            return true;
+    }
+    return false;
+}
+
+void AppendPacketLanes(DangerMap& out, float playerX, float playerY, float laneCap, uint64_t nowMs)
+{
+    PacketShot local[kMaxPacketShots];
+    int n = 0;
+    {
+        std::lock_guard<std::mutex> lk(s_packetMutex);
+        int write = 0;
+        for (int i = 0; i < s_packetCount; ++i) {
+            if (nowMs - s_packetShots[i].receivedMs > kPacketRecoveryMs) continue;
+            // Once the authoritative runtime tracker has observed this identity,
+            // the packet fallback has completed its job. Consume it permanently.
+            // Merely suppressing it for this frame lets it "resurrect" after the
+            // runtime projectile is deleted (hit/wall/despawn) but before the
+            // fallback's 750-ms timeout, leaving a ghost lane in the overlay/map.
+            if (RuntimeHasShot(s_packetShots[i])) continue;
+            s_packetShots[write++] = s_packetShots[i];
+        }
+        s_packetCount = write;
+        n = write;
+        for (int i = 0; i < n; ++i) local[i] = s_packetShots[i];
+    }
+
+    for (int i = 0; i < n; ++i) {
+        const PacketShot& s = local[i];
+        const float ageMs = static_cast<float>(nowMs - s.receivedMs);
+        if (s.lifetimeMs > 0.f && ageMs >= s.lifetimeMs) continue;
+        const float tilesPerMs = (s.speed > 0.f && IsFinite(s.speed)) ? s.speed / 10000.f : 0.005f;
+        const Vec2 dir{ std::cos(s.angle), std::sin(s.angle) };
+        const Vec2 live{ s.x + dir.x * tilesPerMs * ageMs,
+                         s.y + dir.y * tilesPerMs * ageMs };
+        const float remainingMs = s.lifetimeMs > 0.f
+            ? std::min(kLaneCoverMs, std::max(0.f, s.lifetimeMs - ageMs)) : kLaneCoverMs;
+        const float reach = tilesPerMs * remainingMs;
+        if (Len(Sub(live, { playerX, playerY })) > kThreatCullTiles + reach) continue;
+        if (out.laneCount >= kMaxProjectiles) { out.limited = true; break; }
+
+        LaneThreat& lane = out.lanes[out.laneCount++];
+        lane = LaneThreat{};
+        lane.bulletId = s.bullet;
+        lane.attackerObjId = s.owner;
+        lane.ownerObjId = static_cast<uint32_t>(s.owner);
+        lane.hitHalf = std::clamp(s.hitHalf, 0.05f, 2.5f);
+        lane.provisional = true;
+        lane.points[0] = live;
+        lane.pointTimesMs[0] = 0.f;
+        lane.pointCount = 1;
+        lane.tailAtShotEnd = s.lifetimeMs > 0.f && remainingMs >= s.lifetimeMs - ageMs - 1.f;
+        float path = 0.f;
+        while (lane.pointCount < kMaxLanePoints) {
+            const float relMs = std::min(remainingMs,
+                static_cast<float>(lane.pointCount) * kTraceStepMs);
+            path = tilesPerMs * relMs;
+            lane.pointTimesMs[lane.pointCount] = relMs;
+            lane.points[lane.pointCount++] = Add(live, Mul(dir, path));
+            if (relMs >= remainingMs || LaneTraceDone(path, laneCap, relMs)) break;
+        }
+        SetInstantSpan(lane, laneCap);
+    }
+}
 
 // ── Instantaneous danger map (plan 45) ──────────────────────────────────────
 // Lane tracing helpers. Times here are LOCAL variables only — they trace the
@@ -504,6 +638,20 @@ void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& 
     s_aoes.clear();
     AoeTracking::CopyActiveForDraw(s_aoes);
 
+    // AoeTracking retains up to 128 entries while DangerMap is deliberately
+    // smaller. Its ring-buffer order is not spatial, so taking the first 32 made
+    // nearby blasts disappear whenever older/farther effects filled the map.
+    // Nearest-first makes overflow deterministic and preserves every zone that
+    // can affect the player before decorative/distant entries consume capacity.
+    std::stable_sort(s_aoes.begin(), s_aoes.end(), [&](const WorldAoe& a,
+                                                       const WorldAoe& b) {
+        const float ad = IsFinitePoint(a.destX, a.destY)
+            ? DistSq(a.destX, a.destY, playerX, playerY) : kHugeClearance;
+        const float bd = IsFinitePoint(b.destX, b.destY)
+            ? DistSq(b.destX, b.destY, playerX, playerY) : kHugeClearance;
+        return ad < bd;
+    });
+
     // Player speed for the arm window, resolved AT MOST ONCE per rebuild and only
     // when a zone actually needs it (the common case is no zones at all, and
     // ReadDodgePlayerStats calls into the game to get the live move multiplier).
@@ -586,6 +734,15 @@ void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& 
 // ticks; keeping this frame-fresh is what lets the per-frame step re-validation
 // (UDodge::Tick) refuse to walk onto where an add has since moved. The locked
 // boss position is refreshed live too, so the orbit goal tracks it mid-tick.
+// A blocker's radius follows what the thing actually IS. hasHealthBar is false for
+// walls and destructibles, and isScenery marks static props — both are fixed,
+// one-tile map furniture rather than a body that moves, so they get the inscribed
+// tile radius. Everything with a real health bar keeps the mob radius.
+float BlockerRadiusFor(const EnemyTracker::Entry& e)
+{
+    return (!e.hasHealthBar || e.isScenery) ? kStaticBlockerRadius : kEnemyRadius;
+}
+
 void PopulateEnemies(DangerMap& out, float playerX, float playerY)
 {
     out.enemyCount = 0;
@@ -624,7 +781,7 @@ void PopulateEnemies(DangerMap& out, float playerX, float playerY)
             if (out.enemyCount < kMaxEnemies) {
                 EnemyBlocker& b = out.enemies[out.enemyCount++];
                 b.pos = { e.x, e.y };
-                b.radius = kEnemyRadius;   // single baked source — no per-enemy size field exists
+                b.radius = BlockerRadiusFor(e);
                 if (out.enemyCount == kMaxEnemies) refreshFarthest();   // just filled
             } else {
                 // Full: the snapshot exceeded capacity (still reported via
@@ -634,7 +791,7 @@ void PopulateEnemies(DangerMap& out, float playerX, float playerY)
                 if (dSq < farthestDistSq) {
                     EnemyBlocker& b = out.enemies[farthestIdx];
                     b.pos = { e.x, e.y };
-                    b.radius = kEnemyRadius;
+                    b.radius = BlockerRadiusFor(e);
                     refreshFarthest();
                 }
             }
@@ -650,6 +807,48 @@ void PopulateEnemies(DangerMap& out, float playerX, float playerY)
 }
 
 } // namespace
+
+void RecordPacketShot(const char* encoded)
+{
+    if (!encoded) return;
+    if (std::strcmp(encoded, "clear") == 0) {
+        ClearPacketShots();
+        return;
+    }
+    PacketShot shot{};
+    if (sscanf_s(encoded, "%d,%d,%f,%f,%f,%f,%f,%f",
+                 &shot.owner, &shot.bullet, &shot.x, &shot.y, &shot.angle,
+                 &shot.speed, &shot.lifetimeMs, &shot.hitHalf) != 8)
+        return;
+    if (shot.owner == 0 || !IsFinitePoint(shot.x, shot.y) || !IsFinite(shot.angle)) return;
+    shot.bullet &= 0xffff;
+    shot.receivedMs = GetTickCount64();
+    if (!IsFinite(shot.speed) || shot.speed < 0.f) shot.speed = 0.f;
+    if (!IsFinite(shot.lifetimeMs) || shot.lifetimeMs < 0.f) shot.lifetimeMs = 0.f;
+    if (!IsFinite(shot.hitHalf) || shot.hitHalf <= 0.f) shot.hitHalf = 0.5f;
+
+    std::lock_guard<std::mutex> lk(s_packetMutex);
+    for (int i = 0; i < s_packetCount; ++i) {
+        if (s_packetShots[i].owner == shot.owner && s_packetShots[i].bullet == shot.bullet) {
+            s_packetShots[i] = shot;
+            return;
+        }
+    }
+    if (s_packetCount < kMaxPacketShots) {
+        s_packetShots[s_packetCount++] = shot;
+    } else {
+        int oldest = 0;
+        for (int i = 1; i < s_packetCount; ++i)
+            if (s_packetShots[i].receivedMs < s_packetShots[oldest].receivedMs) oldest = i;
+        s_packetShots[oldest] = shot;
+    }
+}
+
+void ClearPacketShots()
+{
+    std::lock_guard<std::mutex> lk(s_packetMutex);
+    s_packetCount = 0;
+}
 
 void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& settings)
 {
@@ -669,7 +868,6 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
         return;
     }
 
-    const float cullSq = kThreatCullTiles * kThreatCullTiles;
     const float laneCap = std::clamp(settings.laneTiles, 2.f, 16.f);
     const uint64_t nowMs = GetTickCount64();
     const int32_t localId = ProjectileTracking::GetLocalPlayerObjectId();
@@ -681,19 +879,16 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
     // tracked list, so their lanes vanish immediately instead of lingering to their
     // full lifetime. Throttled (~10 Hz) — reading the live pool is IL2CPP work — and
     // safe (never prunes on a failed read). Game-thread only (BuildMap runs there).
-    {
-        static ULONGLONG s_lastReconcileMs = 0;
-        const ULONGLONG nowRec = GetTickCount64();
-        if (nowRec - s_lastReconcileMs >= 100ULL) {
-            s_lastReconcileMs = nowRec;
-            ProjectileTracking::ReconcileWithLivePool();
-        }
-    }
+    ReconcileProjectilesThrottled(nowMs);
 
     // Projectiles → danger lanes: live position (anchor) + remaining travel
     // path as pure geometry. Same filter chain as Build.
     s_projs.clear();
     ProjectileTracking::CopyActiveForDraw(s_projs);
+    std::stable_sort(s_projs.begin(), s_projs.end(), [&](const WorldProjectile& a,
+                                                         const WorldProjectile& b) {
+        return DistSq(a.x, a.y, playerX, playerY) < DistSq(b.x, b.y, playerX, playerY);
+    });
     {
         static int s_bmN = 0;
         if ((s_bmN++ % 120) == 0)
@@ -709,7 +904,8 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
         if (!p.canHitPlayer && localId != 0 && static_cast<int32_t>(p.ownerObjId) == localId) continue;
         if (!p.canHitPlayer && p.attackerObjId == 0 && static_cast<int32_t>(p.ownerObjId) == 0) continue;
         if (!IsFinitePoint(p.x, p.y)) continue;
-        if (DistSq(p.x, p.y, playerX, playerY) > cullSq) continue;
+        const float elapsedMs = static_cast<float>(nowMs > p.spawnTick ? nowMs - p.spawnTick : 0u);
+        if (!CouldReachThreatRegion(p, playerX, playerY, elapsedMs)) continue;
 
         // WALL-HIT RETIREMENT (reliable, hook-free): a shot whose CENTER is inside a
         // wall tile has hit that wall — the game deletes it there — so retire it (the
@@ -718,8 +914,7 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
         // a wall tile, so this can NEVER drop a live shot. The age guard avoids a shot
         // that spawned right next to a wall being culled on its very first frames.
         {
-            const float ageMs = static_cast<float>(nowMs > p.spawnTick ? nowMs - p.spawnTick : 0u);
-            if (ageMs > 80.f &&
+            if (elapsedMs > 80.f &&
                 WorldTAB::IsTileBlocked(static_cast<int>(std::floor(p.x)),
                                         static_cast<int>(std::floor(p.y)))) {
                 ProjectileTracking::RetireProjectile(p);
@@ -740,10 +935,13 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
 
         // Coarse elapsed only — the calibrated clock is deliberately unused
         // here: the live position is the anchor.
-        const float elapsedMs = static_cast<float>(nowMs > p.spawnTick ? nowMs - p.spawnTick : 0u);
         TraceLane(lane, p, elapsedMs, laneCap);
         if (lane.pointCount >= 1) ++out.laneCount;
     }
+
+    // Packet-time recovery is appended only for identities the authoritative
+    // runtime hook has not observed. It expires after 750 ms either way.
+    AppendPacketLanes(out, playerX, playerY, laneCap, nowMs);
 
     // AoE zones → present-tense discs (active = landed & persisting; pending
     // = telegraphed soft cost).
@@ -771,9 +969,13 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
     if (!ProjectileTracking::IsInstalled()) return false;
     s_hazardMemo.Clear();   // per-frame hazard memo reset (same contract as Build)
 
-    const float cullSq = kThreatCullTiles * kThreatCullTiles;
     const uint64_t nowMs = GetTickCount64();
     const int32_t localId = ProjectileTracking::GetLocalPlayerObjectId();
+
+    // Hits against walls/trees and despawns after an owner dies remove the
+    // projectile from the game's live pool. Prune those identities before
+    // copying/re-anchoring so neither the overlay nor AutoNexus sees ghosts.
+    ReconcileProjectilesThrottled(nowMs);
 
     // Live projectile set, same filter chain as BuildMap. Any mismatch with
     // the map's lane set (spawn/retire) is a structural change — return false
@@ -791,7 +993,8 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
         if (!p.canHitPlayer && localId != 0 && static_cast<int32_t>(p.ownerObjId) == localId) continue;
         if (!p.canHitPlayer && p.attackerObjId == 0 && static_cast<int32_t>(p.ownerObjId) == 0) continue;
         if (!IsFinitePoint(p.x, p.y)) continue;
-        if (DistSq(p.x, p.y, playerX, playerY) > cullSq) continue;
+        const float elapsedMs = static_cast<float>(nowMs > p.spawnTick ? nowMs - p.spawnTick : 0u);
+        if (!CouldReachThreatRegion(p, playerX, playerY, elapsedMs)) continue;
         if (++liveCount > map.laneCount) return false;   // spawned mid-tick
 
         // Match on (bulletId, attackerObjId, ownerObjId) — bulletId alone is
@@ -799,7 +1002,8 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
         int laneIdx = -1;
         for (int i = 0; i < map.laneCount; ++i) {
             const LaneThreat& lane = map.lanes[i];
-            if (lane.bulletId == static_cast<int32_t>(p.bulletId) &&
+            if (!lane.provisional &&
+                lane.bulletId == static_cast<int32_t>(p.bulletId) &&
                 lane.attackerObjId == p.attackerObjId &&
                 lane.ownerObjId == p.ownerObjId) { laneIdx = i; break; }
         }
@@ -821,7 +1025,6 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
         const bool curved = IsCurvedShot(p);   // ONE definition, shared with CachedAnchorIndex
         const float laneCap = std::clamp(settings.laneTiles, 2.f, 16.f);
         if (curved) {
-            const float elapsedMs = static_cast<float>(nowMs > p.spawnTick ? nowMs - p.spawnTick : 0u);
             TraceLane(lane, p, elapsedMs, laneCap);   // identity + hitHalf preserved (TraceLane only sets the polyline)
         } else {
             // Re-anchor: rebase the polyline so the nearest lane point becomes the
@@ -854,7 +1057,25 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
             SetInstantSpan(lane, laneCap);
         }
     }
-    if (liveCount != map.laneCount) return false;        // a lane's shot retired
+    int runtimeLaneCount = 0;
+    for (int i = 0; i < map.laneCount; ++i)
+        if (!map.lanes[i].provisional) ++runtimeLaneCount;
+    if (liveCount != runtimeLaneCount) return false;     // a runtime lane's shot retired
+
+    // Packet recovery lanes are not members of the runtime projectile pool and
+    // must never participate in its structural-count invariant. Remove the old
+    // provisional tail and regenerate it from the bounded packet store at its
+    // current age. This is cheap straight-line plain math and avoids forcing a
+    // full BuildMap + solve every frame during the 750 ms recovery window.
+    int writeLane = 0;
+    for (int i = 0; i < map.laneCount; ++i) {
+        if (map.lanes[i].provisional) continue;
+        if (writeLane != i) map.lanes[writeLane] = map.lanes[i];
+        ++writeLane;
+    }
+    map.laneCount = writeLane;
+    AppendPacketLanes(map, playerX, playerY,
+                      std::clamp(settings.laneTiles, 2.f, 16.f), nowMs);
 
     // Zones: rebuilt wholesale (cheap; classification is present-tense).
     RebuildZones(map, playerX, playerY, settings, nowMs);
@@ -874,7 +1095,15 @@ bool IsHazardAt(float worldX, float worldY)
 
 bool CanOccupy(float worldX, float worldY, bool safeWalk)
 {
-    return Movement::TileSensor::CanOccupy(s_hazardMemo, worldX, worldY, safeWalk);
+    if (!Movement::TileSensor::CanOccupy(s_hazardMemo, worldX, worldY, safeWalk)) return false;
+    if (!safeWalk) return true;
+    // Damaging ground is tile-based, but the player is not a point. Check the
+    // footprint corners so merely grazing a dangerous tile corner is rejected.
+    constexpr float h = kUOccPlayerHalfEdge;
+    return !IsHazardAt(worldX - h, worldY - h) &&
+           !IsHazardAt(worldX + h, worldY - h) &&
+           !IsHazardAt(worldX - h, worldY + h) &&
+           !IsHazardAt(worldX + h, worldY + h);
 }
 
 } } // namespace UDodge::Sensors

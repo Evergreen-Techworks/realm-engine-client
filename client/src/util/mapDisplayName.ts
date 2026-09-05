@@ -3,7 +3,8 @@
  * Localized tokens look like {@code {s.rotmg}} — we map that one to "Realm".
  */
 export function normalizeMapDisplayName(displayName: unknown, name?: unknown): string {
-  const raw = String(displayName ?? name ?? '').trim();
+  const display = String(displayName ?? '').trim();
+  const raw = display || String(name ?? '').trim();
   if (!raw) return '';
 
   const localized = raw.match(/^\{s\.([^}]+)\}$/i);

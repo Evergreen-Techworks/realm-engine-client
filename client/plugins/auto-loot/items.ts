@@ -118,3 +118,28 @@ export function shouldSkipAutodrinkClassCap(
   const target = STAT_POT_ITEM_TO_PERMANENT[itemId];
   return target != null && isStatCapped(caps, values, target);
 }
+
+/** Class-cap guard for every permanent potion, including Life and Mana. */
+export function shouldSkipPermanentPotionClassCap(
+  classType: number,
+  values: PermanentStatValues & {
+    maxHealth: number; maxMana: number;
+    healthBonus?: number; manaBonus?: number;
+    exaltedMaxHP?: number; exaltedMaxMP?: number;
+  },
+  itemId: number,
+  getCaps: (ct: number) => PlayerClassStatMaxes | undefined,
+): boolean {
+  if (shouldSkipAutodrinkClassCap(classType, values, itemId, getCaps)) return true;
+  const caps = getCaps(classType);
+  if (!caps) return false;
+  if (LIFE_MANA_POTION_IDS.has(itemId)) {
+    const life = itemId === 2793 || itemId === 5471 || itemId === 9070;
+    const base = life
+      ? values.maxHealth - Number(values.healthBonus ?? 0) - Number(values.exaltedMaxHP ?? 0)
+      : values.maxMana - Number(values.manaBonus ?? 0) - Number(values.exaltedMaxMP ?? 0);
+    const cap = life ? caps.maxHitPoints : caps.maxMagicPoints;
+    return Number.isFinite(base) && Number.isFinite(cap) && cap > 0 && base >= cap;
+  }
+  return false;
+}

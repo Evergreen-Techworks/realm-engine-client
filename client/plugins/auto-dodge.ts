@@ -37,6 +37,41 @@ export function register(ctx: PluginContext) {
     const off = forceOff || !ctx.enabled;
     const mode = off ? 0 : modeToIdx(ctx.getSetting<string>('dodgeMode'));
     sendDllFeature('autoDodgeMode', mode);
+    updateMoveEnvelopeArming();
+  }
+
+  type MovePoint = { time: number; x: number; y: number };
+  const moveEnvelope = {
+    valid: false,
+    x: 0,
+    y: 0,
+    time: 0,
+  };
+
+  function envelopeWanted(): boolean {
+    return ctx.enabled && ctx.getSetting<string>('dodgeMode') === 'unified' &&
+      ctx.getSetting<string>('udodgeMoveEnvelope') === 'on';
+  }
+
+  function updateMoveEnvelopeArming(): void {
+    const wanted = envelopeWanted();
+    // Direct local placement is allowed only after at least one real MOVE has
+    // established the last-sent anchor. After map/GOTO reset, the first MOVE is
+    // deliberately native and unclamped; it re-arms the following interval.
+    const armed = wanted && moveEnvelope.valid;
+    sendDllFeature('udodgeMoveEnvelope', wanted ? 1 : 0);
+    sendDllFeature('udodgeMoveEnvelopeArmed', armed ? 1 : 0);
+    if (!armed) sendDllFeature('udodgeServerPositionError', 0);
+    if (!wanted) sendDllFeature('udodgeServerAnchorValid', 0);
+  }
+
+  function resetMoveEnvelope(): void {
+    moveEnvelope.valid = false;
+    moveEnvelope.x = moveEnvelope.y = 0;
+    moveEnvelope.time = 0;
+    sendDllFeature('udodgeMoveEnvelopeArmed', 0);
+    sendDllFeature('udodgeServerAnchorValid', 0);
+    sendDllFeature('udodgeServerPositionError', 0);
   }
 
   // `mode` may be a single dodge mode or several — settings shown for the RE-Sim
@@ -326,6 +361,72 @@ export function register(ctx: PluginContext) {
     label: '[UDodge] Plan window radius (grid cells — smaller = cheaper)', advanced: true,
     type: 'range', value: 20, min: 8, max: 40, step: 1,
   }, (v: number) => sendDllFeature('udodgePlanRadius', v));
+  registerModeSetting('unified', 'udodgeMoveEnvelope',
+    onOff('[UDodge] Server-safe outbound MOVE envelope', 'on'),
+    () => updateMoveEnvelopeArming());
+
+  // Keep observing MOVE even outside Unified mode so switching modes starts
+  // from the last position actually sent, never from an invented anchor.
+  ctx.hookPacket('MOVE', (client, packet) => {
+    if (!packet.isDefined || !Array.isArray(packet.data.records)) return;
+    const records = packet.data.records as MovePoint[];
+    if (records.length === 0) return;
+
+    let maxError = 0;
+    const shouldClamp = envelopeWanted();
+    const rawSpeed = client.playerData.speed + client.playerData.speedBonus;
+    const spd = Number.isFinite(rawSpeed) ? Math.max(0, Math.min(75, rawSpeed)) : 0;
+    const tilesPerSec = 4.0 + 5.6 * (spd / 75.0);
+
+    for (const record of records) {
+      const desiredX = Number(record.x);
+      const desiredY = Number(record.y);
+      const recordTime = Number(record.time) | 0;
+      if (![desiredX, desiredY, recordTime].every(Number.isFinite)) continue;
+
+      if (!moveEnvelope.valid || recordTime <= moveEnvelope.time) {
+        moveEnvelope.valid = true;
+        moveEnvelope.x = desiredX;
+        moveEnvelope.y = desiredY;
+        moveEnvelope.time = recordTime;
+        continue;
+      }
+
+      let sentX = desiredX;
+      let sentY = desiredY;
+      if (shouldClamp) {
+        const dtMs = Math.min(1000, Math.max(0, recordTime - moveEnvelope.time));
+        const legalDistance = tilesPerSec * (dtMs / 1000) * 1.05;
+        const dx = desiredX - moveEnvelope.x;
+        const dy = desiredY - moveEnvelope.y;
+        const desiredDistance = Math.hypot(dx, dy);
+        if (desiredDistance > legalDistance && desiredDistance > 1e-6) {
+          const scale = legalDistance / desiredDistance;
+          sentX = moveEnvelope.x + dx * scale;
+          sentY = moveEnvelope.y + dy * scale;
+          record.x = sentX;
+          record.y = sentY;
+          packet.modified = true;
+        }
+        maxError = Math.max(maxError, Math.hypot(desiredX - sentX, desiredY - sentY));
+      }
+      moveEnvelope.x = sentX;
+      moveEnvelope.y = sentY;
+      moveEnvelope.time = recordTime;
+    }
+    if (shouldClamp)
+      sendDllFeature('udodgeServerPositionError', Math.min(0.35, maxError));
+    if (moveEnvelope.valid && shouldClamp) {
+      sendDllFeature('udodgeServerAnchorX', moveEnvelope.x);
+      sendDllFeature('udodgeServerAnchorY', moveEnvelope.y);
+      sendDllFeature('udodgeServerAnchorValid', 1);
+    }
+    updateMoveEnvelopeArming();
+  }, { prepend: true });
+
+  ctx.hookPacket('GOTO', (_client, packet) => {
+    if (packet.isDefined) resetMoveEnvelope();
+  });
 
   registerModeSetting('xdodge', 'xdodgeAstar', onOff('[Goal] Smart goal pathing'),
     (v: string) => sendDllFeature('xdodgeAstar', v === 'on' ? 1 : 0));
@@ -497,6 +598,7 @@ export function register(ctx: PluginContext) {
                      'udodgeFieldEscape', 'udodgeLockFollow', 'udodgeFollowLantern',
                      'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
+    updateMoveEnvelopeArming();
     // Re-apply the 60fps cap here too. The onEnabledChange / clientConnected
     // handlers were the only places setting targetFrameRate, so if the cap
     // landed before the DLL was ready (or the player was already in-game
@@ -516,6 +618,7 @@ export function register(ctx: PluginContext) {
     applyDodgeFps(ctx.enabled);
   });
   ctx.on('clientDisconnected', () => {
+    resetMoveEnvelope();
     flush(true);
     applyDodgeFps(false);
   });
@@ -529,6 +632,7 @@ export function register(ctx: PluginContext) {
   let _mapinfoDebounce: ReturnType<typeof setTimeout> | null = null;
   ctx.hookPacket('MAPINFO', () => {
     try {
+      resetMoveEnvelope();
       if (_mapinfoDebounce) clearTimeout(_mapinfoDebounce);
       _mapinfoDebounce = setTimeout(() => {
         _mapinfoDebounce = null;
@@ -546,6 +650,7 @@ export function register(ctx: PluginContext) {
   });
 
   ctx.registerCleanup(() => {
+    sendDllFeature('udodgeMoveEnvelopeArmed', 0);
     flush(true);
     applyDodgeFps(false);           // restore uncapped on unload
   });

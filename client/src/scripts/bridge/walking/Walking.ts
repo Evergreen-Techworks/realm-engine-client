@@ -1,40 +1,36 @@
-import { Walking } from '@realmengine/sdk';
-import type { Position } from '@realmengine/sdk';
+import { Walking, Position, Objects } from '@realmengine/sdk';
 import type { Enemy } from '@realmengine/sdk';
 import type { BridgeDeps } from '../BridgeDeps.js';
 import { warnUnimplemented } from '../stubWarn.js';
 import { Logger } from '../../../util/Logger.js';
+import type { MovementController } from '../movement/MovementController.js';
 
 export class BridgeWalking {
-  static install(deps: BridgeDeps): void {
-    Walking.walkTo = (_x, _y) => {
-      warnUnimplemented('Walking.walkTo');
-      return false;
+  static install(deps: BridgeDeps, movement: MovementController): void {
+    Walking.walkTo = (x, y) => {
+      return movement.navigateTo(x, y);
     };
 
-    Walking.walkToPosition = (_position: Position) => {
-      warnUnimplemented('Walking.walkToPosition');
-      return false;
+    Walking.walkToPosition = (position: Position) => {
+      return Walking.walkTo(Number(position?.x), Number(position?.y));
     };
 
-    Walking.walkToEnemy = (_enemy: Enemy) => {
-      warnUnimplemented('Walking.walkToEnemy');
-      return false;
+    Walking.walkToEnemy = (enemy: Enemy) => {
+      return Walking.walkToPosition(enemy.position);
     };
 
     Walking.walkToPortal = (_name: string) => {
-      warnUnimplemented('Walking.walkToPortal');
-      return false;
+      const portal = Objects.findPortal(_name);
+      return portal ? Walking.walkToPosition(portal.position) : false;
     };
 
     Walking.walkToNearestPortal = () => {
-      warnUnimplemented('Walking.walkToNearestPortal');
-      return false;
+      const portal = Objects.getNearestPortal();
+      return portal ? Walking.walkToPosition(portal.position) : false;
     };
 
     Walking.walkToNexusPortal = () => {
-      warnUnimplemented('Walking.walkToNexusPortal');
-      return false;
+      return Walking.walkToPortal('Nexus');
     };
 
     Walking.walkToLeftWall = () => {
@@ -63,17 +59,17 @@ export class BridgeWalking {
     };
 
     Walking.stopMoving = () => {
-      warnUnimplemented('Walking.stopMoving');
+      movement.clearWaypoint();
     };
 
     Walking.isMoving = () => {
-      warnUnimplemented('Walking.isMoving');
-      return false;
+      return movement.getTarget() != null;
     };
 
-    Walking.hasReached = (_position: Position, _tolerance = 0.5) => {
-      warnUnimplemented('Walking.hasReached');
-      return false;
+    Walking.hasReached = (position: Position, tolerance = 0.5) => {
+      const p = deps.clientRef.current?.playerData.pos;
+      if (!p || !Number.isFinite(position?.x) || !Number.isFinite(position?.y)) return false;
+      return Math.hypot(p.x - position.x, p.y - position.y) <= Math.max(0, tolerance);
     };
 
     Walking.nexus = () => {

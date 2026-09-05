@@ -13,6 +13,7 @@ namespace il2cppmin {
 using ProcResolver = void* (*)(const char* symbol, void* user);
 
 struct Api {
+    int (*init)(const char* domainName)                                  = nullptr;
     void* (*domain_get)()                                                = nullptr;
     void* (*thread_attach)(void* domain)                                 = nullptr;
     // NOT il2cpp_domain_get_assemblies: the shipping GameAssembly.dll's export
@@ -31,6 +32,8 @@ struct Api {
     const void* (*class_get_method_from_name)(void* klass,
                                               const char* name,
                                               int argc)                  = nullptr;
+    void* (*runtime_invoke)(const void* method, void* object,
+                            void** params, void** exception)             = nullptr;
     void (*thread_detach)(void* thread)                                  = nullptr;
     bool ready = false;
 };

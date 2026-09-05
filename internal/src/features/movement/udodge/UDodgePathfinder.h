@@ -69,14 +69,19 @@ struct OccGrid {
 
 // Coarse 1-tile navigation occupancy for the walk-to A* (SEPARATE from OccGrid —
 // larger window, no hazard/temporal axis). The GAME THREAD fills it from WorldTAB's
-// blocked-tile map (one bulk locked read; undiscovered tiles left 0 = walkable, the
-// optimistic model). center = the world position of the CENTER cell (= player at
-// raster time); cell (gx,gy) covers world tile floor(center) + (gx-rad, gy-rad).
+// blocked-tile map (one bulk locked read). Squares the server has not streamed are
+// map void, NOT open floor: FillNavGrid folds bit3 into bit0 so the A* never routes
+// into them. center = the world position of the CENTER cell (= player at raster
+// time); cell (gx,gy) covers world tile floor(center) + (gx-rad, gy-rad).
 struct NavGrid {
     Vec2    center{};                  // world position of the center cell (= player)
     uint8_t flags[kUNavCells]{};       // bit0 = blocked (wall / occupy-square)
                                       // bit1 = damaging ground (SOFT: kUNavHazardCost per cell, safeWalk only)
                                       // bit2 = sink / water ground (HARD: impassable for nav — see NavBlocked)
+                                      // bit3 = UNSTREAMED map void. Folded into bit0 for traversal, but kept
+                                      //        distinct so ComputeNav can tell the EXPLORATION boundary ("the
+                                      //        map continues here, it just hasn't arrived yet") apart from a
+                                      //        wall — see the frontier-partial comment in ComputeNav.
 };
 
 // Everything the pathfinder needs — PLAIN DATA ONLY (no IL2CPP handles, no void*,
@@ -103,6 +108,8 @@ struct PlannerSnapshot {
     Settings settings{};           // hitScale / safeWalk feed the plain safety + occupancy tests
     bool     goalActive = false;   // a soft goal exists (tie-break only)
     Vec2     goalPos{};
+    bool     goalWalkTo = false;
+    bool     playerOnHazard = false;
     bool     hasLock = false;      // locked boss → gate goal cells to the weapon-range disk
     Vec2     lockPos{};
     float    weaponRangeTiles = 0.f; // disk radius (0 = no gate)
@@ -115,6 +122,8 @@ struct PlannerSnapshot {
     // reachable-in-time durable goal — commitment is a tiebreak, never a safety override.
     bool     prevGoalValid = false;
     Vec2     prevGoalPos{};         // last accepted g_route.goalPos (world)
+    bool     retreatValid = false;  // an older, nearby point the player actually traversed
+    Vec2     retreatPos{};          // soft retreat preference; never bypasses safety/occupancy
     DangerMap map{};               // plain-data danger (lanes+times / zones / enemies) for per-cell cost
     OccGrid   grid{};              // rasterized occupancy+hazard (game thread fills)
     // ── Navigation (Shift+Click walk-to) — second job on the same worker ─────
@@ -130,6 +139,8 @@ struct PlanResult {
     Vec2  goalPos{};           // the durable-safe goal cell (world)
     Vec2  stepTarget{};        // immediate steering target: route point ~one budget ahead
     Vec2  stepDir{};           // unit direction of the first step (player → stepTarget)
+    bool  retreatValid = false;
+    Vec2  retreatPos{};        // breadcrumb forwarded to the least-bad immediate fallback
     float goalDist    = 0.f;   // grid path arc-length to the goal (tiles)
     int   waypoints   = 0;     // number of route cells (diagnostics; PATH len=<n>)
     // Route polyline in WORLD coords for the debug overlay ([0] = player cell,

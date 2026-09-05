@@ -200,6 +200,14 @@ export function sendLootSwap(
 ): boolean {
   if (Date.now() < state.manualPotionSuppressUntil) return false;
 
+  // Re-read the destination immediately before sending. `destination` was chosen
+  // from playerData, which only refreshes on NEWTICK, so it can describe the slot
+  // as it was up to a tick ago. Sending slotObject2 with an objectType that does
+  // not match the slot's real contents is an invalid inventory operation, and the
+  // server drops the connection over those rather than just ignoring them.
+  const actual = getPlayerSlotObjectType(client, destination.packetSlotId);
+  if (actual !== destination.currentObjectType) return false;
+
   const packet = ctx.createPacket('INVENTORYSWAP');
   packet.data.time = Math.trunc(client.time);
   packet.data.position = {

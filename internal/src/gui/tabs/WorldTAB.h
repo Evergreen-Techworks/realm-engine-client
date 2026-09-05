@@ -305,7 +305,8 @@ namespace WorldTAB {
     // Output bits per cell: bit0 = hard wall, bit1 = DAMAGING ground (only when
     // foldHazard — a soft avoid for the consumer), bit2 = SINK/water ground (always
     // emitted, foldHazard-independent: the nav A* hard-blocks it, the dodge grid
-    // ignores it). Consumers that only want walls must mask bit0 explicitly.
+    // ignores it), bit3 = unknown/unstreamed map void. Consumers that only want
+    // walls must mask bit0 explicitly; autonomous routes should block bit3.
     // Takes the tile mutex ONCE for the whole grid (vs the per-cell CanOccupy
     // mutex storm this replaces).
     // Undiscovered tiles stay walkable (optimistic). This is IsPositionBlocked's box

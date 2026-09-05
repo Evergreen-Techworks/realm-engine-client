@@ -10,6 +10,7 @@ namespace {
 
 // Order matters: it must match the binding order in LoadApi below.
 const char* const kRequiredSymbols[] = {
+    "il2cpp_init",
     "il2cpp_domain_get",
     "il2cpp_thread_attach",
     "il2cpp_domain_assembly_open",
@@ -22,6 +23,7 @@ const char* const kRequiredSymbols[] = {
     "il2cpp_field_get_name",
     "il2cpp_field_get_offset",
     "il2cpp_class_get_method_from_name",
+    "il2cpp_runtime_invoke",
     "il2cpp_thread_detach",
 };
 constexpr std::size_t kRequiredSymbolCount =
@@ -47,6 +49,7 @@ bool LoadApi(Api& out, ProcResolver resolve, void* user)
     }
 
     std::size_t i = 0;
+    out.init                       = reinterpret_cast<decltype(out.init)>(slots[i++]);
     out.domain_get                 = reinterpret_cast<decltype(out.domain_get)>(slots[i++]);
     out.thread_attach              = reinterpret_cast<decltype(out.thread_attach)>(slots[i++]);
     out.domain_assembly_open       = reinterpret_cast<decltype(out.domain_assembly_open)>(slots[i++]);
@@ -59,6 +62,7 @@ bool LoadApi(Api& out, ProcResolver resolve, void* user)
     out.field_get_name             = reinterpret_cast<decltype(out.field_get_name)>(slots[i++]);
     out.field_get_offset           = reinterpret_cast<decltype(out.field_get_offset)>(slots[i++]);
     out.class_get_method_from_name = reinterpret_cast<decltype(out.class_get_method_from_name)>(slots[i++]);
+    out.runtime_invoke             = reinterpret_cast<decltype(out.runtime_invoke)>(slots[i++]);
     out.thread_detach              = reinterpret_cast<decltype(out.thread_detach)>(slots[i++]);
 
     out.ready = true;

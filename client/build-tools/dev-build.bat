@@ -131,6 +131,14 @@ echo [dev] MSBuild: !MSBUILD!
 
 REM ── Build ───────────────────────────────────────────────────────────────────
 
+REM Remove the injectable artifact BEFORE MSBuild. The old existence-only check
+REM below accepted a stale client\assets DLL when the project emitted nowhere or
+REM failed to refresh OutDir, making a successful-looking dev build inject old code.
+set "BUILT_DLL=!WIN_BASE!\client\assets\realm-engine.dll"
+set "BUILT_PDB=!WIN_BASE!\client\assets\realm-engine.pdb"
+if exist "!BUILT_DLL!" del /F /Q "!BUILT_DLL!"
+if exist "!BUILT_PDB!" del /F /Q "!BUILT_PDB!"
+
 echo [dev] Clearing x64 build cache for a clean compile...
 if exist "!WIN_BASE!\!INTERNAL_DIR!\x64\!BUILD_CONFIG!" (
     rmdir /S /Q "!WIN_BASE!\!INTERNAL_DIR!\x64\!BUILD_CONFIG!" 2>nul
@@ -148,14 +156,13 @@ if !ERRORLEVEL! NEQ 0 (
 
 REM The vcxproj's OutDir is $(SolutionDir)..\client\assets\ — the DLL builds
 REM there (that's also where the client resolves it from for injection).
-set "BUILT_DLL=!WIN_BASE!\client\assets\realm-engine.dll"
-set "BUILT_PDB=!WIN_BASE!\client\assets\realm-engine.pdb"
 if not exist "!BUILT_DLL!" (
     echo [dev] ERROR: Built DLL not found at !BUILT_DLL!
     echo [dev]        That is the vcxproj OutDir client\assets\ -- did the build actually succeed?
     pause
     exit /b 1
 )
+for %%I in ("!BUILT_DLL!") do echo [dev] Fresh DLL: %%~fI  %%~zI bytes  %%~tI
 
 REM ── Build injector.exe ──────────────────────────────────────────────────────
 REM injector.cpp is NOT in the .sln, so nothing else compiles it. Without

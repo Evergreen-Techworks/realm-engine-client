@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, utilityProcess } = require('electron');
 const { spawn, fork, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -16,6 +16,17 @@ const POLL_INTERVAL = 500;
 app.setName(APP_NAME);
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_USER_MODEL_ID);
+}
+
+// Wine/Proton cannot initialize Chromium's Windows sandbox reliably. Keep the
+// sandbox enabled on native Windows and disable it only in compatibility layers.
+const runningUnderWine = Boolean(
+  process.env.WINEPREFIX || process.env.WINELOADERNOEXEC
+  || process.env.PROTON_VERSION || process.env.STEAM_COMPAT_DATA_PATH
+);
+if (runningUnderWine) {
+  app.commandLine.appendSwitch('no-sandbox');
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
 }
 
 
@@ -216,6 +227,9 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      // The preload is sandboxed and cannot require ipc-channels.cjs itself, so
+      // hand it the channel map here — see the comment at the top of preload.cjs.
+      additionalArguments: ['--ipc-channels=' + JSON.stringify(IPC)],
     },
     show: false,
   });
@@ -286,12 +300,14 @@ async function waitForDashboardAndLoad() {
 
 function startProxy() {
   const projectRoot = path.join(__dirname, '..');
-  const distApp = path.join(projectRoot, 'dist', 'app.cjs');
+  const realRoot = process.resourcesPath;
+  const unpackedDist = path.join(realRoot, 'app.asar.unpacked', 'dist', 'app.cjs');
+  const asarDist = path.join(projectRoot, 'dist', 'app.cjs');
+  const distApp = fs.existsSync(unpackedDist) ? unpackedDist : asarDist;
   const isProd = app.isPackaged && fs.existsSync(distApp);
 
   if (isProd) {
-    console.log('[Electron] Starting proxy (production mode)');
-    const realRoot = process.resourcesPath;
+    console.log('[Electron] Starting proxy (production mode) from:', distApp);
     const userCfgDir = path.join(app.getPath('userData'), 'realm-engine');
     try {
       fs.mkdirSync(userCfgDir, { recursive: true });
@@ -300,25 +316,39 @@ function startProxy() {
     }
     const userCfgPath = path.join(userCfgDir, 'config.json');
 
-    proxyProcess = fork(distApp, ['--dev'], {
-      cwd: realRoot,
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      env: {
-        ...process.env,
-        REALM_ENGINE_PROD: '1',
-        REALM_ENGINE_ROOT: realRoot,
-        REALM_ENGINE_APP_ROOT: projectRoot,
-        REALM_ENGINE_USER_CONFIG_PATH: userCfgPath,
-        REALM_ENGINE_VERSION: app.getVersion(),
-      },
-    });
+    const env = {
+      ...process.env,
+      REALM_ENGINE_PROD: '1',
+      REALM_ENGINE_ROOT: realRoot,
+      REALM_ENGINE_APP_ROOT: projectRoot,
+      REALM_ENGINE_USER_CONFIG_PATH: userCfgPath,
+      REALM_ENGINE_VERSION: app.getVersion(),
+    };
+
+    if (typeof utilityProcess !== 'undefined' && typeof utilityProcess.fork === 'function') {
+      console.log('[Electron] Spawning proxy via utilityProcess.fork');
+      proxyProcess = utilityProcess.fork(distApp, ['--dev'], {
+        cwd: realRoot,
+        stdio: 'pipe',
+        env,
+      });
+    } else {
+      console.log('[Electron] Spawning proxy via child_process.fork');
+      proxyProcess = fork(distApp, ['--dev'], {
+        cwd: realRoot,
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+        env,
+      });
+    }
 
     if (proxyProcess.stdout) {
-      proxyProcess.stdout.on('data', (d) => process.stdout.write(d));
+      proxyProcess.stdout.on('data', (d) => {
+        try { process.stdout.write(d); } catch {}
+      });
     }
     if (proxyProcess.stderr) {
       proxyProcess.stderr.on('data', (d) => {
-        process.stderr.write(d);
+        try { process.stderr.write(d); } catch {}
         proxyStderrTail = (proxyStderrTail + d.toString()).slice(-500);
       });
     }

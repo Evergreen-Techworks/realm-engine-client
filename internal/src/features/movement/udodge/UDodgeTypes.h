@@ -18,7 +18,11 @@ constexpr int   kCandidateCount  = kDirectionCount + 3;   // 35
 constexpr float kTwoPi           = 6.28318530717958647692f;
 
 // ── Map capacities (fixed buffers — zero per-frame heap allocation) ─────────
-constexpr int kMaxProjectiles = 96;
+// Dense exaltation/O3 patterns can exceed the old 96-shot buffer. Overflow was
+// order-dependent and silently removed real lanes. 192 remains a bounded,
+// allocation-free snapshot within Temporal::Ctx's stack budget; Sensors also
+// orders shots nearest-first before filling it.
+constexpr int kMaxProjectiles = 192;
 constexpr int kMaxAoes        = 32;
 // 192, raised from 64: within the 16-tile blocker cull a dungeon corridor or a
 // horde routinely exceeds 64 entities. Overflow used to DROP the newcomer, and
@@ -78,6 +82,10 @@ constexpr float kSolveCommitW      = 1.0f;  // directional continuity (anti-jitt
 // already-safe candidate set only, so it can never trade safety away.
 constexpr float kSolveCommitBonus  = 0.5f;
 constexpr float kSolveGoalW        = 0.8f;  // goal/WASD progress (fades near danger)
+// Extra locked-target engagement pull. Applied only among candidates that have
+// already passed every spatial/temporal safety gate, so it makes the dodge take
+// an equally-safe inward/threading step instead of drifting away from the fight.
+constexpr float kSolveLockGoalW    = 1.0f;
 constexpr float kSolvePerpW        = 1.2f;  // lateral sidestep vs radial flee/charge: strong enough
                                             // that a left/right sidestep beats a backpedal's clearance edge
 constexpr float kSolveMoveW        = 1.2f;  // minimal-disruption penalty (prefer nearest safe)
@@ -90,7 +98,59 @@ constexpr float kSolveClearComfort = 0.5f;  // clearance (tiles) above which com
 // that flees to open space. Applied ONLY to already-safe (arrival-clear)
 // candidates, so it can never trade safety away; it just keeps the dodge tight
 // and aggressive instead of retreating off the pattern. Bounded, modest.
-constexpr float kSolveWeaveW = 0.35f;   // flat reward for a threaded (in-gap) candidate
+//
+// KEPT (not retired) now that the durability gradient below exists, because the
+// two say different things and only one of them is "stay ON the pattern":
+// threading is a STANCE (I am inside the pattern and the gap opens for me),
+// durability is a MEASUREMENT (nothing reaches this cell for N ms). Open space is
+// durable BY DEFINITION, so a gradient alone would hand every retreat the maximum
+// reward and quietly invert the very preference this term was added for — the
+// dodge would refuse to enter a room whose shot-walls must be weaved. So the flat
+// term keeps holding the pattern and the gradient RANKS WITHIN each stance: the
+// thread that stays open longest beats the one that closes immediately, and the
+// open cell nothing crosses beats the open cell a wall sweeps in 350 ms.
+constexpr float kSolveWeaveW = 0.50f;   // flat reward for a threaded (in-gap) candidate
+// ── TEMPORAL DURABILITY GRADIENT ────────────────────────────────────────────
+// Everything the temporal layer produced used to be BINARY: a candidate either
+// survived the kUDwellMs dwell window or it did not, and after admission ranking
+// fell back to Cand::clr — INSTANTANEOUS clearance, which knows nothing about the
+// future. A cell that stays clear for the whole 800 ms horizon and a cell a wall
+// sweeps at 310 ms therefore scored IDENTICALLY, and the solver had no way to
+// prefer durable safety or to express "that gap is opening, go there".
+//
+// This is the term that scores it: (time-to-danger − kUDwellMs) / (horizon −
+// kUDwellMs), clamped to [0,1] — 0 for a candidate that survives admission and no
+// more, 1 for one nothing reaches anywhere in the horizon. Free, because
+// Core::Temporal::TimeToDanger already computes that time on the way to the
+// admission answer and used to throw it away.
+//
+// 0.30 is deliberately SMALLER than kSolveWeaveW and much smaller than the
+// positioning terms. Sized so it can:
+//   • break a near-tie decisively — its 0..0.30 span is 2 × kSolveReflexHystEps,
+//     so "same spot, but it survives 500 ms longer" wins;
+//   • out-rank the comfort tiebreak (kSolveClearW × kSolveClearComfort = 0.125),
+//     which is the correct precedence: how long a cell stays safe matters more
+//     than how much room it has right now;
+// and NOT:
+//   • overturn the locked annulus (0.30 buys 0.30/kSolveOutRangeW ≈ 0.19 tiles of
+//     out-of-range drift before the linear term alone erases it, and the quadratic
+//     term erases it far sooner) — a durable-but-boring cell can never win on time;
+//   • buy distance (kSolveMoveW = 1.2 per budget) or beat the lateral-sidestep
+//     term (kSolvePerpW = 1.2), so "durable" never turns into "run away".
+// It also does NOT double-count with kSolveStandBias: the stand only reaches the
+// scored set when the HOLD gate already declined it, and it is measured on exactly
+// the same basis as every move candidate (walk-then-hold, zero-length walk).
+constexpr float kSolveDurableW = 0.30f;   // full reward for staying clear through the whole horizon
+// THE OVER-CORRECTION GUARD. Open space is durable by definition, so if the
+// gradient could ever out-weigh the threading stance the dodge would start
+// treating "retreat off the pattern" as the best-scoring option and refuse to
+// enter shot-wall rooms at all — the exact failure kSolveWeaveW was added to
+// prevent. Keeping the gradient strictly below it bounds the worst case: a
+// threaded candidate that survives admission and no more (dur 0) still out-scores
+// a perfectly durable open one (dur 1) by kSolveWeaveW − kSolveDurableW. The
+// gradient therefore only ever re-orders WITHIN a stance; it never flips one.
+static_assert(kSolveDurableW < kSolveWeaveW,
+              "the durability gradient must not out-shout the threading stance (see kSolveWeaveW)");
 constexpr float kSolveStandBias    = 0.15f; // score the stand point gets so we don't twitch off a safe stand
 // ── PENDING-ZONE SOFT COST (finding G-2) ────────────────────────────────────
 // A pending (telegraphed, not-yet-landed) AoE disc is documented as "cost-only
@@ -128,6 +188,13 @@ constexpr float kSolveOutRangeQuadW = 0.8f;   // tune in testing
 // twitch in/out at the exact range boundary. Locked boss only.
 constexpr float kUReturnRangeSlack = 0.5f;
 
+// Do not plan at the projectile's mathematical lifetime boundary. Target motion,
+// MOVE-record quantization and one frame of launch latency can all turn a
+// center-to-center shot at that exact radius into a miss. Lock mode therefore
+// uses an engagement radius inset from physical projectile travel. The existing
+// route slack and return hysteresis operate inside that reserve.
+constexpr float kUEngagementRangeInset = 0.75f;
+
 // Route-step anti-oscillation (movement smoothing; baked, NO user setting). The
 // worker republishes a route each server tick and its first-step direction can
 // FLIP when it toggles between two near-equal durable-safe goal cells. Consuming
@@ -162,6 +229,7 @@ constexpr float kSolveReflexHystEps = 0.15f;
 //    kUMaxDampTicks consecutive damped ticks so a genuine required turn is never
 //    delayed indefinitely.
 constexpr float   kURouteGoalHystMs    = 120.f;  // keep the old goal unless a new one arrives this much sooner
+constexpr float   kURetreatGoalDetourMs = 320.f; // bounded extra arrival time to escape toward known ground
 constexpr float   kURouteGoalHystTiles = 1.5f;   // ...or (partial route) is this much closer to the player
 constexpr uint8_t kUMaxDampTicks       = 3;      // max consecutive soft-damped ticks before accepting the new step
 
@@ -206,17 +274,19 @@ static_assert(kUArrivalMargin > 0.f, "kUArrivalMargin must stay > 0: a zero/nega
 //     ever known to that precision;
 //   • one 60 fps frame (~16.7 ms) passes between the solve and the move actually
 //     being applied, during which the bullet keeps moving.
-// Those are independent, so ~sqrt(15.6² + 16.7²) ≈ 23 ms; 20 ms is the round
-// number just under that, chosen on the TIGHT-WEAVING side deliberately (the
-// swept-segment tests and the fast-lane half-steps already cover the geometric
-// chord error, so this term must not also pay for that). The march grid's 100 ms
-// spacing is NOT in here: steps are swept, not sampled at endpoints.
-constexpr float kUPredErrMs = 20.f;
-// Ceiling on the speed term (tiles). A lane whose sampled speed is absurd (bad
-// offsets, a ghost sample) must not be able to inflate the margin until nothing
-// is admissible — refusing to move is its own way of dying. 0.30 tiles is
-// reached at 15 tiles/s, already past any real shot.
-constexpr float kUPredPadMaxTiles = 0.30f;
+// They are independent for a typical-error estimate, but a safety gate must cover
+// the case where both delays point the same way. Their conservative sum is about
+// 32.3 ms, so use 35 ms (including a small scheduling allowance). The old 20 ms
+// value was below even the ~23 ms RMS estimate documented here and admitted
+// boundary-threading candidates a fraction of a tile too early. The swept tests
+// already cover geometric chord error; this term covers timing error only. The
+// march grid's 100 ms spacing is NOT in here: steps are swept, not endpoint-only.
+constexpr float kUPredErrMs = 35.f;
+// Ceiling on the speed term (tiles). Keep malformed/ghost speeds bounded without
+// truncating the new 35 ms allowance for ordinary fast shots: 0.45 tiles covers
+// roughly 12.9 tiles/s. Refusing to move is its own way of dying, so this remains
+// a firm cap rather than allowing an arbitrary sampled speed to inflate the map.
+constexpr float kUPredPadMaxTiles = 0.45f;
 
 // Clearance (tiles) a cell needs BEYOND the server hit boundary to count as a
 // DURABLE resting pocket / route goal, and the comfort a HELD stand keeps. This
@@ -226,6 +296,7 @@ constexpr float kUDurablePocketMargin = 0.18f;
 constexpr int   kUPocketRings    = 12;    // concentric rings out to kULookaheadTiles (0.5-tile step)
 constexpr int   kUPocketAngles   = 24;    // angular samples per ring (15° resolution)
 constexpr float kSolveFallbackPocketW = 0.5f; // fallback: bias the least-bad step toward the pocket/gap
+constexpr float kSolveFallbackBackW   = 0.35f; // no-safe-cell fallback: prefer the known corridor behind us
 
 // ── Temporal lookahead (plan 64 ext; baked, NO user sliders) ─────────────────
 // The static durable-pocket test above treats each lane (bullet's whole forward
@@ -261,17 +332,16 @@ constexpr float kUTemporalCullTiles = 8.f;   // only predict bullets whose trace
 //     through (Lost Halls miniboss): the only tiles that survive an 800 ms
 //     stand-still test are the ones nothing ever crosses, and in a wall pattern
 //     there are none.
-// kUDwellMs is how long AFTER ARRIVAL a candidate must stay clear. 300 ms =
-// 1.5 × kServerTickSec (0.2 s): the arrival tick itself plus a full replan
-// quantum of slack, so (a) a bullet occupying the candidate at or near arrival
-// still rejects it, and (b) the player always has one whole planning quantum in
-// which to leave again before the dwell guarantee runs out. Past kUDwellMs a lane
+// kUDwellMs is how long AFTER ARRIVAL a candidate must stay clear. One server
+// tick is enough to guarantee the next solve can leave while still allowing a
+// deliberate cross in front of a shot; the previous 300 ms requirement turned
+// short-lived openings into permanent walls. Past kUDwellMs a lane
 // simply STOPS being tested against the held position — it is not treated as a
 // hit, it is treated as "the next solve's problem", which is literally true.
 // NOTE: the STAND-durability gate deliberately opts OUT of this (it passes the
 // full horizon) — detecting a slow-closing wall early is the whole point of that
 // query, and there the stand-still assumption is the honest one.
-constexpr float kUDwellMs = 300.f;
+constexpr float kUDwellMs = 200.f;
 
 // ── Fast-lane sub-stepping (plan 95 §3 — activated) ─────────────────────────
 // The march step's swept-segment test treats the bullet as travelling a straight
@@ -297,8 +367,8 @@ constexpr float kUTemporalMaxSweepTiles = 1.0f;
 // search is re-run unconstrained (may leave range to dodge, then return). The
 // immediate reflex already penalizes leaving range via kSolveOutRangeW. This
 // constraint applies ONLY when locked; unlocked behavior is unchanged.
-constexpr float kUInRangeSlack = 0.35f;  // tiles of grace added to weaponRange when gating pockets to the
-                                         // disk, so a pocket right at the boundary still counts as in-range
+constexpr float kUInRangeSlack = 0.20f;  // small grid-quantization grace around the already-inset
+                                         // engagement radius; never extends to physical max range
 
 // ── Inner-standoff annulus (locked-boss only; plan 75; baked, NO user sliders) ─
 // The in-range manifold is an ANNULUS [innerStandoff, weaponRange], not a filled
@@ -315,6 +385,11 @@ constexpr float kUInnerStandoffMinTiles = 2.0f;   // absolute inner-radius floor
 constexpr float kSolveInnerW = 1.6f;
 
 // ── General enemy standoff (EVERY enemy, lock or no lock; baked, NO sliders) ─
+// Hard clearance beyond the estimated enemy body and the player's hit half. This
+// is intentionally shared by the live solver and worker pathfinder: ending a step
+// closer than this is never an acceptable resting point. Their path tests retain
+// the existing escape exception when an enemy has already moved onto the player.
+constexpr float kUEnemyKeepoutGap = 0.75f;
 // The annulus above only exists while a boss is LOCKED. With no lock the ONLY
 // thing holding the player off a mob was Core::EnemyBlocked's HARD exclusion at
 // kEnemyRadius + kUPlayerHalf (~1.01 tiles from the enemy CENTRE) — and
@@ -448,6 +523,13 @@ constexpr float kUNavRefillTiles = 16.f; // re-rasterize the nav window only aft
                                          // (else reuse the cached grid — the worker handles the player's
                                          // offset from the stale center). Keeps the big grid cheap.
 constexpr float kUNavArriveTiles = 0.6f; // waypoint-reached radius when advancing along the route
+constexpr float kUNavSinkCost    = 3.0f; // extra A* cost to ENTER sink/slow ground (shallow water,
+                                         // quicksand, honey). These tiles carry <Sink>/<Sinking> and a
+                                         // speed multiplier of ~0.25-0.75 — they are SLOW, not walls.
+                                         // Genuinely impassable water carries <NoWalk> as well and is
+                                         // already a hard block via WorldTAB's blockedMap, so this cost
+                                         // is what expresses "prefer dry land, but wade when that is the
+                                         // way". Below kUNavHazardCost: wet is cheaper than burning.
 constexpr float kUNavHazardCost  = 6.0f; // extra A* cost to ENTER a DAMAGING cell (lava/venom, safeWalk
                                          // only): routes around it when a clean path exists, but still
                                          // traverses it when boxed in (never a hard wall — a hazard-floored
@@ -463,9 +545,8 @@ constexpr float kUNavHazardCost  = 6.0f; // extra A* cost to ENTER a DAMAGING ce
 // runway keep the player moving continuously; the actual per-tick step is still
 // one budget (min(dist, budget)) and still temporally validated, so lookahead
 // only smooths the drive, never the safety.
-constexpr float kUStepLookaheadBudgets = 2.5f;  // dodge route anchor runway
+constexpr float kUStepLookaheadBudgets = 1.25f; // short-lived combat route anchor; refreshed every tick
 constexpr float kUNavLookaheadBudgets  = 3.0f;  // walk-to corridor anchor runway (open ground)
-
 // ── Async pathfinder worker (plan 65; two-rate MPC — baked, NO user sliders) ──
 // The heavy grid Dijkstra + radius expansion runs on a DEDICATED WORKER THREAD
 // over a plain-data snapshot (rebuilt from the retired plan-58/59 seam), NOT on
@@ -519,6 +600,7 @@ struct EnemyBlocker {
 
 struct Settings {
     float hitScale    = 1.0f;    // × per-shot hit threshold [0.25, 2.5]
+    float positionUncertainty = 0.f; // local desired vs server-visible MOVE position [0, .35]
     bool  safeWalk    = true;    // avoid damaging ground in path checks
     bool  speedScale  = true;    // match gentle overrides to intent speed
     bool  fieldEscape = true;    // Dijkstra pocket search when boxed in
@@ -555,6 +637,13 @@ struct Env {
     bool (*canOccupy)(float x, float y, bool safeWalk) = nullptr;
     // "Is (x, y) damaging ground?" — used by the hazard-escape mode.
     bool (*isHazard)(float x, float y) = nullptr;
+    // Worker-safe occupancy snapshot. When canOccupy is null, the solver reads
+    // these copied flags instead of touching WorldTAB/game memory.
+    const uint8_t* occFlags = nullptr;
+    Vec2 occCenter{};
+    int occSide = 0;
+    int occRadius = 0;
+    float occCellTiles = 0.f;
 };
 
 // ── Instantaneous danger map (plan 45; temporal lookahead plan 64 ext) ──────
@@ -594,7 +683,7 @@ constexpr float kTraceStepMs      = 30.f;   // sensor-internal geometry tracing 
                                             // time never leaves the sensor
 // 36 points × 30 ms = 1050 ms of coverage at the SAME 30 ms resolution as before
 // (raising the step instead would have chorded wavy/turning shots more coarsely).
-// Memory: 12 B/point (Vec2 + float) × kMaxProjectiles(96) = 1.15 KB per extra
+// Memory: 12 B/point (Vec2 + float) × kMaxProjectiles(192) = 2.25 KB per extra
 // point, so 24 → 36 costs ~13.8 KB per DangerMap (29.6 → 43.4 KB). There are a
 // handful of DangerMaps (g_map, two PlannerSnapshots, the debug slot) and they
 // are all statics/globals, so this is ~70 KB of BSS, not stack.
@@ -618,6 +707,7 @@ struct LaneThreat {
                                    // silently widening the instantaneous danger field (and with it
                                    // the pathfinder's per-cell cost) behind the user's slider.
     bool     tailAtShotEnd = false;// the last point is where the SHOT ENDS (lifetime reached), so
+    bool     provisional = false;  // packet-time ENEMYSHOOT recovery; runtime lane supersedes it
                                    // freezing the bullet there is a FACT. False means the trace
                                    // merely ran out — see the unknown-tail floor in UDodgeCore.
     Vec2     points[kMaxLanePoints]{};   // points[0] = live position (anchor)
@@ -663,6 +753,42 @@ struct MapInput {
     Env env{};
     const DangerMap* map = nullptr;
 };
+
+inline bool CanOccupyAt(const MapInput& in, Vec2 pos)
+{
+    if (in.env.canOccupy)
+        return in.env.canOccupy(pos.x, pos.y, in.settings.safeWalk);
+    if (!in.env.occFlags || in.env.occSide <= 0 || in.env.occCellTiles <= 0.f)
+        return true;
+    const int gx = static_cast<int>(std::lround((pos.x - in.env.occCenter.x) /
+                                                in.env.occCellTiles)) + in.env.occRadius;
+    const int gy = static_cast<int>(std::lround((pos.y - in.env.occCenter.y) /
+                                                in.env.occCellTiles)) + in.env.occRadius;
+    if (gx < 0 || gy < 0 || gx >= in.env.occSide || gy >= in.env.occSide) return false;
+    const uint8_t f = in.env.occFlags[gy * in.env.occSide + gx];
+    if (f & 0x1) return false;
+    if (in.settings.safeWalk && (f & 0x2)) return false;
+    return true;
+}
+
+// Swept movement occupancy/hazard gate. Endpoint-only safe-walk permits a long
+// diagonal to clip the corner of a damaging tile even though both ends are safe.
+// Sample densely enough to cover the player's half-width; the live game-thread
+// callback evaluates the real footprint, while worker snapshots use their 0.5-tile
+// raster. When already on damaging ground, retain the existing escape rule: only
+// require a safe endpoint so the starting tile cannot imprison the player.
+inline bool OccupancyPathClear(const MapInput& in, Vec2 from, Vec2 to)
+{
+    if (!CanOccupyAt(in, to)) return false;
+    if (in.playerOnHazard) return true;
+    const float d = Len(Sub(to, from));
+    const int steps = std::max(1, static_cast<int>(std::ceil(d / 0.20f)));
+    for (int i = 1; i < steps; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(steps);
+        if (!CanOccupyAt(in, Add(from, Mul(Sub(to, from), t)))) return false;
+    }
+    return true;
+}
 
 enum class Decision : uint8_t {
     None,
@@ -717,6 +843,8 @@ struct DebugSnapshot {
     Decision decision = Decision::None;
     uint8_t  solveKind = 0;   // Solver::SolveKind (Hold/Safe/Fallback/Surrounded)
     Vec2  player{};
+    bool  serverAnchorValid = false;
+    Vec2  serverAnchor{};   // last clamped outbound MOVE point (server collision anchor)
     Vec2  intentDir{};
     Vec2  moveTarget{};
     bool  overrideActive = false;
