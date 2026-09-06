@@ -21,3 +21,13 @@ internal/data/objects.xml
 # ── Local tooling ──
 /tools/
 /.idea/
+
+# Native artifacts built by the build, not committed. build-all.bat builds them
+# locally; the automated builder uses automation/build-native-tools.ps1 and
+# build-prod.mjs. Committing them shipped binaries as current as whoever last
+# built them by hand, and added a fresh multi-MB blob to history each time.
+client/assets/realm-engine.dll
+client/assets/winhttp.dll
+client/assets/injector.exe
+client/winhttp-proxy/winhttp.dll
+client/assets/*.obj

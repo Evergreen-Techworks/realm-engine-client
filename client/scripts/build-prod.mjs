@@ -125,11 +125,26 @@ function findMSBuild() {
   return null;
 }
 
+// On Windows, a missing MSBuild means a broken toolchain, not a valid build
+// mode. Falling through used to produce an installer carrying whatever
+// realm-engine.dll happened to be lying in assets/ — or none at all — with
+// nothing louder than a log line, so a release could ship a DLL months older
+// than its source. Non-Windows hosts genuinely cannot run MSBuild, so they keep
+// the soft path for JS-only work; ALLOW_MISSING_NATIVE is the deliberate
+// opt-out on Windows.
+const ALLOW_MISSING_NATIVE = process.env.REALM_ENGINE_ALLOW_MISSING_NATIVE === '1';
 const msbuild = findMSBuild();
 if (!msbuild) {
+  if (process.platform === 'win32' && !ALLOW_MISSING_NATIVE) {
+    console.error('[build-prod] ERROR: MSBuild not found, so the native DLL cannot be built.');
+    console.error('[build-prod] Install Visual Studio Build Tools with the C++ x64 workload,');
+    console.error('[build-prod] or set REALM_ENGINE_ALLOW_MISSING_NATIVE=1 for a JS-only build.');
+    console.error('[build-prod] Refusing to package a stale or missing realm-engine.dll.');
+    process.exit(1);
+  }
   const existingDll = DLL_BUILD_CANDIDATES.find((p) => existsSync(p) && statSync(p).size > 0);
-  if (existingDll) log(`MSBuild unavailable; using prebuilt native DLL: ${existingDll}`);
-  else log('MSBuild unavailable; building the cross-platform client without a native DLL.');
+  if (existingDll) log(`WARNING: MSBuild unavailable; using prebuilt native DLL: ${existingDll}`);
+  else log('WARNING: MSBuild unavailable; building the cross-platform client without a native DLL.');
 } else {
   log(`Using MSBuild: ${msbuild}`);
   try {
@@ -139,6 +154,15 @@ if (!msbuild) {
     );
   } catch (err) {
     console.error('[build-prod] ERROR: MSBuild failed.');
+    process.exit(1);
+  }
+  // MSBuild can report success without leaving anything at the paths we ship
+  // from (wrong OutDir, a rename upstream). Assert the artifact exists rather
+  // than discovering it missing after the installer is built.
+  const produced = DLL_BUILD_CANDIDATES.find((p) => existsSync(p) && statSync(p).size > 0);
+  if (!produced) {
+    console.error('[build-prod] ERROR: MSBuild reported success but no realm-engine.dll was produced.');
+    console.error(`[build-prod] Looked in: ${DLL_BUILD_CANDIDATES.join(', ')}`);
     process.exit(1);
   }
 }

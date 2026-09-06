@@ -1,15 +1,22 @@
 # Setup — regenerating stripped build artifacts
 
-To keep the source small enough to distribute, two categories of large,
-**regenerable** files are not committed (they're in `.gitignore`):
+To keep the source small enough to distribute, large **regenerable** files are
+not committed (they're in `.gitignore`):
 
 | Not committed | ~Size | How to regenerate |
 |---|---|---|
 | `internal/src/game/generated/il2cpp-*.h` | ~94 MB | Dump from your game (step 1) |
 | `client/data/objects.xml`, `client/data/tiles.xml`, `internal/data/objects.xml` | ~85 MB | `npm run download-game-xml` (step 2) |
+| `client/assets/realm-engine.dll`, `winhttp.dll`, `injector.exe` | ~2.7 MB | `build-all.bat` (step 3) |
 
-Both regenerate per RotMG build — the game's IL2CPP offsets and obfuscated
-names change on every update, so you re-run these after each patch.
+The first two regenerate per RotMG build — the game's IL2CPP offsets and
+obfuscated names change on every update, so you re-run these after each patch.
+
+The native binaries in `client/assets/` are compiled from source in this repo.
+They used to be committed, which meant the shipped copies were only ever as
+current as whoever last built them by hand, and every rebuild added another
+multi-MB blob to git history. `build-all.bat` builds all three; the automated
+release builder does the same.
 
 You need the **RotMG Exalt** game installed (you need it to inject anyway).
 

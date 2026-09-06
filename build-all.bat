@@ -80,7 +80,7 @@ REM  The vcxproj's OutDir is already client\assets\, so no copy step is needed.
 if not exist "%ROOT%client\assets\version.dll" ( echo   [ERROR] version.dll not produced. & goto :fail )
 echo   Built -^> client\assets\version.dll
 
-REM --- [3/6] winhttp.dll ------------------------------------------------------
+REM --- [3/6] winhttp.dll + injector.exe ---------------------------------------
 REM  The proxy sources are optional: when client\winhttp-proxy\ is not present
 REM  we fall back to whatever winhttp.dll is already staged in client\assets\
 REM  rather than failing the whole build. Only warn if there is no shim at all,
@@ -106,6 +106,24 @@ if not exist "%ROOT%client\winhttp-proxy\build.bat" (
   copy /y "%ROOT%client\winhttp-proxy\winhttp.dll" "%ROOT%client\assets\winhttp.dll" >nul
   echo   Staged -^> client\assets\winhttp.dll
 )
+
+REM  injector.exe — CreateRemoteThread loader that src/native/injector.ts spawns
+REM  to inject realm-engine.dll. Single translation unit, Windows.h + CRT only.
+REM  It is NOT built by `npm run dist:installer`, so without this step the
+REM  packaged client ships whatever injector.exe happens to be lying in assets\.
+REM  Console subsystem is deliberate: it prints a JSON result line, and it is
+REM  spawned with windowsHide so no window appears.
+echo [3/6] Building injector.exe...
+if not exist "%ROOT%internal\tools\injector\injector.cpp" (
+  echo   [ERROR] internal\tools\injector\injector.cpp not found. & goto :fail
+)
+pushd "%ROOT%client\assets"
+cl /nologo /O2 /MT /W3 /EHsc /std:c++17 /DWIN32_LEAN_AND_MEAN ^
+   "%ROOT%internal\tools\injector\injector.cpp" /Fe:injector.exe || ( popd & goto :fail )
+del /q injector.obj 2>nul
+popd
+if not exist "%ROOT%client\assets\injector.exe" ( echo   [ERROR] injector.exe not produced. & goto :fail )
+echo   Staged -^> client\assets\injector.exe
 
 REM --- [4/6] Client dependencies ---------------------------------------------
 pushd "%ROOT%client"
