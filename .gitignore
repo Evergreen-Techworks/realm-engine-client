@@ -27,7 +27,12 @@ internal/data/objects.xml
 # build-prod.mjs. Committing them shipped binaries as current as whoever last
 # built them by hand, and added a fresh multi-MB blob to history each time.
 client/assets/realm-engine.dll
-client/assets/winhttp.dll
 client/assets/injector.exe
+# NOT client/assets/winhttp.dll. That is a committed prebuilt from 2026-05-27
+# and is NOT what client/winhttp-proxy/ currently builds — those sources are
+# the newer splash-bypass / IL2CPP-shim work, still in development. The game
+# loads winhttp.dll at startup, so shipping a build of the in-flight sources
+# crashes it before anything else runs. Ship the known-good binary until the
+# proxy sources are ready to replace it.
 client/winhttp-proxy/winhttp.dll
 client/assets/*.obj
