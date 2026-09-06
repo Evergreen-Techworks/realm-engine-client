@@ -118,7 +118,10 @@ if not exist "%ROOT%internal\tools\injector\injector.cpp" (
   echo   [ERROR] internal\tools\injector\injector.cpp not found. & goto :fail
 )
 pushd "%ROOT%client\assets"
-cl /nologo /O2 /MT /W3 /EHsc /std:c++17 /DWIN32_LEAN_AND_MEAN ^
+REM  UNICODE is required: injector.cpp calls LookupPrivilegeValueW but passes
+REM  SE_DEBUG_NAME, a TCHAR macro that expands narrow without it, so the file
+REM  will not compile. VS C++ projects define it by default; bare cl does not.
+cl /nologo /O2 /MT /W3 /EHsc /std:c++17 /DWIN32_LEAN_AND_MEAN /DUNICODE /D_UNICODE ^
    "%ROOT%internal\tools\injector\injector.cpp" /Fe:injector.exe || ( popd & goto :fail )
 del /q injector.obj 2>nul
 popd
