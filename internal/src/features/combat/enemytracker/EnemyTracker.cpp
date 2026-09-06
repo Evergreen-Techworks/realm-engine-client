@@ -3,6 +3,9 @@
 #include "EnemyTracker.h"
 #include "GameState.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
+#include "core/il2cpp/Il2CppContainers.h"
+#include "game/objects/GameObjects.h"
 
 #include <Windows.h>
 #include <atomic>
@@ -12,25 +15,6 @@
 #include <vector>
 
 namespace {
-
-// ── Offset aliases ───────────────────────────────────────────────────────────
-static const uint32_t& kOffPosX          = RuntimeOffsets::PosX;
-static const uint32_t& kOffPosY          = RuntimeOffsets::PosY;
-static const uint32_t& kOffHp            = RuntimeOffsets::HP;
-static const uint32_t& kOffMaxHp         = RuntimeOffsets::MaxHP;
-static const uint32_t& kOffObjProps      = RuntimeOffsets::ObjProps;
-static const uint32_t& kOffOpIsEnemy     = RuntimeOffsets::OP_IsEnemy;
-static const uint32_t& kOffOpNoHealthBar = RuntimeOffsets::OP_NoHealthBar;
-static const uint32_t& kOffOpInvincElem  = RuntimeOffsets::OP_InvincibleElem;
-static const uint32_t& kOffObjType       = RuntimeOffsets::ObjType;
-static const uint32_t& kOffWmDict        = RuntimeOffsets::WM_AllDict;
-
-// IL2CPP Dictionary<int,T> layout constants
-constexpr uint32_t kOffDictEnt  = 0x18;
-constexpr uint32_t kOffDictCnt  = 0x20;
-constexpr uint32_t kOffArrMax   = 0x18;
-constexpr uint32_t kOffArrData  = 0x20;
-constexpr int      kEntryStride = 24;
 
 // ── Object type lists ────────────────────────────────────────────────────────
 // Non-enemy entity types to reject outright, and whitelisted types that bypass
@@ -45,11 +29,6 @@ static bool IsIgnoredType(int32_t t) {
 static bool IsWhitelistedType(int32_t t) {
     for (int32_t v : kWhitelistedTypes) if (v == t) return true;
     return false;
-}
-
-static inline bool AddrOk(const void* p) {
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000 && a < 0x7FFFFFFFFFFFULL;
 }
 
 // ── Velocity tracking ────────────────────────────────────────────────────────
@@ -72,21 +51,19 @@ static void UpdateVelocity(int32_t id, float ex, float ey, ULONGLONG now, void* 
 {
     float moVx = 0.f, moVy = 0.f;
     bool  haveMo = false;
-    const uint32_t velOff = RuntimeOffsets::MoVelocity;
-    if (velOff != 0 && AddrOk(entity)) {
-        __try {
-            uint8_t* ent = reinterpret_cast<uint8_t*>(entity);
-            float rvx = *reinterpret_cast<float*>(ent + velOff);
-            float rvy = *reinterpret_cast<float*>(ent + velOff + 4);
-            // Only use MoVelocity when it reports actual movement — the field reads
-            // 0.0 on enemies when the offset is wrong or the entity is stationary,
-            // which would otherwise drive chord-estimated velocity toward 0 via blending.
-            if (std::isfinite(rvx) && std::isfinite(rvy) &&
-                fabsf(rvx) < kMaxVelTilesPerMs && fabsf(rvy) < kMaxVelTilesPerMs &&
-                (fabsf(rvx) > 1e-5f || fabsf(rvy) > 1e-5f)) {
-                moVx = rvx; moVy = rvy; haveMo = true;
-            }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    float rvx = 0.f, rvy = 0.f;
+    // Character::Velocity reads the MoVelocity Vector2 under a single SEH guard and
+    // returns false if the offset is unresolved (0) / the pointer is bad / the read
+    // faults — the exact guard the hand-rolled __try provided.
+    if (Game::Character(entity).Velocity(rvx, rvy)) {
+        // Only use MoVelocity when it reports actual movement — the field reads
+        // 0.0 on enemies when the offset is wrong or the entity is stationary,
+        // which would otherwise drive chord-estimated velocity toward 0 via blending.
+        if (std::isfinite(rvx) && std::isfinite(rvy) &&
+            fabsf(rvx) < kMaxVelTilesPerMs && fabsf(rvy) < kMaxVelTilesPerMs &&
+            (fabsf(rvx) > 1e-5f || fabsf(rvy) > 1e-5f)) {
+            moVx = rvx; moVy = rvy; haveMo = true;
+        }
     }
 
     auto it = s_velMap.find(id);
@@ -135,9 +112,9 @@ static bool SehReadLocalKlassAndPos(void* local, float* outX, float* outY, uint6
 {
     __try {
         uint8_t* lp = reinterpret_cast<uint8_t*>(local);
-        *outX   = *reinterpret_cast<float*>(lp + kOffPosX);
-        *outY   = *reinterpret_cast<float*>(lp + kOffPosY);
-        *outKlass = *reinterpret_cast<uint64_t*>(lp);
+        *outX   = *reinterpret_cast<float*>(lp + RuntimeOffsets::PosX);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        *outY   = *reinterpret_cast<float*>(lp + RuntimeOffsets::PosY);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        *outKlass = *reinterpret_cast<uint64_t*>(lp);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
@@ -145,68 +122,79 @@ static bool SehReadLocalKlassAndPos(void* local, float* outX, float* outY, uint6
 struct CandidateOut {
     int32_t id, objType, hp, maxHp;
     float   x, y;
-    bool    isInvulnerable, hasHealthBar;
+    bool    isInvulnerable, hasHealthBar, isScenery;
     void*   ptr;
 };
 
 // Returns true if the dict entry describes a targetable enemy.
 // Soft properties (invulnerable, hasHealthBar) are always populated so callers
 // can apply their own targeting policies.
-static bool SehReadCandidate(uint8_t* entry, void* local, uint64_t localKlass, CandidateOut& out)
+static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t localKlass, CandidateOut& out)
 {
     __try {
-        if (*reinterpret_cast<int32_t*>(entry) < 0)
-            return false;
-        void* entity = *reinterpret_cast<void**>(entry + 16);
         if (!entity || entity == local)
             return false;
-        if (*reinterpret_cast<uint64_t*>(entity) == localKlass)
+        if (*reinterpret_cast<uint64_t*>(entity) == localKlass)  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
             return false;
 
-        void* objProps = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(entity) + kOffObjProps);
-        if (!AddrOk(objProps))
+        void* objProps = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(entity) + RuntimeOffsets::ObjProps);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        if (!Mem::AddrOk(objProps))
             return false;
         uint8_t* op  = reinterpret_cast<uint8_t*>(objProps);
         uint8_t* ent = reinterpret_cast<uint8_t*>(entity);
 
-        if (!*reinterpret_cast<uint8_t*>(op + kOffOpIsEnemy))
+        if (!*reinterpret_cast<uint8_t*>(op + RuntimeOffsets::OP_IsEnemy))  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
             return false;
 
         // noHealthBar (walls/destructibles) — stored as metadata, not hard-rejected
-        const uint8_t noHB = *reinterpret_cast<uint8_t*>(op + kOffOpNoHealthBar);
+        const uint8_t noHB = *reinterpret_cast<uint8_t*>(op + RuntimeOffsets::OP_NoHealthBar);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        const bool isStatic = *reinterpret_cast<uint8_t*>(op + RuntimeOffsets::OP_IsStatic) != 0; // raw-access-ok: guarded by shared SEH
+        void* projectiles = *reinterpret_cast<void**>(op + RuntimeOffsets::OP_Projectiles); // raw-access-ok: guarded by shared SEH
+        const uintptr_t projectileCount = Mem::AddrOk(projectiles)
+            ? *reinterpret_cast<uintptr_t*>(reinterpret_cast<uint8_t*>(projectiles) + 0x18) : 0; // Il2CppArray::max_length
 
-        // XML <Invincible/> — reject if InvincibleElement pointer exists (regardless of string)
-        void* invPtr = *reinterpret_cast<void**>(op + kOffOpInvincElem);
-        if (invPtr && AddrOk(invPtr))
-            return false;
+        // XML <Invincible/> is targeting metadata, not an enemy-classification
+        // failure. Keep the entity in the shared snapshot so dodge/projectile
+        // ownership still sees invincible phases and environmental shooters;
+        // combat consumers already filter Entry::isInvulnerable as appropriate.
+        void* invPtr = *reinterpret_cast<void**>(op + RuntimeOffsets::OP_InvincibleElem);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        bool isInvuln = invPtr && Mem::AddrOk(invPtr);
 
-        bool isInvuln = false;
-
-        const int32_t hp    = *reinterpret_cast<int32_t*>(ent + kOffHp);
-        const int32_t maxHp = *reinterpret_cast<int32_t*>(ent + kOffMaxHp);
+        const int32_t hp    = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::HP);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        const int32_t maxHp = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::MaxHP);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (hp <= 0 || maxHp <= 0 || hp > maxHp)
             return false;
 
-        const int32_t objType = *reinterpret_cast<int32_t*>(ent + kOffObjType);
+        const int32_t objType = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::ObjType);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (!IsWhitelistedType(objType)) {
-            if (maxHp == 200)
+            // maxHp == 200 is the DECOY heuristic. Decoys carry a health bar;
+            // walls/destructibles do not (noHB above, deliberately kept as
+            // metadata rather than a hard reject). Without the !noHB guard this
+            // also silently swallowed every breakable wall that happens to sit
+            // at exactly 200 max HP — those walls then never reached the
+            // snapshot, so udodge's blocker set and auto-break could not see
+            // them at all. Real enemies (health bar present) are unaffected, so
+            // AutoAim's target pool is unchanged.
+            if (maxHp == 200 && !noHB)
                 return false;
             if (IsIgnoredType(objType))
                 return false;
         }
 
-        // Runtime condition check (stasis / runtime invincible)
+        // Runtime stasis/invincible is likewise a soft targetability property.
+        // Dropping it here made the entity disappear from uDodge's blocker and
+        // shooter model. Mark it invulnerable and let each combat mode decide.
         uint32_t cond0 = 0, cond1 = 0;
         const bool condOk = RuntimeOffsets::TryReadMapObjectConditions(entity, &cond0, &cond1);
         if (condOk && (cond0 | cond1) && RuntimeOffsets::MapObjectConditionsMakeUntargetable(cond0, cond1))
-            return false;
+            isInvuln = true;
 
-        const float ex2 = *reinterpret_cast<float*>(ent + kOffPosX);
-        const float ey2 = *reinterpret_cast<float*>(ent + kOffPosY);
+        const float ex2 = *reinterpret_cast<float*>(ent + RuntimeOffsets::PosX);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        const float ey2 = *reinterpret_cast<float*>(ent + RuntimeOffsets::PosY);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (!std::isfinite(ex2) || !std::isfinite(ey2) || (ex2 == 0.f && ey2 == 0.f))
             return false;
 
-        out.id            = *reinterpret_cast<int32_t*>(entry + 8);
+        out.id            = id;
         out.objType       = objType;
         out.hp            = hp;
         out.maxHp         = maxHp;
@@ -214,6 +202,7 @@ static bool SehReadCandidate(uint8_t* entry, void* local, uint64_t localKlass, C
         out.y             = ey2;
         out.isInvulnerable = isInvuln;
         out.hasHealthBar  = (noHB == 0);
+        out.isScenery     = isStatic && projectileCount == 0;
         out.ptr           = entity;
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -248,49 +237,24 @@ void Tick()
         return;
 
     void* wm = GameState::GetWorldMgr();
-    if (!AddrOk(wm)) return;
+    if (!Mem::AddrOk(wm)) return;
 
-    void* allDict = nullptr;
-    __try { allDict = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(wm) + kOffWmDict); }
-    __except (EXCEPTION_EXECUTE_HANDLER) { return; }
-    if (!AddrOk(allDict)) return;
+    void* allDict = Mem::ReadPtr(wm, RuntimeOffsets::WM_AllDict);
+    if (!Mem::AddrOk(allDict)) return;
 
-    void*   entries = nullptr;
-    int32_t count   = 0;
-    __try {
-        entries = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(allDict) + kOffDictEnt);
-        count   = *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(allDict) + kOffDictCnt);
-    } __except (EXCEPTION_EXECUTE_HANDLER) { return; }
-    if (!AddrOk(entries) || count <= 0) return;
+    s_snapshot.reserve(256);
 
-    int32_t maxLen = 0;
-    __try { maxLen = *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(entries) + kOffArrMax); }
-    __except (EXCEPTION_EXECUTE_HANDLER) { return; }
-
-    const int32_t limit = (count < maxLen ? count : maxLen) < 4096
-                        ? (count < maxLen ? count : maxLen) : 4096;
-
-    uint8_t* base = reinterpret_cast<uint8_t*>(entries) + kOffArrData;
-
-    s_snapshot.reserve(static_cast<size_t>(limit / 4));
-
-    for (int32_t i = 0; i < limit; ++i) {
-        uint8_t* entry = base + i * kEntryStride;
-
-        // Opportunistically capture local player's dict key.
-        // The entry at offset +8 is the dict key (object ID); +16 is the entity pointer.
-        __try {
-            if (*reinterpret_cast<int32_t*>(entry) >= 0) {
-                void* ent = *reinterpret_cast<void**>(entry + 16);
-                if (ent == local)
-                    s_localPlayerObjectId.store(*reinterpret_cast<int32_t*>(entry + 8),
-                                                std::memory_order_relaxed);
-            }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    // Walk the world's Dictionary<int, entity>. WalkDict skips free/tombstone
+    // slots (hashCode < 0) — the same slots the candidate check already discarded
+    // — and clamps a corrupt count to 4096, matching the prior hand loop.
+    Il2CppC::WalkDict(allDict, /*maxEntries*/4096, [&](int32_t key, void* entity) {
+        // Opportunistically capture local player's dict key (object ID).
+        if (entity == local)
+            s_localPlayerObjectId.store(key, std::memory_order_relaxed);
 
         CandidateOut cand{};
-        if (!SehReadCandidate(entry, local, localKlass, cand))
-            continue;
+        if (!SehReadCandidate(entity, key, local, localKlass, cand))
+            return;
 
         UpdateVelocity(cand.id, cand.x, cand.y, now, cand.ptr);
 
@@ -303,6 +267,7 @@ void Tick()
         e.maxHp          = cand.maxHp;
         e.isInvulnerable = cand.isInvulnerable;
         e.hasHealthBar   = cand.hasHealthBar;
+        e.isScenery      = cand.isScenery;
         e.ptr            = cand.ptr;
 
         // Populate velocity from the just-updated map
@@ -312,7 +277,7 @@ void Tick()
             e.vy = it->second.vy;
         }
         s_snapshot.push_back(e);
-    }
+    });
 
     // Prune stale velocity entries every 5 seconds
     if (now >= s_pruneAt) {
@@ -335,6 +300,27 @@ void Enumerate(Callback cb, void* user)
 int32_t GetLocalPlayerObjectId()
 {
     return s_localPlayerObjectId.load(std::memory_order_relaxed);
+}
+
+bool ResolveObjectPos(int32_t id, float& outX, float& outY)
+{
+    if (id == 0) return false;
+    void* wm = GameState::GetWorldMgr();
+    if (!Mem::AddrOk(wm)) return false;
+    void* allDict = Mem::ReadPtr(wm, RuntimeOffsets::WM_AllDict);
+    if (!Mem::AddrOk(allDict)) return false;
+
+    bool  found = false;
+    float fx = 0.f, fy = 0.f;
+    Il2CppC::WalkDict(allDict, /*maxEntries*/4096, [&](int32_t key, void* entity) {
+        if (found || key != id || !Mem::AddrOk(entity)) return;
+        float ex = 0.f, ey = 0.f;
+        if (Game::Entity(entity).TryPosFinite(ex, ey) && !(ex == 0.f && ey == 0.f)) {
+            fx = ex; fy = ey; found = true;
+        }
+    });
+    if (found) { outX = fx; outY = fy; }
+    return found;
 }
 
 } // namespace EnemyTracker

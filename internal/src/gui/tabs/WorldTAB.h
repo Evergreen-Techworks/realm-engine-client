@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+#include <unordered_set>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WorldEntity — snapshot of one entity from the entity dictionary.
@@ -74,7 +75,22 @@ static constexpr uint8_t TCOND_NOWALK  = 0x10;
 // WorldProjectile — SpawnProjectile hook + WorldManager KJMONHENJEN containers (DIA4A offsets).
 // Filled from ProjectileTracking::SnapshotToWorld and WM dict/list merge on each refresh.
 // ─────────────────────────────────────────────────────────────────────────────
-static constexpr int kWorldProjectilePathSampleCap = 24;
+// ── Cached trajectory sampling (ProjectileTrajectory::CachePath) ────────────
+// Sampled at a FIXED TIME STEP, not at lifetime/(N-1). The old fraction-of-
+// lifetime scheme put 87 ms between samples on a 2000 ms shot, 217 ms at 5 s and
+// 435 ms at 10 s, while every consumer LINEARLY INTERPOLATES between them: a wavy
+// shot (Flash period ~600 ms) was reconstructed as its chord, so the model was
+// conservative about a curve the bullet never flies — dangerous where the bullet
+// is not, safe where it is. A fixed 50 ms step is ~12 samples per wavy period at
+// any lifetime.
+// The span is bounded by the sample budget (cover = (cap-1) x step), so a shot
+// that outlives the cache simply runs out of cached path; consumers detect that
+// (their cached-path builders refuse a path that stops short of the window they
+// need while the shot is still alive) and re-sample fresh from positionAt.
+static constexpr float kWorldProjectilePathStepMs    = 50.f;
+static constexpr int   kWorldProjectilePathSampleCap = 48;      // 47 x 50 ms = 2350 ms
+static constexpr float kWorldProjectilePathCoverMs   =
+    static_cast<float>(kWorldProjectilePathSampleCap - 1) * kWorldProjectilePathStepMs;
 
 struct WorldProjectile
 {
@@ -190,14 +206,24 @@ struct WorldProjectile
 static constexpr uint8_t kAoeSrcGjj  = 0;  // GJJCEFJMNMK::KOBMINBDOBD  (throwable entity init)
 static constexpr uint8_t kAoeSrcFhoh = 1;  // FHOHCELBPDO::KOBMINBDOBD  (visual fallback)
 static constexpr uint8_t kAoeSrcExpl = 2;  // FGOFPGIIEPC::KOBMINBDOBD  (explosion controller)
-static constexpr uint8_t kAoeSrcSfx  = 3;  // HJMBOMEHGDJ::CGBILOJJPEI  (ShowEffect packet)
+static constexpr uint8_t kAoeSrcSfx  = 3;  // COEFCBBIBMC::JEFJDICFNBA  (ShowEffect packet Read)
+
+// ShowEffect effectType values we care about (PEHBMICMEDO game protocol enum —
+// these are packet payload constants, NOT class field offsets, so they are the
+// same for every build). Lives here next to WorldAoe::sfxEffectType so both the
+// producer (AoeTracking) and the consumers (udodge sensors, overlays) read one
+// definition.
+static constexpr int32_t kSfxType_Throw           =  4;  // throw arc visual (pos1=src, pos2=dest)
+static constexpr int32_t kSfxType_Nova            =  5;  // expanding ring at pos1
+static constexpr int32_t kSfxType_CircleTelegraph = 23;  // ground warning circle at pos1
+static constexpr int32_t kSfxType_AoE             = 39;  // Exalt-specific AoE at pos1
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WorldAoe — ground-target AOE zone captured from four hook paths:
 //   GJJ  (kAoeSrcGjj):  GJJCEFJMNMK throwable entity. ownerObjId = throwable's objectId.
 //   FHOH (kAoeSrcFhoh): FHOHCELBPDO visual fallback.  ownerObjId = visual object's objectId.
 //   EXPL (kAoeSrcExpl): FGOFPGIIEPC explosion ring.   ownerObjId = anchor (thrower) entity objectId.
-//   SFX  (kAoeSrcSfx):  ShowEffect packet handler.    ownerObjId = packet targetObjectId (source entity).
+//   SFX  (kAoeSrcSfx):  ShowEffect packet Read.       ownerObjId = packet targetObjectId (source entity).
 //
 // ownerObjId meaning by source:
 //   GJJ/FHOH → objectId of the throwable/visual entity (NOT the thrower — isEnemy deferred via pos-match)
@@ -205,16 +231,22 @@ static constexpr uint8_t kAoeSrcSfx  = 3;  // HJMBOMEHGDJ::CGBILOJJPEI  (ShowEff
 // ─────────────────────────────────────────────────────────────────────────────
 struct WorldAoe
 {
-    float    x           = 0.f;    // throw origin world X  (GJJCEFJMNMK+0x368 / SFX pos1.x)
-    float    y           = 0.f;    // throw origin world Y  (GJJCEFJMNMK+0x36C / SFX pos1.y)
-    float    destX       = 0.f;    // landing spot X        (GJJCEFJMNMK+0x370 / SFX pos2.x for THROW)
-    float    destY       = 0.f;    // landing spot Y        (GJJCEFJMNMK+0x374 / SFX pos2.y for THROW)
+    float    x           = 0.f;    // throw origin world X  (GJJCEFJMNMK+0x368 / SFX *pos1 .x)
+    float    y           = 0.f;    // throw origin world Y  (GJJCEFJMNMK+0x36C / SFX *pos1 .y)
+    float    destX       = 0.f;    // landing spot X        (GJJCEFJMNMK+0x370 / SFX *pos2 .x for THROW)
+    float    destY       = 0.f;    // landing spot Y        (GJJCEFJMNMK+0x374 / SFX *pos2 .y for THROW)
     float    radius      = 0.f;    // GJJ/FHOH/SFX: kDefaultAoeRadiusTiles (2.0); EXPL: CustomExplosionEntrance+0x38
     float    innerR      = 0.f;    // inner radius if annular, 0 = filled disk
     float    lifetime    = 3000.f; // total duration ms
     float    arcMs       = 0.f;    // arc flight duration (distance/speed × 1000) when known from
                                    // CustomExplosionEntrance; 0 = use heuristic. Planner uses this
                                    // as the arming window so severity ramps during arc, peaks at blast.
+                                   // CAVEAT for kAoeSrcExpl: FGOFPGIIEPC fires AT detonation, so its
+                                   // arcMs is travel time ALREADY SPENT, not a landing delay — the
+                                   // blast is live from elapsed=0. DO NOT read this field as a
+                                   // landing time: call AoeTracking::LandDelayMs, which applies the
+                                   // per-source arming rule every consumer (udodge, pjdodge,
+                                   // autonexus, the overlays) now shares.
     uint64_t spawnTick   = 0;      // GetTickCount64() at capture time
     bool     valid       = false;
     bool     isDamaging      = false;  // true = throwable / explosion AOE
@@ -252,10 +284,37 @@ namespace WorldTAB {
     const std::vector<WorldTile>&   GetTiles();
     const std::vector<WorldProjectile>& GetProjectiles();
 
+    // Collect the instance pointers of every projectile CURRENTLY LIVE in the game
+    // (walks the WorldManager projectile pools fresh). Used to prune tracked shots
+    // the game has already deleted (wall/enemy/player hit). Returns false if the
+    // WorldManager is unreadable — callers MUST NOT prune on false (safety: an
+    // incomplete/failed read would otherwise retire live shots).
+    bool CollectLiveProjectilePtrs(std::unordered_set<uintptr_t>& out);
+
     // Returns true if tile (tx, ty) blocks movement.
     // Flash isWalkable() parity: NoWalk ground OR entity with OccupySquare OR FullOccupy.
     // Damaging tiles are NOT in this set; they are physically walkable.
     bool IsTileBlocked(int tx, int ty);
+
+    // Bulk PLAYER-BOX occupancy read over a grid of side*side cells (row-major,
+    // out[gy*side+gx]). Cell (gx,gy) maps to world CENTER
+    // (originX + gx*cellTiles, originY + gy*cellTiles); a cell is blocked (out=1)
+    // when the player-box footprint over that center — floor(center +/- playerHalfEdge)
+    // on each axis, matching the game's collision half-edge (kUOccPlayerHalfEdge =
+    // 0.2285, i.e. TestTAB's kPlayerChebyshevScale) — touches any blocked tile.
+    // Output bits per cell: bit0 = hard wall, bit1 = DAMAGING ground (only when
+    // foldHazard — a soft avoid for the consumer), bit2 = SINK/water ground (always
+    // emitted, foldHazard-independent: the nav A* hard-blocks it, the dodge grid
+    // ignores it), bit3 = unknown/unstreamed map void. Consumers that only want
+    // walls must mask bit0 explicitly; autonomous routes should block bit3.
+    // Takes the tile mutex ONCE for the whole grid (vs the per-cell CanOccupy
+    // mutex storm this replaces).
+    // Undiscovered tiles stay walkable (optimistic). This is IsPositionBlocked's box
+    // logic hoisted under a single lock. Noclip is intentionally NOT consulted: the
+    // planner treats walls as solid, while noclip lets the player through them
+    // anyway — leaving noclip out is conservative, never a safety regression.
+    void CopyBoxBlocked(float originX, float originY, int side, float cellTiles,
+                        float playerHalfEdge, bool foldHazard, unsigned char* out);
 
     // Returns true if tile (tx, ty) has a FullOccupy entity.
     // Used for the Flash isValidPosition sub-tile neighbour check (section B):

@@ -1,5 +1,7 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../src/proxy/ClientConnection.js';
+import type { PluginContext } from './api.js';
+import type { ClientConnection } from './api.js';
+import { StatType } from './api.js';
+import { ConditionEffect } from './api.js';
 
 /**
  * Anti-Debuffs — faithful port of MultiTool's Class41.
@@ -41,32 +43,34 @@ import type { ClientConnection } from '../src/proxy/ClientConnection.js';
 
 // ── Stat IDs ─────────────────────────────────────────────────────────────────
 
-const STAT_EFFECTS  = 29;
-const STAT_EFFECTS2 = 95;
+const STAT_EFFECTS  = StatType.Effects;   // 29
+const STAT_EFFECTS2 = StatType.Effects2;  // 95
 
-// ── Effects (stat 29) bitmasks ────────────────────────────────────────────────
+// ── Effects (stat 29) bitmasks — derived from canonical ConditionEffect indices ──
+// Effects holds bits 0-30, so the mask is `1 << ConditionEffect.<name>`.
 
-const BIT_QUIET        = 0x00000002;
-const BIT_WEAK         = 0x00000004;
-const BIT_SLOWED       = 0x00000008;
-const BIT_SICK         = 0x00000010;
-const BIT_DAZED        = 0x00000020;
-const BIT_STUNNED      = 0x00000040;
-const BIT_BLIND        = 0x00000080;  // visual-only
-const BIT_HALLUC       = 0x00000100;  // visual-only
-const BIT_DRUNK        = 0x00000200;  // visual-only
-const BIT_CONFUSED     = 0x00000400;  // visual-only
-const BIT_PARALYZED    = 0x00002000;
-const BIT_BLEEDING     = 0x00008000;
-const BIT_PET_STASIS   = 0x00200000;
-const BIT_ARMOR_BROKEN = 0x04000000;
-const BIT_UNSTABLE     = 0x20000000;  // visual-only
-const BIT_DARKNESS     = 0x40000000;  // visual-only
+const BIT_QUIET        = 1 << ConditionEffect.Quiet;         // 0x00000002
+const BIT_WEAK         = 1 << ConditionEffect.Weak;          // 0x00000004
+const BIT_SLOWED       = 1 << ConditionEffect.Slowed;        // 0x00000008
+const BIT_SICK         = 1 << ConditionEffect.Sick;          // 0x00000010
+const BIT_DAZED        = 1 << ConditionEffect.Dazed;         // 0x00000020
+const BIT_STUNNED      = 1 << ConditionEffect.Stunned;       // 0x00000040
+const BIT_BLIND        = 1 << ConditionEffect.Blind;         // 0x00000080  visual-only
+const BIT_HALLUC       = 1 << ConditionEffect.Hallucinating; // 0x00000100  visual-only
+const BIT_DRUNK        = 1 << ConditionEffect.Drunk;         // 0x00000200  visual-only
+const BIT_CONFUSED     = 1 << ConditionEffect.Confused;      // 0x00000400  visual-only
+const BIT_PARALYZED    = 1 << ConditionEffect.Paralyzed;     // 0x00002000
+const BIT_BLEEDING     = 1 << ConditionEffect.Bleeding;      // 0x00008000
+const BIT_PET_STASIS   = 1 << ConditionEffect.Stasis;        // 0x00200000
+const BIT_ARMOR_BROKEN = 1 << ConditionEffect.ArmorBroken;   // 0x04000000
+const BIT_UNSTABLE     = 1 << ConditionEffect.Unstable;      // 0x20000000  visual-only
+const BIT_DARKNESS     = 1 << ConditionEffect.Darkness;      // 0x40000000  visual-only
 
 // ── Effects2 (stat 95) bitmasks ───────────────────────────────────────────────
+// Effects2 holds bits 31+, so the in-stat bit index is `ConditionEffect.<name> - 31`.
 
-const BIT2_PETRIFIED   = 0x00000008;  // bit 3 in Effects2 = ConditionEffect index 34
-const BIT2_SILENCE     = 0x00010000;  // bit 16 in Effects2 = ConditionEffect index 47
+const BIT2_PETRIFIED   = 1 << (ConditionEffect.Petrified - 31);  // index 34 → bit 3  (0x00000008)
+const BIT2_SILENCE     = 1 << (ConditionEffect.Silenced - 31);   // index 47 → bit 16 (0x00010000)
 
 // ── Per-client state ──────────────────────────────────────────────────────────
 

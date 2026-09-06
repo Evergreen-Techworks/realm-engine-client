@@ -9,6 +9,7 @@
 #include "ZDodgeTarget.h"
 #include "RePP.h"
 #include "PJDodge.h"
+#include "features/movement/udodge/UDodge.h"
 #include "AutoNexus.h"
 #include "DbgFileLog.h"
 #include "BootGate.h"
@@ -22,13 +23,18 @@ using TestTAB::DodgeMode;
 #include <cstdint>
 #include <atomic>
 #include "W2S.h"
+#include "gui/CamState.h"
+#include "gui/MinimapNav.h"
+#include "game/math/MoveSpeed.h"
 #include "WorldTAB.h"
 #include "CameraTAB.h"
 #include "DirectX.h"
 #include "ProjectileTracking.h"
-#include "AutoAim.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
+#include "features/combat/autoaim/modes/KillAura.h"
 #include "BagLooter.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
 #include "GameState.h"
 #include "LocalPlayer.h"
 #include "FeatureState.h"
@@ -54,7 +60,6 @@ static float g_mouseSX      = 0.f, g_mouseSY      = 0.f;
 static bool  g_w2sValid     = false;
 
 static bool  g_basisMeasured = false;
-static bool  g_useMeasuredBasis = true;
 // Readout values
 static float g_dbgCx = 0.f, g_dbgCy = 0.f, g_dbgZoom = 0.f, g_dbgAngleRad = 0.f;
 static float g_dbgPlayerX = 0.f,  g_dbgPlayerY = 0.f;
@@ -86,10 +91,7 @@ static void WriteLocalKjnhlademh(int32_t v)
 {
     void* p = LocalPlayer::GetPtr();
     if (!p) return;
-    __try {
-        *reinterpret_cast<int32_t*>(
-            reinterpret_cast<uint8_t*>(p) + RuntimeOffsets::HP) = v;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    Mem::TryWrite<int32_t>(p, RuntimeOffsets::HP, v);
 }
 
 // Walk To target
@@ -168,15 +170,17 @@ void ApplyDodgeModeWithEnter(DodgeMode nextMode)
     ZDodge::SetEnabled(nextMode == DodgeMode::ZDodge);
     RePP::SetEnabled(nextMode == DodgeMode::RePP);
     PJDodge::SetEnabled(nextMode == DodgeMode::PJDodge);
+    UDodge::SetEnabled(nextMode == DodgeMode::UDodge);
 
 
     DBG_FILE_LOG("[DodgeSwap] ApplyDodgeModeWithEnter nextMode=" << static_cast<int>(nextMode)
-        << " (0=Off 1=XDodge 2=RollGrid 3=RollQuad 4=ZDodge 5=RePP 6=PJDodge)"
+        << " (0=Off 1=XDodge 2=RollGrid 3=RollQuad 4=ZDodge 5=RePP 6=PJDodge 7=UDodge)"
         << " -> enabled{ XDodge=" << XDodge::IsEnabled()
         << " Rollout=" << RolloutDodge::IsEnabled()
         << " ZDodge=" << ZDodge::IsEnabled()
         << " RePP=" << RePP::IsEnabled()
-        << " PJDodge=" << PJDodge::IsEnabled() << " }");
+        << " PJDodge=" << PJDodge::IsEnabled()
+        << " UDodge=" << UDodge::IsEnabled() << " }");
     if (nextMode == DodgeMode::XDodge) {
         XDodge::OnEnter();
         // Install the AppEngineManager::Update detour that drives the dodge Tick.
@@ -202,6 +206,9 @@ void ApplyDodgeModeWithEnter(DodgeMode nextMode)
     } else if (nextMode == DodgeMode::PJDodge) {
         PJDodge::OnEnter();
         DangerPlanner::TryInstall();
+    } else if (nextMode == DodgeMode::UDodge) {
+        UDodge::OnEnter();
+        DangerPlanner::TryInstall();
     }
 
     // DangerPlanner steering is disabled; the active dodge engine drives moves.
@@ -217,34 +224,11 @@ void ApplyDodgeModeWithEnter(DodgeMode nextMode)
 // Legacy game hitbox display helpers. PlayerCollider is the only writer for
 // ObjectProperties.collisionRadiusMultiplier; this tab may read it for debug UI.
 // ─────────────────────────────────────────────────────────────────────────────
-static constexpr uint32_t kOffObjProps1      = 0x18;   // KJMONHENJEN.OBAKMCCDBJA
-static constexpr uint32_t kOffObjProps2      = 0x1C8;  // LKHPPBEGNOM.KKENJFFDMPO
-static constexpr uint32_t kOffCollisionMult  = 0x780;  // ObjectProperties.collisionRadiusMultiplier
-
 // Native speed mult: HBEAKBIHANL KDAJOMOFMJB via il2cpp_field_get_offset; optional UI scale in ProjectileTracking.
 static float g_flashSpeedMulUi = 1.f;
 
 
 
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Single source of truth for local player X/Y (same as Follow Mouse / S2W anchor).
-// Always reads +0x3C/+0x40 from GetLocalPtr() when available — no (0,0) skip.
-// ─────────────────────────────────────────────────────────────────────────────
-static bool ReadLivePlayerXY(float& outX, float& outY)
-{
-    void* p = WorldTAB::GetLocalPtr();
-    if (p) {
-        __try {
-            outX = *(float*)((uint8_t*)p + 0x3C);
-            outY = *(float*)((uint8_t*)p + 0x40);
-            return true;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    }
-    outX = WorldTAB::GetLocalX();
-    outY = WorldTAB::GetLocalY();
-    return true;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reads ObjectProperties.collisionRadiusMultiplier from the local player.
@@ -255,11 +239,10 @@ static float ReadCollisionMult(void* entityPtr)
     if (!entityPtr) return 1.0f;
     __try {
         uint8_t* e = reinterpret_cast<uint8_t*>(entityPtr);
-        void* op = *reinterpret_cast<void**>(e + kOffObjProps1);
+        void* op = *reinterpret_cast<void**>(e + RuntimeOffsets::ObjProps);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (!op) return 1.0f;
-        uintptr_t opa = reinterpret_cast<uintptr_t>(op);
-        if (opa < 0x10000 || opa > 0x7FFFFFFFFFFFULL) return 1.0f;
-        float mult = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(op) + kOffCollisionMult);
+        if (!Mem::AddrOk(op)) return 1.0f;
+        float mult = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(op) + RuntimeOffsets::OP_CollRadiusMult);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (mult != mult || mult < 0.f || mult > 20.f) return 1.0f;  // NaN / invalid
         return mult;
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -271,11 +254,10 @@ static float ReadCollisionMultAlt(void* entityPtr)
     if (!entityPtr) return 1.0f;
     __try {
         uint8_t* e = reinterpret_cast<uint8_t*>(entityPtr);
-        void* op = *reinterpret_cast<void**>(e + kOffObjProps2);
+        void* op = *reinterpret_cast<void**>(e + RuntimeOffsets::MoObjectProps);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (!op) return 1.0f;
-        uintptr_t opa = reinterpret_cast<uintptr_t>(op);
-        if (opa < 0x10000 || opa > 0x7FFFFFFFFFFFULL) return 1.0f;
-        float mult = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(op) + kOffCollisionMult);
+        if (!Mem::AddrOk(op)) return 1.0f;
+        float mult = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(op) + RuntimeOffsets::OP_CollRadiusMult);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (mult != mult || mult < 0.f || mult > 20.f) return 1.0f;
         return mult;
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -288,120 +270,6 @@ static float GamePlayerChebyshevHalf()
     return kPlayerChebyshevScale * ReadCollisionMult(WorldTAB::GetLocalPtr());
 }
 
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Build the per-frame camera state for W2S / S2W.
-// Uses Camera.pixelRect (when available) for the true game viewport centre,
-// properly excluding the game's right-side inventory/UI panel.
-// ─────────────────────────────────────────────────────────────────────────────
-static bool BuildCamState(float& camX,    float& camY,
-                          float& angleRad, float& zoom,
-                          float& cx,       float& cy,
-                          float& screenW,  float& screenH)
-{
-    // Live read every frame (Walk To, Follow Mouse, S2W all share this anchor).
-    ReadLivePlayerXY(camX, camY);
-    
-    g_dbgPlayerX = camX;
-    g_dbgPlayerY = camY;
-
-    float angleDeg = CameraTAB::GetAngle();
-    float ortho    = CameraTAB::GetZoom();
-    // angleDeg == 0 is the valid RotMG default (north-up, no rotation) — do NOT replace with 45
-    if (ortho == 0.f) ortho = 8.f;
-    angleRad = angleDeg * (kPI / 180.f);
-
-    HWND wnd = DirectX::window;
-    if (!wnd) return false;
-    RECT r;
-    GetClientRect(wnd, &r);
-    screenW = static_cast<float>(r.right  - r.left);
-    screenH = static_cast<float>(r.bottom - r.top);
-    if (screenW <= 0.f || screenH <= 0.f) return false;
-
-    // This is the old (and worse) version that's just computed as a fallback.
-    //
-    // Unity Camera.pixelRect tells us which portion of the screen the game
-    // renders to (excluding UI overlay panels). Layout: x = left edge,
-    // y = bottom edge (Unity Y-up), w/h = extent. Zoom uses viewport height,
-    // not full screen height.
-    {
-        const float prX = CameraTAB::GetPixelRectX();
-        const float prY = CameraTAB::GetPixelRectY();
-        const float prW = CameraTAB::GetPixelRectW();
-        const float prH = CameraTAB::GetPixelRectH();
-        if (prW > 16.f && prH > 16.f) {
-            cx   = prX + prW * 0.5f;
-            cy   = screenH - (prY + prH * 0.5f);
-            zoom = prH / (2.f * ortho);
-        } else {
-            // Fallback while CameraTAB hasn't refreshed yet
-            cx   = screenW * 0.5f;
-            cy   = screenH * 0.5f;
-            zoom = screenH / (2.f * ortho);
-        }
-    }
-
-    // This is the actually good way of getting the basis using the player's position.
-    // We use the player's position, and the position 1 to the left / right / up / down
-    // to get the basis for the camera. 
-    if (g_useMeasuredBasis) {
-        static CameraTAB::ScreenBasis s_basis{};
-        static ULONGLONG s_lastRefineMs = 0;
-        static ULONGLONG s_lastGoodMs   = 0;
-        constexpr ULONGLONG kRefineEveryMs = 100;
-        constexpr ULONGLONG kBasisMaxAgeMs = 1000;
-
-        const ULONGLONG nowMs = GetTickCount64();
-        
-        const bool refine = (nowMs - s_lastRefineMs) >= kRefineEveryMs;
-        CameraTAB::ScreenBasis fresh{};
-        if (CameraTAB::CalibrateScreenBasis(WorldTAB::GetLocalPtr(), screenW, screenH, fresh, refine)) {
-            s_basis.anchorTileX   = fresh.anchorTileX;
-            s_basis.anchorTileY   = fresh.anchorTileY;
-            s_basis.anchorScreenX = fresh.anchorScreenX;
-            s_basis.anchorScreenY = fresh.anchorScreenY;
-            s_basis.hasAnchor     = fresh.hasAnchor;
-            s_lastGoodMs          = nowMs;
-            
-            if (fresh.hasScaleAndRotation) {
-                s_basis.pixelsPerTile       = fresh.pixelsPerTile;
-                s_basis.rotationRad         = fresh.rotationRad;
-                s_basis.fitResidualPx       = fresh.fitResidualPx;
-                s_basis.hasScaleAndRotation = true;
-                s_lastRefineMs              = nowMs;
-            }
-        } else if (refine) {
-            s_lastRefineMs = nowMs;
-            CameraTAB::ForceRefresh();
-        }
-        g_basisAgeMs    = (s_lastGoodMs != 0) ? static_cast<float>(nowMs - s_lastGoodMs) : -1.f;
-        g_basisResidual = s_basis.fitResidualPx;
-
-        if (s_lastGoodMs != 0 && (nowMs - s_lastGoodMs) <= kBasisMaxAgeMs && s_basis.hasAnchor) {
-            camX = s_basis.anchorTileX;
-            camY = s_basis.anchorTileY;
-            cx   = s_basis.anchorScreenX;
-            cy   = s_basis.anchorScreenY;
-            
-            if (s_basis.hasScaleAndRotation) {
-                angleRad = s_basis.rotationRad;
-                zoom     = s_basis.pixelsPerTile;
-            }
-            g_basisMeasured = true;
-            g_basisFull     = s_basis.hasScaleAndRotation;
-            
-            return true;
-        }
-        g_basisMeasured = false;
-        g_basisFull     = false;
-    }
-
-    g_dbgCamTileX = CameraTAB::GetCamWorldX();
-    g_dbgCamTileY = -CameraTAB::GetCamWorldY();
-
-    return (camX != 0.f || camY != 0.f);
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MovePlayer — direct position write.
@@ -423,7 +291,7 @@ static bool BuildCamState(float& camX,    float& camY,
 //     attempted so the player glides smoothly along walls.
 //
 // playerX/playerY must be the same live values used for this frame's S2W / Walk
-// checks (from ReadLivePlayerXY / BuildCamState) — do not re-read from memory here.
+// checks (from the CamState snapshot) — do not re-read from memory here.
 // ─────────────────────────────────────────────────────────────────────────────
 
 static constexpr float kTileInset   = 0.01f;
@@ -557,11 +425,11 @@ static void ReadPlayerStats(int32_t& hp, int32_t& maxHp, float& spd, float& tile
         // Unresolved (e.g. first frames in world): assume SPD 50 so the dodge
         // planner always has a non-zero move budget. Server-authoritative
         // clamping tolerates a modest under/over-estimate.
-        tilesPerSec = 4.0f + 5.6f * (50.f / 75.f);
+        tilesPerSec = GameMath::TilesPerSecFromSpd(50.f);
     }
     // Display-equivalent SPD stat back-derived from the speed curve
     // (Flash: tilesPerSec = 4.0 + 5.6 * spd/75, capped at SPD 75).
-    spd = std::clamp((tilesPerSec - 4.0f) / 5.6f * 75.f, 0.f, 120.f);
+    spd = GameMath::SpdFromTilesPerSec(tilesPerSec);
 }
 
 
@@ -581,7 +449,7 @@ static void MovePlayer(float targetWorldX, float targetWorldY, float dt,
     // Step budget from the game's own CalcMoveSpeed; SPD-50 curve fallback
     // when unresolved. (The old raw +0x478 SPD read broke on the 2026-08 build.)
     float tps = DodgeRuntime::GetTilesPerSec(player);
-    if (tps <= 0.f) tps = 4.f + 5.6f * (50.f / 75.f);
+    if (tps <= 0.f) tps = GameMath::TilesPerSecFromSpd(50.f);
 
     float maxStep = tps * dt * speedMult;
 
@@ -642,6 +510,36 @@ static void MovePlayer(float targetWorldX, float targetWorldY, float dt,
     DangerPlanner::NativeMoveTo(player, moveX, moveY);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Ctrl+click teleport write gate (plan 105, decision D2)
+// ─────────────────────────────────────────────────────────────────────────────
+// All four teleport writes are floats and fail OPEN on a stale offset — a wrong
+// float offset writes SUCCESSFULLY onto some other valid, writable float
+// (RuntimeOffsets.h "Fail-closed gate for FLOAT WRITES"), so the write cannot
+// fault and refusing is the only defence. KJ_Float3Pos in particular would
+// scribble a float3 into an unknown struct on the local player. Gate all four
+// together: a partial teleport (position moved, float3 not, or vice versa) is
+// worse than no teleport. KJ_Float3Pos + 4u is covered by the KJ_Float3Pos
+// entry — the gate keys on the offset VARIABLE's address, not the computed
+// value. Mirrors PlayerCollider::CollisionOffsetTrusted.
+static int s_tpWriteTrustLogged = -1;   // -1 unknown, 0 refused, 1 armed
+
+static bool TeleportOffsetsTrusted()
+{
+    const bool trusted =
+           RuntimeOffsets::IsFieldWriteTrusted(&RuntimeOffsets::PosX)          // raw-access-ok: plan 105 D2 — offset-HEALTH query by variable address, reads no game memory
+        && RuntimeOffsets::IsFieldWriteTrusted(&RuntimeOffsets::PosY)          // raw-access-ok: plan 105 D2 — offset-HEALTH query by variable address, reads no game memory
+        && RuntimeOffsets::IsFieldWriteTrusted(&RuntimeOffsets::KJ_Float3Pos);
+    const int now = trusted ? 1 : 0;
+    if (now != s_tpWriteTrustLogged) {
+        s_tpWriteTrustLogged = now;
+        DBG_FILE_LOG(trusted
+            ? "[TestTAB] teleport offsets metadata-resolved — Ctrl+click teleport ARMED"
+            : "[TestTAB] teleport offset FALLBACK/STALE (PosX/PosY/KJ_Float3Pos) — "
+              "REFUSING Ctrl+click teleport writes");
+    }
+    return trusted;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TestTAB::Tick — called every frame from dPresent
@@ -693,10 +591,17 @@ void TestTAB::Tick(bool menuVisible)
     }
 
     // ── Build camera/screen state for this frame ─────────────────────────────
-    float camX = 0.f, camY = 0.f, angleRad = 0.f, zoom = 0.f;
-    float cx = 0.f, cy = 0.f, screenW = 0.f, screenH = 0.f;
-    g_w2sValid = BuildCamState(camX, camY, angleRad, zoom, cx, cy, screenW, screenH);
+    CamState::Tick();
+    const CamState::Snapshot& cs = CamState::Get();
+    float camX = cs.camX, camY = cs.camY, angleRad = cs.angleRad, zoom = cs.zoom;
+    float cx = cs.cx, cy = cs.cy;
+    g_w2sValid = cs.valid;
     g_dbgCx = cx; g_dbgCy = cy; g_dbgZoom = zoom; g_dbgAngleRad = angleRad;
+    // Mirror the OVERLAY PROJECTION diagnostics for the Test-tab readout.
+    g_dbgPlayerX    = cs.playerX;       g_dbgPlayerY    = cs.playerY;
+    g_dbgCamTileX   = cs.camTileX;      g_dbgCamTileY   = cs.camTileY;
+    g_basisAgeMs    = cs.basisAgeMs;    g_basisResidual = cs.basisResidual;
+    g_basisMeasured = cs.basisMeasured; g_basisFull     = cs.basisFull;
 
     // ── Mouse position (screen coords, relative to game client area) ────────
     POINT pt;
@@ -754,7 +659,12 @@ void TestTAB::Tick(bool menuVisible)
             if (PJDodge::IsEnabled()) {
                 PJDodge::RenderDebugOverlay(camX, camY, angleRad, zoom, cx, cy);
             }
+            if (UDodge::IsEnabled()) {
+                UDodge::RenderDebugOverlay(camX, camY, angleRad, zoom, cx, cy);
+            }
             CombatTAB::FeatAutoNexus::RenderDebugPath(camX, camY, angleRad, zoom, cx, cy);
+            // Killaura lock overlay — self-gates on its own enable + overlay toggle.
+            KillAura::RenderOverlay(camX, camY, angleRad, zoom, cx, cy);
         }
 
         // Locked enemy visualization — red reticle + two rings:
@@ -835,14 +745,8 @@ void TestTAB::Tick(bool menuVisible)
         if (lp) {
             // LKHPPBEGNOM own fields need direct raw reads — ACTK +0x50 shift means
             // il2cpp_field_get_value reads dump offsets which land in ACTK bytes.
-            __try {
-                uint8_t* p = reinterpret_cast<uint8_t*>(lp);
-                s_hudKJNHLADHEMH = *reinterpret_cast<int32_t*>(p + RuntimeOffsets::HP);
-                s_hudHODJPKFINKF = *reinterpret_cast<int32_t*>(p + RuntimeOffsets::Defense);
-            } __except (EXCEPTION_EXECUTE_HANDLER) {
-                s_hudKJNHLADHEMH = 0;
-                s_hudHODJPKFINKF = 0;
-            }
+            s_hudKJNHLADHEMH = Mem::ReadOr<int32_t>(lp, RuntimeOffsets::HP,      0);
+            s_hudHODJPKFINKF = Mem::ReadOr<int32_t>(lp, RuntimeOffsets::Defense, 0);
         } else {
             s_hudKJNHLADHEMH = 0;
             s_hudHODJPKFINKF = 0;
@@ -927,13 +831,11 @@ void TestTAB::Tick(bool menuVisible)
                 const bool okLand = ComputeCtrlTeleportLanding(
                     camX, camY, g_mouseWorldX, g_mouseWorldY, tpX, tpY);
 
-                if (okLand) {
-                    __try {
-                        *(float*)((uint8_t*)localPlayer + 0x3C) =  tpX;
-                        *(float*)((uint8_t*)localPlayer + 0x40) =  tpY;
-                        *(float*)((uint8_t*)localPlayer + 0x68) =  tpX;
-                        *(float*)((uint8_t*)localPlayer + 0x6C) = -tpY;
-                    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+                if (okLand && TeleportOffsetsTrusted()) {
+                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::PosX, tpX);                    // raw-access-ok: plan 105 D2 — gated teleport WRITE (TeleportOffsetsTrusted), not a position read
+                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::PosY, tpY);                    // raw-access-ok: plan 105 D2 — gated teleport WRITE (TeleportOffsetsTrusted), not a position read
+                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::KJ_Float3Pos, tpX);            // raw-access-ok: plan 105 D2 — gated teleport WRITE (TeleportOffsetsTrusted)
+                    Mem::TryWrite<float>(localPlayer, RuntimeOffsets::KJ_Float3Pos + 4u, -tpY);      // raw-access-ok: plan 105 D2 — gated teleport WRITE (TeleportOffsetsTrusted)
                 }
             }
         }
@@ -953,7 +855,42 @@ void TestTAB::Tick(bool menuVisible)
             const bool chordEdge = chord && !s_prevLockChord;
             s_prevLockChord = chord;
 
-            if (chordEdge && g_w2sValid && !menuVisible) {
+            // ── Minimap intercept ────────────────────────────────────────
+            // A Shift+Click that lands inside the on-screen minimap rectangle
+            // walks to the corresponding WORLD position (via MinimapNav's
+            // minimap→world transform), NOT the on-ground cursor position. This
+            // path does not require g_w2sValid — MinimapNav resolves its own
+            // basis from the minimap camera/rect. Everything below (enemy lock,
+            // player follow, on-ground walk-to) stays for clicks OUTSIDE it.
+            bool minimapConsumed = false;
+            if (chordEdge && !menuVisible
+                && MinimapNav::HitTest(g_mouseSX, g_mouseSY, cs.screenW, cs.screenH))
+            {
+                // Minimap Shift+Click is a TOGGLE: if a walk-to path is already
+                // active, this click CANCELS it — clear the path AND any locked
+                // enemy (so we stop navigating / orbiting). Otherwise it sets a new
+                // walk-to goal at the clicked world spot and drops any lock so we
+                // walk rather than orbit. Walk-to waypoints are minimap-ONLY.
+                float wgx = 0.f, wgy = 0.f; bool wgActive = false;
+                DangerPlanner::GetWalkGoal(wgx, wgy, wgActive);
+                if (wgActive) {
+                    DangerPlanner::ClearWalkGoal();
+                    DangerPlanner::ClearEnemyLock();
+                } else {
+                    float mmWorldX = 0.f, mmWorldY = 0.f;
+                    if (MinimapNav::ClickToWorld(g_mouseSX, g_mouseSY,
+                                                 cs.screenW, cs.screenH,
+                                                 camX, camY, CameraTAB::GetAngle(),
+                                                 mmWorldX, mmWorldY))
+                    {
+                        DangerPlanner::ClearEnemyLock();
+                        DangerPlanner::SetWalkGoal(mmWorldX, mmWorldY);
+                    }
+                }
+                minimapConsumed = true;
+            }
+
+            if (chordEdge && g_w2sValid && !menuVisible && !minimapConsumed) {
                 // Dual-target click: closest enemy OR closest player
                 // wins, whichever is nearer to the cursor. Enemies get
                 // lock-follow (orbit at weapon range), players get
@@ -1008,6 +945,10 @@ void TestTAB::Tick(bool menuVisible)
                     if (current == bestEnemyId) DangerPlanner::ClearEnemyLock();
                     else                        DangerPlanner::SetEnemyLock(bestEnemyId);
                 }
+                // Shift+Click on EMPTY GROUND in-world does NOTHING now — walk-to
+                // waypoints are set ONLY from the minimap (handled by the MinimapNav
+                // intercept above). In-world Shift+Click stays purely enemy-lock /
+                // player-follow.
             }
         }
 
@@ -1030,24 +971,19 @@ void TestTAB::Tick(bool menuVisible)
         // These are written by the game's InputHandler (WASD → camera-rotated world dir)
         // and are NOT affected by our position writes or dodge steering.
         if (localPlayer) {
-            __try {
-                const uint8_t* p = reinterpret_cast<const uint8_t*>(localPlayer);
-                const bool  gameMoving = *reinterpret_cast<const bool*>(p + RuntimeOffsets::Player_Moving);
-                const float gameDirX   = *reinterpret_cast<const float*>(p + RuntimeOffsets::Player_MoveDirX);
-                const float gameDirY   = *reinterpret_cast<const float*>(p + RuntimeOffsets::Player_MoveDirY);
-                if (gameMoving && std::isfinite(gameDirX) && std::isfinite(gameDirY)) {
-                    const float len = sqrtf(gameDirX * gameDirX + gameDirY * gameDirY);
-                    if (len > 0.01f) {
-                        s_intentDirX = gameDirX / len;
-                        s_intentDirY = gameDirY / len;
-                        s_hasIntent  = true;
-                    } else {
-                        s_hasIntent = false;
-                    }
+            const bool  gameMoving = Mem::ReadOr<bool>(localPlayer,  RuntimeOffsets::Player_Moving,   false);
+            const float gameDirX   = Mem::ReadOr<float>(localPlayer, RuntimeOffsets::Player_MoveDirX, 0.f);
+            const float gameDirY   = Mem::ReadOr<float>(localPlayer, RuntimeOffsets::Player_MoveDirY, 0.f);
+            if (gameMoving && std::isfinite(gameDirX) && std::isfinite(gameDirY)) {
+                const float len = sqrtf(gameDirX * gameDirX + gameDirY * gameDirY);
+                if (len > 0.01f) {
+                    s_intentDirX = gameDirX / len;
+                    s_intentDirY = gameDirY / len;
+                    s_hasIntent  = true;
                 } else {
                     s_hasIntent = false;
                 }
-            } __except (EXCEPTION_EXECUTE_HANDLER) {
+            } else {
                 s_hasIntent = false;
             }
         } else {
@@ -1065,7 +1001,7 @@ void TestTAB::RenderMovementSection()
     ImGui::Indent(8.f);
 
     int modeIdx = static_cast<int>(g_dodgeMode);
-    const char* modeLabels[] = { "Off", "RE-Plus", "RE-Sim (Grid)", "RE-Sim (Quadtree)", "zDodge", "RE++", "PJDodge" };
+    const char* modeLabels[] = { "Off", "RE-Plus", "RE-Sim (Grid)", "RE-Sim (Quadtree)", "zDodge", "RE++", "PJDodge", "Unified" };
     ImGui::SetNextItemWidth(240.f);
     if (ImGui::Combo("Mode##dodgeModeCombo", &modeIdx, modeLabels, IM_ARRAYSIZE(modeLabels))) {
         ApplyDodgeModeWithEnter(static_cast<DodgeMode>(modeIdx));
@@ -1089,6 +1025,9 @@ void TestTAB::RenderMovementSection()
     } else if (g_dodgeMode == DodgeMode::PJDodge) {
         ImGui::Spacing();
         PJDodge::RenderSettings();
+    } else if (g_dodgeMode == DodgeMode::UDodge) {
+        ImGui::Spacing();
+        UDodge::RenderSettings();
     }
 
     ImGui::Unindent(8.f);
@@ -1228,12 +1167,15 @@ void TestTAB::SetBotWalkTarget(float worldX, float worldY, bool active)
         g_walkX        = worldX;
         g_walkY        = worldY;
         g_walkActive   = true;
-        // Feed the DangerPlanner as an external goal override so the planner
-        // prefers this target over WASD/idle cell selection while dodging.
+        // Keep the legacy planner override for older movement modes, and feed
+        // the dedicated walk-goal channel consumed by the unified UDodge
+        // waypoint planner. SDK navigation enters native movement here.
         DangerPlanner::SetExternalGoal(worldX, worldY);
+        DangerPlanner::SetWalkGoal(worldX, worldY);
     } else {
         g_walkActive = false;
         DangerPlanner::ClearExternalGoal();
+        DangerPlanner::ClearWalkGoal();
     }
 }
 
@@ -1247,28 +1189,9 @@ void TestTAB::Render()
     ImGui::Separator();
     ImGui::Spacing();
 
-    // ── Developer diagnostics / MCP bridge ────────────────────────────────────
-    // Runtime opt-in for the re-mcp diagnostics egress. Compiled in for everyone,
-    // dormant until flipped on here (settings.bEnableDiagBridge gates DiagBridge::Tick).
-    ImGui::TextColored(ImVec4(0.6f, 1.f, 0.7f, 1.f), "DIAGNOSTICS BRIDGE (MCP)");
-    ImGui::Checkbox("Enable diagnostics egress (MCP bridge)##diagbridge", &settings.bEnableDiagBridge);
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s",
-            "Developer tool. Mirrors live BootGate / dodge state to\n"
-            "%LOCALAPPDATA%\\RealmEngine\\*.json so the re-mcp server (internal/tools/re-mcp)\n"
-            "can runtime-test the DLL from an MCP client. Off = nothing is written.");
-    }
-    ImGui::TextDisabled("%s", settings.bEnableDiagBridge
-        ? "Writing %LOCALAPPDATA%\\RealmEngine\\{diag,cmd,resp}.json (~1 Hz)."
-        : "Off — no files written. Enable to use the re_* MCP tools.");
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
     // Debug Overlay
     ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.f, 1.f), "OVERLAY PROJECTION");
-    ImGui::Checkbox("Measured Unity basis##w2sbasis", &g_useMeasuredBasis);
+    ImGui::Checkbox("Measured Unity basis##w2sbasis", CamState::UseMeasuredBasisPtr());
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("%s",
             "ON (default) = ask Unity where the player actually is. The only\n"
@@ -1459,6 +1382,15 @@ void TestTAB::Render()
         ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.f, 1.f),
             "Current game multiplier: %.4f  (effective half = %.4f tiles)",
             liveMult, 0.2285f * liveMult);
+
+        const uint64_t colTick = PlayerCollider::LastTickMs();
+        const uint64_t sinceMs  = colTick ? (GetTickCount64() - colTick) : 0;
+        ImGui::TextColored(colTick && sinceMs < 500 ? ImVec4(0.4f,1.f,0.4f,1.f)
+                                                    : ImVec4(1.f,0.5f,0.3f,1.f),
+            "Collider Tick: %s (%llu ms ago)  offset=%s",
+            colTick ? "live" : "NEVER TICKED",
+            (unsigned long long)sinceMs,
+            PlayerCollider::OffsetTrusted() ? "metadata-trusted" : "FALLBACK/untrusted");
     }
 
     ImGui::Unindent(8.f);
@@ -1551,7 +1483,7 @@ namespace TestTAB {
     void      SetDodgeMode(DodgeMode m)
     {
         const int v = static_cast<int>(m);
-        ApplyDodgeModeWithEnter((v >= 0 && v <= static_cast<int>(DodgeMode::PJDodge))
+        ApplyDodgeModeWithEnter((v >= 0 && v <= static_cast<int>(DodgeMode::UDodge))
             ? m : DodgeMode::Off);
     }
     // SetDodgeModeWithEnter — IpcBridge calls this to route a dashboard dodge-mode

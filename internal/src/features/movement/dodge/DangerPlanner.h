@@ -47,6 +47,16 @@ bool HasExternalGoal();
 // Returns false when no goal is active.
 bool GetExternalGoal(float& outX, float& outY);
 
+// Walk-to-spot goal (Shift+Click on empty ground, TestTAB). A persistent world
+// point UDodge pathfinds to while still micro-dodging on the way. Separate from
+// the external-goal (IPC walkTarget) channel and the enemy lock — a dedicated
+// UDodge-consumed slot so it coexists cleanly with both. Cleared on arrival,
+// on WASD steer, or when a new walk/click is issued (see UDodge::Tick).
+void SetWalkGoal(float worldX, float worldY);
+void ClearWalkGoal();
+// Returns false (outActive=false) when no walk goal is set.
+bool GetWalkGoal(float& outX, float& outY, bool& outActive);
+
 // Enemy lock — click-to-follow. While locked, the planner parks the player
 // at ~followPaddingRatio × weaponRange from the enemy on whatever side is
 // safest, so shots still land while keeping distance.

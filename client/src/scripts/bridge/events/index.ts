@@ -16,6 +16,7 @@ import type { BridgeDeps } from '../BridgeDeps.js';
 import type { ClientConnection } from '../../../proxy/ClientConnection.js';
 import type { Packet } from '../../../packets/Packet.js';
 import { StatType } from '../../../constants/StatType.js';
+import { GAME_PORT } from '../../../constants/GameId.js';
 import { normalizeMapDisplayName } from '../../../util/mapDisplayName.js';
 import { Logger } from '../../../util/Logger.js';
 
@@ -509,7 +510,7 @@ export function install(deps: BridgeDeps): void {
     const addr = client.state?.conTargetAddress;
     const port = client.state?.conTargetPort;
     fire('connected', {
-      serverAddress: addr ? `${addr}:${port ?? 2050}` : undefined,
+      serverAddress: addr ? `${addr}:${port ?? GAME_PORT}` : undefined,
     });
   });
 
@@ -519,7 +520,7 @@ export function install(deps: BridgeDeps): void {
     prevInvByClient.delete(client);
     fire('disconnected', {
       serverAddress: client.state?.conTargetAddress
-        ? `${client.state.conTargetAddress}:${client.state.conTargetPort ?? 2050}`
+        ? `${client.state.conTargetAddress}:${client.state.conTargetPort ?? GAME_PORT}`
         : undefined,
     });
   });

@@ -1,8 +1,9 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
-import { sendDllFeature } from '../src/bridge/DllFeatureBus.js';
+import type { PluginContext } from './api.js';
+import { sendDllFeature } from './api.js';
 
 // Maps the dashboard string value to the C++ TestTAB::DodgeMode enum.
-// Off=0, XDodge=1, RolloutGrid=2, RolloutQuad=3, zDodge=4, RePP=5.
+// Off=0, XDodge=1, RolloutGrid=2, RolloutQuad=3, zDodge=4, RePP=5,
+// PJDodge=6, UDodge (Unified)=7.
 // XDodge uses A* (goal-directed) with BFS fallback (immediate escape),
 // ported from XRebuild/XDriver decompile. RE-Sim does per-input forward
 // simulation; the two RE-Sim modes differ only in broad-phase backend
@@ -10,7 +11,9 @@ import { sendDllFeature } from '../src/bridge/DllFeatureBus.js';
 // intent-preserving slide-assist dodge. RePP (RE++) is the next-gen
 // reactive dodge. PJDodge is the predictive controller (exact segment CCD,
 // survival-first candidate selection, intent ladder, escape search).
-const DODGE_VALUES = ['off', 'xdodge', 'rollout-grid', 'rollout-quad', 'zdodge', 're-plus-plus', 'pj-dodge'] as const;
+// Unified (UDodge) merges PJDodge's predictive core with RePP's field
+// escape and autopilot goal layer.
+const DODGE_VALUES = ['off', 'xdodge', 'rollout-grid', 'rollout-quad', 'zdodge', 're-plus-plus', 'pj-dodge', 'unified'] as const;
 type ActiveDodgeMode = Exclude<(typeof DODGE_VALUES)[number], 'off'>;
 type SettingConfig = Parameters<PluginContext['registerSetting']>[1];
 type SettingCallback = Parameters<PluginContext['registerSetting']>[2];
@@ -34,6 +37,41 @@ export function register(ctx: PluginContext) {
     const off = forceOff || !ctx.enabled;
     const mode = off ? 0 : modeToIdx(ctx.getSetting<string>('dodgeMode'));
     sendDllFeature('autoDodgeMode', mode);
+    updateMoveEnvelopeArming();
+  }
+
+  type MovePoint = { time: number; x: number; y: number };
+  const moveEnvelope = {
+    valid: false,
+    x: 0,
+    y: 0,
+    time: 0,
+  };
+
+  function envelopeWanted(): boolean {
+    return ctx.enabled && ctx.getSetting<string>('dodgeMode') === 'unified' &&
+      ctx.getSetting<string>('udodgeMoveEnvelope') === 'on';
+  }
+
+  function updateMoveEnvelopeArming(): void {
+    const wanted = envelopeWanted();
+    // Direct local placement is allowed only after at least one real MOVE has
+    // established the last-sent anchor. After map/GOTO reset, the first MOVE is
+    // deliberately native and unclamped; it re-arms the following interval.
+    const armed = wanted && moveEnvelope.valid;
+    sendDllFeature('udodgeMoveEnvelope', wanted ? 1 : 0);
+    sendDllFeature('udodgeMoveEnvelopeArmed', armed ? 1 : 0);
+    if (!armed) sendDllFeature('udodgeServerPositionError', 0);
+    if (!wanted) sendDllFeature('udodgeServerAnchorValid', 0);
+  }
+
+  function resetMoveEnvelope(): void {
+    moveEnvelope.valid = false;
+    moveEnvelope.x = moveEnvelope.y = 0;
+    moveEnvelope.time = 0;
+    sendDllFeature('udodgeMoveEnvelopeArmed', 0);
+    sendDllFeature('udodgeServerAnchorValid', 0);
+    sendDllFeature('udodgeServerPositionError', 0);
   }
 
   // `mode` may be a single dodge mode or several — settings shown for the RE-Sim
@@ -65,6 +103,7 @@ export function register(ctx: PluginContext) {
       { label: 'zDodge', value: 'zdodge' },
       { label: 'RE++', value: 're-plus-plus' },
       { label: 'PJDodge', value: 'pj-dodge' },
+      { label: 'Unified (RE++ x PJDodge)', value: 'unified' },
     ],
   }, () => flush());
 
@@ -272,6 +311,123 @@ export function register(ctx: PluginContext) {
     onOff('[PJDodge] Lock follow (walk toward lock target)', 'off'),
     (v: string) => sendDllFeature('pjdodgeLockFollow', v === 'on' ? 1 : 0));
 
+  // ── UDodge (Unified) settings ─────────────────────────────────────────────
+  registerModeSetting('unified', 'udodgeLaneTiles', {
+    label: '[UDodge] Danger lane length (tiles)',
+    type: 'range', value: 12, min: 2, max: 16, step: 0.5,
+  }, (v: number) => sendDllFeature('udodgeLaneTiles', v));
+  registerModeSetting('unified', 'udodgeStepTiles', {
+    label: '[UDodge] Step distance (tiles, 0 = auto: one server tick)', advanced: true,
+    type: 'range', value: 0, min: 0, max: 3, step: 0.1,
+  }, (v: number) => sendDllFeature('udodgeStepTiles', v));
+  registerModeSetting('unified', 'udodgeHitScale', {
+    label: '[UDodge] Hit scale (1 = exact game hitbox)', advanced: true,
+    type: 'range', value: 1, min: 0.5, max: 1.5, step: 0.05,
+  }, (v: number) => sendDllFeature('udodgeHitScale', v));
+  registerModeSetting('unified', 'udodgeReactMargin', {
+    label: '[UDodge] Reaction margin (tiles — wider = dodge sooner/smoother)',
+    type: 'range', value: 0.6, min: 0.05, max: 2.0, step: 0.05,
+  }, (v: number) => sendDllFeature('udodgeReactMargin', v));
+  registerModeSetting('unified', 'udodgeSafeWalk', onOff('[UDodge] Safe walk (avoid damaging ground)', 'on'),
+    (v: string) => sendDllFeature('udodgeSafeWalk', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeSpeedScale', onOff('[UDodge] Match intent speed on gentle overrides', 'on'),
+    (v: string) => sendDllFeature('udodgeSpeedScale', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeFieldEscape',
+    onOff('[UDodge] Field escape (Dijkstra route around walls when boxed in)', 'on'),
+    (v: string) => sendDllFeature('udodgeFieldEscape', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeLockFollow',
+    onOff('[UDodge] Lock follow (walk toward lock target)', 'off'),
+    (v: string) => sendDllFeature('udodgeLockFollow', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeFollowLantern',
+    onOff('[UDodge][Autopilot] Follow stand-on object (lantern) — perf cost', 'off'),
+    (v: string) => sendDllFeature('udodgeFollowLantern', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeAutopilot',
+    onOff('[UDodge][Autopilot] Auto-lock highest-HP enemy (auto-fight the orbit)', 'off'),
+    (v: string) => sendDllFeature('udodgeAutopilot', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeStandOnType', {
+    label: '[UDodge][Autopilot] Stand-on objType (0=off; e.g. Moonlight Village lantern)',
+    advanced: true,
+    type: 'range', value: 0, min: 0, max: 65535, step: 1,
+  }, (v: number) => sendDllFeature('udodgeStandOnType', v));
+  registerModeSetting('unified', 'udodgeDebugOverlay', onOff('[UDodge] Debug overlay', 'on'),
+    (v: string) => sendDllFeature('udodgeDebugOverlay', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeDrawPath', onOff('[UDodge] Draw planned route overlay', 'on'),
+    (v: string) => sendDllFeature('udodgeDrawPath', v === 'on' ? 1 : 0));
+  registerModeSetting('unified', 'udodgeOrbitRange', {
+    label: '[UDodge][Autopilot] Orbit range (tiles, 0 = auto from weapon range)',
+    type: 'range', value: 0, min: 0, max: 16, step: 0.5,
+  }, (v: number) => sendDllFeature('udodgeOrbitRange', v));
+  registerModeSetting('unified', 'udodgePlanRadius', {
+    label: '[UDodge] Plan window radius (grid cells — smaller = cheaper)', advanced: true,
+    type: 'range', value: 20, min: 8, max: 40, step: 1,
+  }, (v: number) => sendDllFeature('udodgePlanRadius', v));
+  registerModeSetting('unified', 'udodgeMoveEnvelope',
+    onOff('[UDodge] Server-safe outbound MOVE envelope', 'on'),
+    () => updateMoveEnvelopeArming());
+
+  // Keep observing MOVE even outside Unified mode so switching modes starts
+  // from the last position actually sent, never from an invented anchor.
+  ctx.hookPacket('MOVE', (client, packet) => {
+    if (!packet.isDefined || !Array.isArray(packet.data.records)) return;
+    const records = packet.data.records as MovePoint[];
+    if (records.length === 0) return;
+
+    let maxError = 0;
+    const shouldClamp = envelopeWanted();
+    const rawSpeed = client.playerData.speed + client.playerData.speedBonus;
+    const spd = Number.isFinite(rawSpeed) ? Math.max(0, Math.min(75, rawSpeed)) : 0;
+    const tilesPerSec = 4.0 + 5.6 * (spd / 75.0);
+
+    for (const record of records) {
+      const desiredX = Number(record.x);
+      const desiredY = Number(record.y);
+      const recordTime = Number(record.time) | 0;
+      if (![desiredX, desiredY, recordTime].every(Number.isFinite)) continue;
+
+      if (!moveEnvelope.valid || recordTime <= moveEnvelope.time) {
+        moveEnvelope.valid = true;
+        moveEnvelope.x = desiredX;
+        moveEnvelope.y = desiredY;
+        moveEnvelope.time = recordTime;
+        continue;
+      }
+
+      let sentX = desiredX;
+      let sentY = desiredY;
+      if (shouldClamp) {
+        const dtMs = Math.min(1000, Math.max(0, recordTime - moveEnvelope.time));
+        const legalDistance = tilesPerSec * (dtMs / 1000) * 1.05;
+        const dx = desiredX - moveEnvelope.x;
+        const dy = desiredY - moveEnvelope.y;
+        const desiredDistance = Math.hypot(dx, dy);
+        if (desiredDistance > legalDistance && desiredDistance > 1e-6) {
+          const scale = legalDistance / desiredDistance;
+          sentX = moveEnvelope.x + dx * scale;
+          sentY = moveEnvelope.y + dy * scale;
+          record.x = sentX;
+          record.y = sentY;
+          packet.modified = true;
+        }
+        maxError = Math.max(maxError, Math.hypot(desiredX - sentX, desiredY - sentY));
+      }
+      moveEnvelope.x = sentX;
+      moveEnvelope.y = sentY;
+      moveEnvelope.time = recordTime;
+    }
+    if (shouldClamp)
+      sendDllFeature('udodgeServerPositionError', Math.min(0.35, maxError));
+    if (moveEnvelope.valid && shouldClamp) {
+      sendDllFeature('udodgeServerAnchorX', moveEnvelope.x);
+      sendDllFeature('udodgeServerAnchorY', moveEnvelope.y);
+      sendDllFeature('udodgeServerAnchorValid', 1);
+    }
+    updateMoveEnvelopeArming();
+  }, { prepend: true });
+
+  ctx.hookPacket('GOTO', (_client, packet) => {
+    if (packet.isDefined) resetMoveEnvelope();
+  });
+
   registerModeSetting('xdodge', 'xdodgeAstar', onOff('[Goal] Smart goal pathing'),
     (v: string) => sendDllFeature('xdodgeAstar', v === 'on' ? 1 : 0));
   registerModeSetting('xdodge', 'xdodgeWeighting', onOff('[Goal] Weighted danger field'),
@@ -393,7 +549,7 @@ export function register(ctx: PluginContext) {
     sendDllFeature('xdodgeFutureHorizon',  ctx.getSetting<number>('xdodgeFutureHorizon'));
     sendDllFeature('xdodgeFutureStride',   ctx.getSetting<number>('xdodgeFutureStride'));
     sendDllFeature('dodgeHitScale',        ctx.getSetting<number>('dodgeHitScale'));
-    for (const k of ['xdodgeAstar', 'xdodgeWeighting', 'xdodgeSmartGoal', 'xdodgePerpBias', 'xdodgeSpeedMatch', 'xdodgeLockFollow', 'xdodgeWalkCache', 'xdodgeWallAvoid', 'xdodgeArbiter', 'xdodgeBfsBias', 'xdodgeCcd', 'xdodgeCatalog', 'xdodgeLosGoal', 'xdodgeWasdYield', 'xdodgeLateralPref', 'xdodgeGoalSticky', 'xdodgeAvoidEnemies', 'xdodgeGhostHit', 'xdodgeDrawPath'])
+    for (const k of ['xdodgeAstar', 'xdodgeWeighting', 'xdodgeSmartGoal', 'xdodgePerpBias', 'xdodgeSpeedMatch', 'xdodgeLockFollow', 'xdodgeWalkCache', 'xdodgeWallAvoid', 'xdodgeArbiter', 'xdodgeBfsBias', 'xdodgeCcd', 'xdodgeCatalog', 'xdodgeLosGoal', 'xdodgeWasdYield', 'xdodgeLateralPref', 'xdodgeGoalSticky', 'xdodgeAvoidEnemies', 'xdodgeGhostHit', 'xdodgeDrawPath'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     sendDllFeature('xdodgeCcdPad', ctx.getSetting<number>('xdodgeCcdPad'));
     const al = ctx.getSetting<string>('enemyAutoLock');
@@ -405,7 +561,7 @@ export function register(ctx: PluginContext) {
     sendDllFeature('rolloutHitScale',      ctx.getSetting<number>('rolloutHitScale'));
     sendDllFeature('rolloutIntentWeight',  ctx.getSetting<number>('rolloutIntentWeight'));
     sendDllFeature('rolloutRebuildN',      ctx.getSetting<number>('rolloutRebuildN'));
-    for (const k of ['rolloutAvoidEnemies', 'rolloutWasdYield', 'rolloutCommitDwell', 'rolloutDrawPath'])
+    for (const k of ['rolloutAvoidEnemies', 'rolloutWasdYield', 'rolloutCommitDwell', 'rolloutDrawPath'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     // zDodge settings.
     sendDllFeature('zdodgeReactWindowMs', ctx.getSetting<number>('zdodgeReactWindowMs'));
@@ -413,7 +569,7 @@ export function register(ctx: PluginContext) {
     sendDllFeature('zdodgePlayerRadius', ctx.getSetting<number>('zdodgePlayerRadius'));
     sendDllFeature('zdodgeProjectileRadiusFallback', ctx.getSetting<number>('zdodgeProjectileRadiusFallback'));
     sendDllFeature('zdodgeDamageThresholdPct', ctx.getSetting<number>('zdodgeDamageThresholdPct'));
-    for (const k of ['zdodgeDebugOverlay', 'zdodgeCandidateOverlay'])
+    for (const k of ['zdodgeDebugOverlay', 'zdodgeCandidateOverlay'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     // RE++ settings.
     sendDllFeature('reppReactWindowMs', ctx.getSetting<number>('reppReactWindowMs'));
@@ -422,14 +578,27 @@ export function register(ctx: PluginContext) {
     sendDllFeature('reppDangerWeight', ctx.getSetting<number>('reppDangerWeight'));
     sendDllFeature('reppMode', ctx.getSetting<string>('reppMode') === 'autopilot' ? 1 : 0);
     sendDllFeature('reppStandOnType', ctx.getSetting<number>('reppStandOnType'));
-    for (const k of ['reppFollowLantern', 'reppAvoidHazards', 'reppDebugOverlay'])
+    for (const k of ['reppFollowLantern', 'reppAvoidHazards', 'reppDebugOverlay'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     // PJDodge settings.
     sendDllFeature('pjdodgeHorizonMs', ctx.getSetting<number>('pjdodgeHorizonMs'));
     sendDllFeature('pjdodgeLeadMs', ctx.getSetting<number>('pjdodgeLeadMs'));
     sendDllFeature('pjdodgeHitScale', ctx.getSetting<number>('pjdodgeHitScale'));
-    for (const k of ['pjdodgeSafeWalk', 'pjdodgeSpeedScale', 'pjdodgePredictionAccuracy', 'pjdodgeDebugOverlay', 'pjdodgeLockFollow'])
+    for (const k of ['pjdodgeSafeWalk', 'pjdodgeSpeedScale', 'pjdodgePredictionAccuracy', 'pjdodgeDebugOverlay', 'pjdodgeLockFollow'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
+    // UDodge (unified) settings.
+    sendDllFeature('udodgeLaneTiles', ctx.getSetting<number>('udodgeLaneTiles'));
+    sendDllFeature('udodgeStepTiles', ctx.getSetting<number>('udodgeStepTiles'));
+    sendDllFeature('udodgeHitScale', ctx.getSetting<number>('udodgeHitScale'));
+    sendDllFeature('udodgeReactMargin', ctx.getSetting<number>('udodgeReactMargin'));
+    sendDllFeature('udodgeStandOnType', ctx.getSetting<number>('udodgeStandOnType'));
+    sendDllFeature('udodgeOrbitRange', ctx.getSetting<number>('udodgeOrbitRange'));
+    sendDllFeature('udodgePlanRadius', ctx.getSetting<number>('udodgePlanRadius'));
+    for (const k of ['udodgeSafeWalk', 'udodgeSpeedScale',
+                     'udodgeFieldEscape', 'udodgeLockFollow', 'udodgeFollowLantern',
+                     'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath'] as const)
+      sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
+    updateMoveEnvelopeArming();
     // Re-apply the 60fps cap here too. The onEnabledChange / clientConnected
     // handlers were the only places setting targetFrameRate, so if the cap
     // landed before the DLL was ready (or the player was already in-game
@@ -449,6 +618,7 @@ export function register(ctx: PluginContext) {
     applyDodgeFps(ctx.enabled);
   });
   ctx.on('clientDisconnected', () => {
+    resetMoveEnvelope();
     flush(true);
     applyDodgeFps(false);
   });
@@ -462,6 +632,7 @@ export function register(ctx: PluginContext) {
   let _mapinfoDebounce: ReturnType<typeof setTimeout> | null = null;
   ctx.hookPacket('MAPINFO', () => {
     try {
+      resetMoveEnvelope();
       if (_mapinfoDebounce) clearTimeout(_mapinfoDebounce);
       _mapinfoDebounce = setTimeout(() => {
         _mapinfoDebounce = null;
@@ -479,6 +650,7 @@ export function register(ctx: PluginContext) {
   });
 
   ctx.registerCleanup(() => {
+    sendDllFeature('udodgeMoveEnvelopeArmed', 0);
     flush(true);
     applyDodgeFps(false);           // restore uncapped on unload
   });

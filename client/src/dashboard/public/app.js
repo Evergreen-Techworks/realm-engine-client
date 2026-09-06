@@ -108,11 +108,12 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   let seenTypes = new Set();
   let totalCount = 0;
   let recentTimestamps = [];
-  let devMode = true; // open source: dev tabs always available
+  // Developer Mode gates the DEV rail section (Internal, Logs, API, Objects,
+  // Tilemap, Game Wiki, Nearby, Scripts) plus plugin debug controls. Off by
+  // default; persisted in localStorage via the Settings → Developer toggle.
+  let devMode = localStorage.getItem('devMode') === 'true';
   /** When false, hide the packet sniffer drawer (Admin Mode still shows Logs / Packet Lab). Persisted locally. */
   let packetSnifferVisible = localStorage.getItem('packetSnifferVisible') !== 'false';
-  // adminMode is always derived from server — never read from localStorage
-  let adminMode = true; // open source: admin-gated features always available
   const legacyLightMode = localStorage.getItem('lightMode') === 'true';
   let currentTheme = localStorage.getItem('theme') || (legacyLightMode ? 'light' : 'dark');
   let currentLanguage = localStorage.getItem('language') || 'en';
@@ -161,25 +162,8 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   // always-signed-in local admin so every feature is available.
   let accessToken = null;
   let refreshToken = null;
-  let dashboardUser = { id: 'local', email: '', is_admin: true };
+  let dashboardUser = { id: 'local', email: '' };
   let dashboardLoggedIn = true;
-  /** Plan name for sidebar + settings (from /api/payments/subscription plan_name, else Free) */
-  /** Active plan names received from the server (normalized lowercase, e.g. {'dodge', 'developer'}). */
-  var activePlanNames = new Set();
-  /**
-   * View-as preview (admin debug). When set, activePlanNames + adminMode reflect
-   * the override instead of the server's real values. _realActivePlans keeps the
-   * server's last-known plans so we can restore on reset.
-   */
-  var _realActivePlans = new Set();
-  var _realAdminMode = false;
-  var viewAsOverride = null;  // null = no override; otherwise { plans, isAdmin, label }
-  var VIEW_AS_PRESETS = {
-    'free':      { plans: [],            isAdmin: false, label: 'Free user' },
-    'dodge':     { plans: ['dodge'],     isAdmin: false, label: 'Dodge user' },
-    'developer': { plans: ['developer'], isAdmin: false, label: 'Developer user' },
-  };
-  /** Website for gem purchases & subscriptions (Payment page) */
 
   // Packet Lab state
   let labUnknowns = [];
@@ -400,6 +384,20 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   }
   /** @type {'single'|'mac'|'multibox'} */
   let accountLayoutMode = normalizeAccountLayoutMode(localStorage.getItem('accountLayoutMode'));
+
+  /** Accounts page auto-refresh cadence (Settings -> Game). 0 = off. */
+  var ACCOUNTS_AUTO_REFRESH_CHOICES = [0, 30000, 60000, 300000, 900000];
+  var ACCOUNTS_AUTO_REFRESH_DEFAULT_MS = 30000;
+  function normalizeAccountsAutoRefreshMs(raw) {
+    var value = Number(raw);
+    if (!Number.isFinite(value)) return ACCOUNTS_AUTO_REFRESH_DEFAULT_MS;
+    return ACCOUNTS_AUTO_REFRESH_CHOICES.indexOf(value) >= 0 ? value : ACCOUNTS_AUTO_REFRESH_DEFAULT_MS;
+  }
+  var accountsAutoRefreshMs = normalizeAccountsAutoRefreshMs(
+    localStorage.getItem('accountsAutoRefreshMs') !== null
+      ? localStorage.getItem('accountsAutoRefreshMs')
+      : ACCOUNTS_AUTO_REFRESH_DEFAULT_MS,
+  );
   function isMacStyleSidebar() {
     return accountLayoutMode === 'mac' || accountLayoutMode === 'multibox';
   }
@@ -431,60 +429,6 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   let accountsRefreshAllLoading = false;
   let suppressAccountsEditorEvents = false;
 
-  // ── Stat-pot object type IDs (standard + greater) ─────────────────────────
-  var STAT_POT_IDS = {
-    atk:  [2591, 9064],
-    def:  [2592, 9065],
-    spd:  [2593, 9066],
-    dex:  [2636, 9069],
-    vit:  [2612, 9067],
-    wis:  [2613, 9068],
-    life: [2793, 9070],
-    mana: [2794, 9071],
-  };
-  var ALL_STAT_POT_IDS = Object.values ? Object.values(STAT_POT_IDS).reduce(function(a, b) { return a.concat(b); }, []) : [2591,9064,2592,9065,2593,9066,2636,9069,2612,9067,2613,9068,2793,9070,2794,9071];
-
-  function parseItemIds(str) {
-    return (str || '').split(',').map(function(s) {
-      var n = parseInt(s.trim(), 10);
-      return isNaN(n) || n <= 0 ? null : n;
-    }).filter(function(n) { return n !== null; });
-  }
-
-  function serializeItemIds(ids) {
-    var seen = Object.create(null);
-    var unique = ids.filter(function(id) {
-      if (seen[id]) return false;
-      seen[id] = true;
-      return true;
-    });
-    unique.sort(function(a, b) { return a - b; });
-    return unique.join(',');
-  }
-
-  function renderPotRowState(potRowEl, fieldEl) {
-    if (!potRowEl || !fieldEl) return;
-    var currentSet = Object.create(null);
-    parseItemIds(fieldEl.value).forEach(function(id) { currentSet[id] = true; });
-    potRowEl.querySelectorAll('.accounts-pot-btn[data-pot]').forEach(function(btn) {
-      var pot = btn.getAttribute('data-pot');
-      var ids = pot === 'all' ? ALL_STAT_POT_IDS : (STAT_POT_IDS[pot] || []);
-      btn.classList.toggle('active', ids.length > 0 && ids.every(function(id) { return !!currentSet[id]; }));
-    });
-  }
-
-  function renderAllPotRows() {
-    var mulingSection = document.getElementById('accounts-muling-section');
-    if (!mulingSection) return;
-    mulingSection.querySelectorAll('[data-pot-field]').forEach(function(potRow) {
-      var fieldName = potRow.getAttribute('data-pot-field');
-      var fieldEl = fieldName === 'mule-off' ? accountsMulingItemsMuleOff
-                  : fieldName === 'store'     ? accountsMulingItemsStore
-                  : fieldName === 'from-main' ? accountsMulingItemsFromMain
-                  : null;
-      renderPotRowState(potRow, fieldEl);
-    });
-  }
   let accountOverviewById = Object.create(null);
   let accountOverviewNoticeById = Object.create(null);
   let selectedAccountCharacterIdByAccountId = Object.create(null);
@@ -493,12 +437,11 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   let homeAccountOverviewAttemptedIds = new Set();
   let selectedAccountsOverviewTab = 'characters';
   let accountsDetailsCollapsed = localStorage.getItem('accountsDetailsCollapsed') === '1';
-  var activeAccountsEditorTab = 'credentials';
+  var activeAccountsEditorTab = 'overview';
   function switchAccountsEditorTab(tab) {
     activeAccountsEditorTab = tab;
     var panels = {
       credentials: document.getElementById('accounts-login-section'),
-      automation:  document.getElementById('accounts-muling-section'),
       overview:    document.getElementById('accounts-editor-overview-panel'),
     };
     Object.keys(panels).forEach(function(k) {
@@ -601,9 +544,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   const pluginSearch = document.getElementById('plugin-search');
   const pluginCategory = document.getElementById('plugin-category');
   const pluginDetail = document.getElementById('plugin-detail');
-  const hotkeysSearch = document.getElementById('hotkeys-search');
-  const hotkeysTableBody = document.getElementById('hotkeys-table-body');
-  const hotkeysStatus = document.getElementById('hotkeys-status');
+  const hotkeysStatus = document.getElementById('plugin-hotkey-status');
   let pluginsReceived = false;
   const accountsSearchInput = document.getElementById('accounts-search');
   const accountsCountEl = document.getElementById('accounts-count');
@@ -612,7 +553,6 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   const accountsNewBtn = document.getElementById('accounts-new-btn');
   const accountsSaveBtn = document.getElementById('accounts-save-btn');
   const accountsFillBtn = document.getElementById('accounts-fill-btn');
-  const accountsLaunchBtn = document.getElementById('accounts-launch-btn');
   const accountsEditorPanelEl = document.getElementById('accounts-editor-panel');
   const accountsLoginSectionEl = document.getElementById('accounts-login-section');
   const accountsListEl = document.getElementById('accounts-list');
@@ -631,22 +571,6 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   const accountsNotesInput = document.getElementById('accounts-notes');
   const accountsStatusEl = document.getElementById('accounts-status');
   // Muling section elements
-  const accountsMulingSection = document.getElementById('accounts-muling-section');
-  const accountsRoleNoneBtn = document.getElementById('accounts-role-none');
-  const accountsRoleMainBtn = document.getElementById('accounts-role-main');
-  const accountsRoleMuleBtn = document.getElementById('accounts-role-mule');
-  const accountsMulingMainOpts = document.getElementById('accounts-muling-main-opts');
-  const accountsMulingMuleOpts = document.getElementById('accounts-muling-mule-opts');
-  const accountsModeAnyBtn = document.getElementById('accounts-mode-any');
-  const accountsModeSpecificBtn = document.getElementById('accounts-mode-specific');
-  const accountsMulingItemsWrap = document.getElementById('accounts-muling-items-wrap');
-  const accountsMulingItemsStore = document.getElementById('accounts-muling-items-store');
-  const accountsMulingItemsFromMain = document.getElementById('accounts-muling-items-from-main');
-  const accountsMulingItemsMuleOff = document.getElementById('accounts-muling-items-mule-off');
-  const accountsProxyInput = document.getElementById('accounts-proxy');
-  const accountsProxyAuthWrap = document.getElementById('accounts-proxy-auth-wrap');
-  const accountsProxyUsername = document.getElementById('accounts-proxy-username');
-  const accountsProxyPassword = document.getElementById('accounts-proxy-password');
   const accountsCardCtxMenu = document.getElementById('accounts-card-ctx-menu');
   // New elements for redesigned accounts tab
   const accountsSetupEl = document.getElementById('accounts-setup');
@@ -686,7 +610,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
    * (/api/lab/definitions). Idempotent per packet name. Admin only.
    */
   function seedSnifferPacketTypeChipsFromDefs() {
-    if (!adminMode || !packetSnifferVisible) return;
+    if (!devMode || !packetSnifferVisible) return;
     fetch('/api/lab/definitions')
       .then(function (r) { return r.json(); })
       .then(function (data) {
@@ -712,7 +636,6 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   const settingsOverlay = document.getElementById('settings-overlay');
   const settingsTabsEl = document.getElementById('settings-tabs');
   const devModeToggle = document.getElementById('setting-dev-mode');
-  const adminModeToggle = document.getElementById('setting-admin-mode');
   const singleClientOnlyToggle = document.getElementById('setting-single-client-only');
   // Sign-out button now lives in the account popup (wired below)
   const themeSelect = document.getElementById('setting-theme-select');
@@ -814,15 +737,30 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   }
 
   // Initialize dev mode
+  /** Tabs that only exist while Developer Mode is on. */
+  var DEV_TABS = new Set(['internal', 'logs', 'packet-lab', 'multibox', 'mem-helper', 'api', 'objects', 'tilemap', 'game-wiki', 'nearby']);
+
   function applyDevMode() {
     document.body.classList.toggle('dev-mode', devMode);
-    devModeToggle.checked = devMode;
-    if (!devMode) {
-      if (activeTab === 'api' || activeTab === 'objects' || activeTab === 'tilemap' || activeTab === 'nearby' || activeTab === 'scripts') {
-        var fallbackBtn = document.querySelector('.content-tab[data-tab="plugins"]');
-        if (fallbackBtn) fallbackBtn.click();
-      }
+    if (devModeToggle) devModeToggle.checked = devMode;
+    if (!devMode && DEV_TABS.has(activeTab)) {
+      var fallbackBtn = document.querySelector('.content-tab[data-tab="plugins"]');
+      if (fallbackBtn) fallbackBtn.click();
     }
+    // The packet sniffer is a dev tool: collapse it on the way out, and seed
+    // its type chips on the way in.
+    if (!devMode) {
+      if (snifferDrawer) {
+        snifferDrawer.classList.remove('expanded');
+        snifferDrawer.classList.add('collapsed');
+      }
+      snifferExpanded = false;
+      snifferPacketsSinceCollapse = 0;
+      if (snifferBadge) snifferBadge.classList.add('hidden');
+    } else if (packetSnifferVisible) {
+      seedSnifferPacketTypeChipsFromDefs();
+    }
+    applyPacketSnifferVisibility();
   }
   applyDevMode();
 
@@ -837,60 +775,6 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       snifferPacketsSinceCollapse = 0;
       snifferBadge.classList.add('hidden');
     }
-  }
-
-  function applyAdminMode() {
-    // Admin dev: __ADMIN_BUILD__ guard removed — toggle is always enabled.
-    document.body.classList.toggle('admin-mode', adminMode);
-    if (adminModeToggle) {
-      adminModeToggle.checked = adminMode;
-      adminModeToggle.disabled = false;
-      var adminRow = adminModeToggle.closest('.settings-row');
-      if (adminRow) adminRow.classList.toggle('settings-row--locked', false);
-    }
-    if (!adminMode) {
-      if (activeTab === 'logs' || activeTab === 'packet-lab' || activeTab === 'mem-helper') {
-        var fallbackBtn = document.querySelector('.content-tab[data-tab="plugins"]');
-        if (fallbackBtn) fallbackBtn.click();
-      }
-      snifferDrawer.classList.remove('expanded');
-      snifferDrawer.classList.add('collapsed');
-      snifferExpanded = false;
-      snifferPacketsSinceCollapse = 0;
-      snifferBadge.classList.add('hidden');
-    } else if (packetSnifferVisible) {
-      seedSnifferPacketTypeChipsFromDefs();
-    }
-    applyPacketSnifferVisibility();
-  }
-  applyAdminMode();
-
-  /**
-   * View-as preview (admin debug). Swaps activePlanNames + adminMode for a
-   * preset, toggles the banner + body class, and re-renders affected tabs.
-   * Pass null/falsy to reset to the real account state.
-   */
-  function applyViewAsOverride() {
-    if (viewAsOverride) {
-      activePlanNames = new Set(viewAsOverride.plans);
-      adminMode = !!viewAsOverride.isAdmin;
-    } else {
-      activePlanNames = new Set(_realActivePlans);
-      adminMode = _realAdminMode;
-    }
-    document.body.classList.toggle('admin-mode', adminMode);
-    document.body.classList.toggle('view-as-active', !!viewAsOverride);
-
-    var banner    = document.getElementById('view-as-banner');
-    var bannerLbl = document.getElementById('view-as-banner-label');
-    if (banner) banner.style.display = viewAsOverride ? '' : 'none';
-    if (bannerLbl) bannerLbl.textContent = viewAsOverride ? viewAsOverride.label : '—';
-
-    // Re-render the tabs whose UI depends on plan/admin state.
-    if (typeof renderPlugins === 'function' && Array.isArray(allPluginsData)) renderPlugins(allPluginsData);
-    if (typeof renderHomeTab === 'function') renderHomeTab();
-    // applyAdminMode handles the admin-only tab visibility + packet sniffer.
-    applyPacketSnifferVisibility();
   }
 
   // ─── Navbar drag-and-drop reorder + tab visibility ─────────────
@@ -925,6 +809,15 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     var buttons = {};
     contentTabsEl.querySelectorAll('.content-tab').forEach(function (b) { buttons[b.dataset.tab] = b; });
 
+    // The DEV section is a contiguous block at the bottom of the rail, so a
+    // stale saved order (or a drag) can never strand a dev tab above the label.
+    var isDevTab = function (t) {
+      var b = buttons[t];
+      return !!(b && b.classList.contains('dev-only'));
+    };
+    order = order.filter(function (t) { return !isDevTab(t); })
+      .concat(order.filter(isDevTab));
+
     order.forEach(function (tabName) {
       var btn = buttons[tabName];
       if (!btn) return;
@@ -933,11 +826,12 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       btn.classList.toggle('tab-hidden', navbarHiddenTabs.has(tabName));
     });
 
-    // Keep the Developer section label immediately above the API tab
+    // Keep the Developer section label immediately above the first dev tab
     var devLabel = document.getElementById('content-tabs-dev-label');
-    if (devLabel && buttons['api']) {
+    var firstDevTab = order.find(isDevTab);
+    if (devLabel && firstDevTab && buttons[firstDevTab]) {
       try {
-        contentTabsEl.insertBefore(devLabel, buttons['api']);
+        contentTabsEl.insertBefore(devLabel, buttons[firstDevTab]);
       } catch (_e) { /* ignore */ }
     }
 
@@ -955,7 +849,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   }
 
   /** Tabs restricted to dev/admin — not shown in user-facing settings */
-  var RESTRICTED_TABS = new Set(['api', 'scripts', 'packet-lab', 'nearby', 'tilemap', 'objects', 'game-wiki', 'logs', 'multibox', 'mem-helper']);
+  var RESTRICTED_TABS = new Set(['api', 'packet-lab', 'nearby', 'tilemap', 'objects', 'game-wiki', 'logs', 'internal', 'multibox', 'mem-helper']);
 
   /** Render the settings list of tab toggles */
   function renderNavbarTabSettings() {
@@ -967,7 +861,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
 
     navTabVisListEl.innerHTML = '';
     order.forEach(function (tabName) {
-      // Skip dev/admin-only tabs — they're controlled by dev/admin mode, not user settings
+      // Skip dev-only tabs — Developer Mode controls those, not user settings
       if (RESTRICTED_TABS.has(tabName)) return;
       var hidden = navbarHiddenTabs.has(tabName);
       var row = document.createElement('div');
@@ -1434,147 +1328,182 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   document.addEventListener('click', function (e) {
     var launcherBtn = e.target.closest('[data-launcher-tab]');
     if (!launcherBtn) return;
-    if (launcherBtn.classList.contains('launcher-quick-btn--primary')) {
-      handleQuickLaunchClick();
-      return;
-    }
     activateContentTab(String(launcherBtn.getAttribute('data-launcher-tab') || ''));
   });
 
-  document.addEventListener('contextmenu', function (e) {
-    var qlBtn = e.target.closest('.launcher-quick-btn--primary');
-    if (!qlBtn) {
-      hideQuickLaunchCtxMenu();
-      return;
-    }
-    e.preventDefault();
-    showQuickLaunchCtxMenu(e.clientX, e.clientY);
-  });
+  /* ── Split launch control ────────────────────────────────────────────────
+     Left half launches the selected account; the caret opens a menu that
+     picks the account and the server it connects to. The server choice is
+     written back to the account, so this menu and the Accounts tab always
+     agree on one stored value. */
+  var launchSplitEl = document.getElementById('launch-split');
+  var launchMainBtn = document.getElementById('launch-split-main');
+  var launchCaretBtn = document.getElementById('launch-split-caret');
+  var launchMenuEl = document.getElementById('launch-menu');
+  var launchMenuAccountsEl = document.getElementById('launch-menu-accounts');
+  var launchMenuServerEl = document.getElementById('launch-menu-server');
+  var launchMenuGoBtn = document.getElementById('launch-menu-go');
 
-  document.addEventListener('click', function (e) {
-    if (!e.target.closest('#ql-ctx-menu')) hideQuickLaunchCtxMenu();
-    var qlAction = e.target.closest('[data-ql-action]');
-    if (!qlAction) return;
-    var action = qlAction.getAttribute('data-ql-action');
-    hideQuickLaunchCtxMenu();
-    if (action === 'edit') {
-      showQuickLaunchPicker();
-    } else if (action === 'launch') {
-      handleQuickLaunchClick();
-    } else if (action === 'clear') {
-      quickLaunchAccountId = null;
-      localStorage.removeItem('quickLaunchAccountId');
-      updateQuickLaunchBtn();
+  function getQuickLaunchAccount() {
+    if (!quickLaunchAccountId) return null;
+    for (var i = 0; i < dashboardAccounts.length; i++) {
+      if (dashboardAccounts[i].id === quickLaunchAccountId) return dashboardAccounts[i];
     }
-  });
-
-  document.addEventListener('click', function (e) {
-    if (e.target.id === 'ql-picker-close' || e.target.closest('#ql-picker-close')) {
-      hideQuickLaunchPicker();
-    } else if (e.target.classList.contains('ql-picker-backdrop')) {
-      hideQuickLaunchPicker();
-    } else if (e.target.id === 'ql-picker-clear') {
-      quickLaunchAccountId = null;
-      localStorage.removeItem('quickLaunchAccountId');
-      updateQuickLaunchBtn();
-      hideQuickLaunchPicker();
-    }
-  });
-
-  function handleQuickLaunchClick() {
-    if (quickLaunchAccountId) {
-      var account = null;
-      for (var i = 0; i < dashboardAccounts.length; i++) {
-        if (dashboardAccounts[i].id === quickLaunchAccountId) { account = dashboardAccounts[i]; break; }
-      }
-      if (account && String(account.email || '').trim() && String(account.password || '')) {
-        launchGameWithCredentials(
-          String(account.email || '').trim(),
-          String(account.password || ''),
-          String(account.serverName || 'USWest').trim() || 'USWest',
-          undefined,
-          launchOptsWithAccount(account, {}),
-        );
-        return;
-      }
-    }
-    showQuickLaunchPicker();
+    return null;
   }
 
-  function showQuickLaunchPicker() {
-    renderQuickLaunchPicker();
-    var el = document.getElementById('ql-picker');
-    if (el) el.style.display = '';
+  function setQuickLaunchAccount(accountId) {
+    quickLaunchAccountId = accountId || null;
+    if (quickLaunchAccountId) localStorage.setItem('quickLaunchAccountId', quickLaunchAccountId);
+    else localStorage.removeItem('quickLaunchAccountId');
+    updateQuickLaunchBtn();
+    renderLaunchMenu();
   }
 
-  function hideQuickLaunchPicker() {
-    var el = document.getElementById('ql-picker');
-    if (el) el.style.display = 'none';
+  function isLaunchMenuOpen() {
+    return !!launchMenuEl && !launchMenuEl.hidden;
   }
 
-  function renderQuickLaunchPicker() {
-    var list = document.getElementById('ql-picker-list');
-    if (!list) return;
-    list.innerHTML = '';
+  function openLaunchMenu() {
+    if (!launchMenuEl) return;
+    renderLaunchMenu();
+    launchMenuEl.hidden = false;
+    if (launchCaretBtn) launchCaretBtn.setAttribute('aria-expanded', 'true');
+    if (launchSplitEl) launchSplitEl.classList.add('launch-split--open');
+  }
+
+  function closeLaunchMenu() {
+    if (!launchMenuEl) return;
+    launchMenuEl.hidden = true;
+    if (launchCaretBtn) launchCaretBtn.setAttribute('aria-expanded', 'false');
+    if (launchSplitEl) launchSplitEl.classList.remove('launch-split--open');
+  }
+
+  function renderLaunchMenu() {
+    if (!launchMenuAccountsEl) return;
+    var selected = getQuickLaunchAccount();
+
+    launchMenuAccountsEl.innerHTML = '';
     if (!dashboardAccounts.length) {
-      list.innerHTML = '<div class="ql-picker-empty">No accounts saved yet. Add accounts in the Accounts tab first.</div>';
+      var empty = document.createElement('p');
+      empty.className = 'launch-menu-empty';
+      empty.textContent = 'No accounts stored yet. Add one on the Accounts tab.';
+      launchMenuAccountsEl.appendChild(empty);
+    } else {
+      dashboardAccounts.forEach(function (account) {
+        var row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'launch-menu-account' + (account.id === quickLaunchAccountId ? ' launch-menu-account--on' : '');
+        row.setAttribute('data-account-id', account.id);
+        var name = document.createElement('span');
+        name.className = 'launch-menu-account-name';
+        name.textContent = String(account.label || account.email || 'Unnamed account');
+        var server = document.createElement('span');
+        server.className = 'launch-menu-account-server';
+        server.textContent = String(account.serverName || 'USWest');
+        row.appendChild(name);
+        row.appendChild(server);
+        row.addEventListener('click', function () { setQuickLaunchAccount(account.id); });
+        launchMenuAccountsEl.appendChild(row);
+      });
+    }
+
+    if (launchMenuServerEl) {
+      var names = Array.isArray(availableServerNames) && availableServerNames.length
+        ? availableServerNames.slice()
+        : ['USWest'];
+      var current = selected ? String(selected.serverName || '') : '';
+      if (current && names.indexOf(current) === -1) names.unshift(current);
+      launchMenuServerEl.innerHTML = '';
+      names.forEach(function (serverName) {
+        var opt = document.createElement('option');
+        opt.value = serverName;
+        opt.textContent = serverName;
+        launchMenuServerEl.appendChild(opt);
+      });
+      launchMenuServerEl.value = current || names[0];
+      launchMenuServerEl.disabled = !selected;
+    }
+    if (launchMenuGoBtn) launchMenuGoBtn.disabled = !selected;
+  }
+
+  function launchQuickAccount() {
+    var account = getQuickLaunchAccount();
+    if (!account) {
+      openLaunchMenu();
       return;
     }
-    dashboardAccounts.forEach(function (account) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'ql-picker-account-btn' + (account.id === quickLaunchAccountId ? ' selected' : '');
-      var displayName = String(account.label || account.email || 'Unnamed Account');
-      btn.innerHTML =
-        '<span class="ql-picker-account-name">' + escapeHtml(displayName) + '</span>' +
-        '<span class="ql-picker-account-server">' + escapeHtml(String(account.serverName || 'USWest')) + '</span>';
-      btn.addEventListener('click', function () {
-        quickLaunchAccountId = account.id;
-        localStorage.setItem('quickLaunchAccountId', account.id);
-        updateQuickLaunchBtn();
-        hideQuickLaunchPicker();
-      });
-      list.appendChild(btn);
+    launchGameWithCredentials(
+      String(account.email || '').trim(),
+      String(account.password || ''),
+      String(account.serverName || 'USWest').trim() || 'USWest',
+      undefined,
+      launchOptsWithAccount(account, {}),
+    );
+  }
+
+  if (launchMainBtn) {
+    launchMainBtn.addEventListener('click', function () {
+      closeLaunchMenu();
+      launchQuickAccount();
     });
   }
 
+  if (launchCaretBtn) {
+    launchCaretBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (isLaunchMenuOpen()) closeLaunchMenu();
+      else openLaunchMenu();
+    });
+  }
+
+  if (launchMenuServerEl) {
+    launchMenuServerEl.addEventListener('change', function () {
+      var account = getQuickLaunchAccount();
+      if (!account) return;
+      var next = String(launchMenuServerEl.value || '').trim();
+      if (!next || next === account.serverName) return;
+      // One stored value: write it back so the Accounts tab shows the same server.
+      account.serverName = next;
+      account.updatedAt = Date.now();
+      saveDashboardAccounts();
+      updateQuickLaunchBtn();
+      renderLaunchMenu();
+      if (activeTab === 'accounts') renderAccountsTab();
+    });
+  }
+
+  if (launchMenuGoBtn) {
+    launchMenuGoBtn.addEventListener('click', function () {
+      closeLaunchMenu();
+      launchQuickAccount();
+    });
+  }
+
+  document.addEventListener('click', function (e) {
+    if (!isLaunchMenuOpen()) return;
+    if (launchSplitEl && launchSplitEl.contains(e.target)) return;
+    closeLaunchMenu();
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && isLaunchMenuOpen()) closeLaunchMenu();
+  });
+
   function updateQuickLaunchBtn() {
-    var btn = document.querySelector('.launcher-quick-btn--primary');
-    if (!btn) return;
-    var iconEl = btn.querySelector('.launcher-quick-icon');
-    var labelEl = btn.querySelector('.launcher-quick-label');
-    if (quickLaunchAccountId) {
-      var account = null;
-      for (var i = 0; i < dashboardAccounts.length; i++) {
-        if (dashboardAccounts[i].id === quickLaunchAccountId) { account = dashboardAccounts[i]; break; }
-      }
-      if (account) {
-        var displayName = String(account.label || account.email || 'Account');
-        if (iconEl) iconEl.textContent = displayName.charAt(0).toUpperCase();
-        if (labelEl) labelEl.textContent = displayName.length > 14 ? displayName.slice(0, 13) + '…' : displayName;
-        return;
-      }
+    var accountEl = document.getElementById('launch-split-account');
+    var serverEl = document.getElementById('launch-split-server');
+    if (!accountEl || !serverEl) return;
+    var account = getQuickLaunchAccount();
+    if (account) {
+      var displayName = String(account.label || account.email || 'Account');
+      accountEl.textContent = displayName.length > 18 ? displayName.slice(0, 17) + '\u2026' : displayName;
+      serverEl.textContent = String(account.serverName || 'USWest');
+    } else {
+      accountEl.textContent = dashboardAccounts.length ? 'Pick an account' : 'No accounts yet';
+      serverEl.textContent = '';
     }
-    if (iconEl) iconEl.textContent = 'A';
-    if (labelEl) labelEl.textContent = 'Quick Launch';
-  }
-
-  function showQuickLaunchCtxMenu(x, y) {
-    var menu = document.getElementById('ql-ctx-menu');
-    if (!menu) return;
-    menu.style.left = x + 'px';
-    menu.style.top = y + 'px';
-    menu.style.display = '';
-    var hasAccount = !!quickLaunchAccountId && dashboardAccounts.some(function (a) { return a.id === quickLaunchAccountId; });
-    var launchItem = menu.querySelector('[data-ql-action="launch"]');
-    var clearItem = menu.querySelector('[data-ql-action="clear"]');
-    if (launchItem) launchItem.style.display = hasAccount ? '' : 'none';
-    if (clearItem) clearItem.style.display = hasAccount ? '' : 'none';
-  }
-
-  function hideQuickLaunchCtxMenu() {
-    var menu = document.getElementById('ql-ctx-menu');
-    if (menu) menu.style.display = 'none';
+    if (launchMainBtn) launchMainBtn.classList.toggle('launch-split-main--unset', !account);
   }
 
   var btnSettingsCog = document.getElementById('btn-settings');
@@ -1714,50 +1643,9 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     applyDevMode();
   });
 
-  if (adminModeToggle) {
-    adminModeToggle.addEventListener('change', () => {
-      // Admin dev: no is_admin check — toggle freely.
-      adminMode = adminModeToggle.checked;
-      _realAdminMode = adminMode;  // remember the real choice for view-as resets
-      applyAdminMode();
-    });
-  }
-
-  // View-as preview dropdown (admin debug — preview the dashboard as a non-admin user)
-  var viewAsSelect = document.getElementById('setting-view-as');
-  if (viewAsSelect) {
-    viewAsSelect.addEventListener('change', function () {
-      // Only admins can use view-as. If not, snap back to real account.
-      if (!dashboardUser || !dashboardUser.is_admin) {
-        viewAsSelect.value = '';
-        viewAsOverride = null;
-        applyViewAsOverride();
-        return;
-      }
-      var key = viewAsSelect.value;
-      viewAsOverride = key && VIEW_AS_PRESETS[key] ? VIEW_AS_PRESETS[key] : null;
-      applyViewAsOverride();
-    });
-  }
-  var viewAsBannerReset = document.getElementById('view-as-banner-reset');
-  if (viewAsBannerReset) {
-    viewAsBannerReset.addEventListener('click', function () {
-      viewAsOverride = null;
-      var sel = document.getElementById('setting-view-as');
-      if (sel) sel.value = '';
-      applyViewAsOverride();
-    });
-  }
-
   if (singleClientOnlyToggle) {
     singleClientOnlyToggle.checked = singleClientOnly;
     singleClientOnlyToggle.addEventListener('change', () => {
-      // Non-admins cannot disable single-client mode
-      if (!dashboardUser || !dashboardUser.is_admin) {
-        singleClientOnlyToggle.checked = true;
-        singleClientOnly = true;
-        return;
-      }
       singleClientOnly = !!singleClientOnlyToggle.checked;
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({
@@ -1775,9 +1663,22 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       packetSnifferVisible = !!packetSnifferToggle.checked;
       localStorage.setItem('packetSnifferVisible', packetSnifferVisible ? 'true' : 'false');
       applyPacketSnifferVisibility();
-      if (adminMode && packetSnifferVisible) {
+      if (devMode && packetSnifferVisible) {
         seedSnifferPacketTypeChipsFromDefs();
       }
+    });
+  }
+
+  var accountsRefreshIntervalSelect = document.getElementById('setting-accounts-refresh-interval');
+  if (accountsRefreshIntervalSelect) {
+    accountsRefreshIntervalSelect.value = String(accountsAutoRefreshMs);
+    accountsRefreshIntervalSelect.addEventListener('change', function () {
+      accountsAutoRefreshMs = normalizeAccountsAutoRefreshMs(accountsRefreshIntervalSelect.value);
+      localStorage.setItem('accountsAutoRefreshMs', String(accountsAutoRefreshMs));
+      accountsRefreshIntervalSelect.value = String(accountsAutoRefreshMs);
+      accountsAutoRefreshBackoffUntil = 0;             // a deliberate change clears any backoff
+      if (activeTab === 'accounts') startAccountsAutoRefresh();
+      else stopAccountsAutoRefresh();
     });
   }
 
@@ -1843,7 +1744,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       if (e.key === 'Escape' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
         capturePluginHotkeyId = null;
         setHotkeysStatus('Capture cancelled.', '');
-        renderHotkeysTab();
+        refreshPluginHotkeyControls();
         return;
       }
       if (isDashboardHotkeyModifierEvent(e)) {
@@ -1860,6 +1761,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
         setHotkeysStatus('Saved ' + hotkey + '.', 'ok');
       }
       capturePluginHotkeyId = null;
+      refreshPluginHotkeyControls();
       return;
     }
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
@@ -1881,7 +1783,6 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   function openDashboardTab(tabName) {
     var btn = document.querySelector('.content-tab[data-tab="' + String(tabName) + '"]');
     if (!btn) return;
-    if (btn.classList.contains('admin-only') && !adminMode) return;
     if (btn.classList.contains('dev-only') && !devMode) return;
     btn.click();
   }
@@ -2072,9 +1973,9 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     var feedOpenLogsBtn = document.getElementById('home-feed-open-logs-btn');
     if (feedOpenLogsBtn) {
       feedOpenLogsBtn.addEventListener('click', function () {
-        if (!adminMode) {
+        if (!devMode) {
           setHomeActionStatus(t('home.action.adminLogs'));
-          addHomeFeed('warn', 'Open Logs blocked: Admin Mode is disabled.');
+          addHomeFeed('warn', 'Open Logs blocked: Developer Mode is off.');
           return;
         }
         openDashboardTab('logs');
@@ -3559,7 +3460,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
 
     ws.onopen = () => {
       updateDashboardAvailabilityUi();
-      if (adminMode && packetSnifferVisible) seedSnifferPacketTypeChipsFromDefs();
+      if (devMode && packetSnifferVisible) seedSnifferPacketTypeChipsFromDefs();
       addHomeFeed('ok', 'Dashboard socket connected.');
       try { ws.send(JSON.stringify({ type: 'requestScriptPanelSnapshots' })); } catch (_e) {}
     };
@@ -3593,49 +3494,48 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
       switch (msg.type) {
-        case 'packet':
+        case window.WS_MSG.PACKET:
           onPacket(msg.data);
           break;
-        case 'history':
+        case window.WS_MSG.HISTORY:
           msg.data.forEach(p => onPacket(p, true));
           break;
-        case 'plugins': {
+        case window.WS_MSG.PLUGINS: {
           var pl = Array.isArray(msg.data) ? msg.data : [];
           if (pl.length > 0) pluginsReceived = true;
           allPluginsData = pl;
           renderPlugins(pl);
-          if (activeTab === 'hotkeys') renderHotkeysTab();
           populateServerSelect(pl);
           renderDamageSettings(pl);
           break;
         }
-        case 'pluginHotkeyUpdateError':
+        case window.WS_MSG.PLUGIN_HOTKEY_UPDATE_ERROR:
           setHotkeysStatus(msg.reason || 'Could not update hotkey.', 'error');
           capturePluginHotkeyId = null;
-          renderHotkeysTab();
+          refreshPluginHotkeyControls();
           break;
-        case 'gameClient':
+        case window.WS_MSG.GAME_CLIENT:
           updateGameStatus(msg.connected);
           break;
-        case 'internalState':
+        case window.WS_MSG.INTERNAL_STATE:
           updateInternalState(msg.connected);
           break;
-        case 'unresolvedClasses':
+        case window.WS_MSG.UNRESOLVED_CLASSES:
           updateUnresolvedClasses(msg.classes || []);
           break;
-        case 'pluginLog':
+        case window.WS_MSG.PLUGIN_LOG:
           addPluginLog(msg.plugin, msg.message);
           break;
-        case 'playerData':
+        case window.WS_MSG.PLAYER_DATA:
           updatePlayerCard(msg);
           // Feed the inventory diff into the session tracker so it can
           // detect white-bag-tier pickups and shiny items.
           try { window._AccountSessions && window._AccountSessions.observePlayerData(msg); } catch (_) {}
           break;
-        case 'pluginData':
+        case window.WS_MSG.PLUGIN_DATA:
           handlePluginData(msg);
           break;
-        case 'objectsData':
+        case window.WS_MSG.OBJECTS_DATA:
           lastObjectsData = {
             portals: msg.portals || [],
             beacons: msg.beacons || [],
@@ -3645,7 +3545,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
           renderObjectsTree(lastObjectsData);
           updateTeleportBeaconDropdown(false);
           break;
-        case 'tilesData':
+        case window.WS_MSG.TILES_DATA:
           lastTilesData = {
             center: msg.center || { x: 0, y: 0 },
             radius: msg.radius || 12,
@@ -3653,10 +3553,10 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
           };
           if (activeTab === 'tilemap') renderTilemapTree(lastTilesData);
           break;
-        case 'gameWikiCatalog':
+        case window.WS_MSG.GAME_WIKI_CATALOG:
           handleGameWikiCatalog(msg);
           break;
-        case 'objectXmlResult':
+        case window.WS_MSG.OBJECT_XML_RESULT:
           (function () {
             var k = 'o:' + String(msg.objectType);
             delete gameWikiObjectXmlInFlight[k];
@@ -3673,7 +3573,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
             }
           })();
           break;
-        case 'tileXmlResult':
+        case window.WS_MSG.TILE_XML_RESULT:
           (function () {
             var k = 't:' + String(msg.tileType);
             delete gameWikiTileXmlInFlight[k];
@@ -3688,17 +3588,17 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
             }
           })();
           break;
-        case 'nearbyPlayersData':
+        case window.WS_MSG.NEARBY_PLAYERS_DATA:
           lastNearbyPlayers = msg.players || [];
           if (activeTab === 'nearby') renderNearbyPlayersTab();
           break;
-        case 'nearbyPlayerDebug':
+        case window.WS_MSG.NEARBY_PLAYER_DEBUG:
           if (msg && msg.objectId != null && msg.objectId === selectedNearbyPlayerId) {
             lastNearbyPlayerDebug = msg.debug || null;
             if (activeTab === 'nearby') renderNearbyPlayerDebug();
           }
           break;
-        case 'allPlayersRawStats':
+        case window.WS_MSG.ALL_PLAYERS_RAW_STATS:
           if (pendingAllPlayersRawStatsCb) {
             if (pendingAllPlayersRawStatsTimer) {
               clearTimeout(pendingAllPlayersRawStatsTimer);
@@ -3709,7 +3609,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
             fn(msg);
           }
           break;
-        case 'vaultData':
+        case window.WS_MSG.VAULT_DATA:
           if (pendingVaultChestRawStatsCb) {
             if (pendingVaultChestRawStatsTimer) {
               clearTimeout(pendingVaultChestRawStatsTimer);
@@ -3720,36 +3620,36 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
             fnVault(msg);
           }
           break;
-        case 'config':
+        case window.WS_MSG.CONFIG:
           handleConfig(msg);
           break;
-        case 'gameUpdateStatus':
+        case window.WS_MSG.GAME_UPDATE_STATUS:
           renderGameUpdater(msg.status);
           break;
-        case 'launchGameResult':
+        case window.WS_MSG.LAUNCH_GAME_RESULT:
           handleLaunchResult(msg);
           break;
-        case 'labUpdate':
+        case window.WS_MSG.LAB_UPDATE:
           handleLabUpdate(msg.unknowns);
           break;
-        case 'probeResult':
+        case window.WS_MSG.PROBE_RESULT:
           handleProbeResult(msg.result);
           break;
-        case 'labPacketSendResult':
+        case window.WS_MSG.LAB_PACKET_SEND_RESULT:
           handleLabPacketSendResult(msg);
           break;
-        case 'pluginToggleError':
+        case window.WS_MSG.PLUGIN_TOGGLE_ERROR:
           handlePluginToggleError(msg);
           break;
-        case 'scriptLog':
+        case window.WS_MSG.SCRIPT_LOG:
           if (msg.line != null) {
             appendScriptLogLine(String(msg.line), msg.level || 'info', msg.id || '');
           }
           break;
-        case 'scriptsState':
+        case window.WS_MSG.SCRIPTS_STATE:
           applyScriptsStateFromSocket(msg);
           break;
-        case 'scriptPanelState':
+        case window.WS_MSG.SCRIPT_PANEL_STATE:
           handleScriptPanelState(msg);
           break;
         case 'scriptPanelPatches':
@@ -3761,7 +3661,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
         case 'scriptPanelClose':
           closeScriptPanelById(msg && msg.scriptId, { notifyServer: false });
           break;
-        case 'muling_status':
+        case window.WS_MSG.MULING_STATUS:
           handleMulingStatus(msg.status);
           break;
       }
@@ -5883,7 +5783,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   function onPacket(pkt, isHistory) {
     homeStats.packetsProcessed++;
 
-    if (!adminMode || !packetSnifferVisible) return;
+    if (!devMode || !packetSnifferVisible) return;
 
     packets.push(pkt);
     if (packets.length > MAX_ROWS * 2) {
@@ -5901,7 +5801,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     addTypeChip(pkt.name);
 
     // Badge for collapsed sniffer
-    if (!snifferExpanded && adminMode) {
+    if (!snifferExpanded && devMode) {
       snifferPacketsSinceCollapse++;
       snifferBadge.textContent = snifferPacketsSinceCollapse > 999
         ? '999+' : snifferPacketsSinceCollapse;
@@ -6255,6 +6155,79 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     updateTeleportBeaconDropdown(true);
   }
 
+  function createCustomSelect(options, currentValue, onChange) {
+    var wrapper = document.createElement('div');
+    wrapper.className = 'custom-select-wrapper';
+
+    var trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'custom-select-trigger';
+
+    var selectedOpt = options.find(function (o) { return o.value === currentValue; }) || options[0];
+    var labelSpan = document.createElement('span');
+    labelSpan.className = 'custom-select-label';
+    labelSpan.textContent = selectedOpt ? selectedOpt.label : '';
+
+    var arrowSpan = document.createElement('span');
+    arrowSpan.className = 'custom-select-arrow';
+    arrowSpan.innerHTML = '&#9660;';
+
+    trigger.appendChild(labelSpan);
+    trigger.appendChild(arrowSpan);
+
+    var menu = document.createElement('div');
+    menu.className = 'custom-select-menu';
+
+    function buildOptions() {
+      menu.innerHTML = '';
+      options.forEach(function (opt) {
+        var item = document.createElement('div');
+        item.className = 'custom-select-option' + (opt.value === currentValue ? ' selected' : '');
+        item.textContent = opt.label;
+        item.addEventListener('click', function (e) {
+          e.stopPropagation();
+          currentValue = opt.value;
+          labelSpan.textContent = opt.label;
+          wrapper.classList.remove('is-open');
+          buildOptions();
+          if (onChange) onChange(opt.value);
+        });
+        menu.appendChild(item);
+      });
+    }
+    buildOptions();
+
+    trigger.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var wasOpen = wrapper.classList.contains('is-open');
+      document.querySelectorAll('.custom-select-wrapper.is-open').forEach(function (w) {
+        if (w !== wrapper) w.classList.remove('is-open');
+      });
+      wrapper.classList.toggle('is-open', !wasOpen);
+    });
+
+    wrapper.appendChild(trigger);
+    wrapper.appendChild(menu);
+
+    return {
+      element: wrapper,
+      setValue: function (val) {
+        currentValue = val;
+        var found = options.find(function (o) { return o.value === val; });
+        if (found) labelSpan.textContent = found.label;
+        buildOptions();
+      }
+    };
+  }
+
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('.custom-select-wrapper')) {
+      document.querySelectorAll('.custom-select-wrapper.is-open').forEach(function (w) {
+        w.classList.remove('is-open');
+      });
+    }
+  });
+
   function appendPluginSettingsGrid(parent, p) {
     if (!p.settings || p.settings.length === 0) return;
     var settingsDiv = document.createElement('div');
@@ -6384,27 +6357,19 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
         });
         control.appendChild(toggle);
       } else if (s.type === 'select' && s.options) {
-        var select = document.createElement('select');
-        s.options.forEach(function (opt) {
-          var option = document.createElement('option');
-          option.value = opt.value;
-          option.textContent = opt.label;
-          if (opt.value === s.value) option.selected = true;
-          select.appendChild(option);
-        });
-        select.addEventListener('change', function () {
-          s.value = select.value;
-          settingValueByKey[s.key] = select.value;
+        var customSel = createCustomSelect(s.options, s.value, function (val) {
+          s.value = val;
+          settingValueByKey[s.key] = val;
           refreshConditionalSettingVisibility();
           if (!ws || ws.readyState !== 1) return;
           ws.send(JSON.stringify({
             type: 'updateSetting',
             pluginId: p.id,
             key: s.key,
-            value: select.value,
+            value: val,
           }));
         });
-        control.appendChild(select);
+        control.appendChild(customSel.element);
       } else if (s.type === 'text') {
         var tinput = document.createElement('input');
         tinput.type = 'text';
@@ -6512,31 +6477,37 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     }
   }
 
-  function renderEnabledPluginsPanel(plugins, detailEl) {
+  /**
+   * Main plugin panel: one card per plugin in the filtered list. Every card
+   * carries its own enable toggle and hotkey binder, so a plugin can be bound
+   * while it is off; settings only render once the plugin is enabled.
+   */
+  function renderPluginCardsPanel(plugins, detailEl) {
     teleportBeaconSelectEl = null;
     detailEl.innerHTML = '';
 
-    var enabled = plugins.filter(function (p) { return p.enabled; });
-    if (enabled.length === 0) {
+    if (!plugins.length) {
       var empty = document.createElement('div');
       empty.className = 'plugin-detail-loading';
       empty.innerHTML = '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>' +
-        '<span>' + t('plugins.empty.enable') + '</span>';
+        '<span>' + t('plugins.empty.none') + '</span>';
       detailEl.appendChild(empty);
       return;
     }
 
-    enabled.sort(function (a, b) {
+    var sorted = plugins.slice().sort(function (a, b) {
+      if (!!a.enabled !== !!b.enabled) return a.enabled ? -1 : 1;
       return getPluginDisplayName(a).localeCompare(getPluginDisplayName(b));
     });
 
-    enabled.forEach(function (p) {
+    sorted.forEach(function (p) {
       var card = document.createElement('div');
-      card.className = 'plugin-active-card';
+      card.className = 'plugin-active-card' + (p.enabled ? '' : ' plugin-active-card--off');
       card.setAttribute('data-plugin-id', p.id);
 
       var header = document.createElement('div');
       header.className = 'plugin-detail-header';
+
       var titleWrap = document.createElement('div');
       titleWrap.className = 'plugin-detail-title-wrap';
       var hTitle = document.createElement('h3');
@@ -6548,10 +6519,37 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       titleWrap.appendChild(hTitle);
       titleWrap.appendChild(catTag);
       header.appendChild(titleWrap);
+
+      var actions = document.createElement('div');
+      actions.className = 'plugin-detail-actions';
+      actions.appendChild(buildPluginHotkeyControl(p));
+
+      if (!p.hotkeyLocked) {
+        var toggleLabel = document.createElement('label');
+        toggleLabel.className = 'toggle-switch plugin-detail-master-toggle';
+        toggleLabel.title = (p.enabled ? 'Disable ' : 'Enable ') + getPluginDisplayName(p);
+        toggleLabel.innerHTML =
+          '<input type="checkbox" ' + (p.enabled ? 'checked' : '') + '>' +
+          '<span class="toggle-slider"></span>';
+        var cb = toggleLabel.querySelector('input');
+        cb.setAttribute('aria-label', 'Enable ' + getPluginDisplayName(p));
+        cb.addEventListener('change', function () {
+          if (!ws || ws.readyState !== 1) {
+            cb.checked = !!p.enabled;
+            return;
+          }
+          ws.send(JSON.stringify({ type: 'togglePlugin', pluginId: p.id, enabled: cb.checked }));
+        });
+        actions.appendChild(toggleLabel);
+      }
+
+      header.appendChild(actions);
       card.appendChild(header);
 
-      appendTeleportBeaconSection(card, p);
-      appendPluginSettingsGrid(card, p);
+      if (p.enabled) {
+        appendTeleportBeaconSection(card, p);
+        appendPluginSettingsGrid(card, p);
+      }
 
       detailEl.appendChild(card);
     });
@@ -6624,96 +6622,86 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     if (kind === 'error' || kind === 'ok') hotkeysStatus.classList.add(kind);
   }
 
-  function renderHotkeysTab() {
-    if (!hotkeysTableBody) return;
-    var query = hotkeysSearch ? String(hotkeysSearch.value || '').trim().toLowerCase() : '';
-    var rows = (Array.isArray(allPluginsData) ? allPluginsData : [])
-      .filter(function (p) { return p && !HIDDEN_PLUGINS.has(p.id); })
-      .filter(function (p) {
-        if (!query) return true;
-        return getPluginDisplayName(p).toLowerCase().indexOf(query) >= 0
-          || String(p.id || '').toLowerCase().indexOf(query) >= 0
-          || String(p.category || '').toLowerCase().indexOf(query) >= 0;
-      })
-      .sort(function (a, b) { return getPluginDisplayName(a).localeCompare(getPluginDisplayName(b)); });
+  /**
+   * Hotkey binder rendered into each plugin card header. Replaces the old
+   * standalone Hotkeys tab — you bind the key on the plugin's own page.
+   */
+  function buildPluginHotkeyControl(p) {
+    var wrap = document.createElement('div');
+    wrap.className = 'plugin-hotkey';
+    wrap.setAttribute('data-plugin-id', p.id);
 
-    hotkeysTableBody.innerHTML = '';
-    if (!rows.length) {
-      var emptyTr = document.createElement('tr');
-      var emptyTd = document.createElement('td');
-      emptyTd.colSpan = 5;
-      emptyTd.className = 'hotkeys-empty';
-      emptyTd.textContent = pluginsReceived ? 'No plugins match the current search.' : 'Loading plugins...';
-      emptyTr.appendChild(emptyTd);
-      hotkeysTableBody.appendChild(emptyTr);
-      return;
-    }
+    var label = document.createElement('span');
+    label.className = 'plugin-hotkey-label';
+    label.textContent = 'Hotkey';
+    wrap.appendChild(label);
 
-    rows.forEach(function (p) {
-      var tr = document.createElement('tr');
-      if (capturePluginHotkeyId === p.id) tr.className = 'hotkeys-capture-row';
-
-      var nameTd = document.createElement('td');
-      var name = document.createElement('div');
-      name.className = 'hotkeys-plugin-name';
-      name.textContent = getPluginDisplayName(p);
-      var id = document.createElement('div');
-      id.className = 'hotkeys-muted';
-      id.textContent = p.id;
-      nameTd.appendChild(name);
-      nameTd.appendChild(id);
-
-      var catTd = document.createElement('td');
-      catTd.textContent = t(PLUGIN_CATEGORY_LABEL_KEYS[p.category || 'utility']) || (p.category || 'utility');
-
-      var statusTd = document.createElement('td');
-      statusTd.textContent = p.hotkeyLocked ? 'Always on' : (p.enabled ? 'Enabled' : 'Disabled');
-
-      var keyTd = document.createElement('td');
-      var key = document.createElement('span');
-      key.className = 'hotkeys-key';
-      key.textContent = capturePluginHotkeyId === p.id ? 'Press key combo' : (p.hotkey || 'None');
-      keyTd.appendChild(key);
-
-      var actionsTd = document.createElement('td');
-      var actions = document.createElement('div');
-      actions.className = 'hotkeys-actions';
-      var setBtn = document.createElement('button');
-      setBtn.type = 'button';
-      setBtn.className = 'setting-btn';
-      setBtn.textContent = capturePluginHotkeyId === p.id ? 'Listening' : 'Set';
-      setBtn.disabled = !!p.hotkeyLocked;
-      setBtn.addEventListener('click', function () {
+    var setBtn = document.createElement('button');
+    setBtn.type = 'button';
+    setBtn.className = 'plugin-hotkey-key';
+    setBtn.addEventListener('click', function () {
+      if (p.hotkeyLocked) return;
+      if (capturePluginHotkeyId === p.id) {
+        capturePluginHotkeyId = null;
+        setHotkeysStatus('', '');
+      } else {
         capturePluginHotkeyId = p.id;
         setHotkeysStatus('Press a key combo for ' + getPluginDisplayName(p) + '. Escape cancels.', '');
-        renderHotkeysTab();
-      });
-      var clearBtn = document.createElement('button');
-      clearBtn.type = 'button';
-      clearBtn.className = 'setting-btn setting-btn-secondary';
-      clearBtn.textContent = 'Clear';
-      clearBtn.disabled = !!p.hotkeyLocked || !p.hotkey;
-      clearBtn.addEventListener('click', function () {
-        if (!ws || ws.readyState !== 1) return;
-        ws.send(JSON.stringify({ type: 'updatePluginHotkey', pluginId: p.id, hotkey: '' }));
-        setHotkeysStatus('Cleared hotkey for ' + getPluginDisplayName(p) + '.', 'ok');
-      });
-      actions.appendChild(setBtn);
-      actions.appendChild(clearBtn);
-      actionsTd.appendChild(actions);
-
-      tr.appendChild(nameTd);
-      tr.appendChild(catTd);
-      tr.appendChild(statusTd);
-      tr.appendChild(keyTd);
-      tr.appendChild(actionsTd);
-      hotkeysTableBody.appendChild(tr);
+      }
+      refreshPluginHotkeyControls();
     });
+    wrap.appendChild(setBtn);
+
+    var clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'plugin-hotkey-clear';
+    clearBtn.title = 'Clear hotkey';
+    clearBtn.setAttribute('aria-label', 'Clear hotkey for ' + getPluginDisplayName(p));
+    clearBtn.textContent = '\u2715';
+    clearBtn.addEventListener('click', function () {
+      if (!ws || ws.readyState !== 1) return;
+      ws.send(JSON.stringify({ type: 'updatePluginHotkey', pluginId: p.id, hotkey: '' }));
+      setHotkeysStatus('Cleared hotkey for ' + getPluginDisplayName(p) + '.', 'ok');
+    });
+    wrap.appendChild(clearBtn);
+
+    syncPluginHotkeyControl(wrap, p);
+    return wrap;
   }
 
-  if (hotkeysSearch) {
-    hotkeysSearch.addEventListener('input', function () {
-      renderHotkeysTab();
+  function syncPluginHotkeyControl(wrap, p) {
+    var capturing = capturePluginHotkeyId === p.id;
+    wrap.classList.toggle('plugin-hotkey--capturing', capturing);
+    wrap.classList.toggle('plugin-hotkey--unset', !p.hotkey && !capturing);
+    var setBtn = wrap.querySelector('.plugin-hotkey-key');
+    if (setBtn) {
+      setBtn.textContent = capturing
+        ? 'Press keys\u2026'
+        : (p.hotkey || (p.hotkeyLocked ? 'Always on' : 'Set'));
+      setBtn.disabled = !!p.hotkeyLocked;
+      setBtn.title = p.hotkeyLocked
+        ? getPluginDisplayName(p) + ' is always on and cannot be bound.'
+        : 'Bind a key to toggle ' + getPluginDisplayName(p);
+    }
+    var clearBtn = wrap.querySelector('.plugin-hotkey-clear');
+    if (clearBtn) {
+      var canClear = !p.hotkeyLocked && !!p.hotkey;
+      clearBtn.disabled = !canClear;
+      clearBtn.classList.toggle('hidden', !canClear);
+    }
+  }
+
+  /** Re-sync every visible binder from cached plugin data, without a full re-render. */
+  function refreshPluginHotkeyControls() {
+    var detailEl = pluginDetail || document.getElementById('plugin-detail');
+    if (!detailEl) return;
+    var byId = {};
+    (Array.isArray(cachedPluginsForHub) ? cachedPluginsForHub : []).forEach(function (p) {
+      if (p && p.id) byId[p.id] = p;
+    });
+    detailEl.querySelectorAll('.plugin-hotkey[data-plugin-id]').forEach(function (wrap) {
+      var p = byId[wrap.getAttribute('data-plugin-id')];
+      if (p) syncPluginHotkeyControl(wrap, p);
     });
   }
 
@@ -6847,13 +6835,14 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       sideEl.appendChild(item);
     });
 
-    // Main panel: show all enabled plugins with their settings
-    renderEnabledPluginsPanel(filtered, detailEl);
+    // Main panel: one card per plugin (enabled first), each with its own
+    // enable toggle and hotkey binder.
+    renderPluginCardsPanel(filtered, detailEl);
   }
 
   // Type filter chips
   function addTypeChip(name) {
-    if (!adminMode || !packetSnifferVisible) return;
+    if (!devMode || !packetSnifferVisible) return;
     if (typeof name !== 'string' || !name || seenTypes.has(name)) return;
     if (!typeFilters) return;
     seenTypes.add(name);
@@ -8844,7 +8833,12 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     }
     if (tabName === 'home') renderHomeTab();
     if (tabName === 'settings') refreshSettingsTab();
-    if (tabName === 'accounts') renderAccountsTab();
+    if (tabName === 'accounts') {
+      renderAccountsTab();
+      startAccountsAutoRefresh();
+    } else {
+      stopAccountsAutoRefresh();
+    }
     if (tabName === 'damage') renderDamageTab();
     if (tabName === 'logs') refreshLogsEmptyState();
     if (tabName === 'objects') renderObjectsTree(lastObjectsData);
@@ -8913,22 +8907,6 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
           renderPlugins(pl);
           populateServerSelect(pl);
           renderDamageSettings(pl);
-        })
-        .catch(function () {});
-    }
-    if (tabName === 'hotkeys') {
-      renderHotkeysTab();
-      fetch('/api/plugins')
-        .then(function (r) {
-          if (!r.ok) throw new Error('bad status');
-          return r.json();
-        })
-        .then(function (data) {
-          var pl = Array.isArray(data) ? data : [];
-          if (pl.length > 0) pluginsReceived = true;
-          allPluginsData = pl;
-          renderPlugins(pl);
-          renderHotkeysTab();
         })
         .catch(function () {});
     }
@@ -11518,6 +11496,25 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     }
   }
 
+  /** True for the server's "Type 782" placeholder, which is not a real name. */
+  function isPlaceholderObjectName(name) {
+    return !String(name || '').trim() || /^type\s+(0x)?[0-9a-f]+$/i.test(String(name).trim());
+  }
+
+  /** Class name from the tables we ship, ignoring the server placeholder. */
+  function getCharacterClassName(character) {
+    var classType = Number(character && character.classType);
+    if (Number.isFinite(classType) && classType > 0) {
+      var eamClasses = (EAM_ASSETS && EAM_ASSETS.classes) || {};
+      var eamRecord = eamClasses[String(classType)];
+      var known = CLASS_NAMES[classType] || (eamRecord && eamRecord[0]);
+      if (known) return String(known);
+    }
+    var serverName = String(character && character.className || '').trim();
+    if (!isPlaceholderObjectName(serverName)) return serverName;
+    return String(character && character.classTypeHex || '') || 'Character';
+  }
+
   function getEamItemRecord(objectType) {
     if (objectType == null || objectType === '') return null;
     return EAM_ITEMS[String(objectType)] || EAM_ITEMS['0'] || null;
@@ -11533,7 +11530,10 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   function getEquipmentItemLabel(item) {
     if (!item || Number(item.objectType) < 0) return 'Empty Slot';
     var record = getEamItemRecord(item.objectType);
-    return String(item.name || (record && record[0]) || item.objectTypeHex || ('Type ' + String(item.objectType)));
+    var serverName = String(item.name || '').trim();
+    if (!isPlaceholderObjectName(serverName)) return serverName;
+    if (record && record[0]) return String(record[0]);
+    return String(item.objectTypeHex || ('Type ' + String(item.objectType)));
   }
 
   function getItemEnchantIds(item) {
@@ -11581,8 +11581,11 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     var record = eamLookupMode === 'strict'
       ? getEamItemRecordStrict(item.objectType)
       : getEamItemRecord(item.objectType);
+    var strictName = String(item.name || '').trim();
     var titleRaw = eamLookupMode === 'strict'
-      ? String(item.name || (record && record[0]) || item.objectTypeHex || ('Type ' + String(item.objectType)))
+      ? (!isPlaceholderObjectName(strictName)
+          ? strictName
+          : String((record && record[0]) || item.objectTypeHex || ('Type ' + String(item.objectType))))
       : getEquipmentItemLabel(item);
     var title = escapeHtml(titleRaw);
     var enchantIds = getItemEnchantIds(item);
@@ -11901,8 +11904,9 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     };
     itemDetailTitleEl.textContent = itemName;
     var subtitleParts = [];
-    if (objectTypeHex) subtitleParts.push('Type ' + escapeHtml(objectTypeHex));
-    if (objectType >= 0) subtitleParts.push('<button class="item-type-decimal-copy" data-copy-value="' + objectType + '" title="Click to copy">' + objectType + '</button>');
+    // Raw object type is debug detail — Developer Mode only.
+    if (devMode && objectTypeHex) subtitleParts.push('Type ' + escapeHtml(objectTypeHex));
+    if (devMode && objectType >= 0) subtitleParts.push('<button class="item-type-decimal-copy" data-copy-value="' + objectType + '" title="Click to copy">' + objectType + '</button>');
     if (enchantIds.length) subtitleParts.push(escapeHtml(enchantIds.length + ' enchant' + (enchantIds.length === 1 ? '' : 's')));
     itemDetailSubtitleEl.innerHTML = subtitleParts.join(' | ');
     itemDetailSpriteEl.innerHTML = buildItemSpriteHtml(detailItem, 'item-detail-preview');
@@ -12291,7 +12295,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       if (character.dead) badges.push('Dead');
       btn.innerHTML =
         '<div class="account-character-card-top">' +
-          '<span class="account-character-card-name">' + escapeHtml(String(character.className || character.classTypeHex || 'Character')) + '</span>' +
+          '<span class="account-character-card-name">' + escapeHtml(getCharacterClassName(character)) + '</span>' +
           '<span class="account-character-card-badge">' + escapeHtml(badges.join(' • ')) + '</span>' +
         '</div>' +
         '<div class="account-character-card-meta">' +
@@ -12357,8 +12361,10 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     accountsCharacterDetailEl.innerHTML =
       '<div class="accounts-character-header">' +
         '<div>' +
-          '<div class="accounts-character-title">' + escapeHtml(String(selectedCharacter.className || selectedCharacter.classTypeHex || 'Character')) + '</div>' +
-          '<div class="accounts-character-subtitle">Type ' + escapeHtml(String(selectedCharacter.classTypeHex || '')) + '</div>' +
+          '<div class="accounts-character-title">' + escapeHtml(getCharacterClassName(selectedCharacter)) + '</div>' +
+          (devMode
+            ? '<div class="accounts-character-subtitle">Type ' + escapeHtml(String(selectedCharacter.classTypeHex || '')) + '</div>'
+            : '') +
         '</div>' +
         '<div class="accounts-character-badges">' + pills.join('') + '</div>' +
       '</div>' +
@@ -12414,6 +12420,65 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
         renderAccountsOverview();
       });
   }
+
+  /* ── Accounts auto-refresh ──────────────────────────────────────────────
+     Re-pulls the selected account's character list every 30s while the
+     Accounts tab is actually on screen. Each poll is a live call to Deca's
+     char-list endpoint, so it only fires when the window is visible, never
+     overlaps an in-flight request, and backs off after a failure rather than
+     hammering an endpoint that may be rate-limiting us. */
+  var accountsAutoRefreshTimer = null;
+  var accountsAutoRefreshBackoffUntil = 0;
+
+  /** Refresh without the "Loading character list..." notice or spinner flicker. */
+  function quietRefreshSelectedAccountOverview() {
+    var account = getSelectedDashboardAccount();
+    if (!account) return;
+    if (accountOverviewLoadingId) return;              // a load is already running
+    if (accountsRefreshAllLoading) return;
+    if (!String(account.email || '').trim() || !String(account.password || '')) return;
+    if (account.isSteam && !String(account.steamId || '').trim()) return;
+    if (Date.now() < accountsAutoRefreshBackoffUntil) return;
+
+    fetchDashboardAccountOverview(account, true)
+      .then(function (result) {
+        if (!result) return;
+        // The selection may have moved while the request was in flight.
+        var current = getSelectedDashboardAccount();
+        if (!current || current.id !== account.id) return;
+        storeDashboardAccountOverview(account, result.overview, {
+          updatedAt: result.updatedAt,
+          cached: !!result.cached,
+        });
+        if (activeTab === 'accounts') renderAccountsOverview();
+      })
+      .catch(function () {
+        // Most likely rate limiting — sit out a few cycles before trying again.
+        accountsAutoRefreshBackoffUntil = Date.now() + (accountsAutoRefreshMs * 4);
+      });
+  }
+
+  function startAccountsAutoRefresh() {
+    stopAccountsAutoRefresh();
+    if (!accountsAutoRefreshMs) return;                // "Off"
+    accountsAutoRefreshTimer = setInterval(function () {
+      if (activeTab !== 'accounts') { stopAccountsAutoRefresh(); return; }
+      if (document.hidden) return;                     // no polling in the background
+      quietRefreshSelectedAccountOverview();
+    }, accountsAutoRefreshMs);
+  }
+
+  function stopAccountsAutoRefresh() {
+    if (accountsAutoRefreshTimer === null) return;
+    clearInterval(accountsAutoRefreshTimer);
+    accountsAutoRefreshTimer = null;
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden || activeTab !== 'accounts') return;
+    // Restart the cycle on return so the first poll is a full 30s away.
+    startAccountsAutoRefresh();
+  });
 
   function maybeLoadSelectedDashboardAccountOverview() {
     var account = getSelectedDashboardAccount();
@@ -12698,13 +12763,8 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     if (accountsSteamIdWrap) accountsSteamIdWrap.style.display = isSteam ? '' : 'none';
     var steamImportRow = document.getElementById('accounts-steam-import-row');
     if (steamImportRow) steamImportRow.style.display = isSteam ? '' : 'none';
-    var loginCreds = document.getElementById('accounts-login-creds');
-    if (loginCreds) loginCreds.classList.toggle('is-steam', isSteam);
-    var steamCredsLabel = document.getElementById('accounts-steam-creds-label');
-    if (steamCredsLabel) steamCredsLabel.style.display = isSteam ? '' : 'none';
     if (accountsOverviewRefreshBtn) accountsOverviewRefreshBtn.disabled = disabled;
     if (accountsFillBtn) accountsFillBtn.disabled = disabled;
-    if (accountsLaunchBtn) accountsLaunchBtn.disabled = disabled;
     suppressAccountsEditorEvents = false;
   }
 
@@ -12757,7 +12817,10 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
         updateQuickLaunchBtn();
 
       })
-      .catch(function () {
+      .catch(function (err) {
+        // Diagnostic: this catch also swallows throws from renderAccountsTab()
+        // above, which silently masks a render bug as "no accounts saved yet".
+        console.error('[accounts] loadDashboardAccounts failed:', (err && err.stack) || err);
         dashboardAccounts = [];
         selectedAccountId = null;
         pruneDashboardAccountOverviewState();
@@ -12783,7 +12846,8 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
         maybeLoadSelectedDashboardAccountOverview();
     
       })
-      .catch(function () {
+      .catch(function (err) {
+        console.error('[accounts] saveDashboardAccounts failed:', (err && err.stack) || err);
         setAccountsStatus('Failed to save accounts.', true);
       });
   }
@@ -12879,10 +12943,6 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       return false;
     }
 
-    if (!launchOpts.suppressAccountsLaunchBtn && accountsLaunchBtn) {
-      accountsLaunchBtn.disabled = true;
-      accountsLaunchBtn.textContent = 'Launching...';
-    }
     if (!launchOpts.suppressAccountsLaunchBtn) {
       setAccountsStatus('Launching selected account...', false);
     }
@@ -12931,20 +12991,11 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     if (msg.botApiUrl) window._botApiUrl = String(msg.botApiUrl);
     rotmgPath = msg.rotmgPath || '';
     rotmgPathSource = msg.rotmgPathSource || 'none';
-    var isAdminUser = !!(dashboardUser && dashboardUser.is_admin);
-    // Non-admins are always locked to singleClientOnly=true regardless of server config
-    if (isAdminUser) {
-      singleClientOnly = msg.singleClientOnly !== false;
-    } else {
-      singleClientOnly = true;
-    }
+    singleClientOnly = msg.singleClientOnly !== false;
     serverPluginConfigId = String(msg.pluginConfigId || '');
     availableServerNames = Array.isArray(msg.serverNames) ? msg.serverNames.slice() : [];
     if (singleClientOnlyToggle) {
       singleClientOnlyToggle.checked = singleClientOnly;
-      singleClientOnlyToggle.disabled = !isAdminUser;
-      var scoRow = singleClientOnlyToggle.closest('.settings-row');
-      if (scoRow) scoRow.classList.toggle('settings-row--locked', !isAdminUser);
     }
     if (serverPluginConfigId) localStorage.setItem('pluginConfigSelected', serverPluginConfigId);
     renderAccountsTab();
@@ -13064,11 +13115,6 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   if (launchGameBtn) launchGameBtn.addEventListener('click', function () { doLaunchGame(); });
 
   function handleLaunchResult(msg) {
-    if (accountsLaunchBtn) {
-      accountsLaunchBtn.disabled = !getSelectedDashboardAccount();
-      accountsLaunchBtn.textContent = 'Launch';
-    }
-
     var quietOk = msg.ok && Date.now() < macGroupLaunchQuietFeedUntil;
     if (quietOk) return;
 
@@ -14444,19 +14490,6 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       });
     });
   }
-  if (accountsLaunchBtn) {
-    accountsLaunchBtn.addEventListener('click', function () {
-      var account = getSelectedDashboardAccount();
-      if (!account) return;
-      launchGameWithCredentials(
-        String(account.email || '').trim(),
-        String(account.password || ''),
-        String(account.serverName || 'USWest').trim() || 'USWest',
-        undefined,
-        launchOptsWithAccount(account, {}),
-      );
-    });
-  }
   // Editor tab switching (delegated)
   document.addEventListener('click', function(e) {
     var editorTab = e.target.closest('.accounts-editor-tab');
@@ -14516,12 +14549,8 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     account.password = String(accountsPasswordInput && accountsPasswordInput.value || '');
     account.serverName = String(accountsServerSelect && accountsServerSelect.value || account.serverName || 'USWest').trim() || 'USWest';
     account.notes = String(accountsNotesInput && accountsNotesInput.value || '');
-    account.mulingItemsToMuleOff = String(accountsMulingItemsMuleOff && accountsMulingItemsMuleOff.value || '');
-    account.mulingItemsToStore = String(accountsMulingItemsStore && accountsMulingItemsStore.value || '');
-    account.mulingItemsFromMain = String(accountsMulingItemsFromMain && accountsMulingItemsFromMain.value || '');
-    account.proxy = String(accountsProxyInput && accountsProxyInput.value || '').trim();
-    account.proxyUsername = String(accountsProxyUsername && accountsProxyUsername.value || '');
-    account.proxyPassword = String(accountsProxyPassword && accountsProxyPassword.value || '');
+    // Muling role, item lists and proxy are stored per account but are no
+    // longer edited here — leave whatever is on the record untouched.
     account.updatedAt = Date.now();
     if (
       account.email !== prevEmail ||
@@ -14744,91 +14773,6 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       } finally {
         accountsSteamConnectBtn.disabled = false;
       }
-    });
-  }
-
-  // Muling role buttons
-  [accountsRoleNoneBtn, accountsRoleMainBtn, accountsRoleMuleBtn].forEach(function (btn) {
-    if (!btn) return;
-    btn.addEventListener('click', function () {
-      if (suppressAccountsEditorEvents) return;
-      var account = getSelectedDashboardAccount();
-      if (!account || isSelectedAccountRunning()) return;
-      account.mulingRole = btn.getAttribute('data-role') || 'none';
-      account.updatedAt = Date.now();
-      setAccountsDirty(true, 'Unsaved account changes.');
-      renderAccountsEditor();
-    });
-  });
-
-  // Store mode buttons
-  [accountsModeAnyBtn, accountsModeSpecificBtn].forEach(function (btn) {
-    if (!btn) return;
-    btn.addEventListener('click', function () {
-      if (suppressAccountsEditorEvents) return;
-      var account = getSelectedDashboardAccount();
-      if (!account || isSelectedAccountRunning()) return;
-      account.mulingStoreMode = btn.getAttribute('data-mode') || 'any';
-      account.updatedAt = Date.now();
-      setAccountsDirty(true, 'Unsaved account changes.');
-      renderAccountsEditor();
-    });
-  });
-
-  // Proxy input — show/hide auth fields on change
-  if (accountsProxyInput) {
-    accountsProxyInput.addEventListener('input', function () {
-      updateSelectedDashboardAccountFromEditor();
-      var hasProxy = !!String(accountsProxyInput.value || '').trim();
-      if (accountsProxyAuthWrap) accountsProxyAuthWrap.style.display = hasProxy ? '' : 'none';
-    });
-    accountsProxyInput.addEventListener('change', updateSelectedDashboardAccountFromEditor);
-  }
-
-  // Muling text inputs (items + proxy creds)
-  [accountsMulingItemsMuleOff, accountsMulingItemsStore, accountsMulingItemsFromMain, accountsProxyUsername, accountsProxyPassword].forEach(function (el) {
-    if (!el) return;
-    el.addEventListener('input', function() {
-      updateSelectedDashboardAccountFromEditor();
-      // Re-render pot button active states for this input's row
-      if (el.previousElementSibling && el.previousElementSibling.classList && el.previousElementSibling.classList.contains('accounts-pot-row')) {
-        renderPotRowState(el.previousElementSibling, el);
-      }
-    });
-    el.addEventListener('change', updateSelectedDashboardAccountFromEditor);
-  });
-
-  // Delegated pot button clicks on the muling section
-  if (accountsMulingSection) {
-    accountsMulingSection.addEventListener('click', function(e) {
-      var btn = e.target.closest('.accounts-pot-btn');
-      if (!btn || suppressAccountsEditorEvents) return;
-      var account = getSelectedDashboardAccount();
-      if (!account || isSelectedAccountRunning()) return;
-
-      var potRow = btn.closest('[data-pot-field]');
-      if (!potRow) return;
-      var fieldName = potRow.getAttribute('data-pot-field');
-      var fieldEl = fieldName === 'mule-off' ? accountsMulingItemsMuleOff
-                  : fieldName === 'store'     ? accountsMulingItemsStore
-                  : fieldName === 'from-main' ? accountsMulingItemsFromMain
-                  : null;
-      if (!fieldEl) return;
-
-      var pot = btn.getAttribute('data-pot');
-      var potIds = pot === 'all' ? ALL_STAT_POT_IDS : (STAT_POT_IDS[pot] || []);
-      var currentSet = Object.create(null);
-      parseItemIds(fieldEl.value).forEach(function(id) { currentSet[id] = true; });
-      var allActive = potIds.every(function(id) { return !!currentSet[id]; });
-      if (allActive) {
-        potIds.forEach(function(id) { delete currentSet[id]; });
-      } else {
-        potIds.forEach(function(id) { currentSet[id] = true; });
-      }
-      fieldEl.value = serializeItemIds(Object.keys(currentSet).map(Number));
-
-      updateSelectedDashboardAccountFromEditor();
-      renderPotRowState(potRow, fieldEl);
     });
   }
 

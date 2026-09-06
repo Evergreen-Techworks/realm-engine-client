@@ -8,8 +8,8 @@
  * a short window after any manual potion/quickslot action.
  */
 
-import type { PluginContext } from '../../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../../src/proxy/ClientConnection.js';
+import type { PluginContext } from '../api.js';
+import type { ClientConnection } from '../api.js';
 import type { AutoLootSettings } from './settings.js';
 import { StateStore, clearPendingDest, type AutoLootState } from './state.js';
 import { isQuickslotPacketSlot } from './inventory.js';

@@ -2,6 +2,7 @@
 #include "GameState.h"
 #include "RuntimeOffsets.h"
 #include "Il2CppResolver.h"
+#include "core/runtime/MemRead.h"
 
 #include <Windows.h>
 
@@ -22,12 +23,6 @@ static bool         s_wmOffsetResolved = false;    // true once AppMgr_WorldMgr 
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-static inline bool AddrOk(const void* p)
-{
-    uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a >= 0x10000u && a <= 0x7FFFFFFFFFFFull;
-}
-
 // SEH must live in a function without C++ unwinding (C2712).
 static void* ReadPtr(const void* base, size_t offset) noexcept
 {
@@ -41,10 +36,10 @@ static void* ReadPtr(const void* base, size_t offset) noexcept
 // Cheap vtable sanity: first qword of the object should be a valid code address.
 static bool PtrOk(const void* p)
 {
-    if (!AddrOk(p)) return false;
+    if (!Mem::AddrOk(p)) return false;
     __try {
         void* klass = *reinterpret_cast<void* const*>(p);
-        return AddrOk(klass);
+        return Mem::AddrOk(klass);
     }
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
@@ -58,7 +53,7 @@ void Tick()
     // ── Step 1: resolve ApplicationManager once ──────────────────────────────
     // FindObjectsByType is expensive (full IL2CPP object walk).
     // Rate-limited to one attempt every 5 s until it succeeds.
-    if (!AddrOk(s_appMgr))
+    if (!Mem::AddrOk(s_appMgr))
     {
         const ULONGLONG now = GetTickCount64();
         if (now - s_lastAppMgrTry < 5000ULL) return;
@@ -111,7 +106,7 @@ void Tick()
 
     // ── Step 2: WorldMgr — 1 deref per frame ─────────────────────────────────
     void* wm = ReadPtr(s_appMgr, RuntimeOffsets::AppMgr_WorldMgr);
-    if (!AddrOk(wm)) { s_worldMgr = nullptr; s_localPtr = nullptr; return; }
+    if (!Mem::AddrOk(wm)) { s_worldMgr = nullptr; s_localPtr = nullptr; return; }
     s_worldMgr = wm;
 
     // ── Step 3: LocalPtr — 1 deref per frame ─────────────────────────────────

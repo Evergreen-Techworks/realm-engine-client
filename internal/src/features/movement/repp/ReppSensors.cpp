@@ -4,13 +4,12 @@
 #include "AoeTracking.h"
 #include "ProjectileTracking.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
+#include "features/movement/sensors/TileSensor.h"
 #include "gui/tabs/WorldTAB.h"
-#include "gui/tabs/TestTAB.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <unordered_map>
 #include <vector>
 #include <windows.h>
 
@@ -24,15 +23,12 @@ constexpr float kAoeCullPad      = 14.f;
 // Per-tick memo for the LIVE hazard check: the planner queries IsHazardAt at
 // hundreds of points/frame, so each distinct tile is square_lookup'd at most
 // once per tick (cleared at the top of Build). Single game-update thread.
-std::unordered_map<uint32_t, uint8_t> s_hazardMemo;
-uint32_t TileKey(int tx, int ty)
-{
-    return (static_cast<uint32_t>(static_cast<uint16_t>(tx)) << 16) |
-            static_cast<uint32_t>(static_cast<uint16_t>(ty));
-}
+// OUR OWN instance of the shared open-addressed table (Movement::TileSensor) —
+// it replaces a std::unordered_map, so lookups no longer allocate.
+Movement::TileSensor::HazardMemo s_hazardMemo;
 
-bool IsFinite(float v) { return std::isfinite(v); }
-bool IsFinitePoint(float x, float y) { return IsFinite(x) && IsFinite(y); }
+using Movement::TileSensor::IsFinite;
+using Movement::TileSensor::IsFinitePoint;
 
 float SafeRadius(float value, float fallback)
 {
@@ -53,11 +49,7 @@ float ProjectileRadius(const WorldProjectile& p, float fallback)
     return fallback;
 }
 
-float DistSq(float ax, float ay, float bx, float by)
-{
-    const float dx = ax - bx, dy = ay - by;
-    return dx * dx + dy * dy;
-}
+using Movement::TileSensor::DistSq;
 
 void AddSample(Threat& t, float x, float y, float tMs)
 {
@@ -136,14 +128,26 @@ bool AddCachedPath(Threat& t, const WorldProjectile& p, float reactWindowMs, flo
     const float baseMs = IsFinite(p.pathSampleTimesMs[anchor]) ? p.pathSampleTimesMs[anchor] : elapsedMs;
 
     AddSample(t, p.x, p.y, 0.f);
+    bool  shotEnds  = false;
+    bool  spanned   = false;   // the cache reached past the window (coverage complete)
     for (int i = anchor + 1; i < count && t.sampleCount < kMaxPathSamples; ++i) {
         if (!IsFinitePoint(p.pathX[i], p.pathY[i])) break;
         const float sMs = p.pathSampleTimesMs[i];
         if (!IsFinite(sMs)) break;
         if (IsFinite(p.lifetime) && p.lifetime > 0.f && sMs > p.lifetime) break;
         const float futureMs = std::max(0.f, sMs - baseMs);
-        if (futureMs > reactWindowMs) break;
+        if (futureMs > reactWindowMs) { spanned = true; break; }   // cache reaches past the window
         AddSample(t, p.x + (p.pathX[i] - ax), p.y + (p.pathY[i] - ay), futureMs);
+        shotEnds  = IsFinite(p.lifetime) && p.lifetime > 0.f && sMs >= p.lifetime - 1.f;
+    }
+    // TIME COVERAGE (cached path is bounded from spawn — WorldTAB.h
+    // kWorldProjectilePathCoverMs). A long-lived shot outruns the cache, and a
+    // path that stops short of the window while the shot is STILL ALIVE would
+    // silently under-state danger. Refuse it (resetting what we appended) so the
+    // caller re-samples fresh from positionAt over the full window.
+    if (!spanned && !shotEnds && t.sampleCount < kMaxPathSamples) {
+        t.sampleCount = 0;
+        return false;
     }
     return t.sampleCount >= 2;
 }
@@ -192,7 +196,7 @@ void AddAoe(SensorSnapshot& out, const WorldAoe* aoes, int aoeCount,
 SensorSnapshot Build(float playerX, float playerY, const Settings& settings)
 {
     SensorSnapshot out{};
-    s_hazardMemo.clear();   // fresh live-hazard memo for this tick
+    s_hazardMemo.Clear();   // fresh live-hazard memo for this tick
 
     if (!ProjectileTracking::IsInstalled()) {
         out.projectileSourceUnavailable = true;
@@ -287,23 +291,12 @@ SensorSnapshot Build(float playerX, float playerY, const Settings& settings)
 
 bool IsWallAt(float worldX, float worldY)
 {
-    if (!IsFinitePoint(worldX, worldY)) return true;  // unknown → treat as blocked
-    return TestTAB::IsWalkPositionBlocked(worldX, worldY);
+    return Movement::TileSensor::IsWallAt(worldX, worldY);
 }
 
 bool IsHazardAt(float worldX, float worldY)
 {
-    if (!IsFinitePoint(worldX, worldY)) return false;
-    const int tx = static_cast<int>(std::floor(worldX));
-    const int ty = static_cast<int>(std::floor(worldY));
-    const uint32_t key = TileKey(tx, ty);
-    const auto it = s_hazardMemo.find(key);
-    if (it != s_hazardMemo.end()) return it->second != 0;
-    // Live, cover-aware check (transform-proof); falls back to the cached map
-    // internally if the raw call is unavailable on this build.
-    const bool hz = WorldTAB::IsTileDamagingLive(tx, ty);
-    s_hazardMemo[key] = hz ? 1 : 0;
-    return hz;
+    return Movement::TileSensor::IsHazardAt(s_hazardMemo, worldX, worldY);
 }
 
 float TileSpeedAt(float worldX, float worldY)

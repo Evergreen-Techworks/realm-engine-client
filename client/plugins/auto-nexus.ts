@@ -1,9 +1,5 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../src/proxy/ClientConnection.js';
-import type { Packet } from '../src/packets/Packet.js';
-import { sendDllFeature } from '../src/bridge/DllFeatureBus.js';
-import { getDllThreats, getDllGround, getDllThreatsAgeMs } from '../src/bridge/DllThreatBus.js';
-import type { DllThreat } from '../src/bridge/DllThreatBus.js';
+import type { PluginContext, ClientConnection, Packet, DllThreat } from './api.js';
+import { sendDllFeature, getDllThreats, getDllGround, getDllThreatsAgeMs, getDllThreatsTruncated } from './api.js';
 
 /**
  * Auto Nexus — near 1:1 port of MultiTool `Class89` (minus autopot, plus close-spawn ENEMYSHOOT).
@@ -90,6 +86,8 @@ interface NexusState {
   heldTimers:   ReturnType<typeof setTimeout>[];
   /** Trailing window of server HP loss no prediction accounted for. */
   unattributed: UnattributedSample[];
+  escapeRetry: ReturnType<typeof setInterval> | null;
+  escapeCount: number;
 }
 
 interface UnattributedSample {
@@ -168,6 +166,9 @@ export function register(ctx: PluginContext) {
   let includeGroundTicks   = true; // IncludeGroundTicks
   let showNotification     = true; // ShowChatMessageOnNexus
   let drawOverlay          = false; // DrawOverlay
+  let predictedUsesForceThreshold = true;
+  let escapeRetryCount = 4;
+  let escapeRetryIntervalMs = 400;
 
   // ── Lethal PLAYERHIT hold ──────────────────────────────────────────────
   let holdLethalHits  = true; // HoldLethalPlayerHit
@@ -200,6 +201,16 @@ export function register(ctx: PluginContext) {
     label: 'Predicted Nexus Time',
     type: 'range', value: predictedNexusTimeMs, min: 0, max: 1000, step: 10,
   }, (v: number) => { predictedNexusTimeMs = v; pushDllSettings(); });
+
+  ctx.registerSetting('PredictedUsesForceThreshold', {
+    label: 'Predict Against Force Threshold', type: 'boolean', value: true,
+  }, (v: boolean) => { predictedUsesForceThreshold = v === true; });
+  ctx.registerSetting('EscapeRetryCount', {
+    label: 'Escape Retries', advanced: true, type: 'range', value: 4, min: 0, max: 10, step: 1,
+  }, (v: number) => { escapeRetryCount = Math.max(0, Math.min(10, Math.trunc(Number(v) || 0))); });
+  ctx.registerSetting('EscapeRetryIntervalMs', {
+    label: 'Escape Retry Interval', advanced: true, type: 'range', value: 400, min: 100, max: 2000, step: 50,
+  }, (v: number) => { escapeRetryIntervalMs = Math.max(100, Math.min(2000, Math.trunc(Number(v) || 400))); });
 
   ctx.registerSetting('IncludeGroundTicks', {
     label: 'Include Ground Ticks', type: 'boolean', value: includeGroundTicks,
@@ -275,6 +286,7 @@ export function register(ctx: PluginContext) {
         pendingAoes: [],
         predicted: [], predictedRecovery: 0, heldTimers: [],
         unattributed: [],
+        escapeRetry: null, escapeCount: 0,
       };
       states.set(client, s);
     }
@@ -405,11 +417,26 @@ export function register(ctx: PluginContext) {
     return baseThresholdHp(state) + unattributedMarginHp(state);
   }
 
+  function predictedTripPct(state: NexusState): number {
+    if (!predictedUsesForceThreshold) return predictedNexusPct;
+    return Math.max(predictedNexusPct, effectiveThresholdHp(state) / state.maxHp * 100);
+  }
+
   const liveHeldTimers = new Set<ReturnType<typeof setTimeout>>();
+  const liveEscapeTimers = new Set<ReturnType<typeof setInterval>>();
   ctx.registerCleanup(() => {
     for (const timer of liveHeldTimers) clearTimeout(timer);
     liveHeldTimers.clear();
+    for (const timer of liveEscapeTimers) clearInterval(timer);
+    liveEscapeTimers.clear();
   });
+
+  function disarmEscapeRetry(state: NexusState): void {
+    if (!state.escapeRetry) return;
+    clearInterval(state.escapeRetry);
+    liveEscapeTimers.delete(state.escapeRetry);
+    state.escapeRetry = null;
+  }
 
   function clearHeldTimers(state: NexusState): void {
     for (const timer of state.heldTimers) {
@@ -429,7 +456,9 @@ export function register(ctx: PluginContext) {
   }
 
   ctx.on('clientDisconnected', (client) => {
-    clearHeldTimers(getState(client));
+    const state = getState(client);
+    clearHeldTimers(state);
+    disarmEscapeRetry(state);
     if (activeClient === client) activeClient = null;
   });
 
@@ -479,9 +508,25 @@ export function register(ctx: PluginContext) {
         + (body ? `\n${body}` : ''));
     }
 
-    const escape = ctx.createPacket('ESCAPE');
-    escape.modified = true;
-    client.sendToServer(escape);
+    const sendEscape = () => {
+      const escape = ctx.createPacket('ESCAPE');
+      escape.modified = true;
+      client.sendToServer(escape);
+      state.escapeCount++;
+    };
+    sendEscape();
+    disarmEscapeRetry(state);
+    if (escapeRetryCount > 0) {
+      state.escapeRetry = setInterval(() => {
+        if (!state.nexusSent || !client.connected || state.escapeCount > escapeRetryCount) {
+          disarmEscapeRetry(state);
+          return;
+        }
+        ctx.log(`ESCAPE not acknowledged, resending (${state.escapeCount})`);
+        sendEscape();
+      }, escapeRetryIntervalMs);
+      liveEscapeTimers.add(state.escapeRetry);
+    }
   }
 
   function describeLedger(state: NexusState): string {
@@ -614,6 +659,8 @@ export function register(ctx: PluginContext) {
     const state   = getState(client);
     state.inSafeZone = SAFE_ZONE_MAPS.has(mapName);
     state.nexusSent  = false;
+    state.escapeCount = 0;
+    disarmEscapeRetry(state);
     state.serverHp   = 0;
     state.pendingHeal = 0;
     state.pendingAoes   = [];
@@ -629,8 +676,16 @@ export function register(ctx: PluginContext) {
 
   ctx.hookPacket('CREATESUCCESS', (client) => {
     const existing = states.get(client);
-    if (existing) clearHeldTimers(existing);
+    // MAPINFO arrives BEFORE CREATESUCCESS, so the safe-zone flag it just set is
+    // about to be thrown away with the rest of the state — and MAPINFO will not
+    // fire again until the next map change. Without carrying it across, every
+    // safe-zone guard (shouldNexus, evaluateThreats, DEATH, DAMAGE-kill) reads
+    // false for the entire time the player stands in the Nexus/Vault, so a single
+    // bogus threat nexuses out of a safe zone. Carry the flag, reset the rest.
+    const wasInSafeZone = existing ? existing.inSafeZone : false;
+    if (existing) { clearHeldTimers(existing); disarmEscapeRetry(existing); }
     states.delete(client);
+    getState(client).inSafeZone = wasInSafeZone;
   }, { prepend: true });
 
   ctx.hookPacket('NEWTICK', (client, packet) => {
@@ -640,9 +695,9 @@ export function register(ctx: PluginContext) {
     if (nexusPrologue(client, state)) { packet.send = false; return; }
     if (state.nexusSent) { packet.send = false; return; }
 
-    state.maxHp    = pd.maxHealth; //Actual Max HP
+    state.maxHp    = pd.effectiveMaxHealth;
     state.defense  = pd.defense; //Actual Def
-    state.vitality = pd.vitality; //Actual Vit
+    state.vitality = pd.effectiveVitality;
 
     const serverHp     = pd.health > 0 ? pd.health : state.maxHp;
     const prevServerHp = state.serverHp;
@@ -999,6 +1054,18 @@ export function register(ctx: PluginContext) {
     const threats = getDllThreats();
     const ground = getDllGround();
 
+    // ── DELIBERATE BEHAVIOR CHANGE (plan 19): conservative on a partial picture ──
+    // When the DLL shed threats/ground under heavy bullet load it flags the payload
+    // truncated. On such a tick we are seeing a known-incomplete list, so we must
+    // never *raise* the nexus bar (never let it trip at a lower HP than usual). We
+    // assume worst by pulling the predicted-danger threshold up to the hard force
+    // threshold, so a truncated tick trips at least as readily as a full one — never
+    // less. This is the ONE spot that reacts to truncation.
+    const configuredPredictedPct = predictedTripPct(state);
+    const effectivePredictedPct = getDllThreatsTruncated()
+      ? Math.max(configuredPredictedPct, nexusThresholdPct)
+      : configuredPredictedPct;
+
     const groundDmgRaw =
       includeGroundTicks && ground && ground.rawDamage > 0 ? ground.rawDamage : 0;
     if (threats.length === 0 && groundDmgRaw === 0) return null;
@@ -1066,7 +1133,7 @@ export function register(ctx: PluginContext) {
           known: true,
           applies: [],
         });
-        if (tripIndex < 0 && hp / state.maxHp * 100 <= predictedNexusPct) {
+        if (tripIndex < 0 && hp / state.maxHp * 100 <= effectivePredictedPct) {
           tripIndex  = incoming.length - 1;
           hpAtTrip   = hp;
           tripReason = `predicted: standing on damaging ground in ${Math.round(ev.tHitMs)}ms `
@@ -1125,7 +1192,7 @@ export function register(ctx: PluginContext) {
         applies: mitigationEffects,
       });
 
-      if (tripIndex < 0 && hp / state.maxHp * 100 <= predictedNexusPct) {
+      if (tripIndex < 0 && hp / state.maxHp * 100 <= effectivePredictedPct) {
         tripIndex  = incoming.length - 1;
         hpAtTrip   = hp;
         tripReason = `predicted: ${bulletCount} bullet(s) in ${Math.round(ev.tHitMs)}ms `

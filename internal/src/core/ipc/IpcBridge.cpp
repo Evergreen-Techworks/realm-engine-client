@@ -1,24 +1,19 @@
-// Purpose: owns the DLL-side named-pipe bridge loop and keeps the public
-// IpcBridge_* API stable while delegating extracted responsibilities to focused
-// IPC, feature-state, runtime, and tile-state modules.
+// Purpose: owns the DLL-side named-pipe bridge loop and the public IpcBridge_*
+// API for overlay, shutdown, threat, and auth state.
 
 // Helpful notes:
 // - This DLL is the pipe client; the Node/Electron side is the pipe server.
-// - Authentication, heartbeat, and signed command sequencing share s_auth.
+// - The bridge speaks plaintext length-prefixed JSON dispatched by "type";
+//   liveness is tracked by bidirectional heartbeats in s_conn (no MAC/auth).
 // - Per-frame feature application lives in FeatureRuntime; this file only
 //   accepts pipe commands, publishes player/diagnostic events, and reconnects.
-// - Legacy IpcBridge_* accessors intentionally remain as compatibility shims.
+// - Feature state is owned by FeatureState; no forwarding shims remain here.
 
 #include "pch-il2cpp.h"
 #include "IpcBridge.h"
-#include "Handshake.h"
 #include "settings.h"
 #include "DbgFileLog.h"
 #include "RuntimeOffsets.h"
-
-#if __has_include("BuildSecrets.h")
-#include "BuildSecrets.h"
-#endif
 
 #ifndef BUILD_PIPE_NAME
 #define BUILD_PIPE_NAME "\\\\.\\pipe\\lfg-dev-bridge"
@@ -32,11 +27,9 @@
 #include <cstring>
 #include <iostream>
 
-#include "IpcTileState.h"
 #include "IpcFraming.h"
 #include "IpcJson.h"
 #include "IpcMessages.h"
-#include "IpcSession.h"
 #include "FeatureState.h"
 #include "FeatureRuntime.h"
 #include "FeatureCommandRegistry.h"
@@ -57,29 +50,22 @@
 static const char* PipeName() { return BUILD_PIPE_NAME; }
 static const DWORD PIPE_BUFFER_SIZE = 65536;
 
-// Tile map API
+// Connection liveness state (single-threaded — only touched by IpcBridgeThread).
+struct BridgeConn {
+    int       heartbeatMisses;    // consecutive unanswered heartbeats
+    ULONGLONG lastHeartbeatSent;  // GetTickCount64() of last heartbeat we sent
+    bool      heartbeatPending;   // we sent a heartbeat, awaiting heartbeatResp
+    bool      connected;          // hello sent, loop live
+};
+static BridgeConn s_conn = {};
 
-bool IpcBridge_IsTileWalkable(float worldX, float worldY)
-{
-    return IpcTileState::IsWalkable(worldX, worldY);
-}
-
-void IpcBridge_GetTileStats(int* outTileCount, int* outNoWalkTypeCount)
-{
-    IpcTileState::GetStats(outTileCount, outNoWalkTypeCount);
-}
-
-int IpcBridge_CopyUniqueTypeEntries(IpcTileTypeEntry* buf, int maxCount)
-{
-    return IpcTileState::CopyUniqueTypeEntries(buf, maxCount);
-}
-
-static Handshake::AuthState s_auth = {};
+static const DWORD HEARTBEAT_INTERVAL_MS = 5000;
+static const int   HEARTBEAT_MAX_MISSES  = 3;
 
 // Session and overlay state
 
-const char* IpcBridge_GetUserId()       { return s_auth.userId; }
-bool        IpcBridge_IsAuthenticated() { return Handshake::IsHealthy(&s_auth); }
+const char* IpcBridge_GetUserId()       { return ""; }
+bool        IpcBridge_IsAuthenticated() { return s_conn.connected && s_conn.heartbeatMisses < HEARTBEAT_MAX_MISSES; }
 
 static std::atomic<bool> s_overlayEnabled{false};
 
@@ -90,50 +76,6 @@ void IpcBridge_SetOverlayEnabled(bool on)
     if (!on) settings.bShowMenu = false;
     DbgLog("overlayEnabled = %s", on ? "true" : "false");
 }
-
-// Public feature accessors — shim to FeatureState
-
-bool    IpcBridge_GetAutoAimEnabled()                         { return FeatureState::GetAutoAimEnabled(); }
-int     IpcBridge_GetAutoAimMode()                            { return FeatureState::GetAutoAimMode(); }
-void    IpcBridge_SetAutoAimEnabled(bool enabled)             { FeatureState::SetAutoAimEnabled(enabled); }
-void    IpcBridge_SetAutoAimMode(int mode)                    { FeatureState::SetAutoAimMode(mode); }
-
-int     IpcBridge_GetAutoDodgeMode()                          { return FeatureState::GetAutoDodgeMode(); }
-void    IpcBridge_SetAutoDodgeMode(int mode)                  { FeatureState::SetAutoDodgeMode(mode); }
-float   IpcBridge_GetAutoDodgeHorizonMs()                     { return FeatureState::GetAutoDodgeHorizonMs(); }
-void    IpcBridge_SetAutoDodgeHorizonMs(float ms)             { FeatureState::SetAutoDodgeHorizonMs(ms); }
-float   IpcBridge_GetAutoDodgeHitboxPadding()                 { return FeatureState::GetAutoDodgeHitboxPadding(); }
-void    IpcBridge_SetAutoDodgeHitboxPadding(float p)          { FeatureState::SetAutoDodgeHitboxPadding(p); }
-bool    IpcBridge_GetAutoDodgeWallAvoid()                     { return FeatureState::GetAutoDodgeWallAvoid(); }
-void    IpcBridge_SetAutoDodgeWallAvoid(bool enabled)         { FeatureState::SetAutoDodgeWallAvoid(enabled); }
-
-bool    IpcBridge_GetAutoAbilityEnabled()                     { return FeatureState::GetAutoAbilityEnabled(); }
-void    IpcBridge_SetAutoAbilityEnabled(bool enabled)         { FeatureState::SetAutoAbilityEnabled(enabled); }
-float   IpcBridge_GetAutoAbilityMpPct()                       { return FeatureState::GetAutoAbilityMpPct(); }
-void    IpcBridge_SetAutoAbilityMpPct(float pct)              { FeatureState::SetAutoAbilityMpPct(pct); }
-int     IpcBridge_GetAutoAbilityWizardMode()                  { return FeatureState::GetAutoAbilityWizardMode(); }
-void    IpcBridge_SetAutoAbilityWizardMode(int mode)          { FeatureState::SetAutoAbilityWizardMode(mode); }
-
-float   IpcBridge_GetWalkTargetX()                            { return FeatureState::GetWalkTargetX(); }
-float   IpcBridge_GetWalkTargetY()                            { return FeatureState::GetWalkTargetY(); }
-bool    IpcBridge_GetWalkTargetActive()                       { return FeatureState::GetWalkTargetActive(); }
-void    IpcBridge_SetWalkTarget(float wx, float wy, bool a)   { FeatureState::SetWalkTarget(wx, wy, a); }
-
-bool    IpcBridge_GetCameraZoomActive()                       { return FeatureState::GetCameraZoomActive(); }
-float   IpcBridge_GetCameraZoomValue()                        { return FeatureState::GetCameraZoomValue(); }
-void    IpcBridge_SetCameraZoom(bool active, float zoom)      { FeatureState::SetCameraZoom(active, zoom); }
-bool    IpcBridge_GetCameraAngleActive()                      { return FeatureState::GetCameraAngleActive(); }
-int     IpcBridge_GetCameraAngleValue()                       { return FeatureState::GetCameraAngleValue(); }
-void    IpcBridge_SetCameraAngle(bool active, int angle)      { FeatureState::SetCameraAngle(active, angle); }
-bool    IpcBridge_GetCameraCenteringActive()                  { return FeatureState::GetCameraCenteringActive(); }
-bool    IpcBridge_GetCameraCentered()                         { return FeatureState::GetCameraCentered(); }
-void    IpcBridge_SetCameraCentering(bool active, bool c)     { FeatureState::SetCameraCentering(active, c); }
-
-bool    IpcBridge_GetSkinOverrideEnabled()                    { return FeatureState::GetSkinOverrideEnabled(); }
-int     IpcBridge_GetSkinOverrideId()                         { return FeatureState::GetSkinOverrideId(); }
-void    IpcBridge_SetSkinOverride(bool enabled, int skinId)   { FeatureState::SetSkinOverride(enabled, skinId); }
-int32_t IpcBridge_GetClientDefense()                          { return FeatureState::GetClientDefense(); }
-int32_t IpcBridge_GetClientClassType()                        { return FeatureState::GetClientClassType(); }
 
 void IpcBridge_ApplyFeatureOverrides()
 {
@@ -160,160 +102,102 @@ void IpcBridge_EmitPredictedHit(int ownerObjId, int bulletId)
 
 static std::mutex s_threatsMutex;
 static IpcThreat  s_threats[kIpcMaxThreats];
-static int        s_threatCount   = 0;
-static bool       s_threatsPending = false;
+static int        s_threatCount     = 0;
+static bool       s_threatsPending  = false;
+static bool       s_threatsTruncated = false;
 static IpcGround  s_ground;
 
-void IpcBridge_PublishThreats(const IpcThreat* threats, int count, const IpcGround& ground)
+void IpcBridge_PublishThreats(const IpcThreat* threats, int count, const IpcGround& ground, bool truncated)
 {
     if (count < 0) count = 0;
     if (count > kIpcMaxThreats) count = kIpcMaxThreats;
     std::lock_guard<std::mutex> lk(s_threatsMutex);
     for (int i = 0; i < count; ++i) s_threats[i] = threats[i];
-    s_threatCount = count;
-    s_ground = ground;
-    s_threatsPending = true;
+    s_threatCount     = count;
+    s_ground          = ground;
+    s_threatsTruncated = truncated;
+    s_threatsPending  = true;
 }
 
-// "<groundDmg>:<groundTHitMs>;<entries>" where entries are
-// "attacker:bullet:tHitMs:dmg:pierce", comma separated. 
-static int BuildThreatPayload(char* out, int outSize)
+static std::mutex s_aimMutex;
+static IpcAim     s_aim;
+static bool       s_aimPending = false;
+
+void IpcBridge_PublishAim(const IpcAim& aim)
+{
+    std::lock_guard<std::mutex> lk(s_aimMutex);
+    s_aim        = aim;
+    s_aimPending = true;
+}
+
+// Room for the compact versioned payload (see IpcMessages::EncodeThreats):
+// "<version>;<ground>;<threats>;<T>" — +4 over the raw segments for the leading
+// "1;" and trailing ";<T>" tokens.
+constexpr int kThreatEntryMax = 11 + 11 + 14 + 11 + 1 + 5;
+constexpr int kGroundSegMax   = (11 + 1 + 14) + kIpcMaxGroundEvents * (1 + 11 + 1 + 14) + 2;
+constexpr int kThreatPayloadMax = kIpcMaxThreats * kThreatEntryMax + kGroundSegMax + 1 + 4;
+
+static bool WriteThreats(HANDLE hPipe, char* msgBuf, int msgBufSize)
 {
     IpcThreat local[kIpcMaxThreats];
     IpcGround localGround{};
-    int n = 0;
+    int  n         = 0;
+    bool truncated = false;
     {
         std::lock_guard<std::mutex> lk(s_threatsMutex);
-        if (!s_threatsPending) return -1;
+        if (!s_threatsPending) return true;   // nothing new
         s_threatsPending = false;
         n = s_threatCount;
         for (int i = 0; i < n; ++i) local[i] = s_threats[i];
         localGround = s_ground;
+        truncated   = s_threatsTruncated;
     }
-    int used = 0;
-    out[0] = '\0';
-    {
-        // "<d>:<t>" for the summary, then "|<d>:<t>" per additional ground tick.
-        const int wrote = snprintf(out, static_cast<size_t>(outSize), "%d:%.1f",
-                                   localGround.rawDamage,
-                                   static_cast<double>(localGround.tHitMs));
-        if (wrote <= 0 || wrote >= outSize) return -1;
-        used += wrote;
 
-        int nG = localGround.count;
-        if (nG > kIpcMaxGroundEvents) nG = kIpcMaxGroundEvents;
-        for (int i = 0; i < nG; ++i) {
-            const int w2 = snprintf(out + used, static_cast<size_t>(outSize - used),
-                                    "|%d:%.1f",
-                                    localGround.events[i].rawDamage,
-                                    static_cast<double>(localGround.events[i].tHitMs));
-            if (w2 <= 0 || w2 >= outSize - used) break;   // truncate cleanly
-            used += w2;
-        }
-
-        if (used >= outSize - 1) return -1;
-        out[used++] = ';';
-        out[used]   = '\0';
-    }
-    for (int i = 0; i < n; ++i) {
-        const int wrote = snprintf(out + used, static_cast<size_t>(outSize - used),
-                                   "%s%d:%d:%.1f:%d:%d",
-                                   (i == 0) ? "" : ",",
-                                   local[i].attackerObjId, local[i].bulletId,
-                                   static_cast<double>(local[i].tHitMs),
-                                   local[i].fallbackDamage,
-                                   local[i].fallbackArmorPiercing ? 1 : 0);
-        if (wrote <= 0 || wrote >= outSize - used) break;   // truncate cleanly
-        used += wrote;
-    }
-    return used;
-}
-
-constexpr int kThreatEntryMax = 11 + 11 + 14 + 11 + 1 + 5;
-constexpr int kGroundSegMax   = (11 + 1 + 14) + kIpcMaxGroundEvents * (1 + 11 + 1 + 14) + 2;
-constexpr int kThreatPayloadMax = kIpcMaxThreats * kThreatEntryMax + kGroundSegMax + 1;
-
-static bool WriteThreats(HANDLE hPipe, char* msgBuf, int msgBufSize)
-{
     char payload[kThreatPayloadMax] = {};
-    if (BuildThreatPayload(payload, sizeof(payload)) < 0) return true;   // nothing new
-    const uint64_t outSeq = s_auth.nextServerSeq++;
-    char outMac[65] = {};
-    if (!IpcSession::ComputeSessionMacHex(s_auth.sessionKey, outSeq, "threats", payload, outMac)) return false;
-    const int len = IpcMessages::BuildThreats(msgBuf, msgBufSize, payload, outSeq, outMac);
+    if (IpcMessages::EncodeThreats(payload, sizeof(payload), local, n, localGround, truncated) < 0)
+        return true;   // encode failure — skip this tick
+    const int len = IpcMessages::BuildThreats(msgBuf, msgBufSize, payload);
     return IpcFraming::WriteMessage(hPipe, msgBuf, len);
 }
 
-static bool WriteSignedHotkeyEvent(HANDLE hPipe, char* msgBuf, int msgBufSize, const char* pluginId, const char* action, bool value)
+static bool WriteAim(HANDLE hPipe, char* msgBuf, int msgBufSize)
+{
+    IpcAim local{};
+    {
+        std::lock_guard<std::mutex> lk(s_aimMutex);
+        if (!s_aimPending) return true;   // nothing new
+        s_aimPending = false;
+        local = s_aim;
+    }
+
+    // Ample for the fixed 15-token layout (see IpcMessages::EncodeAim).
+    char payload[256] = {};
+    if (IpcMessages::EncodeAim(payload, sizeof(payload), local) < 0)
+        return true;   // encode failure — skip this tick
+    const int len = IpcMessages::BuildAim(msgBuf, msgBufSize, payload);
+    return IpcFraming::WriteMessage(hPipe, msgBuf, len);
+}
+
+static bool WriteHotkeyEvent(HANDLE hPipe, char* msgBuf, int msgBufSize, const char* pluginId, const char* action, bool value)
 {
     if (!hPipe || !msgBuf || !pluginId || !action) return false;
-    char payload[128] = {};
-    snprintf(payload, sizeof(payload), "%s|%s|%s", pluginId, action, value ? "true" : "false");
-    const uint64_t outSeq = s_auth.nextServerSeq++;
-    char outMac[65] = {};
-    if (!IpcSession::ComputeSessionMacHex(s_auth.sessionKey, outSeq, "hotkeyEvent", payload, outMac)) return false;
-    const int len = IpcMessages::BuildHotkeyEvent(msgBuf, msgBufSize, pluginId, action, value, outSeq, outMac);
+    const int len = IpcMessages::BuildHotkeyEvent(msgBuf, msgBufSize, pluginId, action, value);
     return IpcFraming::WriteMessage(hPipe, msgBuf, len);
 }
 
-// Auth and heartbeat dispatcher
+// Heartbeat liveness dispatcher
 
-static void WriteAuthResult(HANDLE hPipe, char* msgBuf, int msgBufSize, bool ok, const char* response = "")
-{
-    IpcFraming::WriteMessage(hPipe, msgBuf, IpcMessages::BuildAuthResult(msgBuf, msgBufSize, ok, response));
-}
-
-static bool DispatchAuthMessage(char* json, HANDLE hPipe, char* msgBuf, int msgBufSize)
+static bool HandleControlMessage(char* json, HANDLE hPipe, char* msgBuf, int msgBufSize)
 {
     char typeBuf[64] = {};
     if (!IpcJson::GetString(json, "type", typeBuf, sizeof(typeBuf))) return false;
-    if (strcmp(typeBuf, "auth") == 0) {
-        char userId[128] = {}, response[128] = {}, clientChallenge[128] = {}, protocol[32] = {}, clientPid[32] = {};
-        if (!IpcJson::GetString(json, "userId", userId, sizeof(userId)) ||
-            !IpcJson::GetString(json, "response", response, sizeof(response)) ||
-            !IpcJson::GetString(json, "challenge", clientChallenge, sizeof(clientChallenge)) ||
-            !IpcJson::GetString(json, "protocol", protocol, sizeof(protocol)) ||
-            !IpcJson::GetString(json, "clientPid", clientPid, sizeof(clientPid))) { DbgLog("Auth message missing required fields."); WriteAuthResult(hPipe, msgBuf, msgBufSize, false); return true; }
-
-        if (!IpcSession::IsAsciiIdSafe(userId) ||
-            strcmp(protocol, "bridge-v3") != 0 ||
-            strlen(response) != 64 || !Handshake::IsHexString(response, 64) ||
-            strlen(clientChallenge) != 64 || !Handshake::IsHexString(clientChallenge, 64) ||
-            strlen(s_auth.pendingChallenge) != 64 || !Handshake::IsHexString(s_auth.pendingChallenge, 64)) { DbgLog("Auth payload failed format validation."); WriteAuthResult(hPipe, msgBuf, msgBufSize, false); return true; }
-        strncpy_s(s_auth.userId, sizeof(s_auth.userId), userId, _TRUNCATE);
-
-        if (!IpcSession::DeriveSessionKey(s_auth.pendingChallenge, clientChallenge, s_auth.userId, clientPid, s_auth.sessionKey, PipeName())) { DbgLog("Session key derivation failed."); WriteAuthResult(hPipe, msgBuf, msgBufSize, false); return true; }
-        s_auth.authenticated = true; s_auth.sessionReady = true; s_auth.heartbeatMisses = 0; s_auth.lastHeartbeatRecv = GetTickCount64(); s_auth.lastClientSeq = 0; s_auth.nextServerSeq = 1;
-        DbgLog("Auth OK: userId=%s", userId);
-        char dllResponse[65] = {};
-        if (!Handshake::ComputeResponse(clientChallenge, strlen(clientChallenge), dllResponse)) { DbgLog("Auth response generation failed."); WriteAuthResult(hPipe, msgBuf, msgBufSize, false); return true; }
-        WriteAuthResult(hPipe, msgBuf, msgBufSize, true, dllResponse);
-        return true;
-    }
-
-    if (strcmp(typeBuf, "heartbeatResp") == 0) {
-        char response[128] = {}, seqStr[32] = {}, macHex[128] = {};
-        if (!IpcJson::GetString(json, "response", response, sizeof(response))) return true;
-        if (!IpcJson::GetString(json, "seq", seqStr, sizeof(seqStr))) return true;
-        if (!IpcJson::GetString(json, "mac", macHex, sizeof(macHex))) return true;
-        if (strlen(response) != 64 || !Handshake::IsHexString(response, 64) || !IpcSession::VerifyClientSeqAndMac(&s_auth, seqStr, macHex, "heartbeatResp", response)) { s_auth.heartbeatMisses++; return true; }
-        if (s_auth.challengePending && Handshake::VerifyResponse(s_auth.pendingChallenge, strlen(s_auth.pendingChallenge), response)) { s_auth.challengePending = false; s_auth.heartbeatMisses = 0; s_auth.lastHeartbeatRecv = GetTickCount64(); }
-        else s_auth.heartbeatMisses++;
-        return true;
-    }
-
     if (strcmp(typeBuf, "heartbeat") == 0) {
-        char nonce[128] = {}, seqStr[32] = {}, macHex[128] = {};
-        if (!IpcJson::GetString(json, "nonce", nonce, sizeof(nonce))) return true;
-        if (!IpcJson::GetString(json, "seq", seqStr, sizeof(seqStr))) return true;
-        if (!IpcJson::GetString(json, "mac", macHex, sizeof(macHex))) return true;
-        if (strlen(nonce) != 64 || !Handshake::IsHexString(nonce, 64)) return true;
-        if (!IpcSession::VerifyClientSeqAndMac(&s_auth, seqStr, macHex, "heartbeat", nonce)) return true;
-        char resp[65] = {}, outMac[65] = {};
-        if (!Handshake::ComputeResponse(nonce, strlen(nonce), resp)) return true;
-        const uint64_t outSeq = s_auth.nextServerSeq++;
-        if (!IpcSession::ComputeSessionMacHex(s_auth.sessionKey, outSeq, "heartbeatResp", resp, outMac)) return true;
-        IpcFraming::WriteMessage(hPipe, msgBuf, IpcMessages::BuildHeartbeatResp(msgBuf, msgBufSize, resp, outSeq, outMac));
+        IpcFraming::WriteMessage(hPipe, msgBuf, IpcMessages::BuildHeartbeatResp(msgBuf, msgBufSize));
+        return true;
+    }
+    if (strcmp(typeBuf, "heartbeatResp") == 0) {
+        s_conn.heartbeatPending = false;
+        s_conn.heartbeatMisses = 0;
         return true;
     }
     return false;
@@ -321,7 +205,7 @@ static bool DispatchAuthMessage(char* json, HANDLE hPipe, char* msgBuf, int msgB
 
 // Feature command parsing and dispatch
 
-static bool ParseSetFeatureCommand(char* json, const char* seqStr, const char* macHex, FeatureCommand* out)
+static bool ParseSetFeatureCommand(char* json, FeatureCommand* out)
 {
     if (!out) return false;
     if (!IpcJson::GetString(json, "key", out->key, sizeof(out->key))) return false;
@@ -335,57 +219,22 @@ static bool ParseSetFeatureCommand(char* json, const char* seqStr, const char* m
     } else {
         return false;
     }
-    char payload[8192] = {};
-    snprintf(payload, sizeof(payload), "%s|%s|%s", out->key, out->valueType, out->value);
-    if (!IpcSession::VerifyClientSeqAndMac(&s_auth, seqStr, macHex, "setFeature", payload)) {
-        DBG_FILE_LOG("[IpcBridge] setFeature HMAC REJECTED: key=" << out->key << " valueType=" << out->valueType << " value=" << out->value);
-        return false;
-    }
     DBG_FILE_LOG("[IpcBridge] setFeature: key=" << out->key << " valueType=" << out->valueType << " value=" << out->value);
     return true;
 }
 
-static bool DispatchTileCommand(const char* type, char* json, const char* seqStr, const char* macHex)
-{
-    if (strcmp(type, "clearTiles") == 0) {
-        if (!IpcSession::VerifyClientSeqAndMac(&s_auth, seqStr, macHex, "clearTiles", "")) return true;
-        IpcTileState::ClearTiles();
-        return true;
-    }
-    if (strcmp(type, "noWalkInit") == 0) {
-        char typesBuf[8192] = {};
-        if (!IpcJson::GetString(json, "types", typesBuf, sizeof(typesBuf))) return true;
-        if (!IpcSession::VerifyClientSeqAndMac(&s_auth, seqStr, macHex, "noWalkInit", typesBuf)) return true;
-        IpcTileState::InitNoWalkTypes(typesBuf);
-        return true;
-    }
-    if (strcmp(type, "tileUpdate") == 0) {
-        char tilesBuf[65000] = {};
-        if (!IpcJson::GetString(json, "tiles", tilesBuf, sizeof(tilesBuf))) return true;
-        if (!IpcSession::VerifyClientSeqAndMac(&s_auth, seqStr, macHex, "tileUpdate", tilesBuf)) return true;
-        IpcTileState::ApplyTileUpdate(tilesBuf);
-        return true;
-    }
-    return false;
-}
-
-static void DispatchSetFeature(char* json, const char* seqStr, const char* macHex)
+static void DispatchSetFeature(char* json)
 {
     FeatureCommand feature{};
-    if (!ParseSetFeatureCommand(json, seqStr, macHex, &feature)) return;
+    if (!ParseSetFeatureCommand(json, &feature)) return;
     FeatureCommandRegistry::Apply(feature);
 }
 
 static void DispatchCommand(char* json)
 {
     char typeBuf[64] = {};
-    char seqStr[32] = {};
-    char macHex[128] = {};
     if (!IpcJson::GetString(json, "type", typeBuf, sizeof(typeBuf))) return;
-    if (!IpcJson::GetString(json, "seq", seqStr, sizeof(seqStr))) return;
-    if (!IpcJson::GetString(json, "mac", macHex, sizeof(macHex))) return;
-    if (DispatchTileCommand(typeBuf, json, seqStr, macHex)) return;
-    if (strcmp(typeBuf, "setFeature") == 0) DispatchSetFeature(json, seqStr, macHex);
+    if (strcmp(typeBuf, "setFeature") == 0) DispatchSetFeature(json);
 }
 
 // Bridge thread
@@ -394,7 +243,7 @@ DWORD WINAPI IpcBridgeThread(LPVOID)
 {
     DBG_FILE_LOG("[IpcBridgeThread] Entered (DLL-as-client mode).");
     DbgLog("Thread started.");
-    DBG_FILE_LOG("[IpcBridgeThread] Handshake key OK. Connecting to pipe: " << PipeName());
+    DBG_FILE_LOG("[IpcBridgeThread] Connecting to pipe: " << PipeName());
     while (!s_shutdown) {
         if (!WaitNamedPipeA(PipeName(), 2000)) {
             if (s_shutdown) break;
@@ -416,19 +265,10 @@ DWORD WINAPI IpcBridgeThread(LPVOID)
 
         DBG_FILE_LOG("[IpcBridgeThread] Connected to Node.js pipe server. Sending hello...");
         DbgLog("Connected. Sending hello...");
-        Handshake::ResetAuthState(&s_auth);
+        s_conn = {};
 
         char msgBuf[PIPE_BUFFER_SIZE];
-        char helloChallenge[65] = {};
-        if (!Handshake::GenerateChallenge(helloChallenge)) {
-            DbgLog("Failed to generate hello challenge.");
-            CloseHandle(hPipe);
-            Sleep(1000);
-            continue;
-        }
-
-        strncpy_s(s_auth.pendingChallenge, sizeof(s_auth.pendingChallenge), helloChallenge, _TRUNCATE);
-        int len = IpcMessages::BuildHello(msgBuf, sizeof(msgBuf), helloChallenge);
+        int len = IpcMessages::BuildHello(msgBuf, sizeof(msgBuf));
         if (!IpcFraming::WriteMessage(hPipe, msgBuf, len)) {
             DbgLog("Failed to send hello.");
             CloseHandle(hPipe);
@@ -437,159 +277,131 @@ DWORD WINAPI IpcBridgeThread(LPVOID)
         }
 
         char readBuf[PIPE_BUFFER_SIZE];
-        bool authOk = false;
-        ULONGLONG authDeadline = GetTickCount64() + 5000;
-
-        while (GetTickCount64() < authDeadline && !s_shutdown) {
-            int readLen = IpcFraming::ReadMessage(hPipe, readBuf, sizeof(readBuf) - 1);
-            if (readLen < 0) break;
-            if (readLen > 0) {
-                readBuf[readLen] = '\0';
-                if (DispatchAuthMessage(readBuf, hPipe, msgBuf, sizeof(msgBuf))) {
-                    authOk = s_auth.authenticated;
-                    break;
-                }
-            }
-            Sleep(25);
-        }
-
-        if (!authOk) {
-            DbgLog("Auth failed or timed out. Retrying.");
-            Handshake::ResetAuthState(&s_auth);
-            CloseHandle(hPipe);
-            Sleep(2000);
-            continue;
-        }
-
-        DbgLog("Authenticated. userId=%s", s_auth.userId);
+        DbgLog("Hello sent. Entering main loop.");
         ULONGLONG lastPlayerPush = 0;
-        s_auth.lastHeartbeatSent = GetTickCount64();
-        s_auth.lastHeartbeatRecv = GetTickCount64();
+        s_conn.connected = true;
+        s_conn.lastHeartbeatSent = GetTickCount64();
         bool connected = true;
         bool sentUnresolvedClasses = false;
 
         while (connected && !s_shutdown) {
-            int readLen = IpcFraming::ReadMessage(hPipe, readBuf, sizeof(readBuf) - 1);
-            if (readLen < 0) {
-                DbgLog("Server disconnected.");
-                connected = false;
-                break;
-            }
-            if (readLen > 0) {
+            // DRAIN the pipe every iteration. This used to read exactly ONE message
+            // per pass, and the pass ends in Sleep(25) — so intake was hard-capped at
+            // ~38 messages/second no matter how many were queued. Every plugin shares
+            // this one lane (the Farmer alone sends walkTargetX/Y/Active at 10 Hz = 30/s,
+            // before auto-dodge's per-MOVE anchor pushes, aim/lock ids, autofire, ...),
+            // so production routinely exceeded the drain rate and the backlog grew
+            // MONOTONICALLY for the whole session: commands were applied tens of
+            // seconds after the script issued them, worsening the longer it ran.
+            // Symptom was "every action takes ~30 s to happen", and it made every
+            // feature look independently broken because they all queue here.
+            // ReadMessage is non-blocking (PeekNamedPipe, returns 0 when empty), so
+            // this terminates as soon as the pipe is dry. The cap only stops a flood
+            // from starving the heartbeat/telemetry writes below.
+            constexpr int kMaxDrainPerIteration = 256;
+            for (int drained = 0; drained < kMaxDrainPerIteration; ++drained) {
+                int readLen = IpcFraming::ReadMessage(hPipe, readBuf, sizeof(readBuf) - 1);
+                if (readLen < 0) {
+                    DbgLog("Server disconnected.");
+                    connected = false;
+                    break;
+                }
+                if (readLen == 0) break;          // pipe empty — nothing more queued
                 readBuf[readLen] = '\0';
-                if (!DispatchAuthMessage(readBuf, hPipe, msgBuf, sizeof(msgBuf)) && Handshake::IsHealthy(&s_auth))
+                if (!HandleControlMessage(readBuf, hPipe, msgBuf, sizeof(msgBuf)))
                     DispatchCommand(readBuf);
             }
+            if (!connected) break;
 
             ULONGLONG now = GetTickCount64();
-            if (now - s_auth.lastHeartbeatSent >= Handshake::HEARTBEAT_INTERVAL_MS) {
-                if (s_auth.challengePending) {
-                    s_auth.heartbeatMisses++;
-                    DbgLog("Heartbeat miss #%d.", s_auth.heartbeatMisses);
-                    if (s_auth.heartbeatMisses >= Handshake::HEARTBEAT_MAX_MISSES) {
+            if (now - s_conn.lastHeartbeatSent >= HEARTBEAT_INTERVAL_MS) {
+                if (s_conn.heartbeatPending) {
+                    s_conn.heartbeatMisses++;
+                    DbgLog("Heartbeat miss #%d.", s_conn.heartbeatMisses);
+                    if (s_conn.heartbeatMisses >= HEARTBEAT_MAX_MISSES) {
                         DbgLog("Too many misses - disconnecting.");
                         connected = false;
                         break;
                     }
                 }
-
-                char nonce[65] = {};
-                if (Handshake::GenerateChallenge(nonce)) {
-                    strncpy_s(s_auth.pendingChallenge, sizeof(s_auth.pendingChallenge), nonce, _TRUNCATE);
-                    s_auth.challengePending = true; s_auth.lastHeartbeatSent = now;
-                    const uint64_t outSeq = s_auth.nextServerSeq++;
-                    char outMac[65] = {};
-                    if (!IpcSession::ComputeSessionMacHex(s_auth.sessionKey, outSeq, "heartbeat", nonce, outMac)) {
-                        connected = false;
-                        break;
-                    }
-                    len = IpcMessages::BuildHeartbeat(msgBuf, sizeof(msgBuf), nonce, outSeq, outMac);
-                    if (!IpcFraming::WriteMessage(hPipe, msgBuf, len)) {
-                        connected = false;
-                        break;
-                    }
-                }
-            }
-
-            if (Handshake::IsHealthy(&s_auth) && now - lastPlayerPush >= 200) {
-                lastPlayerPush = now;
-                const uint64_t outSeq = s_auth.nextServerSeq++;
-                char payload[256] = {};
-                IpcMessages::BuildPlayerSigPayload(payload, sizeof(payload));
-                char outMac[65] = {};
-                if (!IpcSession::ComputeSessionMacHex(s_auth.sessionKey, outSeq, "player", payload, outMac)) {
+                len = IpcMessages::BuildHeartbeat(msgBuf, sizeof(msgBuf));
+                if (!IpcFraming::WriteMessage(hPipe, msgBuf, len)) {
                     connected = false;
                     break;
                 }
-                len = IpcMessages::BuildPlayer(msgBuf, sizeof(msgBuf), outSeq, outMac);
+                s_conn.heartbeatPending = true;
+                s_conn.lastHeartbeatSent = now;
+            }
+
+            if (now - lastPlayerPush >= 200) {
+                lastPlayerPush = now;
+                len = IpcMessages::BuildPlayer(msgBuf, sizeof(msgBuf));
                 if (!IpcFraming::WriteMessage(hPipe, msgBuf, len)) {
                     connected = false;
                     break;
                 }
             }
 
-            if (Handshake::IsHealthy(&s_auth)) {
-                if (FeatureRuntime::PollSocketHotkeyEvent() && !WriteSignedHotkeyEvent(hPipe, msgBuf, sizeof(msgBuf), "socket", "toggle", true)) {
+            if (FeatureRuntime::PollSocketHotkeyEvent() && !WriteHotkeyEvent(hPipe, msgBuf, sizeof(msgBuf), "socket", "toggle", true)) {
+                connected = false;
+                break;
+            }
+
+            std::vector<std::string> pluginToggleEvents;
+            FeatureRuntime::CollectPluginToggleHotkeyEvents(pluginToggleEvents);
+            for (const auto& pluginId : pluginToggleEvents) {
+                if (!WriteHotkeyEvent(hPipe, msgBuf, sizeof(msgBuf), pluginId.c_str(), "togglePlugin", true)) {
                     connected = false;
                     break;
                 }
+            }
+            if (!connected) break;
 
-                std::vector<std::string> pluginToggleEvents;
-                FeatureRuntime::CollectPluginToggleHotkeyEvents(pluginToggleEvents);
-                for (const auto& pluginId : pluginToggleEvents) {
-                    if (!WriteSignedHotkeyEvent(hPipe, msgBuf, sizeof(msgBuf), pluginId.c_str(), "togglePlugin", true)) {
-                        connected = false;
-                        break;
-                    }
-                }
-                if (!connected) break;
+            const int noclipEnabled = FeatureState::ConsumePendingPlayerNoclipEnabled();
+            if (noclipEnabled >= 0 && !WriteHotkeyEvent(hPipe, msgBuf, sizeof(msgBuf), "player-noclip", "noclipEnabled", noclipEnabled != 0)) {
+                connected = false;
+                break;
+            }
 
-                const int noclipEnabled = FeatureState::ConsumePendingPlayerNoclipEnabled();
-                if (noclipEnabled >= 0 && !WriteSignedHotkeyEvent(hPipe, msgBuf, sizeof(msgBuf), "player-noclip", "noclipEnabled", noclipEnabled != 0)) {
+            std::vector<PendingEvent> drained;
+            {
+                std::lock_guard<std::mutex> lk(s_pendingEventsMutex);
+                if (!s_pendingEvents.empty()) drained.swap(s_pendingEvents);
+            }
+            for (const auto& ev : drained) {
+                if (!WriteHotkeyEvent(hPipe, msgBuf, sizeof(msgBuf), ev.pluginId, ev.action, true)) {
                     connected = false;
                     break;
                 }
+            }
+            if (!connected) break;
 
-                std::vector<PendingEvent> drained;
-                {
-                    std::lock_guard<std::mutex> lk(s_pendingEventsMutex);
-                    if (!s_pendingEvents.empty()) drained.swap(s_pendingEvents);
-                }
-                for (const auto& ev : drained) {
-                    if (!WriteSignedHotkeyEvent(hPipe, msgBuf, sizeof(msgBuf), ev.pluginId, ev.action, true)) {
-                        connected = false;
-                        break;
-                    }
-                }
-                if (!connected) break;
+            if (!WriteThreats(hPipe, msgBuf, sizeof(msgBuf))) {
+                connected = false;
+                break;
+            }
 
-                if (!WriteThreats(hPipe, msgBuf, sizeof(msgBuf))) {
-                    connected = false;
-                    break;
-                }
+            if (!WriteAim(hPipe, msgBuf, sizeof(msgBuf))) {
+                connected = false;
+                break;
             }
 
             if (!sentUnresolvedClasses && RuntimeOffsets::HasGivenUp()) {
                 sentUnresolvedClasses = true;
                 const char* classes = RuntimeOffsets::GetUnresolvedClassNames();
                 if (classes && classes[0] != '\0') {
-                    const uint64_t outSeq = s_auth.nextServerSeq++;
-                    char outMac[65] = {};
-                    if (IpcSession::ComputeSessionMacHex(s_auth.sessionKey, outSeq, "unresolvedClasses", classes, outMac)) {
-                        len = IpcMessages::BuildUnresolvedClasses(msgBuf, sizeof(msgBuf), classes, outSeq, outMac);
-                        IpcFraming::WriteMessage(hPipe, msgBuf, len);
-                    }
+                    len = IpcMessages::BuildUnresolvedClasses(msgBuf, sizeof(msgBuf), classes);
+                    IpcFraming::WriteMessage(hPipe, msgBuf, len);
                 }
             }
             Sleep(25);
         }
 
-        Handshake::ResetAuthState(&s_auth);
+        s_conn = {};
         CloseHandle(hPipe);
         DbgLog("Disconnected. Will reconnect.");
     }
 
     DbgLog("Thread exiting.");
-    Handshake::ClearSharedKeyCache();
     return 0;
 }

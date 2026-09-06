@@ -16,8 +16,8 @@
 #include "DbgFileLog.h"
 #include "FloatingTextService.h"
 #include "GameState.h"
-#include "AutoAim.h"
-#include "ProjNoclip.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
+#include "features/combat/autoaim/shoot/ProjNoclip.h"
 #include "Noclip.h"
 #include "NoclipHook.h"
 #include "gui/tabs/TestTAB.h"
@@ -126,7 +126,18 @@ namespace {
         const float walkX      = FeatureState::GetWalkTargetX();
         const float walkY      = FeatureState::GetWalkTargetY();
         const bool changed = walkActive != s_lastActive || walkX != s_lastX || walkY != s_lastY;
-        if (changed) {
+        // UDodge clears location-scoped goals in OnEnter(). An SDK command can
+        // race that reset: FeatureState still owns the new-map target, while the
+        // native walk-goal channel has already been cleared. Reconcile the live
+        // channel as well as watching stored-value changes so map transitions
+        // cannot leave the dashboard saying "walking" with no native waypoint.
+        float nativeX = 0.f, nativeY = 0.f;
+        bool nativeActive = false;
+        DangerPlanner::GetWalkGoal(nativeX, nativeY, nativeActive);
+        const bool nativeDesynced = walkActive != 0
+            && (!nativeActive || std::fabs(nativeX - walkX) > 0.001f
+                              || std::fabs(nativeY - walkY) > 0.001f);
+        if (changed || nativeDesynced) {
             s_lastActive = walkActive; s_lastX = walkX; s_lastY = walkY;
             TestTAB::SetBotWalkTarget(walkX, walkY, walkActive != 0);
         }

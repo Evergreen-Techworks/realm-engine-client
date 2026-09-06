@@ -119,48 +119,73 @@ Both are decoded by `client/src/packets/PacketFactory` (Layer A — the
 Electron app's MITM proxy) and the typed `@re-headless/protocol` classes
 (Layer B — `muling-headless`). They share the same underlying map.
 
-### Update Layer B (the typed packet map)
+### One file, one command
 
-The map lives in
-`client/packages/protocol/src/generated/packet-map.ts`. It is
-regenerated from upstream `realmlib` (currently
-`HiveManager/HeadlessClient/realmlib/src` and
-`Nexus/headless/realmlib/src`, which are byte-identical).
+`client/data/packet-definitions.json` is the **canonical** description of
+the protocol for both stacks. Every derived artifact is generated from
+it; none of them is ever hand-edited. See `client/data/README.md`.
 
-1. Sync from either upstream when they publish their post-patch map
-   update.
-2. Regenerate:
+1. **Edit `client/data/packet-definitions.json`.**
+   - *New packet:* add one entry with `name` (Layer A's
+     `SCREAMINGNOSPACE` spelling, which plugins string-compare),
+     `protocolName` (Layer B's `SCREAMING_SNAKE` spelling — **required**,
+     there is no defaulting rule), `direction` (`client`/`server`) and
+     `fields`.
+   - *Changed wire shape:* edit that packet's `fields`.
+   - *Id only Layer B knows about:* add it to `protocolOnlyPackets`.
+   - *Direction that the two stacks disagree on:* set `protocolDirection`
+     (see "Known divergences" below) — do not silently change `direction`.
+
+2. **Regenerate:**
    ```bash
-   node client/scripts/sync-packet-map.mjs \
-     ../../HiveManager/HeadlessClient/realmlib/src
+   cd client && npm run gen:packets
    ```
-3. The script preserves REC's historical names via a `PacketAlias` export
-   and heuristically seeds direction for any newly-added IDs (each new
-   direction line is marked `// NEW — verify`). Grep for `NEW — verify`
-   and audit each before shipping.
 
-### Update Layer A (the packet-shape definitions)
+3. **Verify:**
+   ```bash
+   npm run check:packets && npm test && npx tsc --noEmit -p tsconfig.json
+   ```
 
-Layer A is data-driven from `client/data/packet-definitions.json` (which
-generates `client/src/packets/packetDefinitions.generated.ts`). If a
-packet's fields changed:
+4. **Review the generated diff** in
+   `client/packages/protocol/src/generated/packet-map.ts` and
+   `client/src/packets/*.generated.ts`. Both should show only the change
+   you intended. A clean tree plus `npm run gen:packets` must produce an
+   empty `git diff` — that is what makes the canonical file canonical.
 
-1. Update `client/data/packet-definitions.json` with the new field list.
-2. Regenerate the `.ts` (whatever build step you use — currently they
-   are kept in-sync manually; if a proper generator lands, document it
-   here).
-3. Confirm both files stay byte-identical to the upstream realmlib fork
-   you sync from (they should — REC and Hive agree on every byte after
-   the current sync).
+`npm run check:packets` also runs from `npm test` and in CI, so a
+hand-edit to a generated file, or updating one stack and forgetting the
+other, fails the build instead of shipping.
 
-Verify with:
+To see what an upstream realmlib checkout knows that the canonical file
+does not, run the read-only reporter (it never writes anything):
 
 ```bash
-diff HiveManager/Manager/data/packet-definitions.json \
-     realm-engine-client/client/data/packet-definitions.json
+node client/scripts/import-realmlib-map.mjs \
+  ../../HiveManager/HeadlessClient/realmlib/src
 ```
 
-An empty diff = you're green.
+### Known divergences (deliberate, unresolved)
+
+The two stacks genuinely disagree in three places. These are recorded as
+**data** in the canonical file and change neither stack's behaviour. Each
+needs a human decision; do not "fix" one in passing.
+
+- **D1 — six ids disagree about direction.** Layer A's `direction` vs
+  Layer B's `PACKET_DIRECTION`: ids **17, 53, 80, 204, 207, 215**. The
+  disagreement is encoded as `protocolDirection` on those packets, and
+  `npm run check:packets` prints the register on every run. Layer B looks
+  better-evidenced for at least 17, 80 and 207, but changing Layer A's
+  `direction` changes proxy behaviour.
+- **D2 — `SHOOTACK` is two different things.** Layer A defines id **100**
+  as `SHOOTACK` (one field, `time: int32`); Layer B has no id 100, and its
+  `SHOOT_ACK` is id **121** with two fields (`time: int32`, `ack: int16`),
+  which Layer A calls `SHOOTACKCOUNTER`. Layer A's id 100 has no consumer
+  and is probably stale — see `protocolNote` on id 100.
+- **D3 — `SHOOTACK` is also a `PacketType` orphan.** `PacketAlias.SHOOTACK`
+  resolves to `PacketType.SHOOT_ACK` (id **121**), while Layer A's
+  `SHOOTACK` is id **100**. Anyone reading both stacks will get this
+  wrong. Orphan `PacketType` members carry no id, so the generator
+  deliberately keeps id 100 out of `PACKET_MAP`.
 
 ---
 

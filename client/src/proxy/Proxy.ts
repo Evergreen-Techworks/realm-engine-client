@@ -4,6 +4,7 @@ import { readFileSync, existsSync, readdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execFileSync } from 'child_process';
+import { GAME_PORT } from '../constants/GameId.js';
 import { ClientConnection } from './ClientConnection.js';
 import { PacketFactory } from '../packets/PacketFactory.js';
 import { type Packet } from '../packets/Packet.js';
@@ -46,7 +47,7 @@ export class Proxy extends EventEmitter {
   }
 
   /** Start the TCP listener. */
-  start(host = '127.0.0.1', port = 2050): void {
+  start(host = '127.0.0.1', port = GAME_PORT): void {
     Logger.log('Proxy', `Starting listener on ${host}:${port}...`);
     this.listener = net.createServer((socket) => this.onLocalConnect(socket));
     this.listener.listen(port, host, () => {
@@ -251,7 +252,7 @@ export class Proxy extends EventEmitter {
       try {
         const output = execFileSync('powershell.exe', [
           '-NonInteractive', '-NoProfile', '-Command',
-          `(Get-NetTCPConnection -LocalPort ${remotePort} -RemotePort 2050 -State Established -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess`,
+          `(Get-NetTCPConnection -LocalPort ${remotePort} -RemotePort ${GAME_PORT} -State Established -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess`,
         ], { encoding: 'utf8', timeout: 2000, windowsHide: true } as any).trim();
         const pid = parseInt(output, 10);
         if (Number.isFinite(pid) && pid > 0) {

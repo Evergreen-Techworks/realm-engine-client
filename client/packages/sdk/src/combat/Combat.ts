@@ -4,6 +4,16 @@ import { Enemy } from '../types/entities/Enemy';
 export type CombatAimTarget = number | { objectId: number };
 
 export class Combat {
+    /** Enable or disable the native automatic weapon trigger. */
+    static setAutoFire(enabled: boolean): boolean {
+        throw new Error('Must be run inside RealmEngine client');
+    }
+
+    /** Enable or disable the native KillAura target/origin controller. */
+    static setKillAura(enabled: boolean): boolean {
+        throw new Error('Must be run inside RealmEngine client');
+    }
+
     /** Auto-aim weapon shots at a tracked object id until stopped or changed. */
     static aimAt(target: CombatAimTarget): boolean {
         throw new Error('Must be run inside RealmEngine client');

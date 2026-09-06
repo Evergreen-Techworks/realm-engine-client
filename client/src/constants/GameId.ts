@@ -12,3 +12,6 @@ export const GameId = {
 } as const;
 
 export type GameIdName = keyof typeof GameId;
+
+/** The RotMG game server TCP port the proxy MITMs / clients connect to. */
+export const GAME_PORT = 2050;

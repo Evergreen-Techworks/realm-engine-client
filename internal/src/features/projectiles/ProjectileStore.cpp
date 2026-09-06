@@ -4,6 +4,8 @@
 #include "ProjectileRuntimeReader.h"
 #include "ProjectileTrajectory.h"
 #include "RuntimeOffsets.h"
+#include "core/runtime/MemRead.h"
+#include "game/objects/GameObjects.h"
 #include "gui/tabs/WorldTAB.h"
 
 #include <atomic>
@@ -46,25 +48,11 @@ bool g_LocalCsInit = false;
 ProjectileStore::HazardSpawnCb g_HazardCb = nullptr;
 void* g_HazardCbUser = nullptr;
 
-static bool AddrOk(const void* p)
-{
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000 && a < 0x7FFFFFFFFFFFULL;
-}
-
 static bool TryReadLivePos(void* projInst, float& outX, float& outY)
 {
     outX = 0.f;
     outY = 0.f;
-    if (!AddrOk(projInst)) return false;
-    __try {
-        uint8_t* p = reinterpret_cast<uint8_t*>(projInst);
-        outX = *reinterpret_cast<float*>(p + RuntimeOffsets::PosX);
-        outY = *reinterpret_cast<float*>(p + RuntimeOffsets::PosY);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    return Game::Entity(projInst).TryPos(outX, outY);
 }
 
 static void EnsureLocalCs()
@@ -81,7 +69,7 @@ static void EnsureLocalCs()
 // (= true model error, recorded as residual). Caller holds the slot lock.
 static void CalibrateSlotClock(WorldProjectile& slot, double qpcNow)
 {
-    if (slot.spawnQpcMs <= 0.0 || !AddrOk(slot.ptr)) return;
+    if (slot.spawnQpcMs <= 0.0 || !Mem::AddrOk(slot.ptr)) return;
     if (qpcNow - slot.lastCalibQpcMs < kCalibThrottleMs) return;
     slot.lastCalibQpcMs = qpcNow;
 
@@ -138,7 +126,7 @@ static void FillOutFromSlot(WorldProjectile& dst, WorldProjectile& src, ULONGLON
 
     dst = src;
     if (!src.valid) return;
-    if (AddrOk(src.ptr)) {
+    if (Mem::AddrOk(src.ptr)) {
         float runtimeHalf = 0.f;
         ProjectileRuntimeReader::TryReadRuntimeChebyshevHalf(src.ptr, runtimeHalf);
         dst.runtimeChebyshevHalf = (runtimeHalf > 1e-5f) ? runtimeHalf : src.runtimeChebyshevHalf;
@@ -158,7 +146,7 @@ static void FillOutFromSlot(WorldProjectile& dst, WorldProjectile& src, ULONGLON
     }
 
     const float elapsed = static_cast<float>(now - src.spawnTick);
-    if (livePos && AddrOk(src.ptr) && TryReadLivePos(src.ptr, dst.x, dst.y))
+    if (livePos && Mem::AddrOk(src.ptr) && TryReadLivePos(src.ptr, dst.x, dst.y))
         return;
 
     if (elapsed >= 0.f && ProjectileTrajectory::GetPositionAtTime(
@@ -270,6 +258,49 @@ bool RetireProjectile(const WorldProjectile& projectile)
         slot.valid = false;
         retired = true;
         break;
+    }
+    LeaveCriticalSection(&g_RingCs);
+    return retired;
+}
+
+// A single reconcile should only ever catch a handful of just-deleted shots. If it
+// would retire MORE than this, the live-pool read is INCOMPLETE (it didn't see shots
+// that are actually alive — observed live=1 during a boss firing dozens), and pruning
+// them would drop LIVE shots → the dodge misses them → death. In that case we abort
+// and prune NOTHING. A lingering phantom lane is safe; a wrongly-dropped live shot is
+// not. Genuine mass-deletions above this just wait for the next reconcile.
+static constexpr int kMaxSafeRetirePerReconcile = 4;
+
+int RetireNotInLiveSet(const std::unordered_set<uintptr_t>& live, float minAgeMs)
+{
+    if (live.empty()) return 0;   // SAFETY: empty = failed/partial pool read → prune NOTHING
+    Initialize();
+    const ULONGLONG now = GetTickCount64();
+
+    EnterCriticalSection(&g_RingCs);
+    // Pass 1 — DRY COUNT how many would be retired; if implausibly many, the read is
+    // incomplete and we must not trust it. Abort without touching a single slot.
+    int wouldRetire = 0;
+    for (int i = 0; i < kMaxTrackedProj; ++i) {
+        const WorldProjectile& slot = g_Slots[i];
+        if (!slot.valid || !slot.ptr) continue;
+        if (static_cast<float>(now - slot.spawnTick) < minAgeMs) continue;
+        if (live.count(reinterpret_cast<uintptr_t>(slot.ptr)) == 0) ++wouldRetire;
+    }
+    if (wouldRetire > kMaxSafeRetirePerReconcile) {
+        LeaveCriticalSection(&g_RingCs);
+        return 0;   // incomplete read → prune nothing (never risk a live shot)
+    }
+
+    // Pass 2 — actually retire the (few, confidently-dead) slots.
+    int retired = 0;
+    for (int i = 0; i < kMaxTrackedProj; ++i) {
+        WorldProjectile& slot = g_Slots[i];
+        if (!slot.valid || !slot.ptr) continue;
+        if (static_cast<float>(now - slot.spawnTick) < minAgeMs) continue;
+        if (live.count(reinterpret_cast<uintptr_t>(slot.ptr)) != 0) continue;  // still alive → keep
+        slot.valid = false;                                                    // game deleted it → drop the lane
+        ++retired;
     }
     LeaveCriticalSection(&g_RingCs);
     return retired;

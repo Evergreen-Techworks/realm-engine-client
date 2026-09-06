@@ -1,5 +1,5 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../src/proxy/ClientConnection.js';
+import type { PluginContext } from './api.js';
+import type { ClientConnection } from './api.js';
 
 /**
  * O3 Helper — faithful port of RealmStock MultiTool's Class87 (O3 Helper).

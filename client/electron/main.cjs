@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, utilityProcess } = require('electron');
 const { spawn, fork, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { WindowHostBridge } = require('./services/window-host-bridge.cjs');
 const { InstanceManager } = require('./services/instance-manager.cjs');
+const { IPC } = require('./ipc-channels.cjs');
 
 const APP_NAME = 'Realm Engine';
 const APP_USER_MODEL_ID = 'com.realmengine.app';
@@ -15,6 +16,17 @@ const POLL_INTERVAL = 500;
 app.setName(APP_NAME);
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_USER_MODEL_ID);
+}
+
+// Wine/Proton cannot initialize Chromium's Windows sandbox reliably. Keep the
+// sandbox enabled on native Windows and disable it only in compatibility layers.
+const runningUnderWine = Boolean(
+  process.env.WINEPREFIX || process.env.WINELOADERNOEXEC
+  || process.env.PROTON_VERSION || process.env.STEAM_COMPAT_DATA_PATH
+);
+if (runningUnderWine) {
+  app.commandLine.appendSwitch('no-sandbox');
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
 }
 
 
@@ -215,12 +227,15 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      // The preload is sandboxed and cannot require ipc-channels.cjs itself, so
+      // hand it the channel map here — see the comment at the top of preload.cjs.
+      additionalArguments: ['--ipc-channels=' + JSON.stringify(IPC)],
     },
     show: false,
   });
 
-  mainWindow.on('maximize', () => mainWindow.webContents.send('window:maximized'));
-  mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:unmaximized'));
+  mainWindow.on('maximize', () => mainWindow.webContents.send(IPC.WINDOW_MAXIMIZED));
+  mainWindow.on('unmaximize', () => mainWindow.webContents.send(IPC.WINDOW_UNMAXIMIZED));
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -232,7 +247,7 @@ function createWindow() {
   instanceManager.on('update', (state) => {
     try {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('instanceHost:update', state);
+        mainWindow.webContents.send(IPC.INSTANCE_HOST_UPDATE, state);
       }
     } catch {}
   });
@@ -285,12 +300,14 @@ async function waitForDashboardAndLoad() {
 
 function startProxy() {
   const projectRoot = path.join(__dirname, '..');
-  const distApp = path.join(projectRoot, 'dist', 'app.cjs');
+  const realRoot = process.resourcesPath;
+  const unpackedDist = path.join(realRoot, 'app.asar.unpacked', 'dist', 'app.cjs');
+  const asarDist = path.join(projectRoot, 'dist', 'app.cjs');
+  const distApp = fs.existsSync(unpackedDist) ? unpackedDist : asarDist;
   const isProd = app.isPackaged && fs.existsSync(distApp);
 
   if (isProd) {
-    console.log('[Electron] Starting proxy (production mode)');
-    const realRoot = process.resourcesPath;
+    console.log('[Electron] Starting proxy (production mode) from:', distApp);
     const userCfgDir = path.join(app.getPath('userData'), 'realm-engine');
     try {
       fs.mkdirSync(userCfgDir, { recursive: true });
@@ -299,25 +316,39 @@ function startProxy() {
     }
     const userCfgPath = path.join(userCfgDir, 'config.json');
 
-    proxyProcess = fork(distApp, ['--dev'], {
-      cwd: realRoot,
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      env: {
-        ...process.env,
-        REALM_ENGINE_PROD: '1',
-        REALM_ENGINE_ROOT: realRoot,
-        REALM_ENGINE_APP_ROOT: projectRoot,
-        REALM_ENGINE_USER_CONFIG_PATH: userCfgPath,
-        REALM_ENGINE_VERSION: app.getVersion(),
-      },
-    });
+    const env = {
+      ...process.env,
+      REALM_ENGINE_PROD: '1',
+      REALM_ENGINE_ROOT: realRoot,
+      REALM_ENGINE_APP_ROOT: projectRoot,
+      REALM_ENGINE_USER_CONFIG_PATH: userCfgPath,
+      REALM_ENGINE_VERSION: app.getVersion(),
+    };
+
+    if (typeof utilityProcess !== 'undefined' && typeof utilityProcess.fork === 'function') {
+      console.log('[Electron] Spawning proxy via utilityProcess.fork');
+      proxyProcess = utilityProcess.fork(distApp, ['--dev'], {
+        cwd: realRoot,
+        stdio: 'pipe',
+        env,
+      });
+    } else {
+      console.log('[Electron] Spawning proxy via child_process.fork');
+      proxyProcess = fork(distApp, ['--dev'], {
+        cwd: realRoot,
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+        env,
+      });
+    }
 
     if (proxyProcess.stdout) {
-      proxyProcess.stdout.on('data', (d) => process.stdout.write(d));
+      proxyProcess.stdout.on('data', (d) => {
+        try { process.stdout.write(d); } catch {}
+      });
     }
     if (proxyProcess.stderr) {
       proxyProcess.stderr.on('data', (d) => {
-        process.stderr.write(d);
+        try { process.stderr.write(d); } catch {}
         proxyStderrTail = (proxyStderrTail + d.toString()).slice(-500);
       });
     }
@@ -368,23 +399,23 @@ function startProxy() {
 
 // ── IPC handlers ─────────────────────────────────────────────────────────────
 
-ipcMain.on('window:minimize', () => mainWindow?.minimize());
-ipcMain.on('window:maximize', () => {
+ipcMain.on(IPC.WINDOW_MINIMIZE, () => mainWindow?.minimize());
+ipcMain.on(IPC.WINDOW_MAXIMIZE, () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize();
   else mainWindow?.maximize();
 });
-ipcMain.on('window:close', () => mainWindow?.close());
-ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false);
-ipcMain.handle('instanceHost:isSupported', () => windowHostBridge.isSupported());
-ipcMain.handle('instanceHost:listInstances', () => instanceManager.list());
-ipcMain.handle('instanceHost:listWindows', async () => windowHostBridge.listTopLevelWindows());
-ipcMain.handle('instanceHost:listAttachments', () => windowHostBridge.listAttachments());
-ipcMain.handle('instanceHost:launch', async (_event, payload) => instanceManager.launch(payload || {}));
-ipcMain.handle('instanceHost:trackByPid', async (_event, payload) => instanceManager.trackByPid(payload || {}));
-ipcMain.handle('instanceHost:stop', async (_event, payload) => instanceManager.stop(payload?.instanceId));
-ipcMain.handle('instanceHost:discoverWindow', async (_event, payload) => instanceManager.discoverWindow(payload?.instanceId));
-ipcMain.handle('instanceHost:focus', async (_event, payload) => instanceManager.focus(payload?.instanceId));
-ipcMain.handle('instanceHost:attach', async (_event, payload) => {
+ipcMain.on(IPC.WINDOW_CLOSE, () => mainWindow?.close());
+ipcMain.handle(IPC.WINDOW_IS_MAXIMIZED, () => mainWindow?.isMaximized() ?? false);
+ipcMain.handle(IPC.INSTANCE_HOST_IS_SUPPORTED, () => windowHostBridge.isSupported());
+ipcMain.handle(IPC.INSTANCE_HOST_LIST_INSTANCES, () => instanceManager.list());
+ipcMain.handle(IPC.INSTANCE_HOST_LIST_WINDOWS, async () => windowHostBridge.listTopLevelWindows());
+ipcMain.handle(IPC.INSTANCE_HOST_LIST_ATTACHMENTS, () => windowHostBridge.listAttachments());
+ipcMain.handle(IPC.INSTANCE_HOST_LAUNCH, async (_event, payload) => instanceManager.launch(payload || {}));
+ipcMain.handle(IPC.INSTANCE_HOST_TRACK_BY_PID, async (_event, payload) => instanceManager.trackByPid(payload || {}));
+ipcMain.handle(IPC.INSTANCE_HOST_STOP, async (_event, payload) => instanceManager.stop(payload?.instanceId));
+ipcMain.handle(IPC.INSTANCE_HOST_DISCOVER_WINDOW, async (_event, payload) => instanceManager.discoverWindow(payload?.instanceId));
+ipcMain.handle(IPC.INSTANCE_HOST_FOCUS, async (_event, payload) => instanceManager.focus(payload?.instanceId));
+ipcMain.handle(IPC.INSTANCE_HOST_ATTACH, async (_event, payload) => {
   const hostHwnd = payload?.hostHwnd || getMainWindowHwndDecimal();
   return instanceManager.attach({
     instanceId: payload?.instanceId,
@@ -392,8 +423,8 @@ ipcMain.handle('instanceHost:attach', async (_event, payload) => {
     hostHwnd,
   });
 });
-ipcMain.handle('instanceHost:detach', async (_event, payload) => instanceManager.detach(payload?.slotId));
-ipcMain.handle('instanceHost:resizeSlot', async (_event, payload) => {
+ipcMain.handle(IPC.INSTANCE_HOST_DETACH, async (_event, payload) => instanceManager.detach(payload?.slotId));
+ipcMain.handle(IPC.INSTANCE_HOST_RESIZE_SLOT, async (_event, payload) => {
   return instanceManager.resizeSlot(payload?.slotId, payload?.bounds || {});
 });
 
@@ -464,7 +495,7 @@ function tryBase64Decode(s) {
 // internal DLL's AppEngineManager.Connect hook. Returns one record per unique
 // GUID (keeps the newest secret per GUID — handles password rotations and
 // post-Steam-relink updates correctly).
-ipcMain.handle('rotmg:readCaptureLog', async () => {
+ipcMain.handle(IPC.ROTMG_READ_CAPTURE_LOG, async () => {
   try {
     const fs = require('fs');
     const os = require('os');
@@ -509,7 +540,7 @@ ipcMain.handle('rotmg:readCaptureLog', async () => {
   }
 });
 
-ipcMain.handle('rotmg:readLauncherCreds', async () => {
+ipcMain.handle(IPC.ROTMG_READ_LAUNCHER_CREDS, async () => {
   return new Promise((resolve) => {
     const { spawn } = require('child_process');
     const proc = spawn('reg.exe', ['query', REG_PATH], { windowsHide: true });
@@ -551,7 +582,7 @@ ipcMain.handle('rotmg:readLauncherCreds', async () => {
   });
 });
 
-ipcMain.handle('steam:connect', () => new Promise((resolve) => {
+ipcMain.handle(IPC.STEAM_CONNECT, () => new Promise((resolve) => {
   let resolved = false;
   const done = (result) => { if (!resolved) { resolved = true; resolve(result); } };
   const authWin = new BrowserWindow({

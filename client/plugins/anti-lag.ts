@@ -1,6 +1,6 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../src/proxy/ClientConnection.js';
-import { StatType } from '../src/constants/StatType.js';
+import type { PluginContext } from './api.js';
+import type { ClientConnection } from './api.js';
+import { StatType } from './api.js';
 
 /**
  * S→C anti-lag: (1) size stat 2 in NEWTICK/UPDATE (Multitool Class82);

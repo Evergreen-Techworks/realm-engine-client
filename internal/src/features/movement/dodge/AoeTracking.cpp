@@ -3,9 +3,12 @@
 #include "Il2CppResolver.h"
 #include "GameState.h"
 #include "RuntimeOffsets.h"
+#include "MemRead.h"
+#include "Il2CppContainers.h"
+#include "game/objects/GameObjects.h"
+#include "Il2CppHook.h"
 #include "DbgFileLog.h"
 #include "BootGate.h"
-#include "minhook/MinHook.h"
 #include <windows.h>
 #include <atomic>
 #include <chrono>
@@ -36,7 +39,7 @@
 //
 // FGOFPGIIEPC (: EGOGOKPFFIP) — throwable explosion controller. KOBMINBDOBD has
 //   3 params: void(LKHPPBEGNOM* anchor, CustomExplosionEntrance* data, float dur)
-//   anchor.x/y (via RuntimeOffsets::PosX/PosY) = throw origin.
+//   anchor.x/y (via Game::Entity::TryPos) = throw origin.
 //   CustomExplosionEntrance.distance (+0x38) = spread/ring radius.
 // ─────────────────────────────────────────────────────────────────────────────
 static constexpr const char* kThrowableClass   = "GJJCEFJMNMK";
@@ -52,7 +55,7 @@ static constexpr int         kExplParamCount   = 3;  // (LKHPPBEGNOM*, CustomExp
 // Assembly-confirmed: [rbx+368h] origin, [rbx+370h] dest, [rbx+388h] durationMs.
 
 // FHOHCELBPDO field offsets — resolved at runtime via RuntimeOffsets.
-// Origin fields are the inherited BMO world position (RuntimeOffsets::PosX/PosY).
+// Origin fields are the inherited BMO world position (Game::Entity::TryPos).
 // Pure visual landing-zone circle — ObjectProperties is NEVER populated.
 
 // Deduplication tolerance: skip FHOH entry if a GJJ entry exists at same dest (within this dist)
@@ -71,22 +74,34 @@ static constexpr float kDedupTolSq = 0.01f;  // (0.1 tile)^2
 // than chip the player.
 static constexpr float kDefaultAoeRadiusTiles = 3.5f;
 
-// HJMBOMEHGDJ::CGBILOJJPEI — ShowEffect packet handler (RVA 0x180B33560).
+// COEFCBBIBMC::JEFJDICFNBA — the ShowEffect PACKET's own Read(PacketReader)
+// override (RVA 0x004B6F60), overriding OODFCLBKDJJ::JEFJDICFNBA.
 // Catches THROW(4), NOVA(5), CIRCLE_TELEGRAPH(23), AoE(39) effect types.
-// x64 ABI: rcx=this (HJMBOMEHGDJ*), rdx=COEFCBBIBMC* msg, r8=MethodInfo*
-static constexpr const char* kShowEffectClass      = "HJMBOMEHGDJ";
-static constexpr const char* kShowEffectMethod     = "CGBILOJJPEI";
-static constexpr int         kShowEffectParamCount = 1;  // (COEFCBBIBMC* msg)
+//
+// This used to hook the WorldManager-side handler HJMBOMEHGDJ::CGBILOJJPEI, which
+// went dead on a game patch: HJMBOMEHGDJ still resolves (it is WorldManager) but
+// CGBILOJJPEI no longer exists in the build — BeeByte re-rolled 71 of that class's
+// method names and this was one of them, so the hook silently never installed
+// ("hooks: 3/4 ... showEffect=0") and Throw/Nova/CircleTelegraph/AoE were never
+// recorded at all. The new name is not recoverable: 66 sibling methods share the
+// signature and RVA order does not survive the rebuild.
+//
+// The packet class is the stable target instead — COEFCBBIBMC and all five of its
+// methods kept their names across the patch, and it is already a BootGate anchor
+// with a RuntimeOffsets block. `self` IS the packet here (no separate msg param),
+// and its fields only populate once Read returns, so the detour must call the
+// original FIRST.
+//
+// x64 ABI: rcx=this (COEFCBBIBMC*), rdx=BHFDLBOGHIB* reader, r8=MethodInfo*
+static constexpr const char* kShowEffectClass      = "COEFCBBIBMC";
+static constexpr const char* kShowEffectMethod     = "JEFJDICFNBA";
+static constexpr int         kShowEffectParamCount = 1;  // (BHFDLBOGHIB* reader)
 
 // COEFCBBIBMC ShowEffect packet field offsets — resolved at runtime via RuntimeOffsets.
 
-// ShowEffect effectType values we care about
-
-// ShowEffect effectType values we care about (game protocol constants — not class field offsets)
-static constexpr int32_t kSfxType_Throw           =  4;  // throw arc visual (pos1=src, pos2=dest)
-static constexpr int32_t kSfxType_Nova            =  5;  // expanding ring at pos1
-static constexpr int32_t kSfxType_CircleTelegraph = 23;  // ground warning circle at pos1
-static constexpr int32_t kSfxType_AoE             = 39;  // Exalt-specific AoE at pos1
+// ShowEffect effectType values (kSfxType_*) live in WorldTAB.h next to
+// WorldAoe::sfxEffectType — the dodge sensors need the same constants to decide
+// which SFX effects are armed on capture, so there is one definition, not two.
 
 // #region agent log
 // Hypotheses: H1=IL2CPP klass/method resolve fails, H2=MinHook init/create/enable fails,
@@ -142,88 +157,47 @@ static std::atomic<uint32_t> g_DbgFhohSkipOriginLogs{ 0 };
 static std::atomic<uint32_t> g_DbgFhohSehOnce{ 0 };
 static std::atomic<uint32_t> g_DbgExplLogs{ 0 };
 
-static inline bool AddrOk(const void* p)
-{
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000 && a < 0x7FFFFFFFFFFFULL;
-}
-
 static bool TryReadAnchorXY(void* anchor, float& outX, float& outY)
 {
-    if (!AddrOk(anchor)) return false;
-    __try {
-        uint8_t* p = reinterpret_cast<uint8_t*>(anchor);
-        const uint32_t ox = RuntimeOffsets::PosX;
-        const uint32_t oy = RuntimeOffsets::PosY;
-        float x = *reinterpret_cast<float*>(p + ox);
-        float y = *reinterpret_cast<float*>(p + oy);
-        if (x != x || y != y) return false;
-        outX = x;
-        outY = y;
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    float x, y;
+    if (!Game::Entity(anchor).TryPos(x, y)) return false;
+    if (x != x || y != y) return false;
+    outX = x;
+    outY = y;
+    return true;
 }
 
-// SEH must live in functions without C++ unwinding (MSVC C2712). Keep only raw reads here.
 static bool TryReadCeeDistanceUnsafe(void* ep, float& outDist)
 {
-    if (!AddrOk(ep)) return false;
-    __try {
-        outDist = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(ep) + RuntimeOffsets::Cee_Distance);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    return Mem::TryRead(ep, RuntimeOffsets::Cee_Distance, outDist);
 }
 
 static bool TryReadCeeSpeedUnsafe(void* ep, float& outSpeed)
 {
-    if (!AddrOk(ep)) return false;
-    __try {
-        outSpeed = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(ep) + RuntimeOffsets::Cee_Speed);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    return Mem::TryRead(ep, RuntimeOffsets::Cee_Speed, outSpeed);
 }
 
-// SEH must live in functions with no C++ unwinding (MSVC C2712). Callers may use std:: types.
 static bool TryReadGjjFromSelf(void* self, float& ox, float& oy, float& dx, float& dy,
     int32_t& durMs)
 {
-    if (!AddrOk(self)) return false;
-    __try {
-        uint8_t* base = reinterpret_cast<uint8_t*>(self);
-        ox    = *reinterpret_cast<float*>(base + RuntimeOffsets::Gjj_OriginX);
-        oy    = *reinterpret_cast<float*>(base + RuntimeOffsets::Gjj_OriginY);
-        dx    = *reinterpret_cast<float*>(base + RuntimeOffsets::Gjj_DestX);
-        dy    = *reinterpret_cast<float*>(base + RuntimeOffsets::Gjj_DestY);
-        durMs = *reinterpret_cast<int32_t*>(base + RuntimeOffsets::Gjj_DurationMs);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_OriginX,    ox))    return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_OriginY,    oy))    return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_DestX,      dx))    return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_DestY,      dy))    return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_DurationMs, durMs)) return false;
+    return true;
 }
 
-// FHOH field reader — same SEH constraint as TryReadGjjFromSelf.
-// Origin (ox/oy) comes from the inherited BMO world position (RuntimeOffsets::PosX/PosY).
+// FHOH field reader.
+// Origin (ox/oy) comes from the inherited BMO world position (Game::Entity::TryPos).
 static bool TryReadFhohFromSelf(void* self, float& ox, float& oy, float& dx, float& dy,
     int32_t& durMs)
 {
-    if (!AddrOk(self)) return false;
-    __try {
-        uint8_t* base = reinterpret_cast<uint8_t*>(self);
-        ox    = *reinterpret_cast<float*>(base + RuntimeOffsets::PosX);
-        oy    = *reinterpret_cast<float*>(base + RuntimeOffsets::PosY);
-        dx    = *reinterpret_cast<float*>(base + RuntimeOffsets::Fhoh_DestX);
-        dy    = *reinterpret_cast<float*>(base + RuntimeOffsets::Fhoh_DestY);
-        durMs = *reinterpret_cast<int32_t*>(base + RuntimeOffsets::Fhoh_DurationMs);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    if (!Game::Entity(self).TryPos(ox, oy))                          return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::Fhoh_DestX,      dx))    return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::Fhoh_DestY,      dy))    return false;
+    if (!Mem::TryRead(self, RuntimeOffsets::Fhoh_DurationMs, durMs)) return false;
+    return true;
 }
 
 // Returns true if there is already an active AOE entry with dest within kDedupTolSq of (tdx,tdy).
@@ -248,15 +222,9 @@ static bool HasActiveAoeAtDest(float tdx, float tdy)
 static bool TryReadIsEnemy(void* entity, bool& outIsEnemy)
 {
     outIsEnemy = false;
-    if (!AddrOk(entity)) return false;
-    __try {
-        void* props = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(entity) + RuntimeOffsets::ObjProps);
-        if (!AddrOk(props)) return false;
-        outIsEnemy = *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(props) + RuntimeOffsets::OP_IsEnemy);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    void* props = Game::Entity(entity).Props();
+    if (!props) return false;
+    return Mem::TryRead(props, RuntimeOffsets::OP_IsEnemy, outIsEnemy);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -265,72 +233,30 @@ static bool TryReadIsEnemy(void* entity, bool& outIsEnemy)
 // Returns: 0 = no entity found at position (unresolved)
 //          1 = entity found, isEnemy=true  (enemy throwable)
 //          2 = entity found, isEnemy=false (friendly throwable)
-//
-// SEH-safe: all pointer chasing is inside __try. No C++ objects with dtors.
-// ─────────────────────────────────────────────────────────────────────────────
-// IL2CPP Dictionary<int,T> layout constants (same as WorldTAB.cpp)
-static constexpr uint32_t kDict_Entries    = 0x18;
-static constexpr uint32_t kDict_Count      = 0x20;
-static constexpr uint32_t kArr_MaxLen      = 0x18;
-static constexpr uint32_t kArr_Data        = 0x20;
-static constexpr uint32_t kEntrySize       = 24;
-static constexpr uint32_t kEntry_Hash      = 0;
-static constexpr uint32_t kEntry_Value     = 16;
-static constexpr uint32_t kEntry_Key       = 8;   // Dictionary<int,T> key field (int32)
-
 static int FindOwnerIsEnemyAtPos(float targetX, float targetY)
 {
-    void* wm = GameState::GetWorldMgr();
-    if (!AddrOk(wm)) return 0;
-    __try {
-        void* dictPtr = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(wm) + RuntimeOffsets::WM_AllDict);
-        if (!AddrOk(dictPtr)) return 0;
+    void* dictPtr = Mem::ReadPtr(GameState::GetWorldMgr(), RuntimeOffsets::WM_AllDict);
+    const float kTol = 0.5f;          // half-tile tolerance
+    int result = 0;                   // 0=unresolved, 1=enemy, 2=friendly
+    Il2CppC::WalkDict(dictPtr, 4096, [&](int32_t /*key*/, void* entity) {
+        if (result != 0) return;      // first match at throw origin wins
+        Game::Entity e(entity);
+        if (!e.Ok()) return;
 
-        void* entriesArr = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(dictPtr) + kDict_Entries);
-        int32_t count = *reinterpret_cast<int32_t*>(
-            reinterpret_cast<uint8_t*>(dictPtr) + kDict_Count);
-        if (!AddrOk(entriesArr)) return 0;
+        float dx = e.X() - targetX;
+        float dy = e.Y() - targetY;
+        if (dx * dx + dy * dy > kTol * kTol) return;
 
-        int32_t maxLen = *reinterpret_cast<int32_t*>(
-            reinterpret_cast<uint8_t*>(entriesArr) + kArr_MaxLen);
-        if (maxLen <= 0 || maxLen > 65536) maxLen = 4096;
-        if (count  <= 0 || count  > maxLen) count  = maxLen;
-
-        const uint32_t offPX = RuntimeOffsets::PosX;
-        const uint32_t offPY = RuntimeOffsets::PosY;
-        const uint32_t offOP = RuntimeOffsets::OP_IsEnemy;
-        const float kTol = 0.5f;          // half-tile tolerance
-
-        for (int32_t i = 0; i < count; ++i) {
-            const uint8_t* entry = reinterpret_cast<const uint8_t*>(entriesArr)
-                                 + kArr_Data
-                                 + static_cast<size_t>(i) * kEntrySize;
-
-            int32_t hash = *reinterpret_cast<const int32_t*>(entry + kEntry_Hash);
-            if (hash < 0) continue;
-
-            void* entity = *reinterpret_cast<void* const*>(entry + kEntry_Value);
-            if (!AddrOk(entity)) continue;
-
-            uint8_t* ep = reinterpret_cast<uint8_t*>(entity);
-            float ex = *reinterpret_cast<float*>(ep + offPX);
-            float ey = *reinterpret_cast<float*>(ep + offPY);
-
-            float dx = ex - targetX;
-            float dy = ey - targetY;
-            if (dx * dx + dy * dy > kTol * kTol) continue;
-
-            // Found entity at throw origin — check its isEnemy
-            void* props = *reinterpret_cast<void**>(ep + RuntimeOffsets::ObjProps);
-            if (!AddrOk(props)) continue;
-            bool isEn = *reinterpret_cast<bool*>(
-                reinterpret_cast<uint8_t*>(props) + offOP);
-            return isEn ? 1 : 2;   // 1=enemy, 2=friendly
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    return 0;   // unresolved
+        // Found entity at throw origin — check its isEnemy. Keep the raw isEnemy
+        // read: props-null and a faulted read both skip (result stays unresolved so
+        // a later entity can win), which Entity::IsEnemy()'s bool collapse loses.
+        void* props = e.Props();
+        if (!props) return;
+        bool isEn;
+        if (!Mem::TryRead(props, RuntimeOffsets::OP_IsEnemy, isEn)) return;
+        result = isEn ? 1 : 2;
+    });
+    return result;
 }
 
 // Walk WorldManager.allDict by key (objectId) to find an entity and check isEnemy.
@@ -339,80 +265,56 @@ static int FindOwnerIsEnemyAtPos(float targetX, float targetY)
 static int FindEntityIsEnemyById(int32_t targetId)
 {
     if (targetId <= 0) return 0;
-    void* wm = GameState::GetWorldMgr();
-    if (!AddrOk(wm)) return 0;
-    __try {
-        void* dictPtr = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(wm) + RuntimeOffsets::WM_AllDict);
-        if (!AddrOk(dictPtr)) return 0;
+    void* dictPtr = Mem::ReadPtr(GameState::GetWorldMgr(), RuntimeOffsets::WM_AllDict);
+    int result = 0;
+    Il2CppC::WalkDict(dictPtr, 4096, [&](int32_t key, void* entity) {
+        if (result != 0) return;
+        if (key != targetId) return;
+        Game::Entity e(entity);
+        if (!e.Ok()) return;
 
-        void* entriesArr = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(dictPtr) + kDict_Entries);
-        int32_t count = *reinterpret_cast<int32_t*>(
-            reinterpret_cast<uint8_t*>(dictPtr) + kDict_Count);
-        if (!AddrOk(entriesArr)) return 0;
-
-        int32_t maxLen = *reinterpret_cast<int32_t*>(
-            reinterpret_cast<uint8_t*>(entriesArr) + kArr_MaxLen);
-        if (maxLen <= 0 || maxLen > 65536) maxLen = 4096;
-        if (count  <= 0 || count  > maxLen) count  = maxLen;
-
-        const uint32_t offOP = RuntimeOffsets::OP_IsEnemy;
-
-        for (int32_t i = 0; i < count; ++i) {
-            const uint8_t* entry = reinterpret_cast<const uint8_t*>(entriesArr)
-                                 + kArr_Data
-                                 + static_cast<size_t>(i) * kEntrySize;
-
-            int32_t hash = *reinterpret_cast<const int32_t*>(entry + kEntry_Hash);
-            if (hash < 0) continue;  // empty slot
-
-            int32_t key = *reinterpret_cast<const int32_t*>(entry + kEntry_Key);
-            if (key != targetId) continue;
-
-            void* entity = *reinterpret_cast<void* const*>(entry + kEntry_Value);
-            if (!AddrOk(entity)) continue;
-
-            void* props = *reinterpret_cast<void**>(
-                reinterpret_cast<uint8_t*>(entity) + RuntimeOffsets::ObjProps);
-            if (!AddrOk(props)) continue;
-            bool isEn = *reinterpret_cast<bool*>(
-                reinterpret_cast<uint8_t*>(props) + offOP);
-            return isEn ? 1 : 2;
-        }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    return 0;
+        void* props = e.Props();
+        if (!props) return;
+        bool isEn;
+        if (!Mem::TryRead(props, RuntimeOffsets::OP_IsEnemy, isEn)) return;
+        result = isEn ? 1 : 2;
+    });
+    return result;
 }
 
 // Read HHPOJBFICAH (objectId, BMO +0x034) from any BMO-derived object.
 static int32_t TryReadObjectId(void* base)
 {
-    if (!AddrOk(base)) return 0;
-    __try {
-        return *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(base) + RuntimeOffsets::ObjId);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0;
-    }
+    return Game::Entity(base).ObjId();
+}
+
+// COEFCBBIBMC's two positions are POINTERS to FFLIAABAAFP (WorldPos), a reference
+// type whose x/y live inside the pointed-to object — NOT inline Vector2s on the
+// packet. Deref, then read x/y at the shape-resolved Sfx_Wpos* offsets.
+// Returns false for a null / unreadable / non-finite position; pos2 is legitimately
+// null for every effect except THROW, so the caller decides whether that matters.
+static bool TryReadWorldPos(void* msg, uint32_t ptrOff, float& outX, float& outY)
+{
+    void* wp = Mem::ReadPtr(msg, ptrOff);
+    if (!Mem::AddrOk(wp))                                     return false;
+    if (!Mem::TryRead(wp, RuntimeOffsets::Sfx_WposX, outX))    return false;
+    if (!Mem::TryRead(wp, RuntimeOffsets::Sfx_WposY, outY))    return false;
+    return std::isfinite(outX) && std::isfinite(outY);
 }
 
 // SEH-safe reader for COEFCBBIBMC (ShowEffect packet) fields.
+// pos1 (the effect's source / centre) is required; pos2 is optional and
+// outHasP2 says whether it was present.
 static bool TryReadShowEffectFields(void* msg, int32_t& outType, int32_t& outObjId,
-    float& outP1X, float& outP1Y, float& outP2X, float& outP2Y, float& outDur)
+    float& outP1X, float& outP1Y, float& outP2X, float& outP2Y, bool& outHasP2,
+    float& outDur)
 {
-    if (!AddrOk(msg)) return false;
-    __try {
-        uint8_t* p = reinterpret_cast<uint8_t*>(msg);
-        outType  = *reinterpret_cast<int32_t*>(p + RuntimeOffsets::Sfx_EffectType);
-        outObjId = *reinterpret_cast<int32_t*>(p + RuntimeOffsets::Sfx_TargetObjId);
-        outP1X   = *reinterpret_cast<float*>(p + RuntimeOffsets::Sfx_Pos1X);
-        outP1Y   = *reinterpret_cast<float*>(p + RuntimeOffsets::Sfx_Pos1Y);
-        outP2X   = *reinterpret_cast<float*>(p + RuntimeOffsets::Sfx_Pos2X);
-        outP2Y   = *reinterpret_cast<float*>(p + RuntimeOffsets::Sfx_Pos2Y);
-        outDur   = *reinterpret_cast<float*>(p + RuntimeOffsets::Sfx_Duration);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_EffectType,  outType))  return false;
+    if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_TargetObjId, outObjId)) return false;
+    if (!Mem::TryRead(msg, RuntimeOffsets::Sfx_Duration,    outDur))   return false;
+    if (!TryReadWorldPos(msg, RuntimeOffsets::Sfx_Pos1Ptr, outP1X, outP1Y)) return false;
+    outHasP2 = TryReadWorldPos(msg, RuntimeOffsets::Sfx_Pos2Ptr, outP2X, outP2Y);
+    return true;
 }
 
 static void RecordAoe(float originX, float originY,
@@ -478,15 +380,13 @@ static void*    g_GjjTarget   = nullptr;
 // value against the instance's float pairs. Runs until resolved; one throwable
 // (e.g. a Medusa cast in the Godlands) is enough.
 static std::atomic<bool> g_gjjFieldsResolved{ false };
-static uint32_t          g_gjjResolvedOriginOff = 0;
-static uint32_t          g_gjjResolvedDestOff   = 0;
 
 // Scan `self` for the Vector2 field (two consecutive floats) equal to (vx,vy).
 // SEH-guarded, POD-only (no C++ unwinding in the __try) — a read past the object
 // faults into __except and returns 0. Returns the byte offset, or 0 if not found.
 static uint32_t FindVec2FieldOffset(void* self, float vx, float vy)
 {
-    if (!AddrOk(self)) return 0;
+    if (!Mem::AddrOk(self)) return 0;
     __try {
         const uint8_t* base = reinterpret_cast<const uint8_t*>(self);
         for (uint32_t off = 0x10u; off + 8u <= 0x800u; off += 4u) {
@@ -510,7 +410,7 @@ static void* __fastcall GjjKobDetour(void* self, int64_t origin, int64_t dest,
     // Self-heal the GJJ origin/dest field offsets from the method params (ground
     // truth, rename-proof). One matched throwable corrects RuntimeOffsets::Gjj_*,
     // so TryReadGjjFromSelf below reads the right place even after a BeeByte rename.
-    if (AddrOk(self) && !g_gjjFieldsResolved.load(std::memory_order_relaxed)) {
+    if (Mem::AddrOk(self) && !g_gjjFieldsResolved.load(std::memory_order_relaxed)) {
         const uint32_t olo = static_cast<uint32_t>(static_cast<uint64_t>(origin));
         const uint32_t ohi = static_cast<uint32_t>(static_cast<uint64_t>(origin) >> 32);
         const uint32_t dlo = static_cast<uint32_t>(static_cast<uint64_t>(dest));
@@ -526,8 +426,6 @@ static void* __fastcall GjjKobDetour(void* self, int64_t origin, int64_t dest,
                 uint32_t dOff = (std::isfinite(pdx) && std::isfinite(pdy))
                                 ? FindVec2FieldOffset(self, pdx, pdy) : 0u;
                 if (dOff) { RuntimeOffsets::Gjj_DestX = dOff; RuntimeOffsets::Gjj_DestY = dOff + 4u; }
-                g_gjjResolvedOriginOff = oOff;
-                g_gjjResolvedDestOff   = dOff;
                 g_gjjFieldsResolved.store(true, std::memory_order_relaxed);
                 DBG_FILE_LOG("[AoeTracking] GJJ fields self-healed via param-match: origin=0x"
                     << std::hex << oOff << " dest=0x" << dOff << std::dec
@@ -537,7 +435,7 @@ static void* __fastcall GjjKobDetour(void* self, int64_t origin, int64_t dest,
     }
 
     // #region agent log
-    if (!AddrOk(self)) {
+    if (!Mem::AddrOk(self)) {
         const uint32_t n = g_DbgFhohBadSelfLogs.fetch_add(1, std::memory_order_relaxed);
         if (n < 5u)
             AgentLogAoe("H3", "AoeTracking.cpp:GjjKobDetour", "bad_self",
@@ -620,7 +518,7 @@ static void __fastcall FhohKobDetour(void* self, int32_t animIdx, void* colorPtr
     if (g_OrigFhohKob)
         g_OrigFhohKob(self, animIdx, colorPtr, durMs, origin, dest, method);
 
-    if (!AddrOk(self)) return;
+    if (!Mem::AddrOk(self)) return;
 
     float ox = 0.f, oy = 0.f, dx = 0.f, dy = 0.f;
     int32_t fhohDurMs = 0;
@@ -725,31 +623,38 @@ static void __fastcall ExplSpawnDetour(void* self, void* anchor, void* ep, float
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HJMBOMEHGDJ::CGBILOJJPEI hook  (ShowEffect packet handler)
+// COEFCBBIBMC::JEFJDICFNBA hook  (ShowEffect packet Read)
 //
-// Catches server-sent ShowEffect packets before game processes them.
+// Catches server-sent ShowEffect packets as they are deserialized, before the
+// game's own handler runs.
 // Filters to: THROW(4)=throw arc, NOVA(5)=ring, CIRCLE_TELEGRAPH(23)=ground warn, AoE(39).
 // targetObjectId is the source entity — used for direct ID-based isEnemy lookup.
 // THROW entries are deduped against existing GJJ/FHOH AOE entries by destination.
 //
-// x64 ABI: rcx=this (HJMBOMEHGDJ*), rdx=COEFCBBIBMC* msg, r8=MethodInfo*
+// `self` IS the packet, and its fields are only populated once Read returns, so
+// the original MUST run first.
+//
+// x64 ABI: rcx=this (COEFCBBIBMC*), rdx=BHFDLBOGHIB* reader, r8=MethodInfo*
 // ─────────────────────────────────────────────────────────────────────────────
-using ShowEffectFn = void (__fastcall*)(void* self, void* msg, void* method);
+using ShowEffectFn = void (__fastcall*)(void* self, void* reader, void* method);
 static ShowEffectFn g_OrigShowEffect = nullptr;
 static void*        g_SfxTarget      = nullptr;
 
 static std::atomic<uint32_t> g_DbgSfxLogs{ 0 };
 
-static void __fastcall ShowEffectDetour(void* self, void* msg, void* method)
+static void __fastcall ShowEffectDetour(void* self, void* reader, void* method)
 {
+    // Fields populate inside the original — read only after it returns.
     if (g_OrigShowEffect)
-        g_OrigShowEffect(self, msg, method);
+        g_OrigShowEffect(self, reader, method);
 
-    if (!AddrOk(msg)) return;
+    void* msg = self;
+    if (!Mem::AddrOk(msg)) return;
 
     int32_t effectType = 0, targetObjId = 0;
     float p1x = 0.f, p1y = 0.f, p2x = 0.f, p2y = 0.f, dur = 0.f;
-    if (!TryReadShowEffectFields(msg, effectType, targetObjId, p1x, p1y, p2x, p2y, dur))
+    bool  hasP2 = false;
+    if (!TryReadShowEffectFields(msg, effectType, targetObjId, p1x, p1y, p2x, p2y, hasP2, dur))
         return;
 
     if (effectType != kSfxType_Throw &&
@@ -769,7 +674,9 @@ static void __fastcall ShowEffectDetour(void* self, void* msg, void* method)
 
     float originX, originY, destX, destY;
     if (effectType == kSfxType_Throw) {
-        // THROW: pos1=source position, pos2=landing spot
+        // THROW: pos1=source position, pos2=landing spot. Without a readable pos2
+        // there is no landing spot to stamp — drop rather than stamp the thrower.
+        if (!hasP2) return;
         originX = p1x; originY = p1y;
         destX   = p2x; destY   = p2y;
         // Skip if GJJ/FHOH already recorded this same throwable
@@ -812,6 +719,7 @@ static void __fastcall ShowEffectDetour(void* self, void* msg, void* method)
         d << "{\"type\":" << effectType << ",\"objId\":" << targetObjId
           << ",\"p1x\":" << p1x << ",\"p1y\":" << p1y
           << ",\"p2x\":" << p2x << ",\"p2y\":" << p2y
+          << ",\"hasP2\":" << (hasP2 ? 1 : 0)
           << ",\"dur\":" << dur << ",\"lifeMs\":" << lifeMs
           << ",\"isEnemy\":" << (isEnemy ? 1 : 0)
           << ",\"checked\":" << (isEnemyChecked ? 1 : 0) << "}";
@@ -823,32 +731,50 @@ static void __fastcall ShowEffectDetour(void* self, void* msg, void* method)
 static bool HookShowEffectPath()
 {
     if (g_SfxTarget) return true;
-    Il2CppClass* klass = Resolver::GetClass("", kShowEffectClass);
-    if (!klass) {
-        AgentLogAoe("H1", "AoeTracking.cpp:HookShowEffectPath", "no_klass",
-            "{\"class\":\"HJMBOMEHGDJ\"}");
+
+    // FAIL CLOSED. An ACTIVE AoE disc is now an untraversable block for the
+    // pathfinder and a swept veto in the solver, so a hook that reads the wrong
+    // bytes does not merely mis-score — it writes garbage walls into the router.
+    // The packet's positions are FFLIAABAAFP* pointers whose x/y offsets are
+    // resolved by shape; if that scan has not confirmed the layout, do not install.
+    if (!RuntimeOffsets::Sfx_WposResolved) {
+        static std::atomic<uint32_t> s_wposLog{ 0 };
+        const uint32_t n = s_wposLog.fetch_add(1, std::memory_order_relaxed);
+        if (n == 0u || (n % 240u) == 0u)
+            DBG_FILE_LOG("[AoeTracking] ShowEffect hook NOT installed — FFLIAABAAFP "
+                "(WorldPos) x/y layout unconfirmed; refusing to stamp AoE discs "
+                "from unverified position fields");
+        AgentLogAoe("H1", "AoeTracking.cpp:HookShowEffectPath", "wpos_unresolved",
+            "{\"class\":\"FFLIAABAAFP\"}");
         return false;
     }
-    const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, kShowEffectMethod, kShowEffectParamCount);
-    if (!mi || !mi->methodPointer) {
-        AgentLogAoe("H1", "AoeTracking.cpp:HookShowEffectPath", "no_method",
-            mi ? "{\"methodPointer\":0}" : "{\"methodInfo\":0}");
+
+    // loose=true so this finds the SAME class RuntimeOffsets resolved the Sfx_*
+    // offsets from (its table uses FindClassLoose). A name-only match is safe for
+    // an 11-char BeeByte identifier, and it removes the chance of the offsets
+    // resolving while the hook silently does not.
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached(
+        kShowEffectClass, kShowEffectMethod, kShowEffectParamCount, true, "");
+    if (!mi) {
+        static std::atomic<uint32_t> s_resolveLog{ 0 };
+        const uint32_t n = s_resolveLog.fetch_add(1, std::memory_order_relaxed);
+        if (n == 0u || (n % 240u) == 0u)
+            DBG_FILE_LOG("[AoeTracking] ShowEffect hook NOT installed — "
+                << kShowEffectClass << "::" << kShowEffectMethod
+                << " (" << kShowEffectParamCount << " params) did not resolve; "
+                "Throw/Nova/CircleTelegraph/AoE will not be recorded");
+        AgentLogAoe("H1", "AoeTracking.cpp:HookShowEffectPath", "no_resolve",
+            "{\"class\":\"COEFCBBIBMC\",\"method\":\"JEFJDICFNBA\"}");
         return false;
     }
 
     void* target = reinterpret_cast<void*>(mi->methodPointer);
     g_OrigShowEffect = nullptr;
-    if (MH_CreateHook(target, reinterpret_cast<void*>(&ShowEffectDetour),
-            reinterpret_cast<void**>(&g_OrigShowEffect)) != MH_OK) {
+    if (!Il2CppHook::InstallMinHook(target, reinterpret_cast<void*>(&ShowEffectDetour),
+            reinterpret_cast<void**>(&g_OrigShowEffect), "AoeTracking:ShowEffect")) {
         g_OrigShowEffect = nullptr;
-        AgentLogAoe("H2", "AoeTracking.cpp:HookShowEffectPath", "mh_create_fail",
+        AgentLogAoe("H2", "AoeTracking.cpp:HookShowEffectPath", "mh_install_fail",
             "{\"target\":" + std::to_string(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(target))) + "}");
-        return false;
-    }
-    if (MH_EnableHook(target) != MH_OK) {
-        MH_RemoveHook(target);
-        g_OrigShowEffect = nullptr;
-        AgentLogAoe("H2", "AoeTracking.cpp:HookShowEffectPath", "mh_enable_fail", "{}");
         return false;
     }
     g_SfxTarget = target;
@@ -858,67 +784,38 @@ static bool HookShowEffectPath()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-static bool s_mhInit = false;
-
-static void TryInitInfrastructure()
+// Returns whether MinHook is up — EnsureInstalled gates the hook installs on it
+// the same way the old file-scope minhook-init latch did.
+static bool TryInitInfrastructure()
 {
     if (!g_CsInit) {
         InitializeCriticalSection(&g_Cs);
         g_CsInit = true;
     }
-    if (!s_mhInit) {
-        MH_STATUS st = MH_Initialize();
-        if (st != MH_OK && st != MH_ERROR_ALREADY_INITIALIZED) {
-            // #region agent log
-            static std::atomic<uint32_t> s_mhFailLog{ 0 };
-            if (s_mhFailLog.fetch_add(1, std::memory_order_relaxed) < 4u) {
-                std::ostringstream d;
-                d << "{\"status\":" << static_cast<int>(st) << "}";
-                AgentLogAoe("H2", "AoeTracking.cpp:TryInitInfrastructure", "mh_init_fail", d.str());
-            }
-            // #endregion
-            return;
-        }
-        s_mhInit = true;
-    }
+    return Il2CppHook::EnsureRuntime("AoeTracking");
 }
 
 static bool HookThrowablePath()
 {
     if (g_GjjTarget) return true;
-    Il2CppClass* klass = Resolver::GetClass("", kThrowableClass);
-    if (!klass) {
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached(
+        kThrowableClass, kSpawnMethod, kGjjParamCount, false, "");
+    if (!mi) {
         // #region agent log
-        AgentLogAoe("H1", "AoeTracking.cpp:HookThrowablePath", "no_klass",
+        AgentLogAoe("H1", "AoeTracking.cpp:HookThrowablePath", "no_resolve",
             "{\"class\":\"GJJCEFJMNMK\"}");
-        // #endregion
-        return false;
-    }
-    const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, kSpawnMethod, kGjjParamCount);
-    if (!mi || !mi->methodPointer) {
-        // #region agent log
-        AgentLogAoe("H1", "AoeTracking.cpp:HookThrowablePath", "no_method",
-            mi ? "{\"methodPointer\":0}" : "{\"methodInfo\":0}");
         // #endregion
         return false;
     }
 
     void* target = reinterpret_cast<void*>(mi->methodPointer);
     g_OrigGjjKob = nullptr;
-    if (MH_CreateHook(target, reinterpret_cast<void*>(&GjjKobDetour),
-            reinterpret_cast<void**>(&g_OrigGjjKob)) != MH_OK) {
+    if (!Il2CppHook::InstallMinHook(target, reinterpret_cast<void*>(&GjjKobDetour),
+            reinterpret_cast<void**>(&g_OrigGjjKob), "AoeTracking:GjjKob")) {
         g_OrigGjjKob = nullptr;
         // #region agent log
-        AgentLogAoe("H2", "AoeTracking.cpp:HookThrowablePath", "mh_create_fail",
+        AgentLogAoe("H2", "AoeTracking.cpp:HookThrowablePath", "mh_install_fail",
             "{\"target\":" + std::to_string(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(target))) + "}");
-        // #endregion
-        return false;
-    }
-    if (MH_EnableHook(target) != MH_OK) {
-        MH_RemoveHook(target);
-        g_OrigGjjKob = nullptr;
-        // #region agent log
-        AgentLogAoe("H2", "AoeTracking.cpp:HookThrowablePath", "mh_enable_fail", "{}");
         // #endregion
         return false;
     }
@@ -933,20 +830,14 @@ static bool HookThrowablePath()
 static bool HookFhohPath()
 {
     if (g_FhohTarget) return true;
-    Il2CppClass* klass = Resolver::GetClass("", kFhohClass);
-    if (!klass) return false;
-    const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, kSpawnMethod, kFhohParamCount);
-    if (!mi || !mi->methodPointer) return false;
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached(
+        kFhohClass, kSpawnMethod, kFhohParamCount, false, "");
+    if (!mi) return false;
 
     void* target = reinterpret_cast<void*>(mi->methodPointer);
     g_OrigFhohKob = nullptr;
-    if (MH_CreateHook(target, reinterpret_cast<void*>(&FhohKobDetour),
-            reinterpret_cast<void**>(&g_OrigFhohKob)) != MH_OK) {
-        g_OrigFhohKob = nullptr;
-        return false;
-    }
-    if (MH_EnableHook(target) != MH_OK) {
-        MH_RemoveHook(target);
+    if (!Il2CppHook::InstallMinHook(target, reinterpret_cast<void*>(&FhohKobDetour),
+            reinterpret_cast<void**>(&g_OrigFhohKob), "AoeTracking:FhohKob")) {
         g_OrigFhohKob = nullptr;
         return false;
     }
@@ -959,39 +850,24 @@ static bool HookFhohPath()
 static bool HookExplosionPath()
 {
     if (g_ExplTarget) return true;
-    Il2CppClass* klass = Resolver::GetClass("", kExplSpawnerClass);
-    if (!klass) {
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached(
+        kExplSpawnerClass, kSpawnMethod, kExplParamCount, false, "");
+    if (!mi) {
         // #region agent log
-        AgentLogAoe("H1", "AoeTracking.cpp:HookExplosionPath", "no_klass",
+        AgentLogAoe("H1", "AoeTracking.cpp:HookExplosionPath", "no_resolve",
             "{\"class\":\"FGOFPGIIEPC\"}");
-        // #endregion
-        return false;
-    }
-    const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, kSpawnMethod, kExplParamCount);
-    if (!mi || !mi->methodPointer) {
-        // #region agent log
-        AgentLogAoe("H1", "AoeTracking.cpp:HookExplosionPath", "no_method",
-            mi ? "{\"methodPointer\":0}" : "{\"methodInfo\":0}");
         // #endregion
         return false;
     }
 
     void* target = reinterpret_cast<void*>(mi->methodPointer);
     g_OrigExplSpawn = nullptr;
-    if (MH_CreateHook(target, reinterpret_cast<void*>(&ExplSpawnDetour),
-            reinterpret_cast<void**>(&g_OrigExplSpawn)) != MH_OK) {
+    if (!Il2CppHook::InstallMinHook(target, reinterpret_cast<void*>(&ExplSpawnDetour),
+            reinterpret_cast<void**>(&g_OrigExplSpawn), "AoeTracking:ExplSpawn")) {
         g_OrigExplSpawn = nullptr;
         // #region agent log
-        AgentLogAoe("H2", "AoeTracking.cpp:HookExplosionPath", "mh_create_fail",
+        AgentLogAoe("H2", "AoeTracking.cpp:HookExplosionPath", "mh_install_fail",
             "{\"target\":" + std::to_string(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(target))) + "}");
-        // #endregion
-        return false;
-    }
-    if (MH_EnableHook(target) != MH_OK) {
-        MH_RemoveHook(target);
-        g_OrigExplSpawn = nullptr;
-        // #region agent log
-        AgentLogAoe("H2", "AoeTracking.cpp:HookExplosionPath", "mh_enable_fail", "{}");
         // #endregion
         return false;
     }
@@ -1005,13 +881,6 @@ static bool HookExplosionPath()
 
 // ─────────────────────────────────────────────────────────────────────────────
 namespace AoeTracking {
-
-void GetGjjProbe(bool& resolved, uint32_t& originOff, uint32_t& destOff)
-{
-    resolved  = g_gjjFieldsResolved.load(std::memory_order_relaxed);
-    originOff = g_gjjResolvedOriginOff;
-    destOff   = g_gjjResolvedDestOff;
-}
 
 void Install()
 {
@@ -1034,14 +903,14 @@ void EnsureInstalled()
         return;
     }
     RuntimeOffsets::EnsureAll();
-    TryInitInfrastructure();
-    if (!s_mhInit || !g_CsInit) {
+    const bool mhReady = TryInitInfrastructure();
+    if (!mhReady || !g_CsInit) {
         // #region agent log
         static std::atomic<uint32_t> s_infraLog{ 0 };
         const uint32_t n = s_infraLog.fetch_add(1, std::memory_order_relaxed);
         if (n < 6u || (n % 200u) == 0u) {
             std::ostringstream d;
-            d << "{\"mhInit\":" << (s_mhInit ? 1 : 0) << ",\"csInit\":" << (g_CsInit ? 1 : 0) << "}";
+            d << "{\"mhInit\":" << (mhReady ? 1 : 0) << ",\"csInit\":" << (g_CsInit ? 1 : 0) << "}";
             AgentLogAoe("H2", "AoeTracking.cpp:EnsureInstalled", "infra_not_ready", d.str());
         }
         // #endregion
@@ -1052,6 +921,26 @@ void EnsureInstalled()
     const bool fh = HookFhohPath();
     const bool ex = HookExplosionPath();
     const bool sf = HookShowEffectPath();
+
+    // TRANSITION-ONLY, and deliberately NOT AgentLogAoe: that macro is _DEBUG-only
+    // AND env-gated, so every AoE install/record signal is invisible in the Release
+    // build the game actually loads — which is exactly why "did the AoE hooks come
+    // up?" could not be answered from a shipped session's trace. One line per
+    // change in the installed-hook count; steady state costs one integer compare.
+    //
+    //   GREP THE TRACE LOG FOR:  [AoeTracking] hooks:
+    {
+        const int hookCount = (g_GjjTarget ? 1 : 0) + (g_FhohTarget ? 1 : 0)
+                            + (g_ExplTarget ? 1 : 0) + (g_SfxTarget ? 1 : 0);
+        static int s_lastHookCount = -1;
+        if (hookCount != s_lastHookCount) {
+            s_lastHookCount = hookCount;
+            DBG_FILE_LOG("[AoeTracking] hooks: " << hookCount << "/4 installed"
+                << " (throwable=" << (th ? 1 : 0) << " fhoh=" << (fh ? 1 : 0)
+                << " explosion=" << (ex ? 1 : 0) << " showEffect=" << (sf ? 1 : 0) << ")"
+                << (hookCount == 0 ? "  <-- NO AoE will EVER be recorded this session" : ""));
+        }
+    }
     // #region agent log
     static std::atomic<uint32_t> s_ensureTick{ 0 };
     const uint32_t t = s_ensureTick.fetch_add(1, std::memory_order_relaxed);
@@ -1069,30 +958,14 @@ void EnsureInstalled()
 
 void Uninstall()
 {
-    if (g_GjjTarget) {
-        MH_DisableHook(g_GjjTarget);
-        MH_RemoveHook(g_GjjTarget);
-        g_GjjTarget   = nullptr;
-        g_OrigGjjKob  = nullptr;
-    }
-    if (g_FhohTarget) {
-        MH_DisableHook(g_FhohTarget);
-        MH_RemoveHook(g_FhohTarget);
-        g_FhohTarget  = nullptr;
-        g_OrigFhohKob = nullptr;
-    }
-    if (g_ExplTarget) {
-        MH_DisableHook(g_ExplTarget);
-        MH_RemoveHook(g_ExplTarget);
-        g_ExplTarget    = nullptr;
-        g_OrigExplSpawn = nullptr;
-    }
-    if (g_SfxTarget) {
-        MH_DisableHook(g_SfxTarget);
-        MH_RemoveHook(g_SfxTarget);
-        g_SfxTarget      = nullptr;
-        g_OrigShowEffect = nullptr;
-    }
+    Il2CppHook::UninstallMinHook(g_GjjTarget, "AoeTracking.Gjj");
+    g_OrigGjjKob  = nullptr;
+    Il2CppHook::UninstallMinHook(g_FhohTarget, "AoeTracking.Fhoh");
+    g_OrigFhohKob = nullptr;
+    Il2CppHook::UninstallMinHook(g_ExplTarget, "AoeTracking.Expl");
+    g_OrigExplSpawn = nullptr;
+    Il2CppHook::UninstallMinHook(g_SfxTarget, "AoeTracking.Sfx");
+    g_OrigShowEffect = nullptr;
 }
 
 void CopyActiveForDraw(std::vector<WorldAoe>& out)
@@ -1151,7 +1024,7 @@ void CopyActiveForDraw(std::vector<WorldAoe>& out)
 
         out.push_back(a);
         ++emitted;
-        if (AddrOk(a.ptr))
+        if (Mem::AddrOk(a.ptr))
             ++withPtr;
         if (a.radius > maxR)
             maxR = a.radius;
@@ -1183,6 +1056,50 @@ int CountActive()
     }
     LeaveCriticalSection(&g_Cs);
     return n;
+}
+
+// ── Per-source arming semantics (the ONE definition) ────────────────────────
+// Is a zone dangerous from the MOMENT it was captured, or does it have a flight /
+// telegraph phase to wait out first? Per-SOURCE, because the four capture paths
+// mean genuinely different things (see WorldTAB.h kAoeSrc*):
+//
+//   kAoeSrcExpl  - FGOFPGIIEPC is the explosion CONTROLLER; it empirically fires
+//                  AT detonation, so the blast is full strength from elapsed=0
+//                  and ends when `lifetime` runs out. Its `arcMs` is the bomb's
+//                  already-completed travel time, NOT a landing delay: reading it
+//                  as one (three consumers did) modelled up to 2.1 s of live,
+//                  full-strength blast as inert. ARMED ON CAPTURE.
+//   kAoeSrcSfx   - ShowEffect packet; depends on the effect:
+//                    NOVA(5) / AoE(39)          - go off at the announced spot as
+//                                                 announced. ARMED ON CAPTURE.
+//                    THROW(4)                   - an arc from pos1 to pos2; the
+//                                                 disc at pos2 is the LANDING spot.
+//                    CIRCLE_TELEGRAPH(23)       - a ground warning that resolves at
+//                                                 the END of its duration.
+//                                                 Both: telegraphed, arm window.
+//   kAoeSrcGjj / kAoeSrcFhoh - the throwable entity and its landing-circle visual.
+//                  The disc is where the throwable WILL land and `lifetime` is the
+//                  flight time, so danger is at the end. The detonation itself
+//                  arrives separately as a kAoeSrcExpl entry. Arm window.
+bool ArmedOnCapture(const WorldAoe& a)
+{
+    if (a.source == kAoeSrcExpl) return true;
+    if (a.source == kAoeSrcSfx)
+        return a.sfxEffectType == kSfxType_Nova || a.sfxEffectType == kSfxType_AoE;
+    return false;
+}
+
+float LifetimeMs(const WorldAoe& a)
+{
+    return (std::isfinite(a.lifetime) && a.lifetime > 0.f) ? a.lifetime : 2000.f;
+}
+
+float LandDelayMs(const WorldAoe& a)
+{
+    if (ArmedOnCapture(a)) return 0.f;
+    // Telegraphed: the flight time when a source carries one, else the full
+    // lifetime (the disc IS the countdown).
+    return (std::isfinite(a.arcMs) && a.arcMs > 0.f) ? a.arcMs : LifetimeMs(a);
 }
 
 int CountHooks()

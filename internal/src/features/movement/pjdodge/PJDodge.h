@@ -11,28 +11,6 @@
 // candidate survives the whole window.
 namespace PJDodge {
 
-// Snapshot for the diag/MCP bridge.
-struct DiagView {
-    bool  enabled = false;
-    int   decision = 0;
-    float playerX = 0.f, playerY = 0.f;
-    bool  overrideActive = false;
-    float velXPerSec = 0.f, velYPerSec = 0.f;
-    int   candidate = 0;
-    float speedScale = 1.f;
-    int   threatCount = 0;
-    float earliestImpactMs = 0.f;
-    int   projectiles = 0;
-    int   aoes = 0;
-    int   enemies = 0;
-    // Prediction-accuracy residual stats.
-    bool  predEnabled = false;
-    int   predCalibrated = 0;
-    float predClockErrMs = 0.f;    // typical clock error being corrected (ms)
-    float predModelErrTiles = 0.f; // typical unexplained model error (tiles)
-    float predModelMaxTiles = 0.f; // worst-case unexplained model error (tiles)
-};
-
 void SetEnabled(bool enabled);
 bool IsEnabled();
 void OnEnter();
@@ -45,8 +23,6 @@ void RenderSettings();
 
 // World overlay (render thread).
 void RenderDebugOverlay(float camX, float camY, float angle, float zoom, float cx, float cy);
-
-DiagView GetDiagView();
 
 // Knobs (atomic; IPC + GUI).
 void  SetHorizonMs(float ms);   float GetHorizonMs();

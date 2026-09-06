@@ -3,7 +3,7 @@
   [![Website](https://img.shields.io/badge/site-realmengine.org-14b8a6)](https://realmengine.org)
   [![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/uEKPPWz9k4)
   [![License](https://img.shields.io/badge/license-Open%20Source-14b8a6)](LICENSE)
-  [![Platform](https://img.shields.io/badge/platform-Windows%20x64-0d9488)](https://realmengine.org/download)
+  [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Wine%2FProton-0d9488)](https://realmengine.org/download)
   [![Stars](https://img.shields.io/github/stars/Evergreen-Techworks/realm-engine-client?style=social)](https://github.com/Evergreen-Techworks/realm-engine-client/stargazers)
   [![Buy Me A Coffee](https://img.shields.io/badge/buy_me_a_coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/egtw)
 
@@ -11,7 +11,7 @@
 
   > **TL;DR:** A full RotMG hack stack — Electron client, IL2CPP DLL injector, and TypeScript SDK — published free and open source. Clone it, fork it, sell your own builds.
 
-  🌐 **Site:** [realmengine.org](https://realmengine.org)  ·  💬 **Discord:** [discord.gg/CGuYyTbf](https://discord.gg/uEKPPWz9k4)  ·  ⬇️ **Download:** [realmengine.org/download](https://realmengine.org/download)
+  🌐 **Site:** [realmengine.org](https://realmengine.org)  ·  💬 **Discord:** [discord.gg/uEKPPWz9k4](https://discord.gg/uEKPPWz9k4)  ·  ⬇️ **Download:** [realmengine.org/download](https://realmengine.org/download)
 
   ---
 
@@ -33,9 +33,6 @@
   - **Hack Builder + Behavior Tab** — visual triggers, conditions, and actions, no code required
   - **Autoloot** — rules for tiers, gear categories, and consumables
   - **TypeScript SDK** — write your own hacks against a typed API
-
-  ### Developer tooling
-  - **RotMG MCP server** — an [MCP](https://modelcontextprotocol.io) server (`internal/tools/re-mcp`) that lets an MCP client (e.g. Claude) **runtime-test the live DLL**: read BootGate / offset-recovery state, resolve IL2CPP classes & field offsets on demand, and watch the dodge engine's decisions. Opt-in: toggle the diagnostics bridge in the in-game **Test** tab, then approve the bundled `.mcp.json`. See [`internal/tools/re-mcp/README.md`](./internal/tools/re-mcp/README.md).
 
   ---
 
@@ -67,6 +64,14 @@
   npm run dist      # production installer build
   ```
 
+  **Linux / Steam Deck (experimental, through Wine or Proton):**
+  Run the Windows Realm Engine build in the same Wine/Proton environment used
+  for RotMG Exalt. The client discovers standard Steam, Flatpak Steam, Proton,
+  and Steam Deck game locations through Wine's `Z:` mapping. For a custom game
+  location, set `ROTMG_PATH` to the Exalt `Production` directory. A Linux source
+  build can reuse the prebuilt `client/assets/realm-engine.dll`; MSBuild is not
+  required for bundling the Electron client.
+
   **Build the native DLL (Visual Studio 2022, toolset v145):**
   ```bash
   cd internal
@@ -95,10 +100,13 @@
   Yes. Fork it, build on it, charge for your own work. Just don't claim you wrote the parts you didn't.
 
   **What OS is supported?**
-  Windows x64 only. The client is Electron; the injection layer is a native Win32 DLL. macOS / Linux / Wine are not supported.
+  Windows x64 is fully supported. Linux and Steam Deck are supported
+  experimentally through Wine/Proton. The injection layer remains a Win32 DLL,
+  so this is compatibility-layer support rather than a native Linux injection
+  backend. macOS is not supported.
 
   **How do I report a bug or request a feature?**
-  Open an issue here or hop into the [Discord](https://discord.gg/CGuYyTbf) — bug reports and feature requests are triaged there.
+  Open an issue here or hop into the [Discord](https://discord.gg/uEKPPWz9k4) — bug reports and feature requests are triaged there.
 
   ---
 
@@ -111,7 +119,7 @@
   ## 🔗 Related
 
   - **Website & web app:** [realmengine.org](https://realmengine.org)
-  - **Discord community:** [discord.gg/CGuYyTbf](https://discord.gg/CGuYyTbf)
+  - **Discord community:** [discord.gg/uEKPPWz9k4](https://discord.gg/uEKPPWz9k4)
   - **Lore / origin story:** [realmengine.org/lore](https://realmengine.org/lore)
 
   ---

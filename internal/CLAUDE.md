@@ -5,11 +5,12 @@ injection layer (`internal/`).
 
 ## Project overview
 
-`internal/` is a Visual Studio 2022 C++ project that produces `version.dll` —
-a DLL loaded by RotMG Exalt (either as a proxy for the real Windows
-`version.dll`, or manually injected). Once loaded it hooks IL2CPP methods
-and `IDXGISwapChain::Present` to run the in-game hack overlay and
-autonomy features.
+`internal/` is a Visual Studio 2022 C++ project that produces `realm-engine.dll` —
+a DLL externally injected into RotMG Exalt by a standalone `injector.exe`
+(CreateRemoteThread + LoadLibraryW). The client's packet proxy triggers
+injection on the first NEWTICK packet, guaranteeing IL2CPP is fully initialized.
+Once loaded the DLL hooks IL2CPP methods and `IDXGISwapChain::Present` to run
+the in-game hack overlay and autonomy features.
 
 External reverse-engineering material — Il2CppInspectorPro dumps, notes
 from Flash/bot-client research, decompiled headers — lives under
@@ -23,11 +24,8 @@ The two active configurations are x64:
 
 | Configuration | Defines | Output | Use for |
 |---|---|---|---|
-| `x64 \| Debug` | `_DEBUG`, `_VERSION` | `x64/Debug/version.dll` | Local dev — spawns a Win32 console for `std::cout`, `SecurityWatcherThread` is a no-op. |
-| `x64 \| Release` | `_VERSION` (+ LTCG) | `x64/Release/version.dll` | Ship builds — anti-debug active, no console. |
-
-The `Win32` configurations exist for legacy manual-injector mode (no
-`_VERSION`, no proxy DLL export) and are not part of the active workflow.
+| `x64 \| Debug` | `_DEBUG` | `x64/Debug/realm-engine.dll` | Local dev — spawns a Win32 console for `std::cout`, `SecurityWatcherThread` is a no-op. |
+| `x64 \| Release` | (+ LTCG) | `x64/Release/realm-engine.dll` | Ship builds — anti-debug active, no console. |
 
 MSBuild CLI equivalent:
 
@@ -41,10 +39,7 @@ msbuild il2cpp-dll-injection.sln /p:Configuration=Release /p:Platform=x64
 
 | Define | Effect |
 |---|---|
-| `_VERSION` | Proxy-DLL mode. `DllMain` calls `Load()` which forwards all 17 `version.dll` exports to the real system DLL loaded from `System32`, waits 6 seconds, then runs `Run()`. |
 | `_DEBUG` | Opens a Win32 console for log output and disables `SecurityWatcherThread` (which otherwise unloads the DLL if a debugger / x64dbg / Scylla-hide is detected). |
-
-Without `_VERSION`, `DllMain` calls `Run()` directly (manual-injector mode).
 
 ## Source layout
 
@@ -52,23 +47,22 @@ The project is organised by concern under `src/`:
 
 ```
 src/
-├── bootstrap/           DllMain, main entry, version.dll proxy exports
-│   ├── dllmain.cpp      DLL entrypoint — dispatches to Load()/Run()
+├── bootstrap/           DllMain and main entry
+│   ├── dllmain.cpp      DLL entrypoint — spawns Run() thread on DLL_PROCESS_ATTACH
 │   ├── main.cpp/.h      Run() — init_il2cpp → AttachIl2Cpp → DetourInitilization
-│   ├── version.cpp/.h   Proxy stubs for the 17 real version.dll exports (WRAPPER_* macros)
 │
 ├── core/                Cross-cutting infrastructure — no game-feature logic here
 │   ├── config/          Persistent settings (settings.h/.cpp) and keybinds (keybinds.h/.cpp)
 │   ├── il2cpp/          PCH (pch-il2cpp.h) + IL2CPP API resolver (il2cpp-init.cpp)
-│   ├── ipc/             Bridge to the Electron client (handshake, framing, JSON, tile state)
+│   ├── ipc/             Bridge to the Electron client (handshake, framing, JSON, threats, aim)
 │   ├── logging/         DBG_FILE_LOG macro + Debug console helpers
-│   ├── runtime/         BootGate, DiagBridge, GameState, LocalPlayer,
-│   │                    RuntimeOffsets, SharedMemory, Il2CppResolver
+│   ├── runtime/         BootGate, GameState, LocalPlayer,
+│   │                    RuntimeOffsets, Il2CppResolver
 │   └── security/        xorstr for compile-time string hiding
 │
 ├── features/            Feature families — one folder per family
 │   ├── account/         Char select + credential/HWID capture surface
-│   ├── combat/          autoability, autoaim, autonexus, enemytracker, ghostHit
+│   ├── combat/          autoability, autoaim (core/shoot/modes/ui — see its README), autonexus, enemytracker, ghostHit
 │   ├── control/         Input-side control logic
 │   ├── loot/            Autoloot rules and inventory automation
 │   ├── misc/            One-offs that don't warrant their own family
@@ -95,17 +89,32 @@ to by their subpath (e.g. `#include "core/runtime/RuntimeOffsets.h"`,
 `#include "gui/tabs/PlayerTAB.h"`). PCH is `src/core/il2cpp/pch-il2cpp.h`
 (built by `pch-il2cpp.cpp`).
 
+**Raw access is forbidden in `features/` and `gui/`.** Read game memory through
+`Mem::` (`core/runtime/MemRead.h` — the one SEH-safe pointer-check + typed
+offset read), walk .NET containers through `Il2CppC::`
+(`core/il2cpp/Il2CppContainers.h`), install method hooks through `Il2CppHook::`
+(`platform/hooks/Il2CppHook.h`), and prefer the typed `Game::` object views
+(`game/objects/`) over pairing a raw pointer with a raw offset. Do **not**
+re-introduce a local `AddrOk`/`AddrValid` copy, an open-coded
+`reinterpret_cast<…>(ptr + RuntimeOffsets::…)` read, a private dict/array
+layout constant, or a bare `MH_CreateHook` in feature/GUI code — those belong
+only to the sanctioned homes above. `internal/tools/check-raw-access.sh` is
+the ratchet that enforces this; `build-and-test.bat` invokes it through WSL.
+A genuinely necessary hot-loop raw read may stay only with a same-line
+`raw-access-ok` comment explaining why.
+
 ## Startup flow
 
 ```
 DllMain (DLL_PROCESS_ATTACH)
-  └─ [_VERSION] Load()                              bootstrap/version.cpp — loads real System32/version.dll, waits 6s
-       └─ Run()                                     bootstrap/main.cpp
-            ├─ (Release) SecurityWatcherThread     unloads if debugger/scylla-hide is present
-            ├─ init_il2cpp(hGameAssembly)          resolves IL2CPP API from GameAssembly.dll
-            ├─ AttachIl2Cpp()                      attaches to IL2CPP domain/thread
-            ├─ DetourInitilization()               installs IDXGISwapChain::Present detour
-            └─ UnloadWatcherThread                 waits on hUnloadEvent, then tears down cleanly
+  └─ CreateThread → Run()                          bootstrap/main.cpp
+       ├─ GetModuleHandleW("GameAssembly.dll")     guaranteed loaded (injected after NewTick)
+       ├─ (Release) SecurityWatcherThread           unloads if debugger/scylla-hide is present
+       ├─ init_il2cpp(hGameAssembly)               resolves IL2CPP API from GameAssembly.dll
+       ├─ AttachIl2Cpp()                           attaches to IL2CPP domain/thread
+       ├─ DetourInitilization()                    installs IDXGISwapChain::Present detour
+       ├─ IpcBridgeThread                          named-pipe bridge to Electron client
+       └─ UnloadWatcherThread                      waits on hUnloadEvent, then tears down cleanly
 ```
 
 ## Hook architecture
@@ -212,15 +221,16 @@ for enemy shot prediction. Key points:
   Flash client source under `refs/prodmafia/` (specifically
   `com/company/assembleegameclient/objects/Projectile.as`).
 
-## Proxy DLL (`bootstrap/version.cpp`)
+## Injection
 
-When `_VERSION` is defined, all 17 `version.dll` exports are forwarded to
-the real system DLL loaded from `System32`. The `WRAPPER_GENFUNC` /
-`WRAPPER_FUNC` macros generate the stubs. `defs/version.def` exports the
-symbols.
+A standalone `injector.exe` (`internal/tools/injector/injector.cpp`) injects
+`realm-engine.dll` into the running RotMG Exalt process via
+CreateRemoteThread + LoadLibraryW. The client's packet proxy triggers
+injection on the first NEWTICK packet — at that point IL2CPP is fully
+initialized and the player is in-realm.
 
 ## Deployment
 
-Copy `x64/Release/version.dll` to the game's root directory (alongside
-`GameAssembly.dll`). The proxy intercepts the game's load of `version.dll`
-and runs `Load()` automatically.
+Both `realm-engine.dll` and `injector.exe` are output to `client/assets/`.
+The Electron client resolves them from there and handles injection
+automatically — no manual file placement needed.

@@ -60,6 +60,12 @@ export type PluginCleanup = () => void;
  * dashboard broadcasts are reserved for bundled first-party plugins shipped
  * with the RealmEngine client. User plugins compose behaviour out of the
  * rest of `@realmengine/sdk` (`chat`, `events`, `RealmEngine.*`, ...).
+ *
+ * This interface is the single authored declaration of the community context
+ * shape. The client's runtime `UserPluginContext` class
+ * (`src/plugins/UserPluginContext.ts`) `implements` it, so the compiler fails
+ * the build if the runtime ever stops satisfying this surface — the two can no
+ * longer be hand-copied out of sync.
  */
 export interface UserPluginContext {
   /** The plugin id — derived from the file name, without `.mjs`. Read-only. */

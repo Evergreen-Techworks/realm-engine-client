@@ -43,7 +43,7 @@ void    SetAutoAimEnabled(bool v)     { s_featAutoAimEnabled.store(v ? 1 : 0, st
 void    SetAutoAimMode(int mode)      { s_featAutoAimMode.store(ClampInt(mode, 0, 3), std::memory_order_relaxed); }
 
 int     GetAutoDodgeMode()            { return s_featDodgeMode.load(std::memory_order_relaxed); }
-void    SetAutoDodgeMode(int mode)    { s_featDodgeMode.store(ClampInt(mode, 0, static_cast<int>(TestTAB::DodgeMode::PJDodge)), std::memory_order_relaxed); }
+void    SetAutoDodgeMode(int mode)    { s_featDodgeMode.store(ClampInt(mode, 0, static_cast<int>(TestTAB::DodgeMode::UDodge)), std::memory_order_relaxed); }
 float   GetAutoDodgeHorizonMs()       { return s_featDodgeHorizonMs.load(std::memory_order_relaxed); }
 void    SetAutoDodgeHorizonMs(float ms)             { s_featDodgeHorizonMs.store(ClampFloat(ms, 100.f, 4000.f), std::memory_order_relaxed); }
 float   GetAutoDodgeHitboxPadding()                 { return s_featDodgeHitboxPadding.load(std::memory_order_relaxed); }

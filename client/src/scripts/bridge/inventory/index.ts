@@ -158,12 +158,42 @@ export function install(deps: BridgeDeps): void {
     return matches;
   };
 
-  inventory.useItem = (_slotIndex: number) => {
-    warnUnimplemented('inventory.useItem');
+  inventory.useItem = (slotIndex: number) => {
+    const c = deps.clientRef.current;
+    if (!c?.connected) return;
+    const itemType = typeIdAtSlot(c.playerData, slotIndex);
+    if (itemType <= 0) return;
+    try {
+      const pkt = deps.proxy.packetFactory.createByName('USEITEM');
+      pkt.data.time = Math.trunc(c.time);
+      pkt.data.slotObject = { objectId: c.objectId, slotId: slotIndex, objectType: itemType };
+      pkt.data.itemUsePos = { x: c.playerData.pos.x, y: c.playerData.pos.y };
+      pkt.data.useType = 0;
+      pkt.data.unknownInt = 0;
+      pkt.modified = true;
+      c.sendToServer(pkt);
+    } catch {
+      // Void SDK API: a disconnect or stale slot simply leaves the item alone.
+    }
   };
 
-  inventory.swapSlots = (_slotA: number, _slotB: number) => {
-    warnUnimplemented('inventory.swapSlots');
+  inventory.swapSlots = (slotA: number, slotB: number) => {
+    const c = deps.clientRef.current;
+    if (!c?.connected || slotA === slotB) return;
+    const a = typeIdAtSlot(c.playerData, slotA);
+    const b = typeIdAtSlot(c.playerData, slotB);
+    if (a < 0 && b < 0) return;
+    try {
+      const pkt = deps.proxy.packetFactory.createByName('INVENTORYSWAP');
+      pkt.data.time = Math.trunc(c.time);
+      pkt.data.position = { x: c.playerData.pos.x, y: c.playerData.pos.y };
+      pkt.data.slotObject1 = { objectId: c.objectId, slotId: slotA, objectType: a };
+      pkt.data.slotObject2 = { objectId: c.objectId, slotId: slotB, objectType: b };
+      pkt.modified = true;
+      c.sendToServer(pkt);
+    } catch {
+      // Void API: ignore stale-slot/disconnect races.
+    }
   };
 
   /** Bag slots only: indices 4–11 (8 slots), per RotMG layout. */

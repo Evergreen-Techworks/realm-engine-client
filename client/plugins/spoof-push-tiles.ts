@@ -1,5 +1,5 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
-import type { GameDataLoader } from '../src/game-data/GameDataLoader.js';
+import type { PluginContext } from './api.js';
+import type { GameDataLoader } from './api.js';
 
 const DEFAULT_TARGET_TILE_TYPE = 0xb003;
 

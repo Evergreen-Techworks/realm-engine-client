@@ -17,15 +17,15 @@ if /I not "%VSCMD_ARG_TGT_ARCH%"=="x64" (
 )
 
 set MH=..\..\internal\vendor\minhook
-set SRC=src\dllmain.cpp src\connect_hook.cpp
+set SRC=src\dllmain.cpp src\connect_hook.cpp src\splash_logic.cpp src\il2cpp_min.cpp src\splash_bypass.cpp
 set MHSRC=%MH%\hook.c %MH%\buffer.c %MH%\trampoline.c %MH%\hde\hde64.c
 
-cl /nologo /LD /O2 /MT /W3 /EHsc ^
+cl /nologo /LD /O2 /MT /W3 /EHsc /std:c++17 ^
    /D_WIN32_WINNT=0x0A00 /DWIN32_LEAN_AND_MEAN ^
    /I src /I "%MH%" ^
    %SRC% %MHSRC% ^
    /Fewinhttp.dll ^
-   /link /DLL ws2_32.lib
+   /link /DLL ws2_32.lib user32.lib
 
 if errorlevel 1 (
     echo [build] FAILED.

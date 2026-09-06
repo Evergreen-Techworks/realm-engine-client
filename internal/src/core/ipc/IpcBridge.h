@@ -3,10 +3,8 @@
 
 // Helpful notes:
 // - IpcBridgeThread runs the pipe client loop and owns IPC session lifetime.
-// - Feature accessors are compatibility shims over FeatureState.
-// - Tile APIs expose the latest tileUpdate/noWalkInit state from the client.
-// - IpcBridge_ApplyFeatureOverrides is retained for legacy callers; new render
-//   code can call FeatureRuntime directly.
+// - Feature state is owned by FeatureState; IpcBridge owns only overlay,
+//   shutdown, threat, and auth state.
 
 #pragma once
 #include <Windows.h>
@@ -49,20 +47,37 @@ struct IpcGround {
 
 constexpr int kIpcMaxThreats = 32;
 
-void IpcBridge_PublishThreats(const IpcThreat* threats, int count, const IpcGround& ground);
+// `truncated` — the publisher had to shed threats/ground events this tick, so
+// the client's picture is known-partial (see plan 19). Threaded into the wire
+// payload's trailing flag by EncodeThreats.
+void IpcBridge_PublishThreats(const IpcThreat* threats, int count, const IpcGround& ground, bool truncated);
 
-// Tile walkability from tileUpdate / noWalkInit packets. Unknown means walkable.
-bool IpcBridge_IsTileWalkable(float worldX, float worldY);
+// ── Killaura aim state ───────────────────────────────────────────────────
+// Wire schema v2 (encoder: IpcMessages::EncodeAim, decoder: client
+// src/bridge/DllAimBus.ts). Keep the two in lockstep.
+//
+// v2 carries the SHOT ORIGIN ITSELF plus the generation that produced it, so the
+// outbound rewrite forwards the DLL's one authoritative value instead of
+// re-deriving a second one from tx/ty/standoff. See KillAura.h.
+constexpr int AIM_SCHEMA_VERSION = 2;
 
-// Tile diagnostics.
-void IpcBridge_GetTileStats(int* outTileCount, int* outNoWalkTypeCount);
-
-struct IpcTileTypeEntry {
-    uint16_t typeId;
-    int      count;
-    bool     noWalk;
+struct IpcAim {
+    uint8_t  armed    = 0;    // 0/1
+    uint8_t  mode     = 0;    // 0 = at-target, 1 = at-mouse
+    int32_t  targetId = 0;
+    float    tx = 0.f, ty = 0.f;
+    float    px = 0.f, py = 0.f;
+    float    standoffTiles  = 0.f;
+    float    maxOffsetTiles = 0.f;
+    uint32_t stampMs = 0;
+    // v2. `originValid == 0` means the refresh refused an origin (the caps in
+    // KillAura::SolveShotOrigin) — consumers must NOT rewrite.
+    uint8_t  originValid = 0;
+    float    ox = 0.f, oy = 0.f;   // ABSOLUTE world tiles
+    uint32_t generation  = 0;      // KillAura refresh counter
 };
-int IpcBridge_CopyUniqueTypeEntries(IpcTileTypeEntry* buf, int maxCount);
+
+void IpcBridge_PublishAim(const IpcAim& aim);
 
 // Auth/session state.
 const char* IpcBridge_GetUserId();
@@ -71,44 +86,6 @@ bool        IpcBridge_IsAuthenticated();
 // Admin-controlled overlay gate.
 bool        IpcBridge_IsOverlayEnabled();
 void        IpcBridge_SetOverlayEnabled(bool on);
-
-// Unified feature state accessors.
-bool        IpcBridge_GetAutoAimEnabled();
-int         IpcBridge_GetAutoAimMode();
-void        IpcBridge_SetAutoAimEnabled(bool enabled);
-void        IpcBridge_SetAutoAimMode(int mode);
-int         IpcBridge_GetAutoDodgeMode();
-void        IpcBridge_SetAutoDodgeMode(int mode);
-float       IpcBridge_GetAutoDodgeHorizonMs();
-void        IpcBridge_SetAutoDodgeHorizonMs(float ms);
-float       IpcBridge_GetAutoDodgeHitboxPadding();
-void        IpcBridge_SetAutoDodgeHitboxPadding(float paddingTiles);
-bool        IpcBridge_GetAutoDodgeWallAvoid();
-void        IpcBridge_SetAutoDodgeWallAvoid(bool enabled);
-bool        IpcBridge_GetAutoAbilityEnabled();
-void        IpcBridge_SetAutoAbilityEnabled(bool enabled);
-float       IpcBridge_GetAutoAbilityMpPct();
-void        IpcBridge_SetAutoAbilityMpPct(float pctZeroTo100);
-int         IpcBridge_GetAutoAbilityWizardMode();
-void        IpcBridge_SetAutoAbilityWizardMode(int mode);
-float       IpcBridge_GetWalkTargetX();
-float       IpcBridge_GetWalkTargetY();
-bool        IpcBridge_GetWalkTargetActive();
-void        IpcBridge_SetWalkTarget(float worldX, float worldY, bool active);
-bool        IpcBridge_GetCameraZoomActive();
-float       IpcBridge_GetCameraZoomValue();
-void        IpcBridge_SetCameraZoom(bool active, float zoom);
-bool        IpcBridge_GetCameraAngleActive();
-int         IpcBridge_GetCameraAngleValue();
-void        IpcBridge_SetCameraAngle(bool active, int angle);
-bool        IpcBridge_GetCameraCenteringActive();
-bool        IpcBridge_GetCameraCentered();
-void        IpcBridge_SetCameraCentering(bool active, bool centered);
-bool        IpcBridge_GetSkinOverrideEnabled();
-int         IpcBridge_GetSkinOverrideId();
-void        IpcBridge_SetSkinOverride(bool enabled, int skinId);
-int32_t     IpcBridge_GetClientDefense();
-int32_t     IpcBridge_GetClientClassType();
 
 // Apply latest pipe feature state from the render thread once per frame.
 void        IpcBridge_ApplyFeatureOverrides();

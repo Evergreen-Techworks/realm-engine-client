@@ -1,9 +1,7 @@
 import http from 'http';
-import https from 'https';
 import net from 'net';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, statSync } from 'fs';
-import { join, extname, dirname, basename, resolve } from 'path';
-import sharp from 'sharp';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
+import { join, extname } from 'path';
 import { execFileSync, spawn } from 'child_process';
 // NOTE: DevServer runs in a forked Node child process (electron/main.cjs
 // → fork(distApp, ...)), NOT in the Electron main process. So
@@ -12,7 +10,6 @@ import { execFileSync, spawn } from 'child_process';
 // is the reliable Windows pattern (delegates to the shell which knows
 // how to open folders); macOS / Linux have their own openers.
 import { WebSocketServer, WebSocket } from 'ws';
-import { XMLParser } from 'fast-xml-parser';
 import { PacketInspector, type CapturedPacket } from './PacketInspector.js';
 import { PacketLab } from './PacketLab.js';
 import { GameUpdater, type GameUpdateStatus } from './GameUpdater.js';
@@ -23,7 +20,21 @@ import type { GameDataLoader } from '../../game-data/GameDataLoader.js';
 import { Logger } from '../../util/Logger.js';
 import { DebugManager } from '../../util/DebugManager.js';
 import { RuntimeScheduler } from '../../util/RuntimeScheduler.js';
+import { injectDll } from '../../native/injector.js';
 import { getRealmengineDataDir, getRealmengineDocumentsDir } from '../../util/rotmgAssetExtractor.js';
+import { extractGameXmls } from '../../util/rotmgAssetExtractor.js';
+import { extractLocalGameAssets } from '../../util/rotmgLocalExtractor.js';
+import { ensureRotmgMetadataXml } from '../../util/ensureRotmgMetadataXml.js';
+import { FameTracker } from './FameTracker.js';
+import { TradeSession } from './TradeSession.js';
+import {
+  AccountService,
+  type DashboardAccountRecord,
+  type DashboardAccountOverview,
+  type DashboardAccountOverviewCacheRecord,
+} from './AccountService.js';
+import { GameLauncher } from './GameLauncher.js';
+import { PluginConfigService } from './PluginConfigService.js';
 
 // ── Debug logging ─────────────────────────────────────────────────────────────
 // Gated behind the 'accounts' debug channel (see util/DebugManager.ts). OFF by
@@ -38,36 +49,10 @@ function debugLog(msg: string): void {
   try { writeFileSync(DEBUG_LOG_PATH, line, { flag: 'a' }); } catch { /* ignore */ }
 }
 
-function extractUserIdFromJwt(accessToken: string): string | undefined {
-  try {
-    const parts = accessToken.split('.');
-    if (parts.length < 2) return undefined;
-    const payload = parts[1];
-    const b64 = payload.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), '=');
-    const json = Buffer.from(padded, 'base64').toString('utf8');
-    const o = JSON.parse(json) as { sub?: string; userId?: string };
-    const id = o.sub ?? o.userId;
-    return typeof id === 'string' && id ? id : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * True when a Deca account/verify `<Error>` says the token/secret is bound to a
- * different machine (HWID) — the one rejection a fresh-HWID retry can fix.
- * Deliberately excludes password/captcha/suspended/rate-limit errors: a
- * different HWID won't change those outcomes, so retrying only wastes requests.
- */
-function isHwidBindingError(rawError: string): boolean {
-  const lower = String(rawError || '').toLowerCase();
-  if (!lower) return false;
-  return lower.includes('different machine') || lower.includes('token for different');
-}
-// ─────────────────────────────────────────────────────────────────────────────
 import { getClientToken, clearCachedHwid } from '../../util/Hwid.js';
 import { ConditionEffect } from '../../constants/ConditionEffect.js';
+import { WS_MSG } from '../wsMessageTypes.js';
+import { GAME_PORT } from '../../constants/GameId.js';
 import type { ScriptHost } from '../../scripts/ScriptHost.js';
 import type { InternalBridge } from '../../bridge/InternalBridge.js';
 import type {
@@ -94,10 +79,8 @@ import {
   setAllExaltPriority,
   spreadAffinityEven,
   tuningSupported,
-  moveRotmgLaunchedWindowAfterSpawn,
   SUGGESTED_REALM_POWER_HINTS,
 } from '../process/rotmgWindowsClientTune.js';
-import { registerCredentialLaunch } from '../process/credentialLaunchRegistry.js';
 import type { PriorityPreset } from '../process/rotmgWindowsClientTune.js';
 import type { ExaltProcessRow } from '../process/rotmgWindowsClientTune.js';
 import { loadExaltTuneSettings, saveExaltTuneSettings, tuneSettingsPath } from '../process/exaltTuneSettings.js';
@@ -142,20 +125,7 @@ import {
   type ClientRole,
 } from '../process/exaltClientRoles.js';
 import { isThermalBackgroundDemotionActive } from '../process/thermalStressLayer.js';
-import {
-  formatObjectTypeHex,
-  parseCharListNumber,
-  parseCharListBoolean,
-  parseCharListObjectTypes,
-  parseDashboardEquipmentTokens,
-  buildDashboardUniqueItemLookup,
-  decodeDashboardEnchantIds,
-  parseCharListError,
-  parseVerifySuccess,
-  parseVerifyError,
-  type DashboardAccountEquipmentToken,
-} from './charListParsers.js';
-import { normalizeSlotCount, toBoolArray, extractTradeItemIncluded, parseOfferSlots } from '../../util/tradeSlots.js';
+import { normalizeSlotCount, toBoolArray, parseOfferSlots } from '../../util/tradeSlots.js';
 import { WikiSpriteService } from './wikiSpriteService.js';
 
 /**
@@ -188,6 +158,32 @@ function countRunningProcessesByImageName(imageName: string): number {
   } catch (err) {
     Logger.warn('DevServer', `Failed to inspect ${imageName} processes: ${(err as Error).message}`);
     return 0;
+  }
+}
+
+function findPidsByImageName(imageName: string): number[] {
+  try {
+    const output = execFileSync('tasklist', ['/FI', `IMAGENAME eq ${imageName}`, '/FO', 'CSV', '/NH'], {
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    const normalize = (s: string): string => s.replace(/ /g, ' ').trim().toLowerCase();
+    const target = normalize(imageName);
+    return String(output || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => {
+        const m = line.match(/^"([^"]*)"/);
+        return m !== null && normalize(m[1]) === target;
+      })
+      .map((line) => {
+        const cols = line.match(/^"[^"]*","(\d+)"/);
+        return cols ? Number(cols[1]) : 0;
+      })
+      .filter((pid) => pid > 0);
+  } catch {
+    return [];
   }
 }
 
@@ -296,93 +292,6 @@ const MIME_TYPES: Record<string, string> = {
   '.json': 'application/json',
 };
 
-/** Atlas basenames (no .png) — order must match RotMGAssetExtractor `ImageBuffer.spriteSheets`. */
-interface DashboardAccountRecord {
-  id: string;
-  label: string;
-  /** For Steam accounts this is the "guid" string Deca expects (often `steamworks:<id>`). */
-  email: string;
-  /** For Steam accounts this stores the Deca-issued Steam secret, not a Windows/email password. */
-  password: string;
-  serverName: string;
-  notes: string;
-  preferredScriptId: string;
-  createdAt: number;
-  updatedAt: number;
-  mulingRole: 'none' | 'main' | 'mule';
-  mulingStoreMode: 'any' | 'specific';
-  mulingItemsToStore: string;
-  mulingItemsFromMain: string;
-  mulingItemsToMuleOff: string;
-  proxy: string;
-  proxyUsername: string;
-  proxyPassword: string;
-  /** Marks this as a Steam-linked account; changes the /account/verify request shape. */
-  isSteam: boolean;
-  /** Steam ID 64 (decimal string). Required when isSteam=true. */
-  steamId: string;
-}
-
-interface DashboardAccountOverviewItem {
-  objectType: number;
-  objectTypeHex: string;
-  name: string;
-  uniqueId: string | null;
-  enchantIds: number[];
-}
-
-interface DashboardAccountOverviewCharacter {
-  charId: number;
-  classType: number;
-  classTypeHex: string;
-  className: string;
-  level: number;
-  exp: number;
-  fame: number;
-  seasonal: boolean;
-  dead: boolean;
-  hp: number;
-  maxHp: number;
-  mp: number;
-  maxMp: number;
-  attack: number;
-  defense: number;
-  speed: number;
-  dexterity: number;
-  vitality: number;
-  wisdom: number;
-  equipment: DashboardAccountOverviewItem[];
-  inventory: DashboardAccountOverviewItem[];
-  backpacks: DashboardAccountOverviewItem[];
-}
-
-interface DashboardAccountOverviewStorageSection {
-  items: DashboardAccountOverviewItem[];
-  totalCount: number;
-  uniqueCount: number;
-}
-
-interface DashboardAccountOverview {
-  accountName: string;
-  totalFame: number;
-  aliveFame: number;
-  bestCharFame: number;
-  maxNumChars: number;
-  characters: DashboardAccountOverviewCharacter[];
-  vault: DashboardAccountOverviewStorageSection;
-  gifts: DashboardAccountOverviewStorageSection;
-  temporaryGifts: DashboardAccountOverviewStorageSection;
-  materialStorage: DashboardAccountOverviewStorageSection;
-  potions: DashboardAccountOverviewStorageSection;
-}
-
-interface DashboardAccountOverviewCacheRecord {
-  accountId: string;
-  email: string;
-  updatedAt: number;
-  overview: DashboardAccountOverview;
-}
-
 /**
  * Dev dashboard HTTP + WebSocket server.
  * Serves the packet inspector UI on localhost:3000.
@@ -424,6 +333,11 @@ export class DevServer {
   private gameWikiCatalogJson: string | null = null;
   /** Spawned muling-headless process (one at a time). */
   private mulingProcess: ReturnType<typeof spawn> | null = null;
+  private accounts!: AccountService;
+
+  private injectorDllPath: string | null = null;
+  private injectorExePath: string | null = null;
+  private dllInjected = false;
 
   private getConfigsDir(): string {
     return join(getRealmengineDocumentsDir(), 'configs');
@@ -441,163 +355,36 @@ export class DevServer {
     return join(getRealmengineDocumentsDir(), 'Accounts');
   }
 
-  private getDashboardAccountOverviewCacheFile(accountId: string): string {
-    return join(this.getAccountsCacheDir(), `${String(accountId || '').trim()}.json`);
-  }
-
-
   private ensureDir(path: string): void {
     if (!existsSync(path)) mkdirSync(path, { recursive: true });
   }
 
-  private generateDashboardAccountId(): string {
-    return `acct-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  }
-
   private normalizeDashboardAccountRecord(raw: any, index = 0): DashboardAccountRecord {
-    const now = Date.now();
-    const id = String(raw?.id || '').trim() || `${this.generateDashboardAccountId()}-${index}`;
-    const createdAt = Number(raw?.createdAt || 0) > 0 ? Number(raw.createdAt) : now;
-    const updatedAt = Number(raw?.updatedAt || 0) > 0 ? Number(raw.updatedAt) : now;
-    const mulingRoles = ['none', 'main', 'mule'] as const;
-    return {
-      id,
-      label: String(raw?.label || '').trim(),
-      email: String(raw?.email || '').trim(),
-      password: String(raw?.password || ''),
-      serverName: String(raw?.serverName || 'USWest').trim() || 'USWest',
-      notes: String(raw?.notes || ''),
-      preferredScriptId: String(raw?.preferredScriptId || '').trim(),
-      createdAt,
-      updatedAt,
-      mulingRole: mulingRoles.includes(raw?.mulingRole as typeof mulingRoles[number]) ? (raw.mulingRole as typeof mulingRoles[number]) : 'none',
-      mulingStoreMode: raw?.mulingStoreMode === 'specific' ? 'specific' as const : 'any' as const,
-      mulingItemsToStore: String(raw?.mulingItemsToStore || ''),
-      mulingItemsFromMain: String(raw?.mulingItemsFromMain || ''),
-      mulingItemsToMuleOff: String(raw?.mulingItemsToMuleOff || ''),
-      proxy: String(raw?.proxy || ''),
-      proxyUsername: String(raw?.proxyUsername || ''),
-      proxyPassword: String(raw?.proxyPassword || ''),
-      isSteam: !!raw?.isSteam,
-      steamId: String(raw?.steamId || '').trim(),
-    };
+    return this.accounts.normalizeDashboardAccountRecord(raw, index);
   }
 
   private readDashboardAccounts(): DashboardAccountRecord[] {
-    try {
-      const dir = getRealmengineDocumentsDir();
-      this.ensureDir(dir);
-      const filePath = this.getAccountsFile();
-      debugLog(`readDashboardAccounts: dir="${dir}" file="${filePath}" exists=${existsSync(filePath)}`);
-      if (!existsSync(filePath)) {
-        debugLog(`readDashboardAccounts: file not found, returning []`);
-        return [];
-      }
-      const raw = readFileSync(filePath, 'utf8');
-      debugLog(`readDashboardAccounts: raw content (first 200 chars): ${raw.slice(0, 200)}`);
-      const parsed = JSON.parse(raw) as { accounts?: unknown[] };
-      const accounts = Array.isArray(parsed?.accounts) ? parsed.accounts : [];
-      debugLog(`readDashboardAccounts: parsed ${accounts.length} account(s)`);
-      return accounts.map((account, index) => this.normalizeDashboardAccountRecord(account, index));
-    } catch (err) {
-      debugLog(`readDashboardAccounts: ERROR: ${(err as Error).message}`);
-      Logger.warn('DevServer', `accounts read failed: ${(err as Error).message}`);
-      return [];
-    }
+    return this.accounts.readDashboardAccounts();
   }
 
   private writeDashboardAccounts(accounts: DashboardAccountRecord[]): void {
-    this.ensureDir(getRealmengineDocumentsDir());
-    writeFileSync(this.getAccountsFile(), JSON.stringify({ accounts }, null, 2), 'utf8');
+    this.accounts.writeDashboardAccounts(accounts);
   }
 
   private readDashboardAccountOverviewCache(accountId: string): DashboardAccountOverviewCacheRecord | null {
-    try {
-      const id = String(accountId || '').trim();
-      if (!id) return null;
-      this.ensureDir(this.getAccountsCacheDir());
-      const filePath = this.getDashboardAccountOverviewCacheFile(id);
-      if (!existsSync(filePath)) return null;
-      const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as Partial<DashboardAccountOverviewCacheRecord>;
-      if (!parsed || typeof parsed !== 'object' || !parsed.overview || typeof parsed.overview !== 'object') return null;
-      if (!this.isDashboardOverviewCacheComplete(parsed.overview as DashboardAccountOverview)) return null;
-      return {
-        accountId: id,
-        email: String(parsed.email || '').trim(),
-        updatedAt: Number(parsed.updatedAt || 0) > 0 ? Number(parsed.updatedAt) : Date.now(),
-        overview: parsed.overview as DashboardAccountOverview,
-      };
-    } catch (err) {
-      Logger.warn('DevServer', `accounts overview cache read failed for ${accountId}: ${(err as Error).message}`);
-      return null;
-    }
-  }
-
-  private isDashboardOverviewCacheComplete(overview: DashboardAccountOverview): boolean {
-    const characters = Array.isArray(overview?.characters) ? overview.characters : [];
-    const storageSections = ['vault', 'gifts', 'temporaryGifts', 'materialStorage', 'potions'];
-    return characters.every((character) => {
-      const equipment = Array.isArray(character?.equipment) ? character.equipment : [];
-      const inventory = Array.isArray(character?.inventory) ? character.inventory : [];
-      const backpacks = Array.isArray(character?.backpacks) ? character.backpacks : [];
-      return [equipment, inventory, backpacks].every((items) => items.every((item) => !!item && Array.isArray(item.enchantIds) && Object.prototype.hasOwnProperty.call(item, 'uniqueId')));
-    }) && storageSections.every((key) => {
-      const section = ((overview as unknown) as Record<string, unknown>)[key] as DashboardAccountOverviewStorageSection | undefined;
-      return !!section && Array.isArray(section.items);
-    });
+    return this.accounts.readDashboardAccountOverviewCache(accountId);
   }
 
   private readAllDashboardAccountOverviewCaches(): Record<string, DashboardAccountOverviewCacheRecord> {
-    const result: Record<string, DashboardAccountOverviewCacheRecord> = {};
-    try {
-      this.ensureDir(this.getAccountsCacheDir());
-      const files = readdirSync(this.getAccountsCacheDir()).filter((file) => extname(file).toLowerCase() === '.json');
-      for (const file of files) {
-        const accountId = file.slice(0, -5);
-        const cached = this.readDashboardAccountOverviewCache(accountId);
-        if (cached) result[accountId] = cached;
-      }
-    } catch (err) {
-      Logger.warn('DevServer', `accounts overview cache list failed: ${(err as Error).message}`);
-    }
-    return result;
-  }
-
-  private writeDashboardAccountOverviewCache(accountId: string, email: string, overview: DashboardAccountOverview): DashboardAccountOverviewCacheRecord {
-    const record: DashboardAccountOverviewCacheRecord = {
-      accountId: String(accountId || '').trim(),
-      email: String(email || '').trim(),
-      updatedAt: Date.now(),
-      overview,
-    };
-    this.ensureDir(this.getAccountsCacheDir());
-    writeFileSync(this.getDashboardAccountOverviewCacheFile(record.accountId), JSON.stringify(record, null, 2), 'utf8');
-    return record;
+    return this.accounts.readAllDashboardAccountOverviewCaches();
   }
 
   private deleteDashboardAccountOverviewCache(accountId: string): void {
-    try {
-      const id = String(accountId || '').trim();
-      if (!id) return;
-      const filePath = this.getDashboardAccountOverviewCacheFile(id);
-      if (existsSync(filePath)) unlinkSync(filePath);
-    } catch (err) {
-      Logger.warn('DevServer', `accounts overview cache delete failed for ${accountId}: ${(err as Error).message}`);
-    }
+    this.accounts.deleteDashboardAccountOverviewCache(accountId);
   }
 
   private pruneDashboardAccountOverviewCaches(accounts: DashboardAccountRecord[]): void {
-    try {
-      const validIds = new Set(accounts.map((account) => String(account.id || '').trim()).filter(Boolean));
-      this.ensureDir(this.getAccountsCacheDir());
-      const files = readdirSync(this.getAccountsCacheDir()).filter((file) => extname(file).toLowerCase() === '.json');
-      for (const file of files) {
-        const accountId = file.slice(0, -5);
-        if (!validIds.has(accountId)) this.deleteDashboardAccountOverviewCache(accountId);
-      }
-    } catch (err) {
-      Logger.warn('DevServer', `accounts overview cache prune failed: ${(err as Error).message}`);
-    }
+    this.accounts.pruneDashboardAccountOverviewCaches(accounts);
   }
 
   private getObjectDisplayName(objectType: number): string {
@@ -607,407 +394,49 @@ export class DevServer {
     return label || `Type ${Math.trunc(objectType)}`;
   }
 
-  private buildDashboardOverviewItem(
-    token: DashboardAccountEquipmentToken,
-    uniqueLookup?: Map<string, string[]>,
-  ): DashboardAccountOverviewItem {
-    const objectType = Number.isFinite(token.objectType) ? Math.trunc(token.objectType) : -1;
-    let enchantIds: number[] = [];
-    if (objectType >= 0 && uniqueLookup instanceof Map) {
-      const exactKey = `${objectType}#${String(token.uniqueId || '').trim()}`;
-      const fallbackKey = `${objectType}#`;
-      const exactBucket = uniqueLookup.get(exactKey);
-      const fallbackBucket = uniqueLookup.get(fallbackKey);
-      const encoded = exactBucket?.length
-        ? String(exactBucket.shift() || '').trim()
-        : (fallbackBucket?.length ? String(fallbackBucket.shift() || '').trim() : '');
-      enchantIds = decodeDashboardEnchantIds(encoded);
-    }
-    return {
-      objectType,
-      objectTypeHex: formatObjectTypeHex(objectType),
-      name: this.getObjectDisplayName(objectType),
-      uniqueId: token.uniqueId,
-      enchantIds,
-    };
-  }
-
-  private resetSessionStats(): void {
-    this.sessionStartedAt = 0;
-    this.fameSectionStart = null;
-    this.fameAccumulated = 0;
-    this.lastKnownFame = 0;
-    if (this.fameInitTimer) { clearTimeout(this.fameInitTimer); this.fameInitTimer = null; }
-  }
-
-  /**
-   * Begin a new reconnect segment. Commits the previous segment's fame into fameAccumulated,
-   * then waits for the first real (non-zero) fame reading before anchoring the new baseline.
-   * A fallback timer accepts a zero baseline after FAME_INIT_WAIT_MS if nothing better arrives.
-   */
-  private startFameSegment(): void {
-    // Commit whatever was gained in the segment that just ended
-    if (this.fameSectionStart != null) {
-      this.fameAccumulated += Math.max(0, this.lastKnownFame - this.fameSectionStart);
-    }
-    this.fameSectionStart = null;
-    if (this.fameInitTimer) { clearTimeout(this.fameInitTimer); this.fameInitTimer = null; }
-    // Fallback: if currentFame never rises above 0 (e.g. new character), accept 0 as baseline
-    this.fameInitTimer = setTimeout(() => {
-      this.fameInitTimer = null;
-      if (this.fameSectionStart == null) {
-        this.fameSectionStart = this.lastKnownFame;
-      }
-    }, DevServer.FAME_INIT_WAIT_MS);
-  }
-
-  private getSessionStats(currentFame: number): { uptimeMs: number; fameGained: number; averageFpm: number } {
-    const now = Date.now();
-    if (!this.sessionStartedAt) this.sessionStartedAt = now;
-    // Track last seen fame every poll so disconnect handler can commit accurately
-    if (Number.isFinite(currentFame) && currentFame > 0) this.lastKnownFame = currentFame;
-    // Anchor segment baseline once we have a real non-zero value
-    if (this.fameSectionStart == null && Number.isFinite(currentFame) && currentFame > 0) {
-      this.fameSectionStart = currentFame;
-      if (this.fameInitTimer) { clearTimeout(this.fameInitTimer); this.fameInitTimer = null; }
-    }
-    const sectionGain = (this.fameSectionStart != null && Number.isFinite(currentFame))
-      ? Math.max(0, currentFame - this.fameSectionStart)
-      : 0;
-    const fameGained = this.fameAccumulated + sectionGain;
-    const uptimeMs = Math.max(0, now - this.sessionStartedAt);
-    const averageFpm = uptimeMs > 0 ? (fameGained / (uptimeMs / 60000)) : 0;
-    return { uptimeMs, fameGained, averageFpm };
-  }
-
-  private buildDashboardOverviewItems(
-    tokens: DashboardAccountEquipmentToken[],
-    uniqueLookup: Map<string, string[]>,
-    keepEmpty = true,
-  ): DashboardAccountOverviewItem[] {
-    const items = tokens.map((token) => this.buildDashboardOverviewItem(token, uniqueLookup));
-    return keepEmpty ? items : items.filter((item) => Number(item.objectType) >= 0);
-  }
-
-  private buildDashboardStorageSection(
-    tokenGroups: DashboardAccountEquipmentToken[][],
-    uniqueLookup: Map<string, string[]>,
-  ): DashboardAccountOverviewStorageSection {
-    const items: DashboardAccountOverviewItem[] = [];
-    tokenGroups.forEach((tokens) => {
-      items.push(...this.buildDashboardOverviewItems(tokens, uniqueLookup, false));
-    });
-    const uniqueTypes = new Set(items.map((item) => Number(item.objectType)).filter((objectType) => Number.isFinite(objectType) && objectType >= 0));
-    return {
-      items,
-      totalCount: items.length,
-      uniqueCount: uniqueTypes.size,
-    };
-  }
-
-  private async fetchCharListXml(accessToken: string): Promise<{ xml: string } | { error: string }> {
-    const body = new URLSearchParams({
-      do_login: 'false',
-      accessToken,
-      game_net: 'Unity',
-      play_platform: 'Unity',
-      game_net_user_id: '',
-      muleDump: 'true',
-      __source: 'ExaltAccountManager',
-    }).toString();
-
-    return new Promise((resolve) => {
-      const req = https.request(
-        'https://www.realmofthemadgod.com/char/list',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Content-Length': Buffer.byteLength(body, 'utf8'),
-            'X-Unity-Version': '2019.3.14f1',
-          },
-        },
-        (res) => {
-          let data = '';
-          res.on('data', (chunk) => { data += chunk; });
-          res.on('end', () => {
-            const error = parseCharListError(data);
-            if (error) {
-              resolve({ error });
-              return;
-            }
-            if (!data.includes('<Chars')) {
-              resolve({ error: `Unexpected char list response${res.statusCode ? ` (${res.statusCode})` : ''}.` });
-              return;
-            }
-            resolve({ xml: data });
-          });
-        },
-      );
-      req.on('error', (err) => {
-        Logger.error('DevServer', `char/list request failed: ${err.message}`);
-        resolve({ error: 'Failed to load character list.' });
-      });
-      req.setTimeout(15000, () => {
-        req.destroy();
-        resolve({ error: 'Character list request timed out.' });
-      });
-      req.write(body, 'utf8');
-      req.end();
-    });
-  }
-
   private async fetchDashboardAccountOverviewRemote(
     accountId: string,
     email: string,
     password: string,
     steam?: { steamId: string },
   ): Promise<{ cache: DashboardAccountOverviewCacheRecord } | { error: string }> {
-    const clientToken = getClientToken();
-    if (!clientToken) return { error: 'Client token unavailable.' };
-
-    const verifyResult = await this.verifyDecaAccount(email, password, clientToken, steam);
-    if ('error' in verifyResult) return { error: verifyResult.error };
-
-    const charListResult = await this.fetchCharListXml(verifyResult.token);
-    if ('error' in charListResult) return { error: charListResult.error };
-
-    const overview = this.parseDashboardAccountOverview(email, charListResult.xml);
-    if ('error' in overview) return { error: overview.error };
-
-    return {
-      cache: this.writeDashboardAccountOverviewCache(accountId, email, overview),
-    };
+    return this.accounts.fetchDashboardAccountOverviewRemote(accountId, email, password, steam);
   }
 
-  private parseDashboardAccountOverview(
-    email: string,
-    xml: string,
-  ): DashboardAccountOverview | { error: string } {
-    try {
-      const parser = new XMLParser({
-        ignoreAttributes: false,
-        attributeNamePrefix: '@_',
-        isArray: (name) => name === 'Char' || name === 'ItemData',
-      });
-      const parsed = parser.parse(xml) as {
-        Chars?: {
-          Account?: Record<string, unknown>;
-          Char?: Array<Record<string, unknown>> | Record<string, unknown>;
-        };
-      };
-      const charsNode = parsed?.Chars;
-      if (!charsNode) return { error: 'Character list payload was missing <Chars>.' };
+  private resetSessionStats(): void {
+    this.fameTracker.reset();
+  }
 
-      const accountNode = (charsNode.Account ?? {}) as Record<string, unknown>;
-      const accountStats = (accountNode.Stats ?? {}) as Record<string, unknown>;
-      const accountUniqueLookup = buildDashboardUniqueItemLookup(accountNode.UniqueItemInfo);
-      const giftUniqueLookup = buildDashboardUniqueItemLookup((charsNode as Record<string, unknown>).UniqueGiftItemInfo ?? accountNode.UniqueGiftItemInfo);
-      const temporaryGiftUniqueLookup = buildDashboardUniqueItemLookup((charsNode as Record<string, unknown>).UniqueTemporaryGiftItemInfo ?? accountNode.UniqueTemporaryGiftItemInfo);
-      const vaultChestNodes = Array.isArray((accountNode.Vault as Record<string, unknown> | undefined)?.Chest)
-        ? ((accountNode.Vault as Record<string, unknown>).Chest as unknown[])
-        : ((accountNode.Vault as Record<string, unknown> | undefined)?.Chest ? [(accountNode.Vault as Record<string, unknown>).Chest] : []);
-      const materialChestNodes = Array.isArray((accountNode.MaterialStorage as Record<string, unknown> | undefined)?.Chest)
-        ? ((accountNode.MaterialStorage as Record<string, unknown>).Chest as unknown[])
-        : ((accountNode.MaterialStorage as Record<string, unknown> | undefined)?.Chest ? [(accountNode.MaterialStorage as Record<string, unknown>).Chest] : []);
-      const rawCharacters = Array.isArray(charsNode.Char)
-        ? charsNode.Char
-        : (charsNode.Char ? [charsNode.Char] : []);
-      const characters = rawCharacters.map((rawChar) => {
-        const classType = parseCharListNumber(rawChar.ObjectType);
-        const uniqueLookup = buildDashboardUniqueItemLookup(rawChar.UniqueItemInfo);
-        const backpackSlots = Math.max(0, parseCharListNumber(rawChar.BackpackSlots));
-        const backpackCount = Math.max(0, Math.min(8, Math.floor(backpackSlots / 8)));
-        const allTokens = parseDashboardEquipmentTokens(rawChar.Equipment, 12 + (backpackCount * 8));
-        const equipmentTokens = allTokens.slice(0, 4);
-        const inventoryTokens = allTokens.slice(4, 12);
-        const backpackTokens = allTokens.slice(12);
-        return {
-          charId: parseCharListNumber(rawChar['@_id']),
-          classType,
-          classTypeHex: formatObjectTypeHex(classType),
-          className: this.getObjectDisplayName(classType),
-          level: parseCharListNumber(rawChar.Level),
-          exp: parseCharListNumber(rawChar.Exp),
-          fame: parseCharListNumber(rawChar.CurrentFame),
-          seasonal: parseCharListBoolean(rawChar.Seasonal),
-          dead: parseCharListBoolean(rawChar.Dead),
-          hp: parseCharListNumber(rawChar.HitPoints),
-          maxHp: parseCharListNumber(rawChar.MaxHitPoints),
-          mp: parseCharListNumber(rawChar.MagicPoints),
-          maxMp: parseCharListNumber(rawChar.MaxMagicPoints),
-          attack: parseCharListNumber(rawChar.Attack),
-          defense: parseCharListNumber(rawChar.Defense),
-          speed: parseCharListNumber(rawChar.Speed),
-          dexterity: parseCharListNumber(rawChar.Dexterity),
-          vitality: parseCharListNumber(rawChar.HpRegen),
-          wisdom: parseCharListNumber(rawChar.MpRegen),
-          equipment: this.buildDashboardOverviewItems(equipmentTokens, uniqueLookup, true),
-          inventory: this.buildDashboardOverviewItems(inventoryTokens, uniqueLookup, true),
-          backpacks: this.buildDashboardOverviewItems(backpackTokens, uniqueLookup, true),
-        } satisfies DashboardAccountOverviewCharacter;
-      });
-      characters.sort(
-        (a, b) => b.level - a.level || b.fame - a.fame || a.className.localeCompare(b.className) || a.charId - b.charId,
-      );
+  private startFameSegment(): void {
+    this.fameTracker.startSegment();
+  }
 
-      return {
-        accountName: String(accountNode.Name || '').trim() || email,
-        totalFame: parseCharListNumber(accountStats.TotalFame),
-        aliveFame: parseCharListNumber(accountStats.Fame),
-        bestCharFame: parseCharListNumber(accountStats.BestCharFame ?? accountStats.BestFame),
-        maxNumChars: parseCharListNumber(accountNode.MaxNumChars),
-        characters,
-        vault: this.buildDashboardStorageSection(vaultChestNodes.map((value) => parseDashboardEquipmentTokens(value, 0)), accountUniqueLookup),
-        gifts: this.buildDashboardStorageSection([parseDashboardEquipmentTokens(accountNode.Gifts, 0)], giftUniqueLookup),
-        temporaryGifts: this.buildDashboardStorageSection([parseDashboardEquipmentTokens(accountNode.TemporaryGifts, 0)], temporaryGiftUniqueLookup),
-        materialStorage: this.buildDashboardStorageSection(materialChestNodes.map((value) => parseDashboardEquipmentTokens(value, 0)), accountUniqueLookup),
-        potions: this.buildDashboardStorageSection([parseDashboardEquipmentTokens(accountNode.Potions, 0)], accountUniqueLookup),
-      };
-    } catch (err) {
-      Logger.warn('DevServer', `char/list parse failed: ${(err as Error).message}`);
-      return { error: 'Failed to parse character list.' };
-    }
+  private getSessionStats(currentFame: number): { uptimeMs: number; fameGained: number; averageFpm: number } {
+    return this.fameTracker.getSessionStats(currentFame);
   }
 
   private sanitizeConfigId(name: string): string {
-    const cleaned = name
-      .trim()
-      .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
-      .replace(/\s+/g, '-')
-      .toLowerCase();
-    return cleaned || `config-${Date.now()}`;
+    return this.pluginConfigs.sanitizeConfigId(name);
   }
 
-  private buildPluginConfigSnapshot(name: string): {
-    id: string;
-    name: string;
-    createdAt: number;
-    updatedAt: number;
-    plugins: Array<{ id: string; enabled: boolean; hotkey: string; settings: Record<string, unknown> }>;
-  } {
-    const now = Date.now();
-    const plugins = this.pluginManager.getPlugins().map((p) => {
-      const settings: Record<string, unknown> = {};
-      // Persist only value settings; skip action buttons (load should never "click" UI buttons).
-      for (const s of p.settings || []) {
-        if (s.type === 'button') continue;
-        settings[s.key] = s.value;
-      }
-      return { id: p.id, enabled: !!p.enabled, hotkey: String((p as any).hotkey || ''), settings };
-    });
-    return {
-      id: this.sanitizeConfigId(name),
-      name: name.trim() || 'Unnamed Config',
-      createdAt: now,
-      updatedAt: now,
-      plugins,
-    };
+  private buildPluginConfigSnapshot(name: string) {
+    return this.pluginConfigs.buildPluginConfigSnapshot(name);
   }
-
-  // ── Autosave: persist current plugin state on every change ─────────────
-  // Settings used to reset on restart because nothing wrote the live state
-  // (only the manual "Save config" did). We now debounce-write the whole
-  // current state to a reserved "Autosave" config and point
-  // lastPluginConfigId at it, so tryAutoLoadLastPluginConfig() restores it
-  // on next launch — no manual save needed.
-  private autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   private writeAutosaveSnapshot(): void {
-    if (this.getActivePluginConfigId() !== DEFAULT_PLUGIN_CONFIG_ID) return;
-    try {
-      const snapshot = this.buildPluginConfigSnapshot(DEFAULT_PLUGIN_CONFIG_NAME);
-      const dir = this.getConfigsDir();
-      this.ensureDir(dir);
-      const filePath = join(dir, snapshot.id + '.json');
-      if (existsSync(filePath)) {
-        try {
-          const oldCfg = JSON.parse(readFileSync(filePath, 'utf8')) as { createdAt?: number };
-          if (Number(oldCfg.createdAt) > 0) snapshot.createdAt = Number(oldCfg.createdAt);
-        } catch {}
-        snapshot.updatedAt = Date.now();
-      }
-      writeFileSync(filePath, JSON.stringify(snapshot, null, 2), 'utf8');
-      this.config.lastPluginConfigId = snapshot.id;
-      this.saveConfig();
-      this.broadcastConfig();
-    } catch (err) {
-      Logger.warn('DevServer', `autosave failed: ${(err as Error).message}`);
-    }
+    this.pluginConfigs.writeAutosaveSnapshot();
   }
 
   private scheduleAutosave(): void {
-    if (this.getActivePluginConfigId() !== DEFAULT_PLUGIN_CONFIG_ID) return;
-    if (this.autosaveTimer) clearTimeout(this.autosaveTimer);
-    this.autosaveTimer = setTimeout(() => {
-      this.autosaveTimer = null;
-      this.writeAutosaveSnapshot();
-    }, 800);
+    this.pluginConfigs.scheduleAutosave();
   }
 
   private applyPluginConfigSnapshot(snapshot: any): { ok: boolean; message: string } {
-    if (!snapshot || !Array.isArray(snapshot.plugins)) {
-      return { ok: false, message: 'Invalid config format: plugins[] is required.' };
-    }
-    const livePlugins = this.pluginManager.getPlugins();
-    for (const p of snapshot.plugins as Array<any>) {
-      if (!p || typeof p.id !== 'string') continue;
-      const live = livePlugins.find((lp) => lp.id === p.id);
-      const liveSettingByKey = new Map<string, { type?: string }>();
-      for (const s of live?.settings || []) {
-        liveSettingByKey.set(String(s.key), { type: String((s as any).type || '') });
-      }
-      if (typeof p.enabled === 'boolean') {
-        this.pluginManager.togglePlugin(p.id, p.enabled);
-      }
-      if (typeof p.hotkey === 'string') {
-        const result = this.pluginManager.updatePluginHotkey(p.id, p.hotkey);
-        if (!result.ok) {
-          Logger.warn('DevServer', `Skipped hotkey for ${p.id}: ${result.reason || 'invalid hotkey'}`);
-        }
-      }
-      if (p.settings && typeof p.settings === 'object') {
-        for (const [key, value] of Object.entries(p.settings as Record<string, unknown>)) {
-          // Never execute button settings from a config replay.
-          const st = liveSettingByKey.get(String(key));
-          if (st?.type === 'button') continue;
-          this.pluginManager.updateSetting(p.id, key, value);
-        }
-      }
-    }
-    this.broadcastPluginState();
-    this.syncPluginHotkeysToDll();
-    return { ok: true, message: `Loaded config "${String(snapshot.name || snapshot.id || 'config')}".` };
+    return this.pluginConfigs.applyPluginConfigSnapshot(snapshot);
   }
 
   public tryAutoLoadDefaultPluginConfig(): void {
-    try {
-      const safeId = DEFAULT_PLUGIN_CONFIG_ID;
-      const filePath = join(this.getConfigsDir(), safeId + '.json');
-      if (!existsSync(filePath)) {
-        this.ensureDir(this.getConfigsDir());
-        const snapshot = this.buildPluginConfigSnapshot(DEFAULT_PLUGIN_CONFIG_NAME);
-        writeFileSync(filePath, JSON.stringify(snapshot, null, 2), 'utf8');
-        this.config.lastPluginConfigId = snapshot.id;
-        this.saveConfig();
-        this.broadcastConfig();
-        Logger.log('DevServer', 'Initialized default plugin config');
-        return;
-      }
-      const raw = readFileSync(filePath, 'utf8');
-      const snapshot = JSON.parse(raw);
-      const result = this.applyPluginConfigSnapshot(snapshot);
-      if (!result.ok) {
-        Logger.warn('DevServer', `Auto-load config failed: ${result.message}`);
-        return;
-      }
-      this.config.lastPluginConfigId = safeId;
-      this.saveConfig();
-      this.broadcastConfig();
-      Logger.log('DevServer', `Auto-loaded plugin config: ${safeId}`);
-    } catch (err) {
-      Logger.warn('DevServer', `Auto-load config error: ${(err as Error).message}`);
-    }
+    this.pluginConfigs.tryAutoLoadDefaultPluginConfig();
   }
 
   constructor(
@@ -1020,6 +449,25 @@ export class DevServer {
     this.inspector = inspector;
     this.inspector.setDefaultMode('summary');
     this.pluginManager = pluginManager;
+    this.accounts = new AccountService(
+      this.getAccountsFile(),
+      this.getAccountsCacheDir(),
+      (objectType) => this.getObjectDisplayName(objectType),
+    );
+    this.launcher = new GameLauncher(
+      () => this.getRotmgPath(),
+      () => this.isSingleClientOnlyEnabled(),
+      (email, password, clientToken, steam) => this.accounts.verifyDecaAccount(email, password, clientToken, steam),
+    );
+    this.pluginConfigs = new PluginConfigService(
+      this.getConfigsDir(),
+      pluginManager,
+      () => this.getActivePluginConfigId(),
+      (id) => { this.config.lastPluginConfigId = id; },
+      () => { this.saveConfig(); this.broadcastConfig(); },
+      () => this.broadcastPluginState(),
+      () => this.syncPluginHotkeysToDll(),
+    );
     this.wikiSprites = new WikiSpriteService(
       publicDir,
       () => this.getRotmgPath(),
@@ -1030,6 +478,43 @@ export class DevServer {
       () => this.getRotmgPath(),
       () => this.getRunningRotmgExaltProcessCount() > 0,
       (status) => this.broadcastGameUpdateStatus(status),
+      async (gameRoot, buildId) => {
+        const dataDir = getRealmengineDataDir();
+        const configuredData = String(this.config.rotmgExtractorGameDataPath ?? '').trim();
+        const localDataDir = configuredData || join(gameRoot, 'RotMG Exalt_Data');
+
+        Logger.log('GameUpdater', `Refreshing XML metadata from ${localDataDir}...`);
+        try {
+          await extractLocalGameAssets(localDataDir, dataDir);
+        } catch (err) {
+          Logger.warn('GameUpdater', `Local XML extraction failed: ${(err as Error).message}; trying CDN.`);
+          await extractGameXmls(dataDir);
+        }
+
+        // Auxiliary metadata is not always embedded in the same Unity TextAssets.
+        // Force a mirror recheck when the game build changes, but do not discard
+        // already-good local files if a mirror lacks an optional document.
+        await ensureRotmgMetadataXml(dataDir, {
+          force: true,
+          log(level, message) {
+            if (level === 'error') Logger.error('GameUpdater', message);
+            else if (level === 'warn') Logger.warn('GameUpdater', message);
+            else Logger.log('GameUpdater', message);
+          },
+        });
+
+        if (!this.gameData) return;
+        const objectsPath = join(dataDir, 'objects.xml');
+        const tilesPath = join(dataDir, 'tiles.xml');
+        if (!existsSync(objectsPath) || !existsSync(tilesPath)) {
+          throw new Error('objects.xml or tiles.xml was not produced');
+        }
+        this.gameData.load(objectsPath);
+        this.gameData.loadTiles(tilesPath);
+        this.gameWikiCatalogJson = null;
+        this.wikiSprites.resetCache();
+        Logger.log('GameUpdater', `Game data hot-reloaded for ${buildId}.`);
+      },
     );
 
     // Packet Lab — captures undefined packets for live analysis
@@ -1039,7 +524,7 @@ export class DevServer {
       this.observeTradePacket(pkt);
     });
     this.lab.on('update', () => {
-      const msg = JSON.stringify({ type: 'labUpdate', unknowns: this.lab.getUnknowns() });
+      const msg = JSON.stringify({ type: WS_MSG.LAB_UPDATE, unknowns: this.lab.getUnknowns() });
       for (const client of this.wss.clients) {
         if (client.readyState === WebSocket.OPEN) client.send(msg);
       }
@@ -1087,7 +572,7 @@ export class DevServer {
 
     // Subscribe to dashboard-only plugin logs
     this.pluginManager.onDashboardLog((pluginName, message) => {
-      const msg = JSON.stringify({ type: 'pluginLog', plugin: pluginName, message });
+      const msg = JSON.stringify({ type: WS_MSG.PLUGIN_LOG, plugin: pluginName, message });
       for (const client of this.wss.clients) {
         if (client.readyState === WebSocket.OPEN) {
           client.send(msg);
@@ -1097,7 +582,7 @@ export class DevServer {
 
     // Subscribe to structured plugin data broadcasts
     this.pluginManager.onBroadcastData((pluginId, type, data) => {
-      const msg = JSON.stringify({ type: 'pluginData', pluginId, dataType: type, data });
+      const msg = JSON.stringify({ type: WS_MSG.PLUGIN_DATA, pluginId, dataType: type, data });
       for (const client of this.wss.clients) {
         if (client.readyState === WebSocket.OPEN) {
           client.send(msg);
@@ -1113,37 +598,11 @@ export class DevServer {
   private currentClient: any = null;
   private connectedClients = new Map<string, any>(); // clientId → ClientConnection
   private disconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private sessionStartedAt = 0;
-  /** Fame at the start of the current reconnect segment. Null until first non-zero reading. */
-  private fameSectionStart: number | null = null;
-  /** Fame accumulated from all prior reconnect segments this session. */
-  private fameAccumulated: number = 0;
-  /** Last observed fame value — captured each poll so disconnect handler can commit it. */
-  private lastKnownFame: number = 0;
-  /** Fallback timer: accept 0-fame baseline if no positive value arrives within FAME_INIT_WAIT_MS. */
-  private fameInitTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Hard-reset timer: wipe accumulated fame if player doesn't reconnect within FAME_RESET_MS. */
-  private fameResetTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly fameTracker = new FameTracker();
   private static readonly DISCONNECT_GRACE_MS = 3000;
-  private static readonly FAME_INIT_WAIT_MS = 5_000;
-  private static readonly FAME_RESET_MS = 120_000;
-  private tradeSession: {
-    active: boolean;
-    ourSlotCount: number;
-    partnerSlotCount: number;
-    ourOffer: boolean[];
-    partnerOffer: boolean[];
-    partnerOfferFromTradeChanged: boolean[];
-    partnerName: string;
-  } = {
-    active: false,
-    ourSlotCount: 12,
-    partnerSlotCount: 12,
-    ourOffer: [],
-    partnerOffer: [],
-    partnerOfferFromTradeChanged: [],
-    partnerName: '',
-  };
+  private readonly tradeSession = new TradeSession();
+  private launcher!: GameLauncher;
+  private pluginConfigs!: PluginConfigService;
   private scriptHost: ScriptHost | undefined;
   private bridgeClientRef: BridgeClientRef | null = null;
   private focusedInspectorClientId: string | null = null;
@@ -1170,6 +629,32 @@ export class DevServer {
     });
   }
 
+  setInjectorPaths(dllPath: string, injectorPath: string): void {
+    this.injectorDllPath = dllPath;
+    this.injectorExePath = injectorPath;
+  }
+
+
+  private async tryInjectDll(): Promise<void> {
+    if (this.dllInjected) return;
+    if (!this.injectorDllPath || !this.injectorExePath) return;
+    if (this.internalBridge?.isConnected) return;
+
+    const pids = findPidsByImageName('RotMG Exalt.exe');
+    if (pids.length === 0) {
+      Logger.warn('DevServer', 'NewTick received but no RotMG Exalt.exe process found for injection.');
+      return;
+    }
+
+    this.dllInjected = true;
+    for (const pid of pids) {
+      const result = await injectDll(pid, this.injectorDllPath, this.injectorExePath);
+      if (!result.ok) {
+        Logger.error('DevServer', `Injection into PID ${pid} failed: ${result.error}`);
+      }
+    }
+  }
+
   /**
    * Current player position for display.
    */
@@ -1182,6 +667,13 @@ export class DevServer {
    */
   attachProxy(proxy: Proxy): void {
     this.proxy = proxy;
+
+    proxy.hookPacket('NEWTICK', () => {
+      if (!this.dllInjected) {
+        void this.tryInjectDll();
+      }
+    });
+
     proxy.on('clientConnected', (client: any) => {
       const previousClientId = this.currentClient?.clientId ? String(this.currentClient.clientId) : null;
       const wasConnected = this.gameClientConnected;
@@ -1190,13 +682,10 @@ export class DevServer {
         this.disconnectTimer = null;
       }
       // Reconnected before the fame hard-reset fired — keep accumulated fame
-      if (this.fameResetTimer) {
-        clearTimeout(this.fameResetTimer);
-        this.fameResetTimer = null;
-      }
+      this.fameTracker.cancelPendingReset();
       this.gameClientConnected = true;
       if (!wasConnected) {
-        this.sessionStartedAt = 0; // restart uptime for this connected segment
+        this.fameTracker.restartUptime();
         this.startFameSegment();   // commit prior segment; wait for first real fame
       }
       this.currentClient = client;
@@ -1232,22 +721,8 @@ export class DevServer {
         this.disconnectTimer = null;
         if (this.connectedClients.size === 0) {
           this.gameClientConnected = false;
-          // Commit the current fame segment into fameAccumulated
-          if (this.fameSectionStart != null) {
-            const segGain = Math.max(0, this.lastKnownFame - this.fameSectionStart);
-            this.fameAccumulated += segGain;
-          }
-          this.fameSectionStart = null;
-          if (this.fameInitTimer) { clearTimeout(this.fameInitTimer); this.fameInitTimer = null; }
-          this.sessionStartedAt = 0;
-          // Don't wipe fameAccumulated yet — player may reconnect (server change, dungeon).
-          // Schedule a hard reset: if they haven't reconnected in FAME_RESET_MS, clear it.
-          if (this.fameResetTimer) clearTimeout(this.fameResetTimer);
-          this.fameResetTimer = setTimeout(() => {
-            this.fameResetTimer = null;
-            this.fameAccumulated = 0;
-            this.lastKnownFame = 0;
-          }, DevServer.FAME_RESET_MS);
+          this.dllInjected = false;
+          this.fameTracker.commitSegmentAndScheduleReset();
         }
         this.broadcastGameClientState();
         this.broadcastClientList();
@@ -1291,7 +766,7 @@ export class DevServer {
 
         const effectivePos = this.getEffectivePlayerPos();
         const msg = JSON.stringify({
-          type: 'playerData',
+          type: WS_MSG.PLAYER_DATA,
           clientId,
           name: pd.name || '',
           classType: pd.classType,
@@ -1379,133 +854,23 @@ export class DevServer {
   }
 
   private getRunningProcessCount(imageName: string): number {
-    return countRunningProcessesByImageName(imageName);
+    return this.launcher.getRunningProcessCount(imageName);
   }
 
   private getRunningRotmgExaltProcessCount(): number {
-    return this.getRunningProcessCount('RotMG Exalt.exe');
+    return this.launcher.getRunningRotmgExaltProcessCount();
   }
 
   private terminateProcessByImageName(imageName: string): boolean {
-    try {
-      execFileSync('taskkill', ['/IM', imageName, '/F'], {
-        encoding: 'utf8',
-        windowsHide: true,
-      });
-      return true;
-    } catch (err) {
-      // taskkill exits non-zero when the image simply isn't running. Detect that
-      // structurally — its "not found"/"no running instance" text is localized by
-      // the Windows UI language, so matching English substrings mislabels the
-      // benign no-op as a real failure on non-English PCs.
-      if (countRunningProcessesByImageName(imageName) === 0) {
-        return false;
-      }
-      Logger.warn('DevServer', `Failed to terminate ${imageName}: ${String((err as Error).message || '')}`);
-      return false;
-    }
+    return this.launcher.terminateProcessByImageName(imageName);
   }
-
 
   private getSingleClientLaunchBlockError(): string | null {
-    if (!this.isSingleClientOnlyEnabled()) return null;
-    if (this.getRunningRotmgExaltProcessCount() < 1) return null;
-    return 'Close the existing RotMG Exalt process and launch again. We only support 1 account at a time right now, but later multiple accounts with proxies will be supported.';
+    return this.launcher.getSingleClientLaunchBlockError();
   }
 
-  /**
-   * When the configured install is the Steam build of RotMG Exalt, ensure a
-   * `steam_appid.txt` sits next to the exe before we launch it directly.
-   *
-   * Without it, the Steam build's early `SteamAPI_RestartAppIfNecessary` call
-   * quits the process we just spawned and relaunches a *fresh* one through
-   * Steam — which orphans the winhttp.dll hook's launcher-PID correlation and
-   * loses our credential-launch tracking. With the file present, a direct spawn
-   * initializes Steamworks against the already-running Steam client and stays in
-   * the same process, so our inject + PID tracking hold.
-   *
-   * The AppID is read from the install's own Steam appmanifest (never
-   * hardcoded), so it stays correct even if Deca re-IDs the app. This is a
-   * strict no-op for the standalone (Deca-launcher) install — that build must
-   * NOT have this file, and it has no `steamapps` ancestor so we never write it.
-   */
-  private ensureSteamAppIdFile(gamePath: string): void {
-    try {
-      // The game lives at <steamapps>/common/<installdir>. Walk up looking for
-      // that exact "common under steamapps" shape; bail if it isn't one.
-      let steamAppsDir: string | null = null;
-      let dir = gamePath;
-      for (let i = 0; i < 6; i++) {
-        const parent = dirname(dir);
-        if (!parent || parent === dir) break;
-        if (basename(dir).toLowerCase() === 'common' && basename(parent).toLowerCase() === 'steamapps') {
-          steamAppsDir = parent;
-          break;
-        }
-        dir = parent;
-      }
-      if (!steamAppsDir) return; // Standalone/Deca install → leave it alone.
-
-      const appIdPath = join(gamePath, 'steam_appid.txt');
-      if (existsSync(appIdPath)) return; // Steam itself, or a prior run, already wrote it.
-
-      const installDirName = basename(gamePath).toLowerCase();
-      let appId: string | null = null;
-      for (const entry of readdirSync(steamAppsDir)) {
-        const m = /^appmanifest_(\d+)\.acf$/i.exec(entry);
-        if (!m) continue;
-        const acf = readFileSync(join(steamAppsDir, entry), 'utf8');
-        const installDir = acf.match(/"installdir"\s+"([^"]+)"/i)?.[1]?.trim().toLowerCase();
-        if (installDir && installDir === installDirName) {
-          appId = m[1];
-          break;
-        }
-      }
-      if (!appId) {
-        Logger.warn('DevServer', `Steam install detected but no appmanifest matched "${basename(gamePath)}"; skipping steam_appid.txt.`);
-        return;
-      }
-      writeFileSync(appIdPath, appId, 'utf8');
-      Logger.log('DevServer', `Wrote steam_appid.txt (AppID ${appId}) for Steam-build direct launch.`);
-    } catch (err) {
-      Logger.warn('DevServer', `ensureSteamAppIdFile failed: ${(err as Error).message}`);
-    }
-  }
-
-  /**
-   * Launch the RotMG Exalt executable.
-   */
   private launchGame(): { ok: boolean; error?: string } {
-    const launchBlockError = this.getSingleClientLaunchBlockError();
-    if (launchBlockError) {
-      return { ok: false, error: launchBlockError };
-    }
-    const gamePath = this.getRotmgPath();
-    if (!gamePath) {
-      return { ok: false, error: 'RotMG path not configured and auto-detection failed.' };
-    }
-
-    const exePath = join(gamePath, 'RotMG Exalt.exe');
-    if (!existsSync(exePath)) {
-      return { ok: false, error: `RotMG Exalt.exe not found at: ${exePath}` };
-    }
-
-    this.ensureSteamAppIdFile(gamePath);
-
-    try {
-      const child = spawn(exePath, [], {
-        cwd: gamePath,
-        detached: true,
-        stdio: 'ignore',
-      });
-      child.unref();
-      Logger.log('DevServer', `Launched RotMG from: ${exePath}`);
-      return { ok: true };
-    } catch (err) {
-      const msg = (err as Error).message;
-      Logger.error('DevServer', `Failed to launch RotMG: ${msg}`);
-      return { ok: false, error: msg };
-    }
+    return this.launcher.launchGame();
   }
 
   /**
@@ -1516,185 +881,7 @@ export class DevServer {
    * set `game_net_user_id` to the Steam ID. The Steam client does NOT need
    * to be running — Deca authenticates with the user-issued Steam secret only.
    *
-   * Deca binds every token/secret — email and Steam alike — to the clientToken
-   * (HWID) that was live when it was issued. A stale cached hwid.txt is the
-   * single most common cause of a "token for different machine" rejection, and
-   * it bites Steam accounts hardest because the Steam secret is long-lived and
-   * gets bound once. So on a machine-binding rejection we retry ONCE with a
-   * freshly computed HWID (bypassing hwid.txt); if that works, the cached file
-   * was stale and we drop it so future launches use the value that just worked.
-   */
-  private async verifyDecaAccount(
-    email: string,
-    password: string,
-    clientToken: string,
-    steam?: { steamId: string },
-  ): Promise<
-    | { token: string; tokenTimestamp: string; tokenExpiration: string }
-    | { error: string }
-  > {
-    const first = await this.verifyDecaAccountOnce(email, password, clientToken, steam);
-    if (!('error' in first)) return first;
-
-    // Only an HWID/machine-binding rejection is worth retrying with a fresh
-    // HWID. Transport failures, wrong passwords, captchas, rate limits, and
-    // suspensions are not machine-bound — retrying would waste a request or
-    // trip Deca's rate limiter.
-    if (first.transport || !isHwidBindingError(first.rawError)) {
-      return { error: first.error };
-    }
-
-    const freshToken = getClientToken({ skipFile: true });
-    if (!freshToken || freshToken === clientToken) {
-      return { error: first.error };
-    }
-
-    Logger.log('DevServer', 'account/verify rejected HWID; retrying once with fresh WMI HWID (bypassing hwid.txt).');
-    const retry = await this.verifyDecaAccountOnce(email, password, freshToken, steam);
-    if (!('error' in retry)) {
-      const removed = clearCachedHwid();
-      Logger.log('DevServer', `Fresh-HWID verify succeeded${removed ? '; removed stale hwid.txt' : ''}.`);
-      return retry;
-    }
-    return { error: retry.error };
-  }
-
-  /**
-   * One account/verify round-trip. `rawError` is the unmapped Deca `<Error>`
-   * text (used by the wrapper to decide whether a fresh-HWID retry can help);
-   * `transport` marks network/timeout failures that a retry can't fix.
-   */
-  private async verifyDecaAccountOnce(
-    email: string,
-    password: string,
-    clientToken: string,
-    steam?: { steamId: string },
-  ): Promise<
-    | { token: string; tokenTimestamp: string; tokenExpiration: string }
-    | { error: string; rawError: string; transport?: boolean }
-  > {
-    const steamId = String(steam?.steamId || '').trim();
-    const useSteam = !!steam && steamId !== '';
-    const body = new URLSearchParams(
-      useSteam
-        ? {
-            guid: email,
-            secret: password,
-            steamid: steamId,
-            clientToken,
-            game_net: 'Unity_steam',
-            play_platform: 'Unity_steam',
-            game_net_user_id: steamId,
-          }
-        : {
-            guid: email,
-            password,
-            clientToken,
-            game_net: 'Unity',
-            play_platform: 'Unity',
-            game_net_user_id: '',
-          },
-    ).toString();
-
-    return new Promise((resolve) => {
-      const req = https.request(
-        'https://www.realmofthemadgod.com/account/verify',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Content-Length': Buffer.byteLength(body, 'utf8'),
-            'X-Unity-Version': '2019.3.14f1',
-          },
-        },
-        (res) => {
-          let data = '';
-          res.on('data', (chunk) => { data += chunk; });
-          res.on('end', () => {
-            const token = parseVerifySuccess(data);
-            if (token) {
-              resolve(token);
-              return;
-            }
-            const rawError = (data.match(/<Error>([^<]*)<\/Error>/i)?.[1] ?? '').trim();
-            if (!rawError) {
-              // Neither a token nor a recognizable <Error>. Surface the HTTP
-              // status + a body snippet so an unexpected response shape (HTML
-              // challenge page, empty body, or a deprecated Steam-secret path
-              // that no longer returns <Error>) is diagnosable instead of a
-              // blank "Login failed."
-              const status = res.statusCode ?? 0;
-              const snippet = data.replace(/\s+/g, ' ').trim().slice(0, 200);
-              Logger.warn(
-                'DevServer',
-                `account/verify unrecognized response (HTTP ${status})${useSteam ? ' [steam]' : ''}: ${snippet || '<empty body>'}`,
-              );
-              resolve({
-                error: `Login failed — unexpected server response (HTTP ${status}). ${snippet ? `Response: ${snippet}` : 'Empty response body.'}`,
-                rawError: '',
-              });
-              return;
-            }
-            resolve({ error: parseVerifyError(data), rawError });
-          });
-        },
-      );
-      req.on('error', (err) => {
-        Logger.error('DevServer', `account/verify request failed: ${err.message}`);
-        resolve({ error: 'Network error. Try again.', rawError: '', transport: true });
-      });
-      req.setTimeout(15000, () => {
-        req.destroy();
-        resolve({ error: 'Request timed out.', rawError: '', transport: true });
-      });
-      req.write(body, 'utf8');
-      req.end();
-    });
-  }
-
-  private clampLaunchWindowSize(n: number, min: number, max: number): number {
-    if (!Number.isFinite(n)) return min;
-    return Math.min(max, Math.max(min, Math.round(n)));
-  }
-
-  /**
-   * Windowed launch extras for Unity player (width/height always honored; x/y best-effort — not all builds respect them).
-   */
-  private buildCredentialLaunchWindowExtras(opts?: {
-    compactWindow?: boolean;
-    windowRect?: { x: number; y: number; width: number; height: number };
-  }): string[] {
-    const rect = opts?.windowRect;
-    if (rect && Number.isFinite(rect.width) && Number.isFinite(rect.height)) {
-      const w = this.clampLaunchWindowSize(rect.width, 320, 7680);
-      const h = this.clampLaunchWindowSize(rect.height, 240, 4320);
-      const x = this.clampLaunchWindowSize(rect.x, -32000, 32000);
-      const y = this.clampLaunchWindowSize(rect.y, -32000, 32000);
-      return [
-        '-screen-fullscreen',
-        '0',
-        '-screen-width',
-        String(w),
-        '-screen-height',
-        String(h),
-        '-screen-x',
-        String(x),
-        '-screen-y',
-        String(y),
-        '-popupwindow',
-        '-nolog',
-      ];
-    }
-    if (opts?.compactWindow) {
-      return ['-screen-fullscreen', '0', '-screen-width', '640', '-screen-height', '360', '-popupwindow', '-nolog'];
-    }
-    return [];
-  }
-
-  /**
-   * Verify with Deca then launch RotMG Exalt with token-based args (LoginGUI-style: verify only, no bind).
-   * @param compactWindow Unity window size below in-game minimum (MAC multibox launch sidebar).
-   * @param windowRect Optional pixel placement + size (virtual desktop coords from dashboard layout editor).
+   * Delegates to AccountService.verifyDecaAccount (HWID retry + fresh-HWID cache-bust).
    */
   private async launchGameWithCredentials(
     email: string,
@@ -1703,108 +890,13 @@ export class DevServer {
     opts?: {
       compactWindow?: boolean;
       windowRect?: { x: number; y: number; width: number; height: number };
-      /** Dashboard saved-account id when the client sends it */
       accountId?: string | null;
-      /** Dashboard display label when the client sends it */
       accountLabel?: string | null;
-      /** When true, authenticate via Steam (requires steamId). */
       isSteam?: boolean;
-      /** Steam ID 64 (decimal string) — required when isSteam is true. */
       steamId?: string;
     },
   ): Promise<{ ok: boolean; error?: string }> {
-    const launchBlockError = this.getSingleClientLaunchBlockError();
-    if (launchBlockError) {
-      return { ok: false, error: launchBlockError };
-    }
-    const gamePath = this.getRotmgPath();
-    if (!gamePath) {
-      return { ok: false, error: 'RotMG path not configured and auto-detection failed.' };
-    }
-
-    const exePath = join(gamePath, 'RotMG Exalt.exe');
-    if (!existsSync(exePath)) {
-      return { ok: false, error: `RotMG Exalt.exe not found at: ${exePath}` };
-    }
-
-    const clientToken = getClientToken();
-    if (!clientToken) {
-      return { ok: false, error: 'Client token unavailable.' };
-    }
-
-    const steamId = String(opts?.steamId || '').trim();
-    if (opts?.isSteam && !steamId) {
-      return { ok: false, error: 'Steam ID is required for Steam accounts.' };
-    }
-    const steamConfig = opts?.isSteam ? { steamId } : undefined;
-
-    const verifyResult = await this.verifyDecaAccount(email, password, clientToken, steamConfig);
-    if ('error' in verifyResult) {
-      return { ok: false, error: verifyResult.error };
-    }
-
-    const { token, tokenTimestamp, tokenExpiration } = verifyResult;
-
-    const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64');
-    // platform stays `Deca` even for Steam accounts: this is a token launch, so
-    // the account is already authenticated and the access token Deca returned is
-    // provider-agnostic (it works for char-list, servers, and game connect the
-    // same way regardless of whether we verified via email or Steam secret).
-    // `platform:Steam` would additionally make the client try to init the Steam
-    // overlay/ticket path, which needs the Steam client running — the opposite
-    // of what this bypass launch is for. Do not change without runtime-testing.
-    const args = `data:{platform:Deca,guid:${b64(email)},token:${b64(token)},tokenTimestamp:${b64(tokenTimestamp)},tokenExpiration:${b64(tokenExpiration)},env:4,serverName:${serverName}}`;
-    const windowExtras = this.buildCredentialLaunchWindowExtras(opts);
-    const launchedAtIso = new Date().toISOString();
-
-    this.ensureSteamAppIdFile(gamePath);
-
-    try {
-      const child = spawn(exePath, [args, ...windowExtras], {
-        cwd: gamePath,
-        detached: true,
-        stdio: 'ignore',
-      });
-      child.unref();
-      const wr = opts?.windowRect;
-      const launcherPid = typeof child.pid === 'number' ? child.pid : -1;
-      if (launcherPid > 0) {
-        registerCredentialLaunch({
-          launcherPid,
-          accountId: opts?.accountId ?? null,
-          accountLabel: opts?.accountLabel ?? null,
-          email,
-        });
-      }
-      if (wr && process.platform === 'win32' && launcherPid > 0) {
-        window.setTimeout(() => {
-          void moveRotmgLaunchedWindowAfterSpawn(launcherPid, wr, { email, launchedAtIso }).then((pos) => {
-            if (pos.ok) {
-              Logger.log(
-                'DevServer',
-                `Positioned credential launch window via Win32 (launcher PID ${launcherPid}, ${wr.width}×${wr.height} @ ${wr.x},${wr.y})`,
-              );
-            } else {
-              Logger.warn(
-                'DevServer',
-                `Post-launch window move failed (launcher PID ${launcherPid}). ${pos.debug ?? ''}`.slice(0, 2000),
-              );
-            }
-          });
-        }, 500);
-      }
-      const logSuffix = wr
-        ? ` (${wr.width}×${wr.height} @ ${wr.x},${wr.y})`
-        : opts?.compactWindow
-          ? ' (640×360 compact)'
-          : '';
-      Logger.log('DevServer', `Launched RotMG with credentials${logSuffix} from: ${exePath}`);
-      return { ok: true };
-    } catch (err) {
-      const msg = (err as Error).message;
-      Logger.error('DevServer', `Failed to launch RotMG: ${msg}`);
-      return { ok: false, error: msg };
-    }
+    return this.launcher.launchGameWithCredentials(email, password, serverName, opts);
   }
 
   /**
@@ -1820,7 +912,7 @@ export class DevServer {
 
   private buildConfigMessage(): string {
     return JSON.stringify({
-      type: 'config',
+      type: WS_MSG.CONFIG,
       rotmgPath: this.getRotmgPath() || '',
       rotmgPathSource: this.config.rotmgPath ? 'custom' : (this.detectedGamePath ? 'auto' : 'none'),
       rotmgExtractorGameDataPath: (this.config.rotmgExtractorGameDataPath || '').trim(),
@@ -1841,7 +933,7 @@ export class DevServer {
 
 
   private broadcastGameUpdateStatus(status: GameUpdateStatus): void {
-    const msg = JSON.stringify({ type: 'gameUpdateStatus', status });
+    const msg = JSON.stringify({ type: WS_MSG.GAME_UPDATE_STATUS, status });
     for (const client of this.wss.clients) {
       if (client.readyState === WebSocket.OPEN) client.send(msg);
     }
@@ -1849,7 +941,7 @@ export class DevServer {
 
   private broadcastInternalState(): void {
     const msg = JSON.stringify({
-      type: 'internalState',
+      type: WS_MSG.INTERNAL_STATE,
       connected: this.internalBridge?.isConnected ?? false,
     });
     for (const client of this.wss.clients) {
@@ -1858,7 +950,7 @@ export class DevServer {
   }
 
   private broadcastUnresolvedClasses(classes: string[]): void {
-    const msg = JSON.stringify({ type: 'unresolvedClasses', classes });
+    const msg = JSON.stringify({ type: WS_MSG.UNRESOLVED_CLASSES, classes });
     for (const client of this.wss.clients) {
       if (client.readyState === WebSocket.OPEN) client.send(msg);
     }
@@ -1866,7 +958,7 @@ export class DevServer {
 
   private broadcastGameClientState(): void {
     const msg = JSON.stringify({
-      type: 'gameClient',
+      type: WS_MSG.GAME_CLIENT,
       connected: this.gameClientConnected,
     });
     for (const client of this.wss.clients) {
@@ -1891,7 +983,7 @@ export class DevServer {
         server: this.ipToServerName[serverIp] || serverIp || '--',
       };
     });
-    const msg = JSON.stringify({ type: 'clientList', clients });
+    const msg = JSON.stringify({ type: WS_MSG.CLIENT_LIST, clients });
     for (const ws of this.wss.clients) {
       if (ws.readyState === WebSocket.OPEN) ws.send(msg);
     }
@@ -1961,7 +1053,7 @@ export class DevServer {
   /** TCP connect to each server:2050, return name -> ms. Failed/timeout omitted. */
   private pingAllServers(): Promise<Record<string, number>> {
     const timeoutMs = 3000;
-    const port = 2050;
+    const port = GAME_PORT;
     const entries = Object.entries(this.servers);
     return Promise.all(
       entries.map(
@@ -3246,66 +2338,11 @@ export class DevServer {
   }
 
   private resetTradeSession(): void {
-    this.tradeSession.active = false;
-    this.tradeSession.ourSlotCount = 12;
-    this.tradeSession.partnerSlotCount = 12;
-    this.tradeSession.ourOffer = [];
-    this.tradeSession.partnerOffer = [];
-    this.tradeSession.partnerOfferFromTradeChanged = [];
-    this.tradeSession.partnerName = '';
+    this.tradeSession.reset();
   }
 
   private observeTradePacket(pkt: CapturedPacket): void {
-    const name = String(pkt.name ?? '').toUpperCase();
-    const direction = String(pkt.direction ?? '');
-    const fromServer = direction.startsWith('S');
-    const fromClient = direction.startsWith('C');
-    const data = (pkt.data && typeof pkt.data === 'object') ? pkt.data : {};
-
-    if (name === 'TRADESTART' && fromServer) {
-      const clientItems = Array.isArray(data.clientItems) ? data.clientItems : [];
-      const partnerItems = Array.isArray(data.partnerItems) ? data.partnerItems : [];
-      this.tradeSession.active = true;
-      this.tradeSession.ourSlotCount = normalizeSlotCount(clientItems.length, this.tradeSession.ourSlotCount);
-      this.tradeSession.partnerSlotCount = normalizeSlotCount(partnerItems.length, this.tradeSession.partnerSlotCount);
-      this.tradeSession.ourOffer = toBoolArray(
-        extractTradeItemIncluded(clientItems),
-        this.tradeSession.ourSlotCount,
-      );
-      this.tradeSession.partnerOffer = toBoolArray(
-        extractTradeItemIncluded(partnerItems),
-        this.tradeSession.partnerSlotCount,
-      );
-      this.tradeSession.partnerOfferFromTradeChanged = this.tradeSession.partnerOffer.slice();
-      this.tradeSession.partnerName = typeof data.partnerName === 'string' ? data.partnerName : '';
-      return;
-    }
-
-    if (name === 'TRADECHANGED' && fromServer) {
-      this.tradeSession.active = true;
-      const next = toBoolArray(data.offer, this.tradeSession.partnerSlotCount);
-      this.tradeSession.partnerOffer = next;
-      this.tradeSession.partnerOfferFromTradeChanged = next.slice();
-      return;
-    }
-
-    if (name === 'CHANGETRADE' && fromClient) {
-      this.tradeSession.active = true;
-      this.tradeSession.ourOffer = toBoolArray(data.offer, this.tradeSession.ourSlotCount);
-      return;
-    }
-
-    if (name === 'TRADEACCEPTED' && fromServer) {
-      this.tradeSession.active = true;
-      this.tradeSession.ourOffer = toBoolArray(data.clientOffer, this.tradeSession.ourSlotCount);
-      this.tradeSession.partnerOffer = toBoolArray(data.partnerOffer, this.tradeSession.partnerSlotCount);
-      // partnerOfferFromTradeChanged unchanged — ACCEPTTRADE must echo last TRADECHANGED
-      return;
-    }
-
-    if ((name === 'TRADEDONE' && fromServer) || (name === 'CANCELTRADE' && fromClient)) {
-      this.resetTradeSession();
-    }
+    this.tradeSession.observePacket(pkt);
   }
 
   private sendLabPacket(nameRaw: unknown, dataRaw: unknown): {
@@ -3347,16 +2384,18 @@ export class DevServer {
         }
         packet.data.name = targetName;
       } else if (packetName === 'ACCEPTTRADE') {
-        const ourCount = normalizeSlotCount(this.tradeSession.ourSlotCount, 12);
-        const partnerCount = normalizeSlotCount(this.tradeSession.partnerSlotCount, 12);
-        packet.data.clientOffer = toBoolArray(this.tradeSession.ourOffer, ourCount);
+        const ts = this.tradeSession.state;
+        const ourCount = normalizeSlotCount(ts.ourSlotCount, 12);
+        const partnerCount = normalizeSlotCount(ts.partnerSlotCount, 12);
+        packet.data.clientOffer = toBoolArray(ts.ourOffer, ourCount);
         const partnerLine =
-          this.tradeSession.partnerOfferFromTradeChanged.length > 0
-            ? this.tradeSession.partnerOfferFromTradeChanged
-            : this.tradeSession.partnerOffer;
+          ts.partnerOfferFromTradeChanged.length > 0
+            ? ts.partnerOfferFromTradeChanged
+            : ts.partnerOffer;
         packet.data.partnerOffer = toBoolArray(partnerLine, partnerCount);
       } else if (packetName === 'CHANGETRADE') {
-        const ourCount = normalizeSlotCount(this.tradeSession.ourSlotCount, 12);
+        const ts = this.tradeSession.state;
+        const ourCount = normalizeSlotCount(ts.ourSlotCount, 12);
         let offer: boolean[];
         if (Array.isArray(data.offer)) {
           offer = toBoolArray(data.offer, ourCount);
@@ -3364,11 +2403,11 @@ export class DevServer {
           const offerSlots = String(data.offerSlots ?? '').trim();
           offer = offerSlots
             ? parseOfferSlots(offerSlots, ourCount)
-            : toBoolArray(this.tradeSession.ourOffer, ourCount);
+            : toBoolArray(ts.ourOffer, ourCount);
         }
         packet.data.offer = offer;
-        this.tradeSession.ourOffer = offer.slice();
-        this.tradeSession.active = true;
+        ts.ourOffer = offer.slice();
+        ts.active = true;
       } else if (packetName === 'CANCELTRADE') {
         this.resetTradeSession();
       } else if (packetName === 'PARTYACTIONRESULT') {
@@ -3451,7 +2490,7 @@ export class DevServer {
   }
 
   private broadcastMulingStatus(status: unknown): void {
-    const msg = JSON.stringify({ type: 'muling_status', status });
+    const msg = JSON.stringify({ type: WS_MSG.MULING_STATUS, status });
     for (const client of this.wss.clients) {
       if (client.readyState === WebSocket.OPEN) client.send(msg);
     }
@@ -3462,30 +2501,30 @@ export class DevServer {
 
     // Send current plugin state
     ws.send(JSON.stringify({
-      type: 'plugins',
+      type: WS_MSG.PLUGINS,
       data: this.pluginManager.getPlugins(),
     }));
 
     // Send current game client state
     ws.send(JSON.stringify({
-      type: 'gameClient',
+      type: WS_MSG.GAME_CLIENT,
       connected: this.gameClientConnected,
     }));
 
     // Send current internal (DLL pipe) state
     ws.send(JSON.stringify({
-      type: 'internalState',
+      type: WS_MSG.INTERNAL_STATE,
       connected: this.internalBridge?.isConnected ?? false,
     }));
 
     if (this.lastUnresolvedClasses !== null) {
-      ws.send(JSON.stringify({ type: 'unresolvedClasses', classes: this.lastUnresolvedClasses }));
+      ws.send(JSON.stringify({ type: WS_MSG.UNRESOLVED_CLASSES, classes: this.lastUnresolvedClasses }));
     }
 
     // Send recent packets
     const recent = this.inspector.getRecent(100);
     ws.send(JSON.stringify({
-      type: 'history',
+      type: WS_MSG.HISTORY,
       data: recent,
     }));
 
@@ -3493,7 +2532,7 @@ export class DevServer {
     const damageHistory = this.pluginManager.getPluginData('damage-sniffer', 'damageHistory');
     if (damageHistory !== undefined) {
       ws.send(JSON.stringify({
-        type: 'pluginData',
+        type: WS_MSG.PLUGIN_DATA,
         pluginId: 'damage-sniffer',
         dataType: 'damageHistory',
         data: damageHistory,
@@ -3502,7 +2541,7 @@ export class DevServer {
     const damageLive = this.pluginManager.getPluginData('damage-sniffer', 'damageLive');
     if (damageLive !== undefined) {
       ws.send(JSON.stringify({
-        type: 'pluginData',
+        type: WS_MSG.PLUGIN_DATA,
         pluginId: 'damage-sniffer',
         dataType: 'damageLive',
         data: damageLive,
@@ -3513,7 +2552,7 @@ export class DevServer {
     const encounters = this.pluginManager.getPluginData('damage-sniffer', 'encounterHistory');
     if (encounters !== undefined) {
       ws.send(JSON.stringify({
-        type: 'pluginData',
+        type: WS_MSG.PLUGIN_DATA,
         pluginId: 'damage-sniffer',
         dataType: 'encounterHistory',
         data: encounters,
@@ -3523,7 +2562,7 @@ export class DevServer {
     // Subscribe to real-time packets
     const unsub = this.inspector.subscribe((packet: CapturedPacket) => {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'packet', data: packet }));
+        ws.send(JSON.stringify({ type: WS_MSG.PACKET, data: packet }));
       }
     });
 
@@ -3531,11 +2570,11 @@ export class DevServer {
     ws.send(this.buildConfigMessage());
 
     // Send current Packet Lab state
-    ws.send(JSON.stringify({ type: 'labUpdate', unknowns: this.lab.getUnknowns() }));
+    ws.send(JSON.stringify({ type: WS_MSG.LAB_UPDATE, unknowns: this.lab.getUnknowns() }));
 
     // Game updater: hand over whatever we know, then run one check per process
     // so a stale install is visible without the user asking.
-    ws.send(JSON.stringify({ type: 'gameUpdateStatus', status: this.gameUpdater.getStatus() }));
+    ws.send(JSON.stringify({ type: WS_MSG.GAME_UPDATE_STATUS, status: this.gameUpdater.getStatus() }));
     if (!this.autoUpdateCheckDone) {
       this.autoUpdateCheckDone = true;
       void this.gameUpdater.check();
@@ -3543,7 +2582,7 @@ export class DevServer {
 
     // Admin dev: always report logged-in with all plans active.
     ws.send(JSON.stringify({
-      type: 'gemStatus',
+      type: WS_MSG.GEM_STATUS,
       loggedIn: true,
       gem_balance: 999999,
       active: true,
@@ -3558,7 +2597,7 @@ export class DevServer {
         if (msg.type === 'togglePlugin') {
           const result = this.pluginManager.togglePlugin(msg.pluginId, msg.enabled);
           if (!result.ok && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'pluginToggleError', pluginId: msg.pluginId, reason: result.reason, requiredPlan: result.requiredPlan ?? null }));
+            ws.send(JSON.stringify({ type: WS_MSG.PLUGIN_TOGGLE_ERROR, pluginId: msg.pluginId, reason: result.reason, requiredPlan: result.requiredPlan ?? null }));
           }
           this.broadcastPluginState();
           this.scheduleAutosave();
@@ -3581,7 +2620,7 @@ export class DevServer {
         } else if (msg.type === 'updateSetting') {
           const settingOk = this.pluginManager.updateSetting(msg.pluginId, msg.key, msg.value);
           if (!settingOk && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'settingUpdateError', pluginId: msg.pluginId, key: msg.key }));
+            ws.send(JSON.stringify({ type: WS_MSG.SETTING_UPDATE_ERROR, pluginId: msg.pluginId, key: msg.key }));
           }
           this.broadcastPluginState();
           this.scheduleAutosave();
@@ -3589,7 +2628,7 @@ export class DevServer {
           const result = this.pluginManager.updatePluginHotkey(msg.pluginId, msg.hotkey);
           if (!result.ok && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
-              type: 'pluginHotkeyUpdateError',
+              type: WS_MSG.PLUGIN_HOTKEY_UPDATE_ERROR,
               pluginId: msg.pluginId,
               reason: result.reason,
               conflictPluginId: result.conflictPluginId ?? null,
@@ -3602,7 +2641,7 @@ export class DevServer {
           const changed = this.pluginManager.resetPluginSettings(String(msg.pluginId ?? ''));
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
-              type: 'pluginSettingsReset',
+              type: WS_MSG.PLUGIN_SETTINGS_RESET,
               pluginId: msg.pluginId,
               changedKeys: changed,
             }));
@@ -3611,7 +2650,7 @@ export class DevServer {
           this.scheduleAutosave();
         } else if (msg.type === 'launchGame') {
           const result = this.launchGame();
-          ws.send(JSON.stringify({ type: 'launchGameResult', ...result }));
+          ws.send(JSON.stringify({ type: WS_MSG.LAUNCH_GAME_RESULT, ...result }));
         } else if (msg.type === 'launchGameWithCredentials') {
           const email = String(msg.email ?? '').trim();
           const password = String(msg.password ?? '');
@@ -3648,17 +2687,17 @@ export class DevServer {
           }).then(
             (result) => {
               if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'launchGameResult', ...result }));
+                ws.send(JSON.stringify({ type: WS_MSG.LAUNCH_GAME_RESULT, ...result }));
               }
             },
           );
         } else if (msg.type === 'probePacket') {
           const result = this.lab.probe(Number(msg.id), String(msg.spec ?? ''));
-          ws.send(JSON.stringify({ type: 'probeResult', id: msg.id, result }));
+          ws.send(JSON.stringify({ type: WS_MSG.PROBE_RESULT, id: msg.id, result }));
         } else if (msg.type === 'sendLabPacket') {
           const result = this.sendLabPacket(msg.packetName, msg.data);
           ws.send(JSON.stringify({
-            type: 'labPacketSendResult',
+            type: WS_MSG.LAB_PACKET_SEND_RESULT,
             requestId: msg.requestId ?? null,
             result,
           }));
@@ -3666,12 +2705,12 @@ export class DevServer {
           if (this.worldState && this.gameData) {
             const payload = this.worldState.getObjectsForDashboard(this.gameData);
             const beaconTypes = this.gameData.getBeaconTypes();
-            const objectsMsg = JSON.stringify({ type: 'objectsData', ...payload, beaconTypes });
+            const objectsMsg = JSON.stringify({ type: WS_MSG.OBJECTS_DATA, ...payload, beaconTypes });
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(objectsMsg);
             }
           } else {
-            const emptyMsg = JSON.stringify({ type: 'objectsData', portals: [], beacons: [], categories: [], beaconTypes: [] });
+            const emptyMsg = JSON.stringify({ type: WS_MSG.OBJECTS_DATA, portals: [], beacons: [], categories: [], beaconTypes: [] });
             if (ws.readyState === WebSocket.OPEN) ws.send(emptyMsg);
           }
         } else if (msg.type === 'requestGameWikiCatalog') {
@@ -3682,7 +2721,7 @@ export class DevServer {
           if (!this.gameData) {
             ws.send(
               JSON.stringify({
-                type: 'gameWikiCatalog',
+                type: WS_MSG.GAME_WIKI_CATALOG,
                 objectSummaries: [],
                 objectDetails: {},
                 tiles: [],
@@ -3696,7 +2735,7 @@ export class DevServer {
           if (!this.gameWikiCatalogJson) {
             const { objectSummaries, objectDetails, tiles } = this.gameData.getGameWikiCatalog();
             this.gameWikiCatalogJson = JSON.stringify({
-              type: 'gameWikiCatalog',
+              type: WS_MSG.GAME_WIKI_CATALOG,
               objectSummaries,
               objectDetails,
               tiles,
@@ -3709,7 +2748,7 @@ export class DevServer {
           if (ws.readyState !== WebSocket.OPEN || !this.gameData) return;
           const t = Number(msg.objectType);
           ws.send(JSON.stringify({
-            type: 'objectXmlResult',
+            type: WS_MSG.OBJECT_XML_RESULT,
             objectType: t,
             rawXml: Number.isFinite(t) ? (this.gameData.getRawObjectXml(t) ?? null) : null,
           }));
@@ -3717,7 +2756,7 @@ export class DevServer {
           if (ws.readyState !== WebSocket.OPEN || !this.gameData) return;
           const t = Number(msg.tileType);
           ws.send(JSON.stringify({
-            type: 'tileXmlResult',
+            type: WS_MSG.TILE_XML_RESULT,
             tileType: t,
             rawXml: Number.isFinite(t) ? (this.gameData.getRawTileXml(t) ?? null) : null,
           }));
@@ -3744,10 +2783,10 @@ export class DevServer {
               );
             }
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'tilesData', ...payload }));
+              ws.send(JSON.stringify({ type: WS_MSG.TILES_DATA, ...payload }));
             }
           } else if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'tilesData', center: { x: 0, y: 0 }, radius: 12, groups: [] }));
+            ws.send(JSON.stringify({ type: WS_MSG.TILES_DATA, center: { x: 0, y: 0 }, radius: 12, groups: [] }));
           }
         } else if (msg.type === 'requestNearbyPlayers') {
           if (this.worldState && this.gameData && this.currentClient?.playerData) {
@@ -3758,11 +2797,11 @@ export class DevServer {
               this.currentClient.objectId,
             );
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'nearbyPlayersData', players: payload }));
+              ws.send(JSON.stringify({ type: WS_MSG.NEARBY_PLAYERS_DATA, players: payload }));
             }
           } else {
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'nearbyPlayersData', players: [] }));
+              ws.send(JSON.stringify({ type: WS_MSG.NEARBY_PLAYERS_DATA, players: [] }));
             }
           }
         } else if (msg.type === 'requestAllPlayersRawStats') {
@@ -3776,7 +2815,7 @@ export class DevServer {
                 : [];
             ws.send(
               JSON.stringify({
-                type: 'allPlayersRawStats',
+                type: WS_MSG.ALL_PLAYERS_RAW_STATS,
                 capturedAt: Date.now(),
                 map: this.currentClient?.playerData?.mapName ?? null,
                 gameId: this.currentClient?.state?.gameId ?? null,
@@ -3787,7 +2826,7 @@ export class DevServer {
           } else {
             ws.send(
               JSON.stringify({
-                type: 'allPlayersRawStats',
+                type: WS_MSG.ALL_PLAYERS_RAW_STATS,
                 capturedAt: Date.now(),
                 map: null,
                 gameId: null,
@@ -3801,13 +2840,13 @@ export class DevServer {
           const vaultState = this.currentClient ? getVaultStore(this.currentClient) : null;
           if (!vaultState) {
             ws.send(JSON.stringify({
-              type: 'vaultData',
+              type: WS_MSG.VAULT_DATA,
               error: 'Vault data not available — enter the vault first.',
               capturedAt: null,
             }));
           } else {
             ws.send(JSON.stringify({
-              type: 'vaultData',
+              type: WS_MSG.VAULT_DATA,
               capturedAt: vaultState.capturedAt,
               map: this.currentClient?.playerData?.mapName ?? null,
               gameId: this.currentClient?.state?.gameId ?? null,
@@ -3835,11 +2874,11 @@ export class DevServer {
             const myPos = this.currentClient.playerData.pos ?? null;
             const debug = this.worldState.getNearbyPlayerDebugForDashboard(this.gameData, myPos, oid);
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'nearbyPlayerDebug', objectId: oid, debug }));
+              ws.send(JSON.stringify({ type: WS_MSG.NEARBY_PLAYER_DEBUG, objectId: oid, debug }));
             }
           } else {
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'nearbyPlayerDebug', objectId: oid, debug: null }));
+              ws.send(JSON.stringify({ type: WS_MSG.NEARBY_PLAYER_DEBUG, objectId: oid, debug: null }));
             }
           }
         } else if (msg.type === 'checkGameUpdate') {
@@ -3880,7 +2919,7 @@ export class DevServer {
 
   broadcastPluginState(): void {
     const pluginData = JSON.stringify({
-      type: 'plugins',
+      type: WS_MSG.PLUGINS,
       data: this.pluginManager.getPlugins(),
     });
     for (const client of this.wss.clients) {
@@ -3970,7 +3009,7 @@ export class DevServer {
   broadcastScriptsState(): void {
     const scripts = this.scriptHost?.list() ?? [];
     const dir = this.scriptHost?.getScriptsDir() ?? null;
-    const msg = JSON.stringify({ type: 'scriptsState', scripts, dir });
+    const msg = JSON.stringify({ type: WS_MSG.SCRIPTS_STATE, scripts, dir });
     for (const client of this.wss.clients) {
       if (client.readyState === WebSocket.OPEN) {
         client.send(msg);
@@ -3983,7 +3022,7 @@ export class DevServer {
     line: string,
     level: 'info' | 'warn' | 'error' = 'info',
   ): void {
-    const msg = JSON.stringify({ type: 'scriptLog', id, line, level });
+    const msg = JSON.stringify({ type: WS_MSG.SCRIPT_LOG, id, line, level });
     for (const client of this.wss.clients) {
       if (client.readyState === WebSocket.OPEN) {
         client.send(msg);
@@ -4008,7 +3047,7 @@ export class DevServer {
       const snap = this.scriptHost.getPanelSnapshot(scriptId);
       if (!snap) continue;
       const msg: ScriptPanelOutboundMessage = {
-        type: 'scriptPanelState',
+        type: WS_MSG.SCRIPT_PANEL_STATE,
         scriptId,
         def: snap.def,
         isOpen: snap.isOpen,

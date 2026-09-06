@@ -1,7 +1,7 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
+import type { PluginContext } from './api.js';
 import { getRealmengineDataDir } from '../src/util/rotmgAssetExtractor.js';
 import { normalizeMapDisplayName } from '../src/util/mapDisplayName.js';
-import { StatType } from '../src/constants/StatType.js';
+import { StatType } from './api.js';
 import { AbilityScalingManager } from '../src/damage-sniffer/abilityScalingManager.js';
 import {
   processCrucibleJsonStrings,

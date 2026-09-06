@@ -16,7 +16,7 @@ if /I "%~1"=="release" set "BUILD_CONFIG=Release"
 echo [dev] Build configuration: !BUILD_CONFIG!^|x64
 
 REM ── Env defaults ────────────────────────────────────────────────────────────────
-if "!WSL_DISTRO!"==""   set "WSL_DISTRO=Debian"
+if "!WSL_DISTRO!"==""   set "WSL_DISTRO=Debian-OLD"
 if "!WSL_USER!"=="" (
     for /f "delims=" %%I in ('wsl -d !WSL_DISTRO! whoami 2^>nul') do set "WSL_USER=%%I"
     if "!WSL_USER!"=="" set "WSL_USER=%USERNAME%"
@@ -70,11 +70,9 @@ if "!WSL_BASE!"=="" (
     echo [dev] WSL mount not found; skipping sync. Building from existing !WIN_BASE!\!INTERNAL_DIR!.
 ) else (
     echo [dev] Syncing !INTERNAL_DIR! from WSL...
-    REM /XF BuildSecrets.h: preserve Windows-side prod secrets written by build-prod.
     robocopy "!WSL_BASE!\!INTERNAL_DIR!" "!WIN_BASE!\!INTERNAL_DIR!" ^
         /MIR /R:3 /W:2 /NFL /NDL /NP /NJH /NJS ^
-        /XD x64 .vs .git ^
-        /XF BuildSecrets.h
+        /XD x64 .vs .git
     if !ERRORLEVEL! GEQ 8 (
         echo [dev] ERROR: !INTERNAL_DIR! sync failed ^(code !ERRORLEVEL!^).
         pause
@@ -82,21 +80,26 @@ if "!WSL_BASE!"=="" (
     )
 )
 
-REM ── Write dev BuildSecrets.h if missing ─────────────────────────────────────
-REM   Must match client/src/bridge/InternalBridge.ts dev fallbacks.
-set "SECRETS=!WIN_BASE!\!INTERNAL_DIR!\src\core\ipc\BuildSecrets.h"
-if not exist "!SECRETS!" (
-    echo [dev] BuildSecrets.h missing; writing dev defaults...
-    ^> "!SECRETS!" echo #pragma once
-    ^>^> "!SECRETS!" echo // DEV-ONLY secrets — MUST match bot-client InternalBridge.ts fallbacks.
-    ^>^> "!SECRETS!" echo #define BUILD_HANDSHAKE_KEY "47eb249907eb980c851fe3a7bdb56a244244bb7d465572b556e810df6827ecfb"
-    ^>^> "!SECRETS!" echo #define BUILD_PIPE_NAME "\\\\.\\pipe\\lfg-dev-bridge"
+REM ── Sync client from WSL (source only; NOT assets — the DLL builds into ──────
+REM    client\assets below, so a /MIR that included assets would delete it) ─────
+if not "!WSL_BASE!"=="" (
+    if exist "!WSL_BASE!\client" (
+        echo [dev] Syncing client from WSL...
+        robocopy "!WSL_BASE!\client" "!WIN_BASE!\client" ^
+            /MIR /R:3 /W:2 /NFL /NDL /NP /NJH /NJS ^
+            /XD node_modules dist release .git .vs assets "electron\native\build"
+        if !ERRORLEVEL! GEQ 8 (
+            echo [dev] ERROR: client sync failed ^(code !ERRORLEVEL!^).
+            pause
+            exit /b 1
+        )
+    )
 )
 
-REM ── Ensure game is closed so we can overwrite version.dll ───────────────────
+REM ── Ensure game is closed so we can overwrite realm-engine.dll ──────────────
 tasklist /FI "IMAGENAME eq RotMG Exalt.exe" | find /I "RotMG Exalt.exe" >nul
 if !ERRORLEVEL! EQU 0 (
-    echo [dev] RotMG Exalt is running. Closing it so we can overwrite version.dll...
+    echo [dev] RotMG Exalt is running. Closing it so we can overwrite realm-engine.dll...
     taskkill /F /IM "RotMG Exalt.exe" >nul 2>&1
     timeout /t 1 /nobreak >nul
 )
@@ -128,6 +131,14 @@ echo [dev] MSBuild: !MSBUILD!
 
 REM ── Build ───────────────────────────────────────────────────────────────────
 
+REM Remove the injectable artifact BEFORE MSBuild. The old existence-only check
+REM below accepted a stale client\assets DLL when the project emitted nowhere or
+REM failed to refresh OutDir, making a successful-looking dev build inject old code.
+set "BUILT_DLL=!WIN_BASE!\client\assets\realm-engine.dll"
+set "BUILT_PDB=!WIN_BASE!\client\assets\realm-engine.pdb"
+if exist "!BUILT_DLL!" del /F /Q "!BUILT_DLL!"
+if exist "!BUILT_PDB!" del /F /Q "!BUILT_PDB!"
+
 echo [dev] Clearing x64 build cache for a clean compile...
 if exist "!WIN_BASE!\!INTERNAL_DIR!\x64\!BUILD_CONFIG!" (
     rmdir /S /Q "!WIN_BASE!\!INTERNAL_DIR!\x64\!BUILD_CONFIG!" 2>nul
@@ -143,43 +154,81 @@ if !ERRORLEVEL! NEQ 0 (
     exit /b !ERRORLEVEL!
 )
 
-set "BUILT_DLL=!WIN_BASE!\!INTERNAL_DIR!\x64\!BUILD_CONFIG!\version.dll"
-set "BUILT_PDB=!WIN_BASE!\!INTERNAL_DIR!\x64\!BUILD_CONFIG!\version.pdb"
+REM The vcxproj's OutDir is $(SolutionDir)..\client\assets\ — the DLL builds
+REM there (that's also where the client resolves it from for injection).
 if not exist "!BUILT_DLL!" (
     echo [dev] ERROR: Built DLL not found at !BUILT_DLL!
+    echo [dev]        That is the vcxproj OutDir client\assets\ -- did the build actually succeed?
     pause
     exit /b 1
 )
+for %%I in ("!BUILT_DLL!") do echo [dev] Fresh DLL: %%~fI  %%~zI bytes  %%~tI
 
-REM ── Deploy straight to the game folder ──────────────────────────────────────
-set "GAME_DIR=%LOCALAPPDATA%\RealmOfTheMadGod\Production"
-if not exist "!GAME_DIR!" (
-    echo [dev] ERROR: Game folder not found: !GAME_DIR!
-    pause
-    exit /b 1
+REM ── Build injector.exe ──────────────────────────────────────────────────────
+REM injector.cpp is NOT in the .sln, so nothing else compiles it. Without
+REM injector.exe in client\assets\, the client logs "Injector not found... DLL
+REM injection unavailable" and realm-engine.dll never loads into the game
+REM (dodge/aim/etc silently do nothing). Compile it standalone with cl.exe.
+set "INJECTOR_SRC=!WIN_BASE!\!INTERNAL_DIR!\tools\injector"
+set "INJECTOR_EXE=!WIN_BASE!\client\assets\injector.exe"
+if exist "!INJECTOR_SRC!\injector.cpp" (
+    set "VCVARS="
+    for /f "delims=" %%I in ('"!VSWHERE!" -latest -prerelease -property installationPath 2^>nul') do (
+        if exist "%%I\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS=%%I\VC\Auxiliary\Build\vcvars64.bat"
+    )
+    if defined VCVARS (
+        echo [dev] Compiling injector.exe...
+        pushd "!INJECTOR_SRC!"
+        call "!VCVARS!" >nul 2>&1
+        cl /EHsc /O2 /nologo /DUNICODE /D_UNICODE injector.cpp /Fe:"!INJECTOR_EXE!" /Fo:"%TEMP%\injector.obj" /link Advapi32.lib >nul
+        if !ERRORLEVEL! NEQ 0 (
+            echo [dev] ERROR: injector.exe compile failed.
+            popd
+            pause
+            exit /b 1
+        )
+        popd
+        echo [dev] injector.exe -^> client\assets\injector.exe
+    ) else (
+        echo [dev] WARNING: vcvars64.bat not found -- injector.exe NOT built. Injection will be unavailable.
+    )
 )
 
-echo [dev] Deploying version.dll to !GAME_DIR!...
-copy /Y "!BUILT_DLL!" "!GAME_DIR!\version.dll" >nul
-if !ERRORLEVEL! NEQ 0 (
-    echo [dev] ERROR: Copy failed. Is the game still holding the DLL open?
-    pause
-    exit /b 1
-)
-
-if exist "!BUILT_PDB!" (
-    copy /Y "!BUILT_PDB!" "!GAME_DIR!\version.pdb" >nul
-    echo [dev] PDB deployed — you can now open crash dumps in Visual Studio and see symbols.
+REM ── Rebuild the client TypeScript (regenerates dist/, incl. dist\plugins) ───
+if exist "!WIN_BASE!\client\package.json" (
+    pushd "!WIN_BASE!\client"
+    if exist "node_modules\.bin\tsc.cmd" (
+        echo [dev] Client deps present - skipping npm install.
+    ) else (
+        echo [dev] Installing client dependencies ^(first run^)...
+        call npm install
+        if !ERRORLEVEL! NEQ 0 (
+            echo [dev] ERROR: npm install failed ^(code !ERRORLEVEL!^).
+            popd
+            pause
+            exit /b !ERRORLEVEL!
+        )
+    )
+    echo [dev] Building client ^(npm run build^)...
+    call npm run build
+    if !ERRORLEVEL! NEQ 0 (
+        echo [dev] ERROR: client build failed ^(code !ERRORLEVEL!^).
+        popd
+        pause
+        exit /b !ERRORLEVEL!
+    )
+    popd
+    echo [dev] Client rebuilt - dist\ regenerated.
 )
 
 echo.
-echo [dev] Done.
+echo [dev] Done. realm-engine.dll built to client\assets\.
 if /I "!BUILD_CONFIG!"=="Debug" (
-    echo [dev] Debug build — when the game starts, a console window will open for DLL logs.
+    echo [dev] Debug build — when injected, a console window will open for DLL logs.
 ) else (
     echo [dev] Release build — no console; crash logs only via WER + dmp.
 )
-echo [dev] Launch RotMG to test. Skip running the bot-client if you want to test the DLL in isolation.
+echo [dev] The client injects the DLL automatically on first NewTick packet.
 echo.
 pause
 endlocal

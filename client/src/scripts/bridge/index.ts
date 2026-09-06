@@ -1,5 +1,7 @@
 import { BridgeSelf } from './self/Self.js';
 import { BridgeWalking } from './walking/Walking.js';
+import { BridgeDodge } from './dodge/Dodge.js';
+import { MovementController } from './movement/MovementController.js';
 import { BridgeCombat } from './combat/Combat.js';
 import { BridgePlayers } from './players/Players.js';
 import { BridgeEnemies } from './enemies/Enemies.js';
@@ -29,7 +31,7 @@ import {
   chat, party, trade, events, inventory, guild, GuildRank,
   INVENTORY_MAIN_SLOT_COUNT, INVENTORY_BACKPACK_SLOT_COUNT, INVENTORY_TOTAL_SLOT_COUNT,
   loot, discord, DiscordWebhook,
-  Self, Walking, Combat, Players, Enemies, Inventory, Vault, World, Tiles, Objects, Projectiles,
+  Self, Walking, Combat, Players, Enemies, Inventory, Vault, World, Tiles, Objects, Projectiles, Dodge,
   Log, Settings, Timing, RealmEngine, Position, StatusEffect, Panel, uiPanel,
   TreeScript, Root, Branch, Leaf, leaf, branch, when, not, always, cooldown, once, sequence, parallel,
 } from '@realmengine/sdk';
@@ -41,12 +43,14 @@ export class SDKBridge {
   static panelRegistry: ScriptPanelRegistry | undefined;
 
   static install(deps: BridgeDeps): void {
+    const movement = new MovementController(deps);
     BridgeVaultChest.install(deps);
     BridgeGiftChest.install(deps);
     BridgeVault.install(deps);
 
     BridgeSelf.install(deps);
-    BridgeWalking.install(deps);
+    BridgeWalking.install(deps, movement);
+    BridgeDodge.install(movement);
     BridgeCombat.install(deps);
     BridgePlayers.install(deps);
     BridgeEnemies.install(deps);
@@ -73,7 +77,7 @@ export class SDKBridge {
       chat, party, trade, events, inventory,
       INVENTORY_MAIN_SLOT_COUNT, INVENTORY_BACKPACK_SLOT_COUNT, INVENTORY_TOTAL_SLOT_COUNT,
       loot, discord, DiscordWebhook, guild, GuildRank,
-      Self, Walking, Combat, Players, Enemies, Inventory, Vault, World, Tiles, Objects, Projectiles,
+      Self, Walking, Combat, Players, Enemies, Inventory, Vault, World, Tiles, Objects, Projectiles, Dodge,
       Log, Settings, Timing, RealmEngine, Position, StatusEffect, Panel, uiPanel,
       TreeScript, Root, Branch, Leaf, leaf, branch, when, not, always, cooldown, once, sequence, parallel,
     };

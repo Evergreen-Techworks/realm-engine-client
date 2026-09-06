@@ -41,7 +41,8 @@ if (process.send) {
 import { resolve, dirname, join } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
-import { existsSync, readFileSync, readdirSync, unlinkSync, copyFileSync, statSync } from 'fs';
+import { GAME_PORT } from './constants/GameId.js';
+import { existsSync, readFileSync, readdirSync, copyFileSync } from 'fs';
 import { Proxy } from './proxy/Proxy.js';
 import { PacketFactory } from './packets/PacketFactory.js';
 import { ReconnectHandler } from './proxy/ReconnectHandler.js';
@@ -62,6 +63,7 @@ import { InternalBridge } from './bridge/InternalBridge.js';
 import { setDllFeatureSender } from './bridge/DllFeatureBus.js';
 import { Logger } from './util/Logger.js';
 import { ensureRotmgMetadataXml } from './util/ensureRotmgMetadataXml.js';
+import { getRealmengineDataDir } from './util/rotmgAssetExtractor.js';
 import { ensureSdkDeployed } from './util/ensureSdkDeployed.js';
 import { getBakedPacketDefinitions, getBakedServers, getBakedStatTypes } from './config/BakedData.js';
 import {
@@ -87,60 +89,22 @@ const DATA_CONFIG_PATH = resolve(ROOT, 'data', 'config.json');
 
 type ClientDataConfig = {
   rotmgPath: string | null;
-  /**
-   * Optional path to a built internal DLL: either the full path to `version.dll`, or the build output
-   * directory (e.g. `...\\x64\\Release`) containing `version.dll`.
-   */
-  internalVersionDllPath: string | null;
   /** Debug: skip copying winhttp.dll (same as REALM_ENGINE_SKIP_WINHTTP_INSTALL=1). */
   skipWinhttpInstall: boolean;
-  /** Debug: skip deploying version.dll (same as REALM_ENGINE_SKIP_VERSION_DLL_DEPLOY=1). */
-  skipVersionDllDeploy: boolean;
 };
 
-/** Accepts a file path to version.dll or a directory that contains version.dll. */
-function resolveInternalVersionDllPath(pathOrDir: string): string | null {
-  const p = String(pathOrDir || '').trim();
-  if (!p || !existsSync(p)) return null;
-  try {
-    const st = statSync(p);
-    if (st.isDirectory()) {
-      const f = resolve(p, 'version.dll');
-      return existsSync(f) ? f : null;
-    }
-    if (st.isFile()) return p;
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function resolveDefaultDevInternalDll(): string | null {
-  const candidates = [
-    resolve(APP_ROOT, '..', 'internal', 'x64', 'Debug', 'version.dll'),
-    resolve(APP_ROOT, '..', 'internal', 'x64', 'Release', 'version.dll'),
-    resolve(APP_ROOT, '..', 'DebugInternal', 'x64', 'Debug', 'version.dll'),
-    resolve(APP_ROOT, '..', 'DebugInternal', 'x64', 'Release', 'version.dll'),
-  ];
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
-}
 
 function loadClientDataConfig(): ClientDataConfig {
   const empty: ClientDataConfig = {
     rotmgPath: null,
-    internalVersionDllPath: null,
     skipWinhttpInstall: false,
-    skipVersionDllDeploy: false,
   };
   try {
     const raw = readMergedClientConfigRaw(ROOT);
     const rotmgPath = String(raw?.rotmgPath || '').trim() || null;
-    const internalVersionDllPath = String(raw?.internalVersionDllPath || '').trim() || null;
     return {
       rotmgPath,
-      internalVersionDllPath,
       skipWinhttpInstall: truthyConfigFlag(raw?.skipWinhttpInstall),
-      skipVersionDllDeploy: truthyConfigFlag(raw?.skipVersionDllDeploy),
     };
   } catch (err) {
     Logger.warn('Main', `Failed to read config.json: ${(err as Error).message}`);
@@ -159,17 +123,12 @@ async function main() {
   const userOverlayPath = getUserClientConfigPath();
   Logger.log(
     'Main',
-    `config write: ${configWritePath}${userOverlayPath ? ` (overlay merges on ${userOverlayPath})` : ''}; bundled defaults: ${DATA_CONFIG_PATH}; skipWinhttp=${clientDataConfig.skipWinhttpInstall} skipVersion=${clientDataConfig.skipVersionDllDeploy}`,
+    `config write: ${configWritePath}${userOverlayPath ? ` (overlay merges on ${userOverlayPath})` : ''}; bundled defaults: ${DATA_CONFIG_PATH}; skipWinhttp=${clientDataConfig.skipWinhttpInstall}`,
   );
   if (clientDataConfig.skipWinhttpInstall) {
     process.env.REALM_ENGINE_SKIP_WINHTTP_INSTALL = '1';
   } else {
     delete process.env.REALM_ENGINE_SKIP_WINHTTP_INSTALL;
-  }
-  if (clientDataConfig.skipVersionDllDeploy) {
-    process.env.REALM_ENGINE_SKIP_VERSION_DLL_DEPLOY = '1';
-  } else {
-    delete process.env.REALM_ENGINE_SKIP_VERSION_DLL_DEPLOY;
   }
   const configuredRotmgPath = clientDataConfig.rotmgPath;
   const assetsDir = resolve(ROOT, 'assets');
@@ -179,120 +138,38 @@ async function main() {
   // #endregion
   if (!hookInstalled) {
     Logger.warn('Main', 'Game hook not installed - see warnings above.');
-    Logger.warn('Main', 'Proxy will still run, but game must be manually pointed to 127.0.0.1:2050.');
+    Logger.warn('Main', `Proxy will still run, but game must be manually pointed to 127.0.0.1:${GAME_PORT}.`);
   }
 
-  // 0b. Deploy cheat DLL (version.dll) to game directory
-  let versionDeploySource:
-    | 'env_override'
-    | 'config_override'
-    | 'assets_dll'
-    | 'dev_copy'
-    | 'skipped_env'
-    | 'none'
-    | 'error' = 'none';
-  if (hooker.gameDirectory) {
-    const skipVersionDeploy = process.env.REALM_ENGINE_SKIP_VERSION_DLL_DEPLOY === '1';
-    if (skipVersionDeploy) {
-      Logger.warn(
-        'Main',
-        'Skipping version.dll deploy (REALM_ENGINE_SKIP_VERSION_DLL_DEPLOY=1). Delete Production\\version.dll yourself when testing without the internal DLL.',
-      );
-      versionDeploySource = 'skipped_env';
-    } else {
-    try {
-      const cheatDllDest = resolve(hooker.gameDirectory, 'version.dll');
-      let deployed = false;
-      // APP_ROOT = bot-client dir (Electron sets REALM_ENGINE_APP_ROOT). ROOT may be resourcesPath in prod,
-      // so never use ROOT/.. for repo siblings — that misses LFG/DebugInternal next to LFG/bot-client.
-      const devDll = resolveDefaultDevInternalDll();
-
-      const envDllResolved = resolveInternalVersionDllPath(
-        String(process.env.REALM_ENGINE_INTERNAL_VERSION_DLL || ''),
-      );
-      if (envDllResolved) {
-        try {
-          copyFileSync(envDllResolved, cheatDllDest);
-          deployed = true;
-          versionDeploySource = 'env_override';
-          Logger.log('Main', 'Internal DLL deployed from REALM_ENGINE_INTERNAL_VERSION_DLL.');
-        } catch (err) {
-          Logger.warn('Main', `REALM_ENGINE_INTERNAL_VERSION_DLL copy failed: ${(err as Error).message}`);
-        }
-      }
-      const cfgDllResolved = clientDataConfig.internalVersionDllPath
-        ? resolveInternalVersionDllPath(clientDataConfig.internalVersionDllPath)
-        : null;
-      if (!deployed && cfgDllResolved) {
-        try {
-          copyFileSync(cfgDllResolved, cheatDllDest);
-          deployed = true;
-          versionDeploySource = 'config_override';
-          Logger.log('Main', 'Internal DLL deployed from data/config.json internalVersionDllPath.');
-        } catch (err) {
-          Logger.warn('Main', `internalVersionDllPath copy failed: ${(err as Error).message}`);
-        }
-      }
-
-      // Shipped DLL: assets/version.dll (plain — written by build-prod, or by VS
-      // when OutDir = client/assets/). Open source: no encrypted blob.
-      const assetsDll = resolve(assetsDir, 'version.dll');
-      if (!deployed && existsSync(assetsDll)) {
-        try {
-          copyFileSync(assetsDll, cheatDllDest);
-          deployed = true;
-          versionDeploySource = 'assets_dll';
-          Logger.log('Main', 'Internal DLL deployed from assets/version.dll.');
-        } catch (err) {
-          Logger.warn('Main', `assets/version.dll copy failed: ${(err as Error).message}`);
-        }
-      }
-
-      // Dev fallback: copy raw DLL from a local internal build output.
-      if (!deployed && devDll) {
-        try {
-          copyFileSync(devDll, cheatDllDest);
-          deployed = true;
-          versionDeploySource = 'dev_copy';
-        } catch {}
-      }
-      if (deployed) {
-        Logger.log('Main', `Internal DLL deployed to ${cheatDllDest}`);
-      } else {
-        Logger.warn('Main', 'Internal DLL not found (no assets/version.dll and no local internal build). DLL features unavailable.');
-      }
-    } catch (err) {
-      versionDeploySource = 'error';
-      Logger.warn('Main', `Internal DLL deployment failed: ${(err as Error).message}`);
-    }
-    }
+  // 0b. Resolve DLL + injector paths for external injection.
+  // The DLL is injected into the running game process on first NewTick packet
+  // (handled by DevServer), not pre-deployed to the game folder.
+  const dllPath = resolve(assetsDir, 'realm-engine.dll');
+  const injectorPath = resolve(assetsDir, 'injector.exe');
+  if (!existsSync(dllPath)) {
+    Logger.warn('Main', `Internal DLL not found at ${dllPath}. DLL features unavailable until built.`);
+  }
+  if (!existsSync(injectorPath)) {
+    Logger.warn('Main', `Injector not found at ${injectorPath}. DLL injection unavailable until built.`);
   }
 
-  // 0c. Hands-off Steam coverage. In auto-detect mode a machine can have BOTH a
-  // Deca-launcher install (AppData/Documents) and a Steam install at once. We
-  // hooked the first one above; mirror the same two DLLs (winhttp.dll proxy +
-  // version.dll hooks) into every OTHER detected install so launching the game
-  // from Steam — or from the launcher — both auto-load the hooks with zero path
-  // config. Skipped when the user pinned a custom path: then we honor exactly
-  // that directory and touch nothing else. Fully best-effort — never throws.
+  // 0c. Hands-off Steam coverage. Mirror winhttp.dll (connection redirect) into
+  // every detected Exalt install so launching from Steam or Deca launcher both
+  // redirect to the proxy. Skipped when the user pinned a custom path.
   const primaryInstall = hooker.gameDirectory;
   if (!configuredRotmgPath && primaryInstall) {
     try {
       const primary = primaryInstall;
       const others = ExaltFinder.findAll().filter((d) => d && d !== primary);
       for (const dir of others) {
-        // Neither winhttp.dll nor version.dll ships in a RotMG game folder (both
-        // are Windows system DLLs), so a plain copy can't clobber a real one.
-        for (const dll of ['winhttp.dll', 'version.dll']) {
-          const src = resolve(primary, dll);
-          if (!existsSync(src)) continue;
-          try {
-            copyFileSync(src, resolve(dir, dll));
-          } catch (err) {
-            Logger.warn('Main', `Could not mirror ${dll} into ${dir}: ${(err as Error).message} (is the game running there?)`);
-          }
+        const src = resolve(primary, 'winhttp.dll');
+        if (!existsSync(src)) continue;
+        try {
+          copyFileSync(src, resolve(dir, 'winhttp.dll'));
+        } catch (err) {
+          Logger.warn('Main', `Could not mirror winhttp.dll into ${dir}: ${(err as Error).message} (is the game running there?)`);
         }
-        Logger.log('Main', `Mirrored hooks into additional install${ExaltFinder.isSteamInstall(dir) ? ' (Steam)' : ''}: ${dir}`);
+        Logger.log('Main', `Mirrored winhttp.dll into additional install${ExaltFinder.isSteamInstall(dir) ? ' (Steam)' : ''}: ${dir}`);
       }
       if (others.length === 0) {
         Logger.log('Main', `One Exalt install detected${ExaltFinder.isSteamInstall(primary) ? ' (Steam)' : ''}: ${primary}`);
@@ -316,10 +193,13 @@ async function main() {
   const proxy = new Proxy(packetFactory);
 
   const dataDir = resolve(ROOT, 'data');
+  // Generated game XML belongs in the persistent user cache. In dev mode the
+  // WSL -> Windows mirror removes files that exist only under ROOT/data.
+  const gameDataDir = getRealmengineDataDir();
 
   // 3. Load game data (objects.xml for projectile definitions, tiles.xml for tile damage)
-  const objectsPath = resolve(ROOT, 'data', 'objects.xml');
-  const tilesPath = resolve(ROOT, 'data', 'tiles.xml');
+  const objectsPath = resolve(gameDataDir, 'objects.xml');
+  const tilesPath = resolve(gameDataDir, 'tiles.xml');
   const gameData = new GameDataLoader();
   try {
     gameData.load(objectsPath);
@@ -456,7 +336,7 @@ async function main() {
 
   // 7. Mirror XML + plugin loading in parallel (metadata fetch can be slow if mirrors are down)
   const [metadataResult] = await Promise.all([
-    ensureRotmgMetadataXml(dataDir, {
+    ensureRotmgMetadataXml(gameDataDir, {
       log(level, message) {
         if (level === 'error') Logger.error('Metadata', message);
         else if (level === 'warn') Logger.warn('Metadata', message);
@@ -479,9 +359,9 @@ async function main() {
   }
 
   // 8. Start proxy
-  proxy.start('127.0.0.1', 2050);
+  proxy.start('127.0.0.1', GAME_PORT);
 
-  Logger.log('Main', 'Proxy ready on 127.0.0.1:2050');
+  Logger.log('Main', `Proxy ready on 127.0.0.1:${GAME_PORT}`);
   if (hookInstalled) {
     Logger.log('Main', `Game hook active - Exalt at ${hooker.gameDirectory}`);
   }
@@ -497,6 +377,7 @@ async function main() {
   stateManager.setDllDefenseSource(() => internalBridge.getDllDefense());
   if (devServer) {
     devServer.setInternalBridge(internalBridge);
+    devServer.setInjectorPaths(dllPath, injectorPath);
   }
   // Start the pipe server — the injected DLL connects to us.
   // No reconnect hammering; server just listens until DLL injects.
@@ -515,16 +396,6 @@ async function main() {
     // #region agent log
     // #endregion
     await hooker.uninstall();
-    // Remove cheat DLL from game directory on shutdown
-    if (hooker.gameDirectory) {
-      try {
-        const cheatDll = resolve(hooker.gameDirectory, 'version.dll');
-        if (existsSync(cheatDll)) {
-          unlinkSync(cheatDll);
-          Logger.log('Main', 'Removed internal DLL from game directory.');
-        }
-      } catch {}
-    }
     proxy.stop();
     pluginManager.stopWatching();
     process.exit(0);

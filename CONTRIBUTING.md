@@ -12,7 +12,6 @@ notes live next to the code they describe:
 - Top-level: [`README.md`](README.md), [`SETUP.md`](SETUP.md)
 - Native: [`internal/CLAUDE.md`](internal/CLAUDE.md),
   [`internal/docs/UPDATING_AFTER_GAME_PATCH.md`](internal/docs/UPDATING_AFTER_GAME_PATCH.md)
-- MCP diagnostics bridge: [`internal/tools/re-mcp/README.md`](internal/tools/re-mcp/README.md)
 
 ## Development environment
 
@@ -58,10 +57,13 @@ cd internal && msbuild il2cpp-dll-injection.sln \
 The wire protocol and the IL2CPP field offsets change every RotMG patch.
 Two things need updating in lockstep:
 
-- **Packet map** — `client/packages/protocol/src/generated/packet-map.ts`
-  is regenerated from an upstream `realmlib` fork. Run
-  `node client/scripts/sync-packet-map.mjs <path-to-realmlib/src>` to
-  refresh. Full runbook: `internal/docs/UPDATING_AFTER_GAME_PATCH.md`.
+- **Packet definitions** — `client/data/packet-definitions.json` is the
+  single source of truth for both protocol stacks. Edit it, then run
+  `cd client && npm run gen:packets` to regenerate every derived artifact
+  (including `packages/protocol/src/generated/packet-map.ts`), and
+  `npm run check:packets` to confirm nothing drifted. Never hand-edit a
+  `*.generated.ts` or `packet-map.ts`. Details: `client/data/README.md`.
+  Full runbook: `internal/docs/UPDATING_AFTER_GAME_PATCH.md`.
 - **IL2CPP offsets** — `internal/src/core/runtime/RuntimeOffsets.cpp`.
   The offsets are static fallback values (the runtime self-healing /
   recovery system was removed); after a game patch, refresh them per the

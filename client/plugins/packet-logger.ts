@@ -1,4 +1,4 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
+import type { PluginContext } from './api.js';
 
 /**
  * Example plugin: logs all defined packets to console.

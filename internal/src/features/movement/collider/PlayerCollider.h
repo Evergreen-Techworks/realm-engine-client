@@ -46,6 +46,14 @@ bool IsEnabled();
 void SetMultiplier(float multiplier);
 float GetMultiplier();
 
+// Liveness: GetTickCount64() stamped at the TOP of Tick(), before any early-out,
+// so it measures "the driver still calls me", not "I did work". 0 until first tick.
+uint64_t LastTickMs();
+
+// True when the collision-multiplier offset is registry-trusted (resolved from live
+// metadata) AND the feature is currently applying. For the Test diag row.
+bool OffsetTrusted();
+
 void Tick(void* player);
 void ResetScene();
 void ResetStateForTest();

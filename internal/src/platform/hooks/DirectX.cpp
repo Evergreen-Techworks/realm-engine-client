@@ -2,6 +2,7 @@
 #include <cstdio>
 
 #include "DirectX.h"
+#include "Il2CppHook.h"
 #include "settings.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/VisualsTAB.h"
@@ -14,13 +15,11 @@
 #include <chrono>
 #include <thread>
 #include <Il2CppResolver.h>
-#include "AutoAim.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
 #include "RuntimeOffsets.h"
 #include "BootGate.h"
-#include "DiagBridge.h"
 #include "GameState.h"
 #include "LocalPlayer.h"
-#include "SharedMemory.h"
 #include "SkinChanger.h"
 #include "BagLooter.h"
 #include "SpeedHack.h"
@@ -145,6 +144,17 @@ HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags
 	if (g_unloading)
 		return oPresent(__this, SyncInterval, Flags);
 
+	// Register THIS thread with IL2CPP before any Tick below touches managed
+	// state. Present runs on the render thread, which AttachIl2Cpp() (called on
+	// the Run thread at load) never registered — yet GameState::Tick,
+	// HwidCapture::Tick and BootGate::Tick all allocate managed objects. An
+	// allocation from an unregistered thread makes the GC abort the process with
+	// "Fatal error in GC: collecting from unknown thread" on the first frame.
+	// EnsureThreadAttached is thread_local and idempotent: one bool test after
+	// the first call. Fail closed — skip the ticks rather than risk the GC.
+	if (!Il2CppHook::EnsureThreadAttached())
+		return oPresent(__this, SyncInterval, Flags);
+
 	// DEBUG BISECT #2: SpeedHack::Tick lazily installs IL2CPP hooks via
 	// Detours every frame on the render thread. Detours' transaction
 	// commit suspends all other threads — if any holds the IL2CPP lock
@@ -186,7 +196,6 @@ HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags
 	// NoclipHook installs from FeatureRuntime::ApplyOverrides (below), and only
 	// while player noclip is enabled — the unconditional per-frame call that used
 	// to live here re-ran a full IL2CPP metadata walk every frame and froze the game.
-	SharedMemory::Tick();    // shared mapping telemetry (pos + legacy bridges still using shared memory)
 	FeatureRuntime::ApplyOverrides(); // unified pipe-driven feature sync
 	SkinChanger::Tick();     // writes skin when ptr changes — uses GameState
 	// #region agent log
@@ -195,7 +204,6 @@ HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags
 	AutoAim::Tick();         // entity dict walk — uses GameState::GetWorldMgr()
 	BagLooter::Tick();       // throttled bag scan + ext-goal routing
 	BootGate::Tick();        // boot gating loop (runs EnsureAll + audit)
-	DiagBridge::Tick();      // mirror live state to %LOCALAPPDATA%\RealmEngine\diag.json
 
 	static std::once_flag init_flag;
 	std::call_once(init_flag, [&]() {

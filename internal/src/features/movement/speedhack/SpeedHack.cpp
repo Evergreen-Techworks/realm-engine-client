@@ -2,6 +2,8 @@
 #include "SpeedHack.h"
 
 #include "Il2CppResolver.h"
+#include "Il2CppHook.h"
+#include "MemRead.h"
 #include "detours/detours.h"
 
 #include <atomic>
@@ -67,15 +69,9 @@ static double GetTime() { return g_virtualTime; }
 static float GetTimeF() { return static_cast<float>(g_virtualTime); }
 }
 
-static bool AddrOk(const void* p)
-{
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a >= 0x10000u && a <= 0x7FFFFFFFFFFFull;
-}
-
 static bool LooksLikeUnityTimeThunk(void* thunkPtr)
 {
-    if (!AddrOk(thunkPtr))
+    if (!Mem::AddrOk(thunkPtr))
         return false;
 
     __try {
@@ -195,29 +191,11 @@ static void ResolveUnityTimeThunk(Fn& target, const char* icallNameText)
         target = reinterpret_cast<Fn>(thunk);
 }
 
-static bool EnsureIl2CppThreadAttached()
-{
-    static thread_local bool attached = false;
-    if (attached)
-        return true;
-    if (!il2cpp_domain_get || !il2cpp_thread_attach)
-        return false;
-
-    Il2CppDomain* domain = il2cpp_domain_get();
-    if (!domain)
-        return false;
-
-    attached = il2cpp_thread_attach(domain) != nullptr;
-    return attached;
-}
-
 static const MethodInfo* FindMethod(Il2CppClass* klass, const char* name, int argc)
 {
-    const MethodInfo* method = nullptr;
-    Resolver::Protection::safe_call([&]() {
-        method = klass ? il2cpp_class_get_method_from_name(klass, name, argc) : nullptr;
-    });
-    return method && method->methodPointer ? method : nullptr;
+    if (!klass || !klass->name) return nullptr;
+    return Il2CppHook::ResolveMethodCached(klass->name, name, argc,
+                                            false, klass->namespaze ? klass->namespaze : "");
 }
 
 static Il2CppClass* FindClassAny(const char* namespaze, const char* name)
@@ -243,7 +221,7 @@ static void AssignMethod(Fn& target, Il2CppClass* klass, const char* methodName)
 
 static TimeIcallFn* TimeIcallSlotFromThunk(void* thunkPtr)
 {
-    if (!AddrOk(thunkPtr))
+    if (!Mem::AddrOk(thunkPtr))
         return nullptr;
 
     TimeIcallFn* slot = nullptr;
@@ -255,7 +233,7 @@ static TimeIcallFn* TimeIcallSlotFromThunk(void* thunkPtr)
             mov[3] | (mov[4] << 8) | (mov[5] << 16) | (mov[6] << 24));
         const uintptr_t rip = reinterpret_cast<uintptr_t>(mov) + 7;
         slot = reinterpret_cast<TimeIcallFn*>(rip + static_cast<std::intptr_t>(disp));
-        if (!AddrOk(slot) || !AddrOk(*slot))
+        if (!Mem::AddrOk(slot) || !Mem::AddrOk(*slot))
             slot = nullptr;
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -269,7 +247,7 @@ static float CallIcall(TimeIcallFn* slot, decltype(app::Time_1_get_deltaTime) fa
     if (slot) {
         __try {
             TimeIcallFn fn = *slot;
-            if (AddrOk(reinterpret_cast<const void*>(fn)))
+            if (Mem::AddrOk(reinterpret_cast<const void*>(fn)))
                 return fn();
         }
         __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -282,7 +260,7 @@ static double CallIcallDouble(DoubleTimeIcallFn* slot, decltype(app::Time_1_get_
     if (slot) {
         __try {
             DoubleTimeIcallFn fn = *slot;
-            if (AddrOk(reinterpret_cast<const void*>(fn)))
+            if (Mem::AddrOk(reinterpret_cast<const void*>(fn)))
                 return fn();
         }
         __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -385,7 +363,7 @@ static void dSpeedHackDetector_Update(app::SpeedHackDetector* self, MethodInfo* 
 template <typename Fn>
 static bool HookOne(Fn& target, Fn detour, Fn& original)
 {
-    if (!AddrOk(reinterpret_cast<void*>(target)) || !detour)
+    if (!Mem::AddrOk(reinterpret_cast<void*>(target)) || !detour)
         return false;
     if (DetourAttach(&(PVOID&)target, reinterpret_cast<PVOID>(detour)) != NO_ERROR) {
         original = nullptr;
@@ -398,7 +376,7 @@ static bool HookOne(Fn& target, Fn detour, Fn& original)
 template <typename Fn>
 static void UnhookOne(Fn& target, Fn detour, Fn original)
 {
-    if (!original || !AddrOk(reinterpret_cast<void*>(target)) || !detour)
+    if (!original || !Mem::AddrOk(reinterpret_cast<void*>(target)) || !detour)
         return;
     DetourDetach(&(PVOID&)target, reinterpret_cast<PVOID>(detour));
 }
@@ -407,7 +385,7 @@ static void ResolveTargets()
 {
     if (s_resolved)
         return;
-    if (!EnsureIl2CppThreadAttached())
+    if (!Il2CppHook::EnsureThreadAttached())
         return;
 
     // Track time so we can give up on BeeByte-renamed anti-cheat classes.

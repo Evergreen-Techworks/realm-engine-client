@@ -1,12 +1,16 @@
 import type { PacketMap } from '../packet-map.js';
 import { invertPacketMap } from '../packet-map.js';
 
-// AUTO-GENERATED from the canonical realmlib packet map.
-// Source of truth: HiveManager/HeadlessClient/realmlib/src/packet-map.ts +
-//                  Nexus/headless/realmlib/src/packet-map.ts (byte-identical).
-// Two independent upstream forks agree on all 183 ID->name mappings for the current
-// Exalt build. To update after a game patch, re-sync from either upstream and rerun
-// scripts/sync-packet-map.mjs (which produced this file).
+// AUTO-GENERATED — do not edit by hand.
+// Source of truth: client/data/packet-definitions.json (see
+// docs/plans/107-packet-source-of-truth.md). Regenerate with:
+//   cd client && npm run gen:packets
+//
+// Each packet carries both spellings on one line of the canonical file:
+// `name` is Layer A's (`src/packets/`, what plugins string-compare) and
+// `protocolName` is Layer B's. Ids Layer A does not decode live in
+// `protocolOnlyPackets`; `PacketType` members with no id live in
+// `protocolOrphanNames`.
 //
 // A handful of packet names differ between REC's historical naming and realmlib's.
 // The map entry uses REC's name (so downstream string comparisons keep working);

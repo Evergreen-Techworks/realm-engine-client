@@ -9,7 +9,19 @@ const packetLabNameOnly: { packets: Array<{ name: string; direction: string; id?
       "id": 24
     },
     {
+      "name": "BoostBPMilestoneMessage",
+      "direction": "client"
+    },
+    {
+      "name": "BuyCustomisationSocketMessage",
+      "direction": "client"
+    },
+    {
       "name": "BuyDusts",
+      "direction": "client"
+    },
+    {
+      "name": "BuyEmoteMessage",
       "direction": "client"
     },
     {
@@ -25,7 +37,19 @@ const packetLabNameOnly: { packets: Array<{ name: string; direction: string; id?
       "direction": "client"
     },
     {
+      "name": "BuyRefinementMessage",
+      "direction": "client"
+    },
+    {
+      "name": "ChangeAllyShoot",
+      "direction": "client"
+    },
+    {
       "name": "ClaimAccountLevel",
+      "direction": "client"
+    },
+    {
+      "name": "ClaimBPMilestoneMessage",
       "direction": "client"
     },
     {
@@ -37,11 +61,39 @@ const packetLabNameOnly: { packets: Array<{ name: string; direction: string; id?
       "direction": "client"
     },
     {
+      "name": "ClaimDailyRewardMessage",
+      "direction": "client"
+    },
+    {
+      "name": "ClaimMission",
+      "direction": "client"
+    },
+    {
       "name": "ClaimVoucher",
       "direction": "client"
     },
     {
+      "name": "CreepHit",
+      "direction": "client"
+    },
+    {
+      "name": "CreepMoveMessage",
+      "direction": "client"
+    },
+    {
+      "name": "CustomMapDeleteMessage",
+      "direction": "client"
+    },
+    {
+      "name": "CustomMapListMessage",
+      "direction": "client"
+    },
+    {
       "name": "DismantleItemsMessage",
+      "direction": "client"
+    },
+    {
+      "name": "EmoteMessage",
       "direction": "client"
     },
     {
@@ -53,7 +105,15 @@ const packetLabNameOnly: { packets: Array<{ name: string; direction: string; id?
       "direction": "client"
     },
     {
+      "name": "GetPlayersListMessage",
+      "direction": "client"
+    },
+    {
       "name": "GiftItemsMessage",
+      "direction": "client"
+    },
+    {
+      "name": "InventoryDrop",
       "direction": "client"
     },
     {
@@ -61,7 +121,67 @@ const packetLabNameOnly: { packets: Array<{ name: string; direction: string; id?
       "direction": "client"
     },
     {
+      "name": "ModeratorActionMessage",
+      "direction": "client"
+    },
+    {
+      "name": "PartyAction",
+      "direction": "client"
+    },
+    {
+      "name": "PartyInvitationResponse",
+      "direction": "client"
+    },
+    {
+      "name": "PartyJoinRequest",
+      "direction": "client"
+    },
+    {
+      "name": "PartyRequestResponse",
+      "direction": "client"
+    },
+    {
+      "name": "PlayerCallout",
+      "direction": "client"
+    },
+    {
       "name": "PurchasePetShader",
+      "direction": "client"
+    },
+    {
+      "name": "QueueCancel",
+      "direction": "client"
+    },
+    {
+      "name": "RedeemExaltationRewardMessage",
+      "direction": "client"
+    },
+    {
+      "name": "RerollAllEnchantmentsMessage",
+      "direction": "client"
+    },
+    {
+      "name": "Retitle",
+      "direction": "client"
+    },
+    {
+      "name": "SetAbility",
+      "direction": "client"
+    },
+    {
+      "name": "SetDiscoverableMessage",
+      "direction": "client"
+    },
+    {
+      "name": "SetEntranceMessage",
+      "direction": "client"
+    },
+    {
+      "name": "SetGravestoneMessage",
+      "direction": "client"
+    },
+    {
+      "name": "SkinRecycleMessage",
       "direction": "client"
     },
     {
@@ -97,6 +217,10 @@ const packetLabNameOnly: { packets: Array<{ name: string; direction: string; id?
       "direction": "server"
     },
     {
+      "name": "BoostBPMilestoneResultMessage",
+      "direction": "server"
+    },
+    {
       "name": "BuyDustsResult",
       "direction": "server"
     },
@@ -113,7 +237,15 @@ const packetLabNameOnly: { packets: Array<{ name: string; direction: string; id?
       "direction": "server"
     },
     {
+      "name": "ChestRewardResult",
+      "direction": "server"
+    },
+    {
       "name": "ChestRewardsInfo",
+      "direction": "server"
+    },
+    {
+      "name": "ClaimBPMilestoneResultMessage",
       "direction": "server"
     },
     {
@@ -137,6 +269,10 @@ const packetLabNameOnly: { packets: Array<{ name: string; direction: string; id?
       "direction": "server"
     },
     {
+      "name": "DamageBoostMessage",
+      "direction": "server"
+    },
+    {
       "name": "DamageWithEffect",
       "direction": "server"
     },
@@ -157,7 +293,15 @@ const packetLabNameOnly: { packets: Array<{ name: string; direction: string; id?
       "direction": "server"
     },
     {
+      "name": "EvolvedPetMessage",
+      "direction": "server"
+    },
+    {
       "name": "ExaltationRedeemInfoMessage",
+      "direction": "server"
+    },
+    {
+      "name": "ForceReconnectMessage",
       "direction": "server"
     },
     {
@@ -173,7 +317,15 @@ const packetLabNameOnly: { packets: Array<{ name: string; direction: string; id?
       "direction": "server"
     },
     {
+      "name": "IncomingPartyInvitation",
+      "direction": "server"
+    },
+    {
       "name": "IncomingPartyRequest",
+      "direction": "server"
+    },
+    {
+      "name": "InventoryResult",
       "direction": "server"
     },
     {
@@ -189,6 +341,11 @@ const packetLabNameOnly: { packets: Array<{ name: string; direction: string; id?
       "direction": "server"
     },
     {
+      "name": "NewCharacterInformation",
+      "direction": "server",
+      "id": 108
+    },
+    {
       "name": "ObjectData",
       "direction": "server"
     },
@@ -197,7 +354,19 @@ const packetLabNameOnly: { packets: Array<{ name: string; direction: string; id?
       "direction": "server"
     },
     {
+      "name": "PartyActionResult",
+      "direction": "server"
+    },
+    {
       "name": "PartyJoinResponse",
+      "direction": "server"
+    },
+    {
+      "name": "PartyListMessage",
+      "direction": "server"
+    },
+    {
+      "name": "PartyMemberAdded",
       "direction": "server"
     },
     {

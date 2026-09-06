@@ -4,6 +4,7 @@ import type { Packet } from '../packets/Packet.js';
 import type { GameDataLoader, ProjectileDef } from '../game-data/GameDataLoader.js';
 import type { GameWorldState } from './GameWorldState.js';
 import { Logger } from '../util/Logger.js';
+import { sendDllFeature } from '../bridge/DllFeatureBus.js';
 
 export interface TrackedProjectile {
   bulletId: number;
@@ -24,8 +25,9 @@ export interface TrackedProjectile {
 
 /**
  * Tracks all active enemy projectiles from ENEMYSHOOT packets.
- * Stores spawn position, angle, damage, and linked ProjectileDef
- * for trajectory calculation by ProjectileSimulator.
+ * Stores spawn position, angle, damage, and linked ProjectileDef.
+ * Trajectory prediction itself lives in the DLL and reaches the client
+ * over DllThreatBus.
  *
  * Bullets are keyed by "${ownerId}:${bulletId}" and expire after
  * their lifetime (from game data) or a hard cap of 10 seconds.
@@ -89,6 +91,15 @@ export class ProjectileTracker {
         spawnTime: Date.now(),
         projDef,
       });
+
+      // Immediate recovery feed for shooters/projectiles that the game runtime
+      // has not streamed yet. The DLL deduplicates this provisional record once
+      // its authoritative projectile hook sees the same owner/bullet pair.
+      const d = projDef;
+      sendDllFeature('udodgePacketShot', [
+        ownerId, (bulletId + i) & 0xffff, position.x, position.y, shotAngle,
+        d?.speed ?? 0, d?.lifetimeMs ?? 0, d?.hitRadius ?? 0.5,
+      ].join(','));
     }
   }
 
@@ -107,6 +118,7 @@ export class ProjectileTracker {
 
   clear(): void {
     this.bullets.clear();
+    sendDllFeature('udodgePacketShot', 'clear');
   }
 
   getBullet(key: string): TrackedProjectile | undefined {

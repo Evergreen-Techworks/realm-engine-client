@@ -1,10 +1,10 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
+import type { PluginContext } from './api.js';
 import {
   DEFENSE_UNSET,
   openShared,
   readPosition,
 } from '../src/native/rotmg-shared.js';
-import { sendDllFeature } from '../src/bridge/DllFeatureBus.js';
+import { sendDllFeature } from './api.js';
 
 /**
  * Auto-aim: enable/mode are driven over the DLL pipe.
@@ -60,6 +60,17 @@ export function register(ctx: PluginContext) {
     value: true,
   }, (val: boolean) => {
     sendDllFeature('autoAimIgnoreWalls', val);
+  });
+
+  // Walls and breakable trees are tagged as enemies and do carry a health bar,
+  // so 'ignoreWalls' (a noHealthBar test) never catches them. This one keys off
+  // the object being static and having no projectiles of its own.
+  ctx.registerSetting('ignoreScenery', {
+    label: 'Ignore walls / breakables',
+    type: 'boolean',
+    value: true,
+  }, (val: boolean) => {
+    sendDllFeature('autoAimIgnoreScenery', val);
   });
 
   ctx.registerSetting('projectileNoclip', {
@@ -128,6 +139,7 @@ export function register(ctx: PluginContext) {
   function syncFilterState() {
     sendDllFeature('autoAimPrioritizeBosses', ctx.getSetting<boolean>('prioritizeBosses'));
     sendDllFeature('autoAimIgnoreWalls', ctx.getSetting<boolean>('ignoreWalls'));
+    sendDllFeature('autoAimIgnoreScenery', ctx.getSetting<boolean>('ignoreScenery'));
   }
 
   ctx.on('clientConnected', () => {

@@ -1,9 +1,8 @@
 #include "pch-il2cpp.h"
 #include "CharSelect.h"
 #include "Il2CppResolver.h"
+#include "platform/hooks/Il2CppHook.h"
 #include "DbgFileLog.h"
-
-#include "minhook/MinHook.h"
 
 #include <atomic>
 #include <windows.h>
@@ -41,30 +40,28 @@ void __fastcall HookedHide(void* __this, void* methodInfo)
 void ResolveOnce()
 {
     if (s_resolved) return;
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* cls = Resolver::FindClassLoose("BHDDFAELFIL");   // CharacterSelectionPanel
-        if (!cls) return;
 
-        // Hook constructor for capture.
-        if (!s_hooksInstalled) {
-            const MethodInfo* ctor = il2cpp_class_get_method_from_name(cls, ".ctor", 0);
-            const MethodInfo* hide = il2cpp_class_get_method_from_name(cls, "Hide", 0);
-            if (ctor && ctor->methodPointer) {
-                void* t = reinterpret_cast<void*>(ctor->methodPointer);
-                if (MH_CreateHook(t, reinterpret_cast<void*>(&HookedCtor),
-                                   reinterpret_cast<void**>(&s_origCtor)) == MH_OK
-                    && MH_EnableHook(t) == MH_OK) {
-                    s_hooksInstalled = true;
-                }
-            }
-            if (s_hooksInstalled && hide && hide->methodPointer) {
-                void* th = reinterpret_cast<void*>(hide->methodPointer);
-                MH_CreateHook(th, reinterpret_cast<void*>(&HookedHide),
-                               reinterpret_cast<void**>(&s_origHide));
-                MH_EnableHook(th);
+    // Hook constructor for capture.
+    if (!s_hooksInstalled) {
+        const MethodInfo* ctor = Il2CppHook::ResolveMethodCached("BHDDFAELFIL", ".ctor", 0);
+        if (ctor) {
+            void* t = reinterpret_cast<void*>(ctor->methodPointer);
+            if (Il2CppHook::InstallMinHook(t, reinterpret_cast<void*>(&HookedCtor),
+                                           reinterpret_cast<void**>(&s_origCtor),
+                                           "charselect.ctor")) {
+                s_hooksInstalled = true;
             }
         }
-    });
+        if (s_hooksInstalled) {
+            const MethodInfo* hide = Il2CppHook::ResolveMethodCached("BHDDFAELFIL", "Hide", 0);
+            if (hide) {
+                void* th = reinterpret_cast<void*>(hide->methodPointer);
+                Il2CppHook::InstallMinHook(th, reinterpret_cast<void*>(&HookedHide),
+                                           reinterpret_cast<void**>(&s_origHide),
+                                           "charselect.Hide");
+            }
+        }
+    }
     if (s_hooksInstalled) s_resolved = true;
 }
 

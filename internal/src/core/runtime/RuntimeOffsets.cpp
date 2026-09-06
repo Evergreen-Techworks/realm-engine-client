@@ -26,6 +26,8 @@ uint32_t ObjId           = 0x34;   // HHPOJBFICAH — objectId Int32
 uint32_t KJ_BaseRadius   = 0x44;   // IOKKOCEAJNA — base bullet radius Single
 uint32_t KJ_Scale        = 0x74;   // KEDBLBJIKCB — scale float3 first component
 uint32_t KJ_Float3Pos    = 0x68;   // DGNPJNFGFPE — Unity.Mathematics.float3 world position (written on teleport/move)
+uint32_t KJ_TileRef      = 0x58;   // EOKJOGFPLOA — BGAIOPJMHLO* current tile
+uint32_t KJ_DictObjectId = 0xC0;   // FDNHINDAEHK — dict-key object id (NOT ObjId/HHPOJBFICAH)
 
 // KJNHLADHEMH = current HP, NCBIICBDGAG = max HP (order in struct; names were once swapped in tooling).
 uint32_t HP          = 0x20C;
@@ -65,9 +67,29 @@ uint32_t Player_MoveDirY   = 0x4CC;
 // PlayerTAB and TestTAB read this without shift for the move-speed formula.
 uint32_t Player_Spd        = 0x478;
 
+// ── Player diagnostic stats (no ACTK shift for stat reads) ─────────────
+uint32_t PlayerGuildName   = 0x470;  // NFJGJKLPLBA — Il2CppString* GUILD name (not IGN)
+uint32_t PlayerClassNum    = 0x4B0;  // KABPJBJPGCM — class number int32
+uint32_t PlayerGuildRank   = 0x4AC;  // GBANOMPLGBH — guild rank int32
+uint32_t PlayerAtk         = 0x474;  // HCMECDPHEMC — ATK stat int32
+uint32_t PlayerDex         = 0x47C;  // GDNEBFDDDKM — DEX stat int32
+uint32_t PlayerVit         = 0x480;  // CGFPEPCKKOK — VIT stat int32
+uint32_t PlayerWis         = 0x484;  // HDCDGHKGLDI — WIS stat int32
+uint32_t PlayerCondInt     = 0x514;  // MPJGAPJBBBF — single-int condition field
+uint32_t PlayerEquipMgr    = 0x668;  // AJJJBDBNBLM — EquipmentManager pointer
+
+// ── EquipmentManager / ItemSlot (namespaced UI classes, no ACTK shift) ──
+uint32_t EM_EquipSlots     = 0x48;   // "equipmentSlots" — ItemSlot[] on EquipmentManager
+uint32_t Item_ObjProps     = 0x58;   // HLJFBHLMANJ — ObjectProperties* on ItemSlot
+uint32_t Item_ObjType      = 0x60;   // INAAIAHOEFE — int32 type id on ItemSlot
+
 // ApplicationManager → WorldManager field offset.
 // Set by GameState.cpp type-scan (immune to backing-field name obfuscation).
 uint32_t AppMgr_WorldMgr   = 0xC0;
+
+// CameraManager component fields (no ACTK shift).
+uint32_t CM_Transform      = 0x28;   // mainCameraContainer — Transform* (world-space camera container)
+uint32_t CM_UnityCam        = 0x50;   // KNAIAEFDCLM — UnityEngine.Camera* (main gameplay camera)
 
 uint32_t WM_Local    = 0x48;
 uint32_t WM_AllDict  = 0xB0;
@@ -83,6 +105,9 @@ uint32_t TileX       = 0x38;
 uint32_t TileY       = 0x3C;
 uint32_t TileType    = 0x40;
 uint32_t TileProps   = 0x50;
+uint32_t Sq_Layer        = 0x44;  // EBCLNFDKKEH — int32 layer enum (ProjNoclip writes 37)
+uint32_t Sq_DamageCached = 0x10;  // EAPMKCKMNDI — int32 current-damage cache
+uint32_t Sq_Cover        = 0x48;  // JGMBPFJEGAH — ref; non-null = square has cover
 
 uint32_t TP_Speed    = 0x50;
 uint32_t TP_Sink     = 0x58;
@@ -100,7 +125,17 @@ uint32_t OP_NoCover       = 0x98;
 uint32_t OP_InvincibleElem= 0x460;
 uint32_t OP_NoWallRpt     = 0x210;
 uint32_t OP_OccupySq      = 0x69A;
-uint32_t OP_FullOcc       = 0x6D1;
+// CORRECTED 2026-08-24: was 0x6D1 — byte-identical to OP_IsEnemy below, which is
+// impossible: `fullOccupy` and `isEnemy` are distinct bools. Verified against the
+// published build 6.13.0.1.0 dump (builds.him.is), where `isEnemy` = 0x6E1 and
+// `fullOccupy` = 0x6E9 — 8 bytes apart (bool + padding). That group sits 0x10
+// higher in 6.13 than in our build (the same shift seen on
+// collisionRadiusMultiplier 0x788 -> 0x798), and our OP_IsEnemy = 0x6D1 is
+// confirmed working against the live client, so fullOccupy = 0x6D1 + 8 = 0x6D9.
+// LATENT, not active: both rows resolve by UNOBFUSCATED name on ObjectProperties
+// (a class BeeByte does not rotate), so live metadata overwrites this every frame
+// and the wrong value only bites if resolution ever fails.
+uint32_t OP_FullOcc       = 0x6D9;
 uint32_t OP_EnemyOcc      = 0x6D2;
 // isEnemy verified at 0x6D1 against the live client (upstream offset update);
 // our il2cpp-types.h dump still shows 0x6C9 — dump is stale for this region.
@@ -114,6 +149,7 @@ uint32_t OP_ProtSink      = 0x6DD;
 uint32_t OP_Flying        = 0x6E4;
 uint32_t OP_ConnectT      = 0x754;
 uint32_t OP_Projectiles   = 0x1C0;
+uint32_t OP_CollRadiusMult= 0x798;   // "collisionRadiusMultiplier" (boxed; current build per builds.him.is dump; 0x780 was questBarYOffset)
 
 uint32_t PP_Lifetime        = 0x158;
 uint32_t PP_Speed           = 0x160;
@@ -152,6 +188,10 @@ uint32_t Hbeak_ProjPropsPtr       = 0x118;  // FOMOIBCKIFP — per-shot Projecti
 uint32_t Hbeak_Angle              = 0x148;  // FFFFKPDHEFP — spawn angle Single
 uint32_t Hbeak_InstanceDamage     = 0x174;  // DBNNDLKNECM — per-instance damage Int32
 uint32_t Hbeak_SpawnAgeMs         = 0x16C;  // GLEGBLDBOJF — spawn-age ms (path anchoring / expiry)
+// NPMECLDKGEF — bool noclip guard. Fallback 0 = unresolved: ProjNoclip must NOT
+// install its hook until this resolves non-zero (no reliable static fallback).
+uint32_t Hbeak_NoclipGuard        = 0;
+uint32_t Hbeak_SpeedMul           = 0;      // KDAJOMOFMJB — 0 = unresolved (speed-mul 1.0)
 uint32_t PP_CustomHitbox          = 0x148;  // "CustomHitbox" — ProjectileCustomHitbox* reference
 uint32_t PP_IsArmorPiercing       = 0x138;  // "IsArmorPiercing"
 uint32_t CH_OffsetX               = 0x10;   // "offsetX" — custom hitbox X offset Single
@@ -181,13 +221,27 @@ uint32_t Fhoh_DestY      = 0x158; // PBHMINMBFOM.y (= DestX+4)
 
 // ── COEFCBBIBMC ShowEffect packet ────────────────────────────────────────
 // OODFCLBKDJJ base (network packets have no ACTK shift).
+//
+// The two positions are NOT inline Vector2s — they are POINTERS to FFLIAABAAFP
+// (the WorldPos reference type), so reading floats at these offsets reads the
+// halves of a pointer. Deref first, then read x/y at Sfx_WposX / Sfx_WposY.
 uint32_t Sfx_EffectType  = 0x10;  // MIDADCIKEBD
 uint32_t Sfx_TargetObjId = 0x14;  // HNOKKCFIJHJ
-uint32_t Sfx_Pos1X       = 0x18;  // KMAIENKMNFA.x
-uint32_t Sfx_Pos1Y       = 0x1C;  // KMAIENKMNFA.y (= Pos1X+4)
-uint32_t Sfx_Pos2X       = 0x20;  // AEPOCACMOHI.x
-uint32_t Sfx_Pos2Y       = 0x24;  // AEPOCACMOHI.y (= Pos2X+4)
+uint32_t Sfx_Pos1Ptr     = 0x18;  // KMAIENKMNFA — FFLIAABAAFP* (source / centre)
+uint32_t Sfx_Pos2Ptr     = 0x20;  // AEPOCACMOHI — FFLIAABAAFP* (destination; null for non-THROW)
 uint32_t Sfx_Duration    = 0x2C;  // KPKIICOBBIM
+
+// ── FFLIAABAAFP WorldPos (reference type) ────────────────────────────────
+// class FFLIAABAAFP : DCBCCBKEIHN { float <x>k__BackingField; float <y>k__BackingField; }
+// x/y are auto-property backing fields, whose metadata names ("<XXXX>k__BackingField")
+// carry an obfuscated inner name that BeeByte re-rolls every build — the same reason
+// GameState.cpp resolves AppMgr_WorldMgr by type instead of by name. So these are
+// located STRUCTURALLY (see ResolveWorldPosLayout): the class carries exactly two
+// adjacent instance floats, x first. Fallback is the current build's layout
+// (object header 0x10 + the 0x10-byte DCBCCBKEIHN base).
+uint32_t Sfx_WposX       = 0x20;
+uint32_t Sfx_WposY       = 0x24;  // = Sfx_WposX + 4
+bool     Sfx_WposResolved = false;  // true once the float pair was located structurally
 
 // ── CustomExplosionEntrance ───────────────────────────────────────────────
 uint32_t Cee_Distance    = 0x38;  // "distance" (XML data class, no ACTK)
@@ -212,6 +266,73 @@ static FieldInfo* FindFieldOnHierarchy(Il2CppClass* klass, const char* name)
         if (f) return f;
     }
     return nullptr;
+}
+
+// ── FFLIAABAAFP (WorldPos) x/y — resolved by SHAPE, not by name ────────────
+// Its x/y are auto-property backing fields, so their metadata names embed an
+// obfuscated inner name ("<CHOGDNLDCMD>k__BackingField") that BeeByte re-rolls
+// every build; name resolution would silently fall back forever. The SHAPE is
+// stable and unambiguous instead: the class declares exactly two instance
+// floats, adjacent, x first. Anything else and we leave Sfx_WposResolved false
+// so callers (AoeTracking's ShowEffect hook) fail closed rather than stamping
+// garbage AoE discs into a system that now hard-blocks routing.
+// Called once per frame from EnsureAll. Latches as soon as the class is seen
+// (match or not) so a shape mismatch cannot spam the log, and gives up on the
+// class lookup itself after a bounded number of frames so a renamed class does
+// not cost a full metadata scan every frame forever.
+static bool s_wposSettled = false;
+static void ResolveWorldPosLayout()
+{
+    if (s_wposSettled) return;
+
+    static int s_wposTries = 0;
+    constexpr int kWposMaxTries = 600;   // ~10 s at 60 fps, matching the table's give-up spirit
+    if (++s_wposTries > kWposMaxTries) {
+        s_wposSettled = true;
+        DBG_FILE_LOG("[RuntimeOffsets] FFLIAABAAFP (WorldPos) never appeared — ShowEffect "
+            "positions stay UNTRUSTED (AoE ShowEffect hook will not install)");
+        return;
+    }
+
+    Il2CppClass* klass = Resolver::FindClassLoose("FFLIAABAAFP");
+    if (!klass) return;
+    s_wposSettled = true;   // class found: this pass decides, match or not
+
+    constexpr int kFieldAttrStatic = 0x0010;
+    uint32_t offs[4] = {};
+    int      n       = 0;
+    void*      iter = nullptr;
+    FieldInfo* f    = nullptr;
+    while ((f = il2cpp_class_get_fields(klass, &iter)) != nullptr) {
+        if (il2cpp_field_is_literal(f)) continue;
+        if (il2cpp_field_get_flags(f) & kFieldAttrStatic) continue;
+        const Il2CppType* ft = il2cpp_field_get_type(f);
+        if (!ft || il2cpp_type_get_type(ft) != IL2CPP_TYPE_R4) continue;
+        if (n < 4) offs[n] = static_cast<uint32_t>(il2cpp_field_get_offset(f));
+        ++n;
+    }
+
+    // Exactly one adjacent float pair, or we do not know which fields these are.
+    if (n != 2) {
+        DBG_FILE_LOG("[RuntimeOffsets] FFLIAABAAFP WorldPos: expected 2 instance floats, saw "
+            << n << " — keeping fallback 0x" << std::hex << Sfx_WposX << std::dec
+            << " and leaving ShowEffect positions UNTRUSTED");
+        return;
+    }
+    const uint32_t lo = offs[0] < offs[1] ? offs[0] : offs[1];
+    const uint32_t hi = offs[0] < offs[1] ? offs[1] : offs[0];
+    if (hi != lo + 4) {
+        DBG_FILE_LOG("[RuntimeOffsets] FFLIAABAAFP WorldPos: floats not adjacent (0x"
+            << std::hex << lo << ", 0x" << hi << std::dec
+            << ") — leaving ShowEffect positions UNTRUSTED");
+        return;
+    }
+
+    Sfx_WposX        = lo;
+    Sfx_WposY        = lo + 4;
+    Sfx_WposResolved = true;
+    DBG_FILE_LOG("[RuntimeOffsets] FFLIAABAAFP WorldPos x/y resolved -> 0x"
+        << std::hex << Sfx_WposX << "/0x" << Sfx_WposY << std::dec);
 }
 
 // ── Resolution table ─────────────────────────────────────────────────────
@@ -266,6 +387,8 @@ static Entry s_entries[] = {
     { "KJMONHENJEN", { "IOKKOCEAJNA" },                              1, 0,     &KJ_BaseRadius,  false },
     { "KJMONHENJEN", { "KEDBLBJIKCB" },                              1, 0,     &KJ_Scale,       false },
     { "KJMONHENJEN", { "DGNPJNFGFPE" },                              1, 0,     &KJ_Float3Pos,   false },
+    { "KJMONHENJEN", { "EOKJOGFPLOA" },                              1, 0,     &KJ_TileRef,     false },
+    { "KJMONHENJEN", { "FDNHINDAEHK" },                              1, 0,     &KJ_DictObjectId,false },
 
     // ── LKHPPBEGNOM (+0x50 ACTK for own fields) ───────────────────────────
     { "LKHPPBEGNOM", { "KJNHLADHEMH", "KJNHLADEMH" },               2, kActk, &HP,            false },
@@ -296,6 +419,30 @@ static Entry s_entries[] = {
     // GDNEBFDDDKM = float moveDirY (dump 0x47C / runtime 0x4CC)
     { "FKALGHJIADI", { "GDNEBFDDDKM" },                              1, kActk, &Player_MoveDirY,    false },
 
+    // ── FKALGHJIADI player diagnostic stats (no ACTK shift) ──────────────
+    // These resolve the same fields as above but WITHOUT the kActk shift,
+    // producing the dump offset used by PlayerTAB for stat display. Some
+    // share BeeByte names with movement entries (e.g. HCMECDPHEMC = Tex1/ATK,
+    // BHJFNEAHAOE = MoveDirX/SPD, GDNEBFDDDKM = MoveDirY/DEX).
+    { "FKALGHJIADI", { "NFJGJKLPLBA" },                              1, 0,     &PlayerGuildName,    false },
+    { "FKALGHJIADI", { "KABPJBJPGCM" },                              1, 0,     &PlayerClassNum,     false },
+    { "FKALGHJIADI", { "GBANOMPLGBH" },                              1, 0,     &PlayerGuildRank,    false },
+    { "FKALGHJIADI", { "HCMECDPHEMC" },                              1, 0,     &PlayerAtk,          false },
+    { "FKALGHJIADI", { "GDNEBFDDDKM" },                              1, 0,     &PlayerDex,          false },
+    { "FKALGHJIADI", { "CGFPEPCKKOK" },                              1, 0,     &PlayerVit,          false },
+    { "FKALGHJIADI", { "HDCDGHKGLDI" },                              1, 0,     &PlayerWis,          false },
+    { "FKALGHJIADI", { "MPJGAPJBBBF" },                              1, 0,     &PlayerCondInt,      false },
+    { "FKALGHJIADI", { "AJJJBDBNBLM" },                              1, 0,     &PlayerEquipMgr,     false },
+
+    // ── CameraManager (no shift — component fields) ────────────────────────
+    { "CameraManager", { "mainCameraContainer" },                        1, 0,     &CM_Transform,  false },
+    { "CameraManager", { "KNAIAEFDCLM" },                                1, 0,     &CM_UnityCam,   false },
+
+    // ── EquipmentManager / ItemSlot (namespaced UI classes, no shift) ─────
+    { "EquipmentManager", { "equipmentSlots" },                      1, 0,     &EM_EquipSlots, false },
+    { "ItemSlot",         { "HLJFBHLMANJ" },                         1, 0,     &Item_ObjProps, false },
+    { "ItemSlot",         { "INAAIAHOEFE" },                         1, 0,     &Item_ObjType,  false },
+
     // ── HJMBOMEHGDJ WorldManager (no shift) ──────────────────────────────
     { "HJMBOMEHGDJ", { "OCLNLBHDEFK" },                              1, 0,     &WM_Local,      false },
     { "HJMBOMEHGDJ", { "DFALIKKKGLI" },                              1, 0,     &WM_AllDict,    false },
@@ -312,6 +459,9 @@ static Entry s_entries[] = {
     { "BGAIOPJMHLO", { "PKEECFNFEIO" },                              1, 0,     &TileY,         false },
     { "BGAIOPJMHLO", { "JOFEAFJPJEM" },                              1, 0,     &TileType,      false },
     { "BGAIOPJMHLO", { "KEOKJCIJIAD" },                              1, 0,     &TileProps,     false },
+    { "BGAIOPJMHLO", { "EBCLNFDKKEH" },                              1, 0,     &Sq_Layer,      false },
+    { "BGAIOPJMHLO", { "EAPMKCKMNDI" },                              1, 0,     &Sq_DamageCached,false },
+    { "BGAIOPJMHLO", { "JGMBPFJEGAH" },                              1, 0,     &Sq_Cover,      false },
 
     // ── CMFPKCJHKKB XmlTileProperties (no shift) ─────────────────────────
     { "CMFPKCJHKKB", { "MFEJMAABLIL" },                              1, 0,     &TP_Speed,      false },
@@ -345,6 +495,7 @@ static Entry s_entries[] = {
     { "ObjectProperties", { "flying" },                              1, 0,     &OP_Flying,         false },
     { "ObjectProperties", { "connectType" },                         1, 0,     &OP_ConnectT,       false },
     { "ObjectProperties", { "Projectiles", "projectiles" },          2, 0,     &OP_Projectiles,    false },
+    { "ObjectProperties", { "collisionRadiusMultiplier" },           1, 0,     &OP_CollRadiusMult, false },
 
     // ── ProjectileProperties (real names, no shift) ───────────────────────
     { "ProjectileProperties", { "Lifetime",   "lifetime" },          2, 0,     &PP_Lifetime,        false },
@@ -391,6 +542,12 @@ static Entry s_entries[] = {
     { "HBEAKBIHANL", { "FFFFKPDHEFP" },                                           1, 0, &Hbeak_Angle,           false },
     { "HBEAKBIHANL", { "DBNNDLKNECM" },                                           1, 0, &Hbeak_InstanceDamage,  false },
     { "HBEAKBIHANL", { "GLEGBLDBOJF" },                                           1, 0, &Hbeak_SpawnAgeMs,      false },
+    { "HBEAKBIHANL", { "KDAJOMOFMJB" },                                           1, 0, &Hbeak_SpeedMul,        false },
+
+    // ── HBEAKBIHANL noclip guard (no shift) ──────────────────────────────────
+    // Fallback 0 = unresolved: ProjNoclip refuses to install its hook until this
+    // resolves non-zero from live metadata (no reliable static fallback exists).
+    { "HBEAKBIHANL", { "NPMECLDKGEF" },                                           1, 0, &Hbeak_NoclipGuard,     false },
 
     // ── ProjectileProperties continued ────────────────────────────────────────
     { "ProjectileProperties", { "CustomHitbox", "customHitbox" },                 2, 0, &PP_CustomHitbox,       false },
@@ -422,8 +579,8 @@ static Entry s_entries[] = {
     // ── COEFCBBIBMC ShowEffect packet (OODFCLBKDJJ base, no ACTK shift) ─────────
     { "COEFCBBIBMC", { "MIDADCIKEBD" },                                           1, 0, &Sfx_EffectType, false },
     { "COEFCBBIBMC", { "HNOKKCFIJHJ" },                                           1, 0, &Sfx_TargetObjId,false },
-    { "COEFCBBIBMC", { "KMAIENKMNFA" },                                           1, 0, &Sfx_Pos1X,     false },
-    { "COEFCBBIBMC", { "AEPOCACMOHI" },                                           1, 0, &Sfx_Pos2X,     false },
+    { "COEFCBBIBMC", { "KMAIENKMNFA" },                                           1, 0, &Sfx_Pos1Ptr,   false },
+    { "COEFCBBIBMC", { "AEPOCACMOHI" },                                           1, 0, &Sfx_Pos2Ptr,   false },
     { "COEFCBBIBMC", { "KPKIICOBBIM" },                                           1, 0, &Sfx_Duration,  false },
 
     // ── CustomExplosionEntrance (real XML field names, no shift) ─────────────────
@@ -526,6 +683,19 @@ void MarkSuspect(const uint32_t* offsetVar)
         if (s_entries[i].outPtr == offsetVar) { s_entryState[i] = OffsetState::Suspect; return; }
 }
 
+OffsetState GetOffsetStateFor(const uint32_t* offsetVar)
+{
+    for (int i = 0; i < kEntryCount; ++i)
+        if (s_entries[i].outPtr == offsetVar) return s_entryState[i];
+    return OffsetState::Pending;
+}
+
+bool IsFieldWriteTrusted(const uint32_t* offsetVar)
+{
+    const OffsetState st = GetOffsetStateFor(offsetVar);
+    return st == OffsetState::ResolvedMatch || st == OffsetState::ResolvedShifted;
+}
+
 // Conservative bounds — only values a CORRECT offset can never produce, so a
 // legitimate edge state (0 def, huge-HP boss pet, etc.) is not false-flagged.
 void SanityCheckPlayerStats(int32_t hp, int32_t maxHp, int32_t defense)
@@ -546,12 +716,15 @@ void SanityCheckProjDamage(int32_t sampledDamage)
 
 void EnsureAll()
 {
+    // FFLIAABAAFP x/y is resolved by shape, not through the entry table, so it
+    // runs ahead of the s_allDone short-circuit (it self-latches once resolved).
+    ResolveWorldPosLayout();
+    Sfx_WposY = Sfx_WposX + 4;
+
     if (s_allDone) {
         Gjj_OriginY = Gjj_OriginX + 4;
         Gjj_DestY   = Gjj_DestX   + 4;
         Fhoh_DestY  = Fhoh_DestX  + 4;
-        Sfx_Pos1Y   = Sfx_Pos1X   + 4;
-        Sfx_Pos2Y   = Sfx_Pos2X   + 4;
         return;
     }
 
@@ -677,8 +850,6 @@ void EnsureAll()
     Gjj_OriginY = Gjj_OriginX + 4;
     Gjj_DestY   = Gjj_DestX   + 4;
     Fhoh_DestY  = Fhoh_DestX  + 4;
-    Sfx_Pos1Y   = Sfx_Pos1X   + 4;
-    Sfx_Pos2Y   = Sfx_Pos2X   + 4;
 }
 
 // ── MapObject status conditions (COHCKAPOLCA UInt32[] — offset_map.md) ─────

@@ -13,8 +13,11 @@
 #include "IpcBridge.h"
 #include "main.h"
 #include "DbgFileLog.h"
-#include "AutoAim.h"
-#include "ProjNoclip.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
+#include "features/combat/autoaim/modes/KillAura.h"
+#include "features/combat/autoaim/modes/AutoFire.h"
+#include "features/combat/autoaim/modes/AutoBreakWalls.h"
+#include "features/combat/autoaim/shoot/ProjNoclip.h"
 #include "PlayerCollider.h"
 #include "FpsSetter.h"
 #include "GhostHit.h"
@@ -26,6 +29,8 @@
 #include "ZDodge.h"
 #include "RePP.h"
 #include "PJDodge.h"
+#include "features/movement/udodge/UDodge.h"
+#include "features/movement/udodge/UDodgeSensors.h"
 #include "SpeedHack.h"
 #include <string>
 #include <cctype>
@@ -97,10 +102,32 @@ namespace {
                     if (hUnloadEvent) SetEvent(hUnloadEvent);
                 }
             }),
-            FH_BOOL("autoAimEnabled", IpcBridge_SetAutoAimEnabled),
-            FH_INT("autoAimMode", IpcBridge_SetAutoAimMode),
+            FH_BOOL("autoAimEnabled", FeatureState::SetAutoAimEnabled),
+            FH_INT("autoAimMode", FeatureState::SetAutoAimMode),
             FH_BOOL("autoAimPrioritizeBosses", AutoAim::SetPrioritizeBosses),
             FH_BOOL("autoAimIgnoreWalls", AutoAim::SetIgnoreWalls),
+            FH_BOOL("autoAimIgnoreScenery", AutoAim::SetIgnoreScenery),
+            FH("killauraEnabled",        KillAura::SetEnabled(f.Bool())),
+            FH("killauraMode",           KillAura::SetMode(f.Int() == 1 ? KillAura::Mode::AtMouse
+                                                                        : KillAura::Mode::AtTarget)),
+            FH_FLOAT("killauraRangeTiles",     KillAura::SetRangeTiles),
+            FH_FLOAT("killauraStandoffTiles",  KillAura::SetStandoffTiles),
+            FH_BOOL ("killauraOverlayEnabled", KillAura::SetOverlayEnabled),
+            FH_BOOL ("killauraDriveAimEnabled", KillAura::SetDriveAimAngle),
+            FH_BOOL("autoFireEnabled", AutoFire::SetEnabled),
+            FH("scriptEnemyLockId", {
+                const int32_t id = f.Int();
+                DangerPlanner::SetEnemyLock(id);
+                AutoAim::SetLockTarget(id > 0 ? id : -1);
+            }),
+            FH("scriptCombatTargetId", {
+                const int32_t id = f.Int();
+                AutoAim::SetLockTarget(id > 0 ? id : -1);
+            }),
+            FH("autoFireHotkey",       AutoFire::SetHotkeyVk(ResolveHotkeyVkInternal(f.value))),
+            FH_BOOL ("autoBreakWallsEnabled",    AutoBreakWalls::SetEnabled),
+            FH_FLOAT("autoBreakWallsProbeTiles", AutoBreakWalls::SetProbeTiles),
+            FH_INT  ("autoBreakWallsTimeoutMs",  AutoBreakWalls::SetTimeoutMs),
             FH("projectileNoclipEnabled", {
                 const bool on = f.Bool();
                 FeatureState::SetProjectileNoclipEnabled(on);
@@ -112,14 +139,14 @@ namespace {
             FH("clientDefense", FeatureState::SetClientDefense(static_cast<int32_t>(f.Int()))),
             FH("clientClassType", FeatureState::SetClientClassType(static_cast<int32_t>(f.Int()))),
             FH("clientSpeed", FeatureState::SetClientSpeed(static_cast<int32_t>(f.Int()))),
-            FH_INT("autoDodgeMode", IpcBridge_SetAutoDodgeMode),
-            FH_FLOAT("autoDodgeHorizonMs", IpcBridge_SetAutoDodgeHorizonMs),
-            FH_FLOAT("autoDodgeHitboxPadding", IpcBridge_SetAutoDodgeHitboxPadding),
-            FH_BOOL("autoDodgeWallAvoid", IpcBridge_SetAutoDodgeWallAvoid),
+            FH_INT("autoDodgeMode", FeatureState::SetAutoDodgeMode),
+            FH_FLOAT("autoDodgeHorizonMs", FeatureState::SetAutoDodgeHorizonMs),
+            FH_FLOAT("autoDodgeHitboxPadding", FeatureState::SetAutoDodgeHitboxPadding),
+            FH_BOOL("autoDodgeWallAvoid", FeatureState::SetAutoDodgeWallAvoid),
             FH_FLOAT("speedHackMult", SpeedHack::SetMultiplier),
-            FH_BOOL("autoAbilityEnabled", IpcBridge_SetAutoAbilityEnabled),
-            FH_FLOAT("autoAbilityMpPct", IpcBridge_SetAutoAbilityMpPct),
-            FH_INT("autoAbilityWizardMode", IpcBridge_SetAutoAbilityWizardMode),
+            FH_BOOL("autoAbilityEnabled", FeatureState::SetAutoAbilityEnabled),
+            FH_FLOAT("autoAbilityMpPct", FeatureState::SetAutoAbilityMpPct),
+            FH_INT("autoAbilityWizardMode", FeatureState::SetAutoAbilityWizardMode),
             FH_INT("targetFrameRate", FpsSetter::SetTargetFps),
             FH_TEXT("showPluginFloatingText", FloatingTextService::QueuePluginText)
         };
@@ -234,6 +261,35 @@ namespace {
         return ApplyFeatureTable(f, h, sizeof(h) / sizeof(h[0]));
     }
 
+    bool ApplyUDodgeFeature(const FeatureCommand& f)
+    {
+        static const FeatureHandler h[] = {
+            FH_FLOAT("udodgeLaneTiles", UDodge::SetLaneTiles),
+            FH_FLOAT("udodgeStepTiles", UDodge::SetStepTiles),
+            FH_FLOAT("udodgeHitScale", UDodge::SetHitScale),
+            FH_FLOAT("udodgeReactMargin", UDodge::SetReactMargin),
+            FH_INT_BOOL("udodgeSafeWalk", UDodge::SetSafeWalk),
+            FH_INT_BOOL("udodgeSpeedScale", UDodge::SetSpeedScale),
+            FH_INT_BOOL("udodgeFieldEscape", UDodge::SetFieldEscape),
+            FH_INT_BOOL("udodgeDebugOverlay", UDodge::SetDebugOverlay),
+            FH_INT_BOOL("udodgeLockFollow", UDodge::SetLockFollow),
+            FH_INT_BOOL("udodgeFollowLantern", UDodge::SetFollowLantern),
+            FH_INT_BOOL("udodgeAutopilot", UDodge::SetAutopilot),
+            FH_INT("udodgeStandOnType", UDodge::SetStandOnType),
+            FH_FLOAT("udodgeOrbitRange", UDodge::SetOrbitRange),
+            FH_FLOAT("udodgePlanRadius", UDodge::SetPlanRadius),
+            FH_INT_BOOL("udodgeDrawPath", UDodge::SetDrawPath),
+            FH_INT_BOOL("udodgeMoveEnvelope", UDodge::SetMoveEnvelope),
+            FH_INT_BOOL("udodgeMoveEnvelopeArmed", UDodge::SetMoveEnvelopeArmed),
+            FH_FLOAT("udodgeServerPositionError", UDodge::SetServerPositionError),
+            FH_FLOAT("udodgeServerAnchorX", UDodge::SetServerAnchorX),
+            FH_FLOAT("udodgeServerAnchorY", UDodge::SetServerAnchorY),
+            FH_INT_BOOL("udodgeServerAnchorValid", UDodge::SetServerAnchorValid),
+            FH_TEXT("udodgePacketShot", UDodge::Sensors::RecordPacketShot)
+        };
+        return ApplyFeatureTable(f, h, sizeof(h) / sizeof(h[0]));
+    }
+
     bool ApplyInputCameraSkinFeature(const FeatureCommand& f)
     {
         static const FeatureHandler h[] = {
@@ -307,6 +363,7 @@ namespace FeatureCommandRegistry {
         if (ApplyZDodgeFeature(feature)) return true;
         if (ApplyReppFeature(feature)) return true;
         if (ApplyPJDodgeFeature(feature)) return true;
+        if (ApplyUDodgeFeature(feature)) return true;
         if (ApplyRolloutFeature(feature)) return true;
         if (ApplyInputCameraSkinFeature(feature)) return true;
         if (ApplyAutoNexusFeature(feature)) return true;

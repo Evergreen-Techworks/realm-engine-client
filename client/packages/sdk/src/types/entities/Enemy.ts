@@ -10,4 +10,7 @@ export interface Enemy extends GameObject {
     isEnraged: boolean;
     isBoss: boolean;
     isTargetingMe: boolean;
+    /** False while dead, stasised, invincible, or invulnerable. */
+    isTargetable: boolean;
+    isInvulnerable: boolean;
 }

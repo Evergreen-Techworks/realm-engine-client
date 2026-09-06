@@ -10,174 +10,12 @@
 #include <cstring>
 #include <cmath>
 #include "Il2CppResolver.h"
+#include "Il2CppHook.h"
 #include "RuntimeOffsets.h"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Fallback offsets when IL2CPP metadata lookup fails (DIA4A / WorldTAB lineage).
-// Live game uses il2cpp_field_get_offset + field names from global-metadata.
-// ─────────────────────────────────────────────────────────────────────────────
-static constexpr uint32_t FB_POS_X         = 0x3C;
-static constexpr uint32_t FB_POS_Y         = 0x40;
-static constexpr uint32_t FB_HP            = 0x20C;
-static constexpr uint32_t FB_MAX_HP        = 0x208;
-static constexpr uint32_t FB_NAME          = 0x4B8;
-static constexpr uint32_t FB_CLASSNUM      = 0x4B0;
-static constexpr uint32_t FB_GRANK         = 0x4AC;
-static constexpr uint32_t FB_CUR_MP        = 0x54C;
-static constexpr uint32_t FB_MAX_MP        = 0x548;
-static constexpr uint32_t FB_ATK           = 0x474;
-static constexpr uint32_t FB_SPD           = 0x478;
-static constexpr uint32_t FB_DEX           = 0x47C;
-static constexpr uint32_t FB_VIT           = 0x480;
-static constexpr uint32_t FB_WIS           = 0x484;
-static constexpr uint32_t FB_DEF           = 0x508;  // NNECFGPDBEE defense @ dump 0x4B8 + 0x50 ACTK
-// MPJGAPJBBBF condition single-int @ dump 0x4C4 + 0x50 ACTK
-static constexpr uint32_t FB_COND_INT      = 0x514;
-// HasConditionEffect in lst reads [this+0x440] — track this raw offset too
-static constexpr uint32_t FB_COND_RAW      = 0x440;
-static constexpr uint32_t FB_EQUIPMENT_MGR = 0x668;
-static constexpr uint32_t FB_EM_SLOTS      = 0x48;
-static constexpr uint32_t FB_ITEM_OP       = 0x58;
-static constexpr uint32_t FB_ITEM_TYPE     = 0x60;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Cached offsets from IL2CPP (or fallbacks)
-// ─────────────────────────────────────────────────────────────────────────────
-struct PlayerFieldCache {
-    uint32_t posX = 0, posY = 0, hp = 0, maxHp = 0;
-    uint32_t nameStr = 0, classNum = 0, guildRank = 0;
-    uint32_t curMp = 0, maxMp = 0;
-    uint32_t atk = 0, spd = 0, dex = 0, vit = 0, wis = 0, def = 0;
-    uint32_t condInt = 0;   // MPJGAPJBBBF — single-int condition field
-    uint32_t condRaw = 0;   // raw offset used by HasConditionEffect in lst ([this+0x440])
-    uint32_t equipmentMgr = 0;
-    uint32_t emEquipmentSlots = 0;
-    uint32_t itemObjProps = 0, itemObjType = 0;
-    bool     ready = false;
-    bool     fromIl2Cpp = false;
-};
-
-static PlayerFieldCache g_fields;
-
-static FieldInfo* FindFieldOnHierarchy(Il2CppClass* klass, const char* fieldName)
-{
-    for (Il2CppClass* k = klass; k; k = il2cpp_class_get_parent(k)) {
-        FieldInfo* f = il2cpp_class_get_field_from_name(k, fieldName);
-        if (f)
-            return f;
-    }
-    return nullptr;
-}
-
-static uint32_t FieldOffsetOr(Il2CppClass* startKlass, const char* fieldName, uint32_t fallback)
-{
-    FieldInfo* f = FindFieldOnHierarchy(startKlass, fieldName);
-    if (!f)
-        return fallback;
-    return static_cast<uint32_t>(il2cpp_field_get_offset(f));
-}
-
-static void ApplyFallbackFieldOffsets()
-{
-    // Use RuntimeOffsets for the shared fields — EnsureAll() may have already
-    // resolved them; these are at least the hardcoded fallback values otherwise.
-    g_fields.posX           = RuntimeOffsets::PosX;
-    g_fields.posY           = RuntimeOffsets::PosY;
-    g_fields.hp             = RuntimeOffsets::HP;
-    g_fields.maxHp          = RuntimeOffsets::MaxHP;
-    g_fields.nameStr        = FB_NAME;
-    g_fields.classNum       = FB_CLASSNUM;
-    g_fields.guildRank      = FB_GRANK;
-    g_fields.curMp          = FB_CUR_MP;
-    g_fields.maxMp          = FB_MAX_MP;
-    g_fields.atk            = FB_ATK;
-    g_fields.spd            = FB_SPD;
-    g_fields.dex            = FB_DEX;
-    g_fields.vit            = FB_VIT;
-    g_fields.wis            = FB_WIS;
-    g_fields.def            = FB_DEF;
-    g_fields.condInt        = FB_COND_INT;
-    g_fields.condRaw        = FB_COND_RAW;
-    g_fields.equipmentMgr   = FB_EQUIPMENT_MGR;
-    g_fields.emEquipmentSlots = FB_EM_SLOTS;
-    g_fields.itemObjProps   = FB_ITEM_OP;
-    g_fields.itemObjType    = FB_ITEM_TYPE;
-    g_fields.fromIl2Cpp     = false;
-    g_fields.ready          = true;
-}
-
-static Il2CppClass* ResolveEquipmentManagerClass()
-{
-    Il2CppClass* k = Resolver::FindClass("DecaGames.RotMG.Managers.Equipment", "EquipmentManager");
-    if (k)
-        return k;
-    return Resolver::FindClassLoose("PNBNDBIPENP");
-}
-
-static Il2CppClass* ResolveItemSlotClass()
-{
-    Il2CppClass* k = Resolver::FindClass("DecaGames.RotMG.UI.Slots", "ItemSlot");
-    if (k)
-        return k;
-    return Resolver::FindClassLoose("CMHHJNPDMHJ");
-}
-
-// il2cpp_field_get_offset reflects runtime layout (incl. ACTK). Retries after menu-time fallback.
-static void EnsurePlayerFieldOffsets()
-{
-    if (g_fields.fromIl2Cpp)
-        return;
-
-    Il2CppClass* fk = Resolver::FindClassLoose("FKALGHJIADI");
-    if (!fk) {
-        if (!g_fields.ready)
-            ApplyFallbackFieldOffsets();
-        return;
-    }
-
-    g_fields.posX      = FieldOffsetOr(fk, "CLFEOFKBNEJ", FB_POS_X);
-    g_fields.posY      = FieldOffsetOr(fk, "PKEECFNFEIO", FB_POS_Y);
-    g_fields.hp        = FieldOffsetOr(fk, "NCBIICBDGAG", FB_HP);
-    g_fields.maxHp     = FieldOffsetOr(fk, "KJNHLADHEMH", FB_MAX_HP);
-    g_fields.nameStr   = FieldOffsetOr(fk, "NFJGJKLPLBA", FB_NAME);
-    g_fields.guildRank = FieldOffsetOr(fk, "GBANOMPLGBH", FB_GRANK);
-    g_fields.classNum  = FieldOffsetOr(fk, "KABPJBJPGCM", FB_CLASSNUM);
-    g_fields.curMp     = FieldOffsetOr(fk, "FMHMGKEPIDN", FB_CUR_MP);
-    g_fields.maxMp     = FieldOffsetOr(fk, "NEDCKPIIIPN", FB_MAX_MP);
-    g_fields.atk       = FieldOffsetOr(fk, "HCMECDPHEMC", FB_ATK);
-    g_fields.spd       = FieldOffsetOr(fk, "BHJFNEAHAOE", FB_SPD);
-    g_fields.dex       = FieldOffsetOr(fk, "GDNEBFDDDKM", FB_DEX);
-    g_fields.vit       = FieldOffsetOr(fk, "CGFPEPCKKOK", FB_VIT);
-    g_fields.wis       = FieldOffsetOr(fk, "HDCDGHKGLDI", FB_WIS);
-    g_fields.def       = FieldOffsetOr(fk, "NNECFGPDBEE", FB_DEF);
-    // MPJGAPJBBBF is the single-int condition field on FKALGHJIADI (not defense).
-    // HasConditionEffect in the .lst reads [this+0x440]; track both for diagnostics.
-    g_fields.condInt   = FieldOffsetOr(fk, "MPJGAPJBBBF", FB_COND_INT);
-    g_fields.condRaw   = FB_COND_RAW; // static — lst-confirmed; no BeeByte alias for this internal field
-    g_fields.equipmentMgr = FieldOffsetOr(fk, "AJJJBDBNBLM", FB_EQUIPMENT_MGR);
-
-    Il2CppClass* em = ResolveEquipmentManagerClass();
-    if (em) {
-        FieldInfo* es = FindFieldOnHierarchy(em, "equipmentSlots");
-        g_fields.emEquipmentSlots = es
-            ? static_cast<uint32_t>(il2cpp_field_get_offset(es))
-            : FB_EM_SLOTS;
-    } else {
-        g_fields.emEquipmentSlots = FB_EM_SLOTS;
-    }
-
-    Il2CppClass* item = ResolveItemSlotClass();
-    if (item) {
-        g_fields.itemObjProps = FieldOffsetOr(item, "HLJFBHLMANJ", FB_ITEM_OP);
-        g_fields.itemObjType  = FieldOffsetOr(item, "INAAIAHOEFE", FB_ITEM_TYPE);
-    } else {
-        g_fields.itemObjProps = FB_ITEM_OP;
-        g_fields.itemObjType  = FB_ITEM_TYPE;
-    }
-
-    g_fields.fromIl2Cpp = true;
-    g_fields.ready      = true;
-}
+#include "core/runtime/MemRead.h"
+#include "core/il2cpp/Il2CppContainers.h"
+#include "game/objects/GameObjects.h"
+#include "game/math/MoveSpeed.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Equipment slots: EquipmentManager.equipmentSlots[] — same order as game static ids
@@ -237,40 +75,8 @@ static float g_autoInterval = 1.0f;
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-template<typename T>
-static bool SafeRead(const void* base, uint32_t offset, T& out)
-{
-    return Resolver::Protection::safe_call([&]() {
-        out = *reinterpret_cast<const T*>(
-            reinterpret_cast<const uint8_t*>(base) + offset);
-    });
-}
-
-static bool AddrValid(const void* p)
-{
-    uintptr_t v = reinterpret_cast<uintptr_t>(p);
-    return v > 0x10000 && v < 0x7FFFFFFFFFFull;
-}
-
-// Read a managed Il2CppString* into a fixed-size char buffer.
-static bool ReadManagedString(const void* strPtr, char* buf, int bufSize)
-{
-    if (!AddrValid(strPtr)) return false;
-    int32_t len = 0;
-    if (!SafeRead(strPtr, 0x10u, len)) return false;
-    if (len <= 0 || len >= bufSize) return false;
-
-    wchar_t wbuf[128] = {};
-    bool ok = Resolver::Protection::safe_call([&]() {
-        const wchar_t* chars = reinterpret_cast<const wchar_t*>(
-            reinterpret_cast<const uint8_t*>(strPtr) + 0x14u);
-        int n = (len < 127) ? len : 127;
-        memcpy(wbuf, chars, static_cast<size_t>(n) * sizeof(wchar_t));
-    });
-    if (!ok) return false;
-    WideCharToMultiByte(CP_UTF8, 0, wbuf, len, buf, bufSize - 1, nullptr, nullptr);
-    return buf[0] != '\0';
-}
+// Raw-memory reads and pointer validation now go through Mem::
+// (core/runtime/MemRead.h).
 
 // EquipmentManager.equipmentSlots[i] → ItemSlot HLJFBHLMANJ (ObjectProperties*), INAAIAHOEFE (type id).
 static void ReadEquipmentSlots(void* localFk, PlayerSnap& s)
@@ -278,23 +84,16 @@ static void ReadEquipmentSlots(void* localFk, PlayerSnap& s)
     for (int i = 0; i < kEquipSlotCount; ++i)
         s.equipment[i] = {};
 
-    if (!localFk || !AddrValid(localFk))
+    if (!localFk || !Mem::AddrOk(localFk))
         return;
 
-    const uint32_t offEm    = g_fields.equipmentMgr;
-    const uint32_t offSlots = g_fields.emEquipmentSlots;
-    const uint32_t offOp    = g_fields.itemObjProps;
-    const uint32_t offTid   = g_fields.itemObjType;
-
     const bool ok = Resolver::Protection::safe_call([&]() {
-        void* em = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(localFk) + offEm);
-        if (!AddrValid(em))
+        void* em = Mem::ReadPtr(localFk, RuntimeOffsets::PlayerEquipMgr);
+        if (!Mem::AddrOk(em))
             return;
 
-        void* arr = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(em) + offSlots);
-        if (!AddrValid(arr))
+        void* arr = Mem::ReadPtr(em, RuntimeOffsets::EM_EquipSlots);
+        if (!Mem::AddrOk(arr))
             return;
 
         const uint32_t lenU = il2cpp_array_length(reinterpret_cast<Il2CppArray*>(arr));
@@ -307,16 +106,15 @@ static void ReadEquipmentSlots(void* localFk, PlayerSnap& s)
 
         for (int i = 0; i < n; ++i) {
             void* slot = GET_ARRAY_ELEMENT(arr, i);
-            if (!AddrValid(slot))
+            if (!Mem::AddrOk(slot))
                 continue;
 
-            uint8_t* sp = reinterpret_cast<uint8_t*>(slot);
-            void* op = *reinterpret_cast<void**>(sp + offOp);
-            int32_t tid = *reinterpret_cast<int32_t*>(sp + offTid);
+            void* op = Mem::ReadPtr(slot, RuntimeOffsets::Item_ObjProps);
+            int32_t tid = Mem::ReadOr<int32_t>(slot, RuntimeOffsets::Item_ObjType, 0);
 
             EquipSlotSnap& es = s.equipment[i];
             es.readable = true;
-            const bool hasOp = AddrValid(op);
+            const bool hasOp = Mem::AddrOk(op);
             if (!hasOp && tid == 0)
                 es.empty = true;
             else
@@ -339,47 +137,51 @@ static void DoRefresh()
     void* lp = LocalPlayer::GetPtr();
     if (!lp) lp = WorldTAB::GetLocalPtr();  // fallback if LocalPlayer not yet warm
     g_valid = false;
-    if (!lp || !AddrValid(lp)) return;
-
-    EnsurePlayerFieldOffsets();
+    if (!lp || !Mem::AddrOk(lp)) return;
 
     PlayerSnap s = {};
 
-    SafeRead(lp, g_fields.posX,    s.x);
-    SafeRead(lp, g_fields.posY,    s.y);
-    SafeRead(lp, g_fields.hp,      s.hp);
-    SafeRead(lp, g_fields.maxHp,   s.maxHp);
-    SafeRead(lp, g_fields.classNum, s.classNum);
-    SafeRead(lp, g_fields.guildRank, s.guildRank);
-    SafeRead(lp, g_fields.curMp,   s.curMp);
-    SafeRead(lp, g_fields.maxMp,   s.maxMp);
-    SafeRead(lp, g_fields.atk,     s.atk);
-    SafeRead(lp, g_fields.spd,     s.spd);
-    SafeRead(lp, g_fields.dex,     s.dex);
-    SafeRead(lp, g_fields.vit,     s.vit);
-    SafeRead(lp, g_fields.wis,     s.wis);
-    SafeRead(lp, g_fields.def,     s.def);
+    Game::Character ch(lp);
+    s.x     = ch.AsEntity().X();
+    s.y     = ch.AsEntity().Y();
+    s.hp    = ch.Hp();
+    s.maxHp = ch.MaxHp();
+    Mem::TryRead(lp, RuntimeOffsets::PlayerClassNum,    s.classNum);
+    Mem::TryRead(lp, RuntimeOffsets::PlayerGuildRank,   s.guildRank);
+    s.curMp = ch.CurMpF();
+    s.maxMp = ch.MaxMp();
+    Mem::TryRead(lp, RuntimeOffsets::PlayerAtk,         s.atk);
+    Mem::TryRead(lp, RuntimeOffsets::Player_Spd,        s.spd);
+    Mem::TryRead(lp, RuntimeOffsets::PlayerDex,         s.dex);
+    Mem::TryRead(lp, RuntimeOffsets::PlayerVit,         s.vit);
+    Mem::TryRead(lp, RuntimeOffsets::PlayerWis,         s.wis);
+    s.def   = ch.Defense();
 
-    // Player name (Il2CppString*)
+    // Player name (Il2CppString*) — base-class IGN field (DPGEBOCBKEF), same
+    // source WorldTAB uses. NFJGJKLPLBA turned out to be the guild string.
     void* namePtr = nullptr;
-    if (SafeRead(lp, g_fields.nameStr, namePtr))
-        ReadManagedString(namePtr, s.name, sizeof(s.name));
+    if (Mem::TryRead(lp, RuntimeOffsets::PlayerIGN, namePtr))
+        Il2CppC::ReadStringUtf8(namePtr, s.name, sizeof(s.name));
     if (s.name[0] == '\0')
         strcpy_s(s.name, "<?>");
 
     ReadEquipmentSlots(lp, s);
 
     // [A] COHCKAPOLCA UInt32[] pointer path (same as WorldTAB / CombatTAB)
-    RuntimeOffsets::TryReadMapObjectConditions(lp, &s.condLo, &s.condHi);
+    {
+        uint64_t condFull = 0;
+        if (ch.Conditions(condFull)) {
+            s.condLo = static_cast<uint32_t>(condFull);
+            s.condHi = static_cast<uint32_t>(condFull >> 32);
+        }
+    }
     // [B] MPJGAPJBBBF single-int condition field (BeeByte-resolved at runtime)
-    SafeRead(lp, g_fields.condInt, s.condInt);
+    Mem::TryRead(lp, RuntimeOffsets::PlayerCondInt, s.condInt);
     // [C] raw [this+0x440] — the exact offset HasConditionEffect reads in the .lst
-    SafeRead(lp, g_fields.condRaw, s.condRaw);
+    Mem::TryRead(lp, RuntimeOffsets::Player_CondRaw, s.condRaw);
 
     if (!s_miCalcMoveSpeed) {
-        Il2CppClass* fk = Resolver::FindClassLoose("FKALGHJIADI");
-        if (fk)
-            s_miCalcMoveSpeed = il2cpp_class_get_method_from_name(fk, "GCFKGLKAPND", 0);
+        s_miCalcMoveSpeed = Il2CppHook::ResolveMethodCached("FKALGHJIADI", "GCFKGLKAPND", 0);
     }
     if (s_miCalcMoveSpeed) {
         Il2CppObject* boxed = Resolver::Protection::SafeRuntimeInvoke(
@@ -543,7 +345,7 @@ void PlayerTAB::Render()
     ImGui::Spacing();
 
     // [B] MPJGAPJBBBF single-int field on FKALGHJIADI (BeeByte-resolved)
-    ImGui::TextDisabled("[B] MPJGAPJBBBF int (FKALGHJIADI @ +0x%03X)", g_fields.condInt);
+    ImGui::TextDisabled("[B] MPJGAPJBBBF int (FKALGHJIADI @ +0x%03X)", RuntimeOffsets::PlayerCondInt);
     if (g_snap.condInt != 0) {
         char cdescB[320] = {};
         uint32_t w0B = static_cast<uint32_t>(g_snap.condInt);
@@ -575,9 +377,9 @@ void PlayerTAB::Render()
     // ── Stats ───────────────────────────────────────────────────────────────
     ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.f), "STATS");
     ImGui::TextDisabled("%s",
-        g_fields.fromIl2Cpp
-            ? "Field offsets from IL2CPP metadata (il2cpp_field_get_offset)."
-            : "Field offsets: static fallbacks (class FKALGHJIADI not loaded yet).");
+        RuntimeOffsets::AllResolved()
+            ? "Field offsets from RuntimeOffsets (self-healing table)."
+            : "Field offsets: RuntimeOffsets pending (resolution in progress).");
     ImGui::Spacing();
 
     float col2 = 110.f;
@@ -607,7 +409,7 @@ void PlayerTAB::Render()
 
     // Tiles/sec = DIA4A's autododge speed formula (same formula used for Follow Mouse movement)
     if (g_snap.spd > 0.f) {
-        const float tilesPerSec = 4.0f + 5.6f * (g_snap.spd / 75.0f);
+        const float tilesPerSec = GameMath::TilesPerSecFromSpd(g_snap.spd);
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.6f, 1.f, 0.6f, 1.f),
             "Move speed:  %.2f tiles/s  (4 + 5.6 * spd/75)", tilesPerSec);

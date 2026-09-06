@@ -10,6 +10,11 @@
 #include "LocalPlayer.h"
 #include "RuntimeOffsets.h"
 #include "Il2CppResolver.h"
+#include "Il2CppHook.h"
+#include "core/runtime/MemRead.h"
+#include "game/objects/GameObjects.h"
+#include "game/actions/ItemUse.h"
+#include "features/movement/udodge/UDodge.h"   // defer prediction to the active dodge system
 #include <algorithm>
 #include <cstdio>
 #include <cstdint>
@@ -27,17 +32,15 @@ static bool  g_nexusProjDmg  = true;
 static bool  g_nexusTileDmg  = true;
 static bool  g_debugDraw     = false;
 
-// EquipmentManager.UseInventoryItemByHotkey — resolved lazily on first
-// use so the module costs nothing at startup. Cached forever once
-// resolved (function pointer is stable for the process lifetime).
-using UseInvByHotkeyFn = void(__fastcall*)(void* eqMgr, int32_t hotkey, void* methodInfo);
-static UseInvByHotkeyFn s_fnUseInvByHotkey = nullptr;
-static uint32_t          s_eqMgrFieldOff   = 0;   // FKALGHJIADI.AJJJBDBNBLM offset
-static bool              s_autoPotResolved = false;
-
 static ULONGLONG s_lastAutoNexusTick = 0;
 
 static constexpr ULONGLONG kAutoNexusPollMs = 16ULL;
+
+// Staleness budget for udodge's last-resort signal (plan 77). AutoNexus polls
+// every ~16 ms; if udodge's SafetyState.tickId has not advanced within this
+// window the game thread has stalled/hitched, so we stop trusting udodge to be
+// handling the shots and let the predictive nexus run as the backstop.
+static constexpr ULONGLONG kUdStaleBudgetMs = 100ULL;
 
 // ── Scan geometry ────────────────────────────────────────────────────────
 static constexpr float kBroadStepMs = 50.f;
@@ -79,18 +82,16 @@ static PlayerMotion ReadPlayerMotion(void* lp, uint64_t conds)
         RuntimeOffsets::HasCondition(conds, CE::Stasis))
         return m;
 
-    bool  moving = false;
-    float dirX = 0.f, dirY = 0.f, spd = kSpdFallback;
-    __try {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>(lp);
-        moving = *reinterpret_cast<const bool*>(p + RuntimeOffsets::Player_Moving);
-        dirX   = *reinterpret_cast<const float*>(p + RuntimeOffsets::Player_MoveDirX);
-        dirY   = *reinterpret_cast<const float*>(p + RuntimeOffsets::Player_MoveDirY);
-        const float s = *reinterpret_cast<const float*>(p + RuntimeOffsets::Player_Spd);
-        if (std::isfinite(s) && s > 0.f && s <= 120.f) spd = s;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return m;
-    }
+    // Each field read is individually SEH-safe via Mem::ReadOr; a bad page
+    // falls each back to its default. On such a fault `moving` becomes false,
+    // and the !moving guard below returns `m` — the same outcome the old shared
+    // __try produced when it aborted the whole read.
+    const bool  moving = Mem::ReadOr<bool>(lp, RuntimeOffsets::Player_Moving, false);
+    const float dirX   = Mem::ReadOr<float>(lp, RuntimeOffsets::Player_MoveDirX, 0.f);
+    const float dirY   = Mem::ReadOr<float>(lp, RuntimeOffsets::Player_MoveDirY, 0.f);
+    float spd = kSpdFallback;
+    const float s = Mem::ReadOr<float>(lp, RuntimeOffsets::Player_Spd, kSpdFallback);
+    if (std::isfinite(s) && s > 0.f && s <= 120.f) spd = s;
 
     if (!moving || !std::isfinite(dirX) || !std::isfinite(dirY)) return m;
     const float len = std::sqrt(dirX * dirX + dirY * dirY);
@@ -472,7 +473,11 @@ static void PublishThreats(const std::vector<Threat>& threats, const GroundThrea
     g.count     = ground.count;
     for (int i = 0; i < ground.count && i < kIpcMaxGroundEvents; ++i)
         g.events[i] = ground.events[i];
-    IpcBridge_PublishThreats(out, n, g);
+    // Load-shedding this tick: we hit the threat cap or the ground-event cap, so
+    // the client is seeing a partial picture. Signal it so auto-nexus can respond
+    // conservatively instead of trusting an incomplete list.
+    const bool truncated = (n >= kIpcMaxThreats) || (ground.count >= kIpcMaxGroundEvents);
+    IpcBridge_PublishThreats(out, n, g, truncated);
 }
 
 static void RunAutoNexus()
@@ -486,17 +491,39 @@ static void RunAutoNexus()
     if (maxHp <= 0 || hp > maxHp * 4) return;
     if (defense < 0) defense = 0;
 
-    uint32_t cW0 = 0, cW1 = 0;
-    RuntimeOffsets::TryReadMapObjectConditions(lp, &cW0, &cW1);
-    const uint64_t cFull = RuntimeOffsets::GetFullConditions(cW0, cW1);
+    Game::Character ch(lp);
+    uint64_t cFull = 0;
+    ch.Conditions(cFull);
 
     std::vector<Threat> threats;
 
     PlayerMotion pm = ReadPlayerMotion(lp, cFull);
+    const UDodge::SafetyState udSafety = UDodge::GetSafetyState();
+    PlayerMotion serverPm = pm;
+    const bool hasServerAnchor = udSafety.enabled && udSafety.serverAnchorValid &&
+        std::isfinite(udSafety.serverX) && std::isfinite(udSafety.serverY);
+    if (hasServerAnchor) {
+        serverPm.x = udSafety.serverX;
+        serverPm.y = udSafety.serverY;
+        // The last emitted MOVE point is an authoritative collision anchor.
+        // Do not invent sub-tick velocity beyond it; scanning both this anchor
+        // and the live local trajectory is conservative in both directions.
+        serverPm.vx = 0.f;
+        serverPm.vy = 0.f;
+    }
     const float horizon = std::max(0.f, std::min(kMaxHorizonMs, g_predTimeMs));
 
     const float fieldVx = pm.vx, fieldVy = pm.vy;
     ObserveVelocity(pm.x, pm.y, pm.vx, pm.vy);
+
+    // AutoNexus is a NEVER-DIE backstop — it must catch every lethal shot on track
+    // to where the player ACTUALLY is. Do NOT bias the prediction by udodge's
+    // INTENDED dodge: if udodge is told to move out of the way but FAILS to, a shot
+    // aimed at the player's real position would be predicted to "miss" and never
+    // published as a threat → the client never nexuses → death. The prediction stays
+    // on the player's own observed motion (the working FourOfSpades behavior); the
+    // client only fires when the summed threat damage would actually be lethal, so
+    // this over-reports threats but never under-reports the one that kills you.
 
     g_gvNowX = pm.x;  g_gvNowY = pm.y;
     g_gvVx   = pm.vx; g_gvVy   = pm.vy;
@@ -540,13 +567,37 @@ static void RunAutoNexus()
             if (alreadyElapsed < 0.f || alreadyElapsed > proj.lifetime + 50.f)
                 continue;
 
+            // Cheap distance cull (perf): a bullet can travel at most speed×horizon
+            // over the prediction window; if its CURRENT position is farther than
+            // that (plus a generous hit/player/error margin) it provably cannot reach
+            // the player this window, so skip the expensive FindHitMsUntil sweep.
+            // Conservative — the margin is wide, so a real threat is never culled.
+            {
+                // Cull only when the speed is RELIABLY known (>0). A misread speed
+                // of 0 would compute a tiny maxReach and skip a real fast shot →
+                // missed threat → death. When speed is unknown, DON'T cull (scan it).
+                const float spd = (proj.speed / 10000.f) * (proj.speedMul > 0.f ? proj.speedMul : 1.f);
+                if (std::isfinite(spd) && spd > 1e-5f) {
+                    const float maxReach = spd * horizon + 4.0f;
+                    const float pdx = proj.x - pm.x, pdy = proj.y - pm.y;
+                    const float sdx = proj.x - serverPm.x, sdy = proj.y - serverPm.y;
+                    if (pdx * pdx + pdy * pdy > maxReach * maxReach &&
+                        (!hasServerAnchor || sdx * sdx + sdy * sdy > maxReach * maxReach))
+                        continue;
+                }
+            }
+
             if (retroMs > 0.f &&
                 CrossedPlayerInPast(proj, alreadyElapsed, retroMs, prevPx, prevPy, pm.x, pm.y)) {
                 ProjectileTracking::RetireProjectile(proj);
                 continue;
             }
 
-            const float tHit = FindHitMsUntil(proj, alreadyElapsed, pm, horizon);
+            float tHit = FindHitMsUntil(proj, alreadyElapsed, pm, horizon);
+            if (hasServerAnchor) {
+                const float serverHit = FindHitMsUntil(proj, alreadyElapsed, serverPm, horizon);
+                if (serverHit >= 0.f && (tHit < 0.f || serverHit < tHit)) tHit = serverHit;
+            }
             if (g_debugDraw) CaptureVizPath(proj, alreadyElapsed, tHit >= 0.f);
             if (tHit < 0.f) continue;
 
@@ -563,62 +614,85 @@ static void RunAutoNexus()
                   [](const Threat& a, const Threat& b) { return a.tHitMs < b.tHitMs; });
     }
 
-    const GroundThreat ground = PredictGroundDamage(lp, pm, horizon);
+    // ── AOE bombs (never-die backstop) ────────────────────────────────────────
+    // AutoNexus previously ignored AOE entirely, so a bomb landing on you was
+    // never a threat → no nexus → death. Predict every enemy damaging AOE: if the
+    // player's predicted position AT DETONATION is inside the blast (and detonation
+    // is within the horizon) report it as a conservatively-lethal threat so the
+    // client nexuses. The dodge now avoids bombs, so this only fires when the dodge
+    // FAILED to clear the blast — exactly a last-resort. Not gated by any toggle.
+    {
+        static std::vector<WorldAoe> s_naoes;
+        s_naoes.clear();
+        AoeTracking::EnsureInstalled();
+        AoeTracking::CopyActiveForDraw(s_naoes);
+        const ULONGLONG nowA = GetTickCount64();
+        int aoeIdx = 0;
+        bool added = false;
+        for (const WorldAoe& a : s_naoes) {
+            if (!a.valid || !a.isDamaging) continue;
+            if (a.isEnemyChecked && !a.isEnemy) continue;
+            if (!std::isfinite(a.destX) || !std::isfinite(a.destY)) continue;
+
+            const float radius   = (std::isfinite(a.radius) && a.radius > 0.f) ? std::min(a.radius, 12.f) : 1.5f;
+            const float elapsed  = static_cast<float>(nowA > a.spawnTick ? nowA - a.spawnTick : 0ULL);
+            const float lifeMs   = AoeTracking::LifetimeMs(a);
+            // PER-SOURCE ARMING (shared with udodge/pjdodge — AoeTracking.cpp).
+            // An explosion-controller (kAoeSrcExpl) entry is captured AT detonation:
+            // its arcMs is travel time ALREADY SPENT, so reading it as a landing
+            // delay treated up to ~2.1 s of live, full-strength blast as inert and
+            // AutoNexus simply did not fire. Observed state only — this is a
+            // capture-path fact, never anything the dodge intends to do.
+            const float landAtMs = AoeTracking::LandDelayMs(a);
+            const float detonMs  = landAtMs - elapsed;          // ms until blast (≤0 = already blasting)
+            if (elapsed >= lifeMs + 50.f) continue;             // expired
+            if (detonMs > horizon) continue;                    // too far out — re-check next poll
+
+            const float t   = std::max(0.f, detonMs);
+            const float plx = pm.x + pm.vx * t;
+            const float ply = pm.y + pm.vy * t;                 // predicted player pos at detonation
+            const float dx  = plx - a.destX, dy = ply - a.destY;
+            const float rr  = radius + DodgeHit::kPlayerHalf + kNexusHitPadTiles;
+            const float splx = serverPm.x + serverPm.vx * t;
+            const float sply = serverPm.y + serverPm.vy * t;
+            const float sdx = splx - a.destX, sdy = sply - a.destY;
+            if (dx * dx + dy * dy > rr * rr &&
+                (!hasServerAnchor || sdx * sdx + sdy * sdy > rr * rr)) continue;
+
+            Threat th{};
+            th.attackerObjId = static_cast<int32_t>(a.ownerObjId);
+            th.bulletId      = 20000 + (aoeIdx++);
+            th.tHitMs        = t;
+            th.rawDamage     = 9999;                            // conservatively lethal (dodge already failed to clear it)
+            th.armorPiercing = false;
+            threats.push_back(th);
+            added = true;
+        }
+        if (added)
+            std::sort(threats.begin(), threats.end(),
+                      [](const Threat& a, const Threat& b) { return a.tHitMs < b.tHitMs; });
+    }
+
+    // Ground damage is a distinct hazard udodge's safeWalk may or may not avoid —
+    // it is NEVER gated by the projectile suppression above. Always predict and
+    // publish it (with an empty projectile list when suppressed).
+    const GroundThreat ground = PredictGroundDamage(lp, hasServerAnchor ? serverPm : pm, horizon);
 
     PublishThreats(threats, ground);
 }
 
 // ── Item-use primitives ──────────────────────────────────────────────────
-// Resolve EquipmentManager.UseInventoryItemByHotkey + the EquipmentManager
-// pointer field on the player class. Idempotent — subsequent calls return
-// immediately when s_autoPotResolved is set.
-static void ResolveAutoPotOnce()
-{
-    if (s_autoPotResolved) return;
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* em = Resolver::FindClass("DecaGames.RotMG.Managers.Equipment", "EquipmentManager");
-        if (!em) em = Resolver::FindClassLoose("PNBNDBIPENP");
-        if (em) {
-            const MethodInfo* mi = il2cpp_class_get_method_from_name(em, "UseInventoryItemByHotkey", 1);
-            if (mi && mi->methodPointer) {
-                s_fnUseInvByHotkey = reinterpret_cast<UseInvByHotkeyFn>(mi->methodPointer);
-            }
-        }
-        Il2CppClass* fk = Resolver::FindClassLoose("FKALGHJIADI");
-        if (fk) {
-            FieldInfo* eqf = il2cpp_class_get_field_from_name(fk, "AJJJBDBNBLM");
-            if (eqf) s_eqMgrFieldOff = static_cast<uint32_t>(il2cpp_field_get_offset(eqf));
-        }
-    });
-    if (s_fnUseInvByHotkey && s_eqMgrFieldOff) s_autoPotResolved = true;
-}
-
-static void* ReadEquipmentManagerPtr(void* localPlayer)
-{
-    if (!localPlayer || !s_eqMgrFieldOff) return nullptr;
-    void* eqMgr = nullptr;
-    __try {
-        eqMgr = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(localPlayer) + s_eqMgrFieldOff);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return nullptr;
-    }
-    return eqMgr;
-}
-
+// Game::ItemUse owns EquipmentManager method resolution and the
+// player→EquipmentManager pointer read (RuntimeOffsets::PlayerEquipMgr).
 static void TryDrinkHotkey(int hotkey, ULONGLONG& lastTickMs, ULONGLONG cooldownMs)
 {
-    ResolveAutoPotOnce();
-    if (!s_fnUseInvByHotkey || !s_eqMgrFieldOff) return;
+    if (!Game::ItemUse::Ready()) return;
     const ULONGLONG now = GetTickCount64();
     if (now - lastTickMs < cooldownMs) return;
-    void* lp = LocalPlayer::GetPtr();
-    if (!lp) return;
-    void* eqMgr = ReadEquipmentManagerPtr(lp);
-    if (!eqMgr) return;
-    Resolver::Protection::safe_call([&]() {
-        s_fnUseInvByHotkey(eqMgr, hotkey, nullptr);
-    });
-    lastTickMs = now;
+    if (Game::ItemUse::UseByHotkey(hotkey))
+        lastTickMs = now;
+    else
+        lastTickMs = now;   // preserve old behavior: cooldown starts on attempt
 }
 
 void Tick()
@@ -748,9 +822,10 @@ void RenderDebugPath(float camX, float camY, float angleRad, float zoom, float c
                                ? std::min(a.radius, 12.f) : 1.5f;
             const float elapsed = static_cast<float>(now > a.spawnTick ? now - a.spawnTick : 0ULL);
             
-            const float landAtMs  = (std::isfinite(a.arcMs) && a.arcMs > 0.f)
-                                  ? a.arcMs
-                                  : ((std::isfinite(a.lifetime) && a.lifetime > 0.f) ? a.lifetime : 2000.f);
+            // Same shared per-source arming rule the predictor uses, so the overlay
+            // shows an EXPL blast as LIVE (red) instead of counting down a landing
+            // that already happened.
+            const float landAtMs  = AoeTracking::LandDelayMs(a);
             const float landingMs = landAtMs - elapsed;
 
             ImU32 col, fill;

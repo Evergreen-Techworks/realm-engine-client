@@ -3,10 +3,10 @@
  * notifier, public-bag pickup delay, and the "Big Loot Bags" size rewrite.
  */
 
-import type { PluginContext } from '../../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../../src/proxy/ClientConnection.js';
-import type { TrackedEntity } from '../../src/state/GameWorldState.js';
-import { StatType } from '../../src/constants/StatType.js';
+import type { PluginContext } from '../api.js';
+import type { ClientConnection } from '../api.js';
+import type { TrackedEntity } from '../api.js';
+import { StatType } from '../api.js';
 import type { AutoLootState } from './state.js';
 import type { AutoLootSettings } from './settings.js';
 import { LootCatalog } from './catalog.js';

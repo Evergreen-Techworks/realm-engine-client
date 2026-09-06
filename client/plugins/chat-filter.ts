@@ -1,5 +1,5 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../src/proxy/ClientConnection.js';
+import type { PluginContext } from './api.js';
+import type { ClientConnection } from './api.js';
 
 /** `/pattern/flags`; backslash escapes the next byte in the regex source. */
 function tryParseSlashRegex(line: string): RegExp | null {

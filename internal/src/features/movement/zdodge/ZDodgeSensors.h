@@ -2,6 +2,7 @@
 
 #include "ZDodgeTypes.h"
 
+#include "features/movement/sensors/TileSensor.h"
 #include "gui/tabs/WorldTAB.h"
 
 #include <algorithm>
@@ -11,33 +12,24 @@ namespace ZDodge::Sensors {
 
 namespace Detail {
 
-inline bool IsFiniteValue(float value)
-{
-	return std::isfinite(value);
-}
-
-inline bool IsFinitePoint(float x, float y)
-{
-	return IsFiniteValue(x) && IsFiniteValue(y);
-}
+// Finiteness / distance primitives live in Movement::TileSensor — this module
+// carried its own copies of all three until they were unified. SafeRadius and
+// SafeReactWindowMs below stay local: SafeReactWindowMs closes over ZDodge's
+// OWN Settings default, so it is not shareable as-is.
+using Movement::TileSensor::IsFinite;
+using Movement::TileSensor::IsFinitePoint;
+using Movement::TileSensor::DistSq;
 
 inline float SafeRadius(float value, float fallback)
 {
-	if (!IsFiniteValue(value) || value <= 0.f) return fallback;
+	if (!IsFinite(value) || value <= 0.f) return fallback;
 	return std::clamp(value, 0.02f, 5.f);
 }
 
 inline float SafeReactWindowMs(float value)
 {
-	if (!IsFiniteValue(value) || value <= 0.f) return Settings{}.reactWindowMs;
+	if (!IsFinite(value) || value <= 0.f) return Settings{}.reactWindowMs;
 	return std::clamp(value, 100.f, 2500.f);
-}
-
-inline float DistSq(float ax, float ay, float bx, float by)
-{
-	const float dx = ax - bx;
-	const float dy = ay - by;
-	return dx * dx + dy * dy;
 }
 
 inline void AddAoeSample(Threat& threat, float x, float y, float tMs)
@@ -78,12 +70,12 @@ inline int CachedPathIndexAtElapsed(const WorldProjectile& projectile, float ela
 {
 	const int count = std::clamp(projectile.pathSampleCount, 0, kWorldProjectilePathSampleCap);
 	if (count <= 1) return 0;
-	if (!IsFiniteValue(elapsedMs) || elapsedMs <= 0.f) return 0;
+	if (!IsFinite(elapsedMs) || elapsedMs <= 0.f) return 0;
 	int best = 0;
 	float bestDelta = 3.402823466e+38f;
 	for (int i = 0; i < count; ++i) {
 		const float t = projectile.pathSampleTimesMs[i];
-		if (!IsFiniteValue(t)) continue;
+		if (!IsFinite(t)) continue;
 		const float delta = std::fabs(t - elapsedMs);
 		if (delta < bestDelta) {
 			bestDelta = delta;
@@ -119,11 +111,11 @@ inline int CachedPathIndexAtLivePositionOrElapsed(const WorldProjectile& project
 		return best;
 	// Live position anchoring failed (likely wrong PosX/PosY offsets).
 	// Fall back to elapsed-time anchoring using cached path timestamps.
-	if (!IsFiniteValue(elapsedMs) || elapsedMs <= 0.f) return -1;
+	if (!IsFinite(elapsedMs) || elapsedMs <= 0.f) return -1;
 	float bestDelta = 3.402823466e+38f;
 	for (int i = 0; i < count; ++i) {
 		const float t = projectile.pathSampleTimesMs[i];
-		if (!IsFiniteValue(t)) continue;
+		if (!IsFinite(t)) continue;
 		const float delta = std::fabs(t - elapsedMs);
 		if (delta < bestDelta) {
 			bestDelta = delta;
@@ -141,7 +133,7 @@ inline bool AddProjectilePathThreat(Threat& threat, const WorldProjectile& proje
 	float reactWindowMs, float elapsedMs)
 {
 	if (!projectile.hasCachedPath || projectile.pathSampleCount < 2) return false;
-	if (Detail::IsFiniteValue(projectile.lifetime) && projectile.lifetime > 0.f && elapsedMs >= projectile.lifetime) return false;
+	if (Detail::IsFinite(projectile.lifetime) && projectile.lifetime > 0.f && elapsedMs >= projectile.lifetime) return false;
 
 	const int count = std::min(projectile.pathSampleCount, kWorldProjectilePathSampleCap);
 	const int anchorIdx = Detail::CachedPathIndexAtLivePositionOrElapsed(projectile, elapsedMs);
@@ -150,7 +142,7 @@ inline bool AddProjectilePathThreat(Threat& threat, const WorldProjectile& proje
 	const float anchorY = projectile.pathY[anchorIdx];
 	if (!Detail::IsFinitePoint(anchorX, anchorY)) return false;
 
-	const float baseTimeMs = Detail::IsFiniteValue(projectile.pathSampleTimesMs[anchorIdx])
+	const float baseTimeMs = Detail::IsFinite(projectile.pathSampleTimesMs[anchorIdx])
 		? projectile.pathSampleTimesMs[anchorIdx]
 		: elapsedMs;
 
@@ -158,16 +150,29 @@ inline bool AddProjectilePathThreat(Threat& threat, const WorldProjectile& proje
 	// Subsequent samples rebase cached-path deltas onto the live position
 	// so the path is correct even when the cache is in offset coordinates.
 	Detail::AddThreatSample(threat, projectile.x, projectile.y, 0.f);
+	bool  shotEnds  = false;
+	bool  spanned   = false;   // the cache reached past the window (coverage complete)
 	for (int i = anchorIdx + 1; i < count && threat.sampleCount < kMaxPathSamples; ++i) {
 		if (!Detail::IsFinitePoint(projectile.pathX[i], projectile.pathY[i])) break;
 		const float sampleTimeMs = projectile.pathSampleTimesMs[i];
-		if (!Detail::IsFiniteValue(sampleTimeMs)) break;
-		if (Detail::IsFiniteValue(projectile.lifetime) && projectile.lifetime > 0.f && sampleTimeMs > projectile.lifetime) break;
+		if (!Detail::IsFinite(sampleTimeMs)) break;
+		if (Detail::IsFinite(projectile.lifetime) && projectile.lifetime > 0.f && sampleTimeMs > projectile.lifetime) break;
 		const float futureMs = std::max(0.f, sampleTimeMs - baseTimeMs);
-		if (futureMs > reactWindowMs) break;
+		if (futureMs > reactWindowMs) { spanned = true; break; }   // cache reaches past the window
 		const float dx = projectile.pathX[i] - anchorX;
 		const float dy = projectile.pathY[i] - anchorY;
 		Detail::AddThreatSample(threat, projectile.x + dx, projectile.y + dy, futureMs);
+		shotEnds  = Detail::IsFinite(projectile.lifetime) && projectile.lifetime > 0.f
+		         && sampleTimeMs >= projectile.lifetime - 1.f;
+	}
+	// TIME COVERAGE (cached path is bounded from spawn — WorldTAB.h
+	// kWorldProjectilePathCoverMs). A long-lived shot outruns the cache, and a
+	// path that stops short of the window while the shot is STILL ALIVE would
+	// silently under-state danger. Refuse it (resetting what we appended) so the
+	// caller re-samples fresh from positionAt over the full window.
+	if (!spanned && !shotEnds && threat.sampleCount < kMaxPathSamples) {
+		threat.sampleCount = 0;
+		return false;
 	}
 	return threat.sampleCount >= 2;
 }
@@ -186,7 +191,7 @@ inline void AddAoeThreats(SensorSnapshot& out, const WorldAoe* aoes, int aoeCoun
 		if (!Detail::IsFinitePoint(a.destX, a.destY)) continue;
 
 		const float elapsedMs = static_cast<float>(nowMs > a.spawnTick ? nowMs - a.spawnTick : 0u);
-		const float lifetimeMs = Detail::IsFiniteValue(a.lifetime) && a.lifetime > 0.f ? a.lifetime : 2000.f;
+		const float lifetimeMs = Detail::IsFinite(a.lifetime) && a.lifetime > 0.f ? a.lifetime : 2000.f;
 		const float remainingMs = lifetimeMs - elapsedMs;
 		if (remainingMs <= 25.f) continue;
 

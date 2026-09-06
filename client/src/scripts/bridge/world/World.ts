@@ -15,6 +15,10 @@ export class BridgeWorld {
       return mapNameLower(deps).includes('nexus');
     };
     World.isRealm = () => {
+      // Live Realm shards use gameId 0 even when MAPINFO.displayName is a
+      // generated shard title such as "Mesa" rather than "Realm".
+      const gid = deps.clientRef.current?.state?.gameId;
+      if (gid === 0) return true;
       const n = mapNameLower(deps);
       return n.includes('realm of the mad god') || n === 'realm';
     };

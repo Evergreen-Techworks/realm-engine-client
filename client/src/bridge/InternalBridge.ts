@@ -2,38 +2,26 @@
  * InternalBridge — Named-pipe server accepting the injected DLL.
  *
  * The DLL connects to us (Node.js is the pipe server). The DLL sends `hello`
- * first regardless of which side created the pipe; all handshake/heartbeat
- * logic is unchanged from the previous client-side model.
+ * first regardless of which side created the pipe.
+ *
+ * Messages are plaintext length-prefixed JSON, dispatched purely by `type` —
+ * there is no per-message signing/verification and no mutual-auth handshake.
  *
  * Handles:
- *   - Mutual authentication (challenge-response HMAC-SHA256)
- *   - Periodic heartbeat (both directions)
+ *   - Connection setup (validate `hello` protocol/version, then treat as connected)
+ *   - Periodic heartbeat (both directions) for liveness
  *   - Command relay (forward dashboard feature toggles to the DLL)
  *   - State/player/entity reception from the DLL
- *
- * The shared HMAC key is embedded at build time via __HANDSHAKE_KEY__.
  */
 
 import { createServer, Server, Socket } from 'net';
-import { createHash, createHmac, randomBytes } from 'crypto';
 import { Logger } from '../util/Logger.js';
 import { EventEmitter } from 'events';
-import { signalHelloEvent } from '../native/hello-event.js';
-import { parseThreatPayload, publishDllThreats } from './DllThreatBus.js';
+import { BRIDGE, DllMessageType } from './contract.js';
+import { decodeThreatPayload, publishDllThreats } from './DllThreatBus.js';
+import { decodeAimPayload, publishDllAim } from './DllAimBus.js';
 
-declare const __HANDSHAKE_KEY__: string | undefined;
-declare const __PIPE_NAME__: string | undefined;
-
-// Dev fallback must match DebugInternal/src/ui/BuildSecrets.h dev pipe name.
-// In production, build-prod.mjs regenerates both to a random per-build value.
-const PIPE_PATH = (() => {
-  try {
-    const raw = typeof __PIPE_NAME__ !== 'undefined' ? __PIPE_NAME__ : '';
-    const s = String(raw || '').trim();
-    if (s.startsWith('\\\\.\\pipe\\')) return s;
-  } catch {}
-  return '\\\\.\\pipe\\lfg-dev-bridge';
-})();
+const PIPE_PATH = BRIDGE.DEV_PIPE_NAME;
 
 /** RotMG Exalt + DLL use Windows named pipes; Node cannot expose them on Linux/WSL/macOS. */
 function isWindowsNamedPipeHost(): boolean {
@@ -43,96 +31,6 @@ function isWindowsNamedPipeHost(): boolean {
 const HEARTBEAT_INTERVAL = 5000;
 const MAX_MISSES = 3;
 const IS_PROD = process.env.REALM_ENGINE_PROD === '1';
-const HEX64 = /^[0-9a-f]{64}$/i;
-
-function getHandshakeKey(): string {
-  return '47eb249907eb980c851fe3a7bdb56a244244bb7d465572b556e810df6827ecfb';
-}
-
-const HANDSHAKE_KEY = getHandshakeKey();
-
-function hmacResponse(data: string): string | null {
-  if (!HANDSHAKE_KEY) return null;
-  try {
-    return createHmac('sha256', Buffer.from(HANDSHAKE_KEY, 'hex'))
-      .update(data)
-      .digest('hex');
-  } catch {
-    return null;
-  }
-}
-
-function randomNonce(): string {
-  return randomBytes(32).toString('hex');
-}
-
-function isHexNonce(value: unknown): value is string {
-  return typeof value === 'string' && HEX64.test(value);
-}
-
-function deriveSessionKey(serverChallenge: string, clientChallenge: string, userId: string, clientPid: string): string | null {
-  if (!HANDSHAKE_KEY) return null;
-  if (!/^[1-9]\d*$/.test(clientPid)) return null;
-  if (!isHexNonce(serverChallenge) || !isHexNonce(clientChallenge)) return null;
-  try {
-    return createHmac('sha256', Buffer.from(HANDSHAKE_KEY, 'hex'))
-      .update(`${serverChallenge}|${clientChallenge}|${userId}|${clientPid}|${PIPE_PATH}|session-v2`)
-      .digest('hex');
-  } catch {
-    return null;
-  }
-}
-
-function computeSessionMac(sessionKeyHex: string, seq: bigint, type: string, payload: string): string | null {
-  if (!isHexNonce(sessionKeyHex)) return null;
-  try {
-    return createHmac('sha256', Buffer.from(sessionKeyHex, 'hex'))
-      .update(`${seq.toString()}|${type}|${payload}`)
-      .digest('hex');
-  } catch {
-    return null;
-  }
-}
-
-function parseSeq(value: unknown): bigint | null {
-  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') return null;
-  const str = String(value);
-  if (!/^\d+$/.test(str)) return null;
-  try {
-    return BigInt(str);
-  } catch {
-    return null;
-  }
-}
-
-function playerPayloadFromMessage(msg: DllMessage): string | null {
-  const alive = msg.alive === true;
-  if (!alive) return 'alive:false';
-  const hp = typeof msg.hp === 'number' && Number.isFinite(msg.hp) ? msg.hp : null;
-  const maxHp = typeof msg.maxHp === 'number' && Number.isFinite(msg.maxHp) ? msg.maxHp : null;
-  const posX = typeof msg.posX === 'number' && Number.isFinite(msg.posX) ? msg.posX : null;
-  const posY = typeof msg.posY === 'number' && Number.isFinite(msg.posY) ? msg.posY : null;
-  if (hp === null || maxHp === null || posX === null || posY === null) return null;
-  let payload = `alive:true|hp:${hp}|maxHp:${maxHp}|posX:${posX.toFixed(3)}|posY:${posY.toFixed(3)}`;
-  // Defense is appended last and only when the DLL sent it — older DLLs omit it,
-  // and the signed payload must match what the DLL signed (with or without def).
-  const def = typeof msg.def === 'number' && Number.isFinite(msg.def) ? Math.trunc(msg.def) : null;
-  if (def !== null) payload += `|def:${def}`;
-  return payload;
-}
-
-function hotkeyPayloadFromMessage(msg: DllMessage): string | null {
-  const pluginId = typeof msg.pluginId === 'string' ? msg.pluginId : null;
-  const action = typeof msg.action === 'string' ? msg.action : null;
-  const value = typeof msg.value === 'boolean' ? msg.value : null;
-  if (!pluginId || !action || value === null) return null;
-  return `${pluginId}|${action}|${value ? 'true' : 'false'}`;
-}
-
-interface SignedFields {
-  payload: string;
-  valueType?: 'b' | 'n' | 's';
-}
 
 export interface DllMessage {
   type: string;
@@ -143,17 +41,14 @@ export class InternalBridge extends EventEmitter {
   private server: Server | null = null;
   private socket: Socket | null = null;
   private userId: string;
-  private authenticated = false;
+  private connected = false;
   private stopped = false;
 
   // Heartbeat state
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private pendingChallenge: string | null = null;
-  private serverChallenge: string | null = null;
   private missCount = 0;
-  private sessionKey: string | null = null;
-  private nextClientSeq = 1n;
-  private lastDllSeq = 0n;
+  /** True while a heartbeat is out awaiting a `heartbeatResp`; cleared on receipt. */
+  private awaitingHeartbeat = false;
 
   /** Latest authoritative defense the DLL read from game memory; null when not alive / not sent. */
   private lastDllDefense: number | null = null;
@@ -172,38 +67,12 @@ export class InternalBridge extends EventEmitter {
     this.userId = userId;
   }
 
-  get isConnected(): boolean { return this.authenticated && this.pipeTransportReady(); }
+  get isConnected(): boolean { return this.connected && this.pipeTransportReady(); }
   get currentUserId(): string { return this.userId; }
 
   /** Non-null only while the OS pipe connection is alive. */
   private pipeTransportReady(): boolean {
     return this.socket !== null && !this.socket.destroyed;
-  }
-
-  /**
-   * DLL rejects empty userId and non-[a-zA-Z0-9._-] (see IpcBridge IsAsciiIdSafe / DeriveSessionKey).
-   * Pre-login bridge uses empty string — map to a stable token so handshake can complete.
-   */
-  private bridgeAuthUserId(): string {
-    const u = String(this.userId ?? '').trim();
-    if (u.length === 0) return 'anonymous';
-    if (u.length > 96) {
-      return createHash('sha256').update(u, 'utf8').digest('hex');
-    }
-    for (let i = 0; i < u.length; i++) {
-      const c = u.charCodeAt(i);
-      const ok =
-        (c >= 0x61 && c <= 0x7a) ||
-        (c >= 0x41 && c <= 0x5a) ||
-        (c >= 0x30 && c <= 0x39) ||
-        c === 0x2d ||
-        c === 0x5f ||
-        c === 0x2e;
-      if (!ok) {
-        return createHash('sha256').update(u, 'utf8').digest('hex');
-      }
-    }
-    return u;
   }
 
   /** Update the user ID (e.g. after API login). Drops the current session — DLL will reconnect. */
@@ -221,11 +90,6 @@ export class InternalBridge extends EventEmitter {
   listen(): void {
     if (this.stopped) return;
     if (this.server) return;
-    if (!HANDSHAKE_KEY) {
-      Logger.error('InternalBridge', 'Handshake key invalid for production; bridge disabled.');
-      this.stopped = true;
-      return;
-    }
     if (!isWindowsNamedPipeHost()) {
       if (!this.warnedNonWindowsPipe) {
         this.warnedNonWindowsPipe = true;
@@ -252,10 +116,6 @@ export class InternalBridge extends EventEmitter {
 
     server.listen(PIPE_PATH, () => {
       Logger.log('InternalBridge', `Pipe server listening on ${PIPE_PATH} — waiting for DLL to connect.`);
-      // Unblock the DLL's load gate so it can call Run() immediately.
-      // The HELLO packet hook also signals this, but calling here covers the
-      // case where the DLL is injected after the game has already entered a realm.
-      signalHelloEvent();
     });
 
     this.server = server;
@@ -271,22 +131,17 @@ export class InternalBridge extends EventEmitter {
     }
   }
 
-  /** Send a command to the DLL (e.g. setFeature). Drops silently if not yet authenticated. */
+  /** Send a command to the DLL (e.g. setFeature). Drops silently if not yet connected. */
   send(msg: DllMessage): void {
-    if (!this.pipeTransportReady() || !this.authenticated) return;
-    const signed = this.signOutgoingMessage(msg);
-    if (!signed) {
-      Logger.warn('InternalBridge', `Dropped unsigned command type: ${msg.type}`);
-      return;
-    }
-    this.writeMessage(JSON.stringify(signed));
+    if (!this.pipeTransportReady() || !this.connected) return;
+    this.writeMessage(JSON.stringify(msg));
   }
 
   /** Send a feature toggle. Always updates the last-known state for replay on reconnect. */
   setFeature(key: string, value: boolean | number | string): void {
     const valueType: 'b' | 'n' | 's'
       = typeof value === 'boolean' ? 'b' : (typeof value === 'number' ? 'n' : 's');
-    const msg: DllMessage = { type: 'setFeature', key, valueType, value };
+    const msg: DllMessage = { type: DllMessageType.SetFeature, key, valueType, value };
     if (key !== 'internalUnloadDll') {
       this.lastSentFeatures.set(key, { ...msg });
     }
@@ -295,88 +150,10 @@ export class InternalBridge extends EventEmitter {
 
   // ── Private ──────────────────────────────────────────────────────────────
 
-  private getNextSeq(): bigint {
-    const current = this.nextClientSeq;
-    this.nextClientSeq += 1n;
-    return current;
-  }
-
-  private getSignedFields(msg: DllMessage): SignedFields | null {
-    switch (msg.type) {
-      case 'heartbeat': {
-        const nonce = msg.nonce;
-        if (!isHexNonce(nonce)) return null;
-        return { payload: nonce };
-      }
-      case 'heartbeatResp': {
-        const response = msg.response;
-        if (!isHexNonce(response)) return null;
-        return { payload: response };
-      }
-      case 'clearTiles':
-        return { payload: '' };
-      case 'noWalkInit': {
-        const types = typeof msg.types === 'string' ? msg.types : null;
-        if (types === null) return null;
-        return { payload: types };
-      }
-      case 'tileUpdate': {
-        const tiles = typeof msg.tiles === 'string' ? msg.tiles : null;
-        if (tiles === null) return null;
-        return { payload: tiles };
-      }
-      case 'setFeature': {
-        const key = typeof msg.key === 'string' ? msg.key : null;
-        const valueType = msg.valueType === 'b' || msg.valueType === 'n' || msg.valueType === 's' ? msg.valueType : null;
-        if (!key || !valueType) return null;
-        const rawValue = msg.value;
-        if (valueType === 'b') {
-          if (typeof rawValue !== 'boolean') return null;
-          return { payload: `${key}|b|${rawValue ? 'true' : 'false'}`, valueType: 'b' };
-        }
-        if (valueType === 'n') {
-          if (typeof rawValue !== 'number' || !Number.isFinite(rawValue)) return null;
-          return { payload: `${key}|n|${rawValue.toString()}`, valueType: 'n' };
-        }
-        if (typeof rawValue !== 'string') return null;
-        return { payload: `${key}|s|${rawValue}`, valueType: 's' };
-      }
-      default:
-        return null;
-    }
-  }
-
-  private signOutgoingMessage(msg: DllMessage): DllMessage | null {
-    if (!this.sessionKey) return null;
-    const signedFields = this.getSignedFields(msg);
-    if (!signedFields) return null;
-
-    const seq = this.getNextSeq();
-    const mac = computeSessionMac(this.sessionKey, seq, msg.type, signedFields.payload);
-    if (!mac) return null;
-
-    return {
-      ...msg,
-      seq: seq.toString(),
-      mac,
-    };
-  }
-
-  private verifyIncomingSignedMessage(msg: DllMessage, payload: string): boolean {
-    if (!this.sessionKey) return false;
-    const seq = parseSeq(msg.seq);
-    const mac = typeof msg.mac === 'string' ? msg.mac : null;
-    if (seq === null || seq <= this.lastDllSeq || !mac || !isHexNonce(mac)) return false;
-    const expected = computeSessionMac(this.sessionKey, seq, msg.type, payload);
-    if (!expected || expected !== mac.toLowerCase()) return false;
-    this.lastDllSeq = seq;
-    return true;
-  }
-
   /** Handle an incoming DLL connection on the pipe server. */
   private acceptConnection(sock: Socket): void {
     this.socket = sock;
-    this.authenticated = false;
+    this.connected = false;
     this.readBuf = Buffer.alloc(0);
     this.loggedFirstPipeData = false;
 
@@ -417,19 +194,15 @@ export class InternalBridge extends EventEmitter {
   }
 
   private cleanup(): void {
-    const wasAuthenticated = this.authenticated;
-    this.authenticated = false;
-    this.pendingChallenge = null;
-    this.serverChallenge = null;
-    this.sessionKey = null;
-    this.nextClientSeq = 1n;
-    this.lastDllSeq = 0n;
+    const wasConnected = this.connected;
+    this.connected = false;
     this.missCount = 0;
+    this.awaitingHeartbeat = false;
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
-    if (wasAuthenticated) this.emit('disconnected');
+    if (wasConnected) this.emit('disconnected');
   }
 
   // ── Length-prefixed message I/O ─────────────────────────────────────────
@@ -470,39 +243,32 @@ export class InternalBridge extends EventEmitter {
 
   private handleMessage(msg: DllMessage): void {
     switch (msg.type) {
-      case 'hello':
+      case DllMessageType.Hello:
         this.handleHello(msg);
         break;
-      case 'authResult':
-        this.handleAuthResult(msg);
+      case DllMessageType.Heartbeat:
+        this.handleHeartbeat();
         break;
-      case 'heartbeat':
-        this.handleHeartbeat(msg);
+      case DllMessageType.HeartbeatResp:
+        this.handleHeartbeatResp();
         break;
-      case 'heartbeatResp':
-        this.handleHeartbeatResp(msg);
-        break;
-      case 'player':
+      case DllMessageType.Player:
         this.handlePlayer(msg);
         break;
-      case 'hotkeyEvent':
+      case DllMessageType.HotkeyEvent:
         this.handleHotkeyEvent(msg);
         break;
-      case 'unresolvedClasses':
+      case DllMessageType.UnresolvedClasses:
         this.handleUnresolvedClasses(msg);
         break;
-      case 'threats':
+      case DllMessageType.Threats:
         this.handleThreats(msg);
         break;
+      case DllMessageType.Aim:
+        this.handleAim(msg);
+        break;
       default:
-        if (this.authenticated) {
-          const sigPayload = typeof msg.sigPayload === 'string' ? msg.sigPayload : null;
-          if (!sigPayload || !this.verifyIncomingSignedMessage(msg, sigPayload)) {
-            Logger.warn('InternalBridge', `Dropped unsigned/invalid DLL message type: ${msg.type}`);
-            return;
-          }
-        }
-        // Forward signed state/entities to listeners
+        // Forward any other state/entity message to listeners.
         this.emit('message', msg);
         break;
     }
@@ -511,93 +277,39 @@ export class InternalBridge extends EventEmitter {
   private handleHello(msg: DllMessage): void {
     const version = Number(msg.version ?? 0);
     const protocol = String(msg.protocol ?? '');
-    const challenge = msg.challenge;
-    if (version !== 3 || protocol !== 'bridge-v3' || !isHexNonce(challenge)) {
-      Logger.error('InternalBridge', 'Hello missing challenge or wrong protocol/version');
+    if (version !== BRIDGE.PROTOCOL_VERSION || protocol !== BRIDGE.PROTOCOL_TAG) {
+      Logger.error('InternalBridge', 'Hello wrong protocol/version');
       this.disconnect();
       return;
     }
 
-    // Compute HMAC(challenge + userId, key) — userId must match DLL IsAsciiIdSafe rules
-    const bid = this.bridgeAuthUserId();
-    const responseData = challenge + bid;
-    const response = hmacResponse(responseData);
-    if (!response) {
-      Logger.error('InternalBridge', 'Unable to compute auth HMAC');
-      this.disconnect();
-      return;
-    }
-
-    // Our own challenge for mutual auth
-    const clientChallenge = randomNonce();
-
-    this.writeMessage(JSON.stringify({
-      type: 'auth',
-      protocol: 'bridge-v3',
-      clientPid: String(process.pid),
-      userId: bid,
-      response,
-      challenge: clientChallenge,
-    }));
-
-    // Store both challenges for mutual auth + session key derivation.
-    this.serverChallenge = challenge;
-    this.pendingChallenge = clientChallenge;
-  }
-
-  private handleAuthResult(msg: DllMessage): void {
-    // Admin dev: accept any authResult from the DLL without verifying its HMAC.
-    const serverChallenge = this.serverChallenge ?? randomNonce();
-    const clientChallenge = this.pendingChallenge ?? randomNonce();
-    const sessionKey = deriveSessionKey(serverChallenge, clientChallenge, this.bridgeAuthUserId(), String(process.pid));
-
-    this.authenticated = true;
-    this.sessionKey = sessionKey ?? '0'.repeat(64);
-    this.nextClientSeq = 1n;
-    this.lastDllSeq = 0n;
-    this.serverChallenge = null;
-    this.pendingChallenge = null;
+    this.connected = true;
     this.missCount = 0;
-
-    Logger.log('InternalBridge', `Authenticated with DLL (bridgeUserId=${this.bridgeAuthUserId()})`);
-    this.emit('authenticated');
+    this.awaitingHeartbeat = false;
+    Logger.log('InternalBridge', 'DLL connected (plaintext bridge).');
+    this.emit('authenticated');            // event name kept for DevServer compat
     this.replayAllFeatureState();
     this.startHeartbeat();
   }
 
   /** Replay all known feature states to the DLL on every (re)connect. */
   private replayAllFeatureState(): void {
-    if (!this.socket || !this.authenticated || !this.sessionKey) return;
+    if (!this.socket || !this.connected) return;
     for (const msg of this.lastSentFeatures.values()) {
-      const signed = this.signOutgoingMessage(msg);
-      if (!signed) {
-        Logger.warn('InternalBridge', `Skipped feature replay for key: ${msg.key}`);
-        continue;
-      }
-      this.writeMessage(JSON.stringify(signed));
+      this.writeMessage(JSON.stringify(msg));
     }
   }
 
-  private handleHeartbeat(msg: DllMessage): void {
-    // Admin dev: respond to DLL heartbeat without verifying incoming seq/mac.
-    const nonce = typeof msg.nonce === 'string' ? msg.nonce : randomNonce();
-    const response = hmacResponse(nonce) ?? '0'.repeat(64);
-    const signed = this.signOutgoingMessage({ type: 'heartbeatResp', response });
-    if (signed) this.writeMessage(JSON.stringify(signed));
+  private handleHeartbeat(): void {
+    this.writeMessage(JSON.stringify({ type: DllMessageType.HeartbeatResp }));
   }
 
-  private handleHeartbeatResp(_msg: DllMessage): void {
-    // Admin dev: accept all DLL heartbeat responses without HMAC check.
+  private handleHeartbeatResp(): void {
     this.missCount = 0;
-    this.pendingChallenge = null;
+    this.awaitingHeartbeat = false;
   }
 
   private handlePlayer(msg: DllMessage): void {
-    const payload = playerPayloadFromMessage(msg);
-    if (!payload || !this.verifyIncomingSignedMessage(msg, payload)) {
-      Logger.warn('InternalBridge', 'Dropped unsigned/invalid player message');
-      return;
-    }
     // Cache the memory-read defense (authoritative ground truth from the game).
     // Cleared when the player isn't alive so the proxy self-check re-arms per load.
     const def = typeof msg.def === 'number' && Number.isFinite(msg.def) ? Math.trunc(msg.def) : null;
@@ -611,32 +323,22 @@ export class InternalBridge extends EventEmitter {
   }
 
   private handleHotkeyEvent(msg: DllMessage): void {
-    const payload = hotkeyPayloadFromMessage(msg);
-    if (!payload || !this.verifyIncomingSignedMessage(msg, payload)) {
-      Logger.warn('InternalBridge', 'Dropped unsigned/invalid hotkey event');
-      return;
-    }
     this.emit('message', msg);
   }
 
   private handleThreats(msg: DllMessage): void {
     const payload = typeof msg.threats === 'string' ? msg.threats : '';
-    if (!this.verifyIncomingSignedMessage(msg, payload)) {
-      Logger.warn('InternalBridge', 'Dropped unsigned/invalid threats message');
-      return;
-    }
-    {
-      const parsed = parseThreatPayload(payload);
-      publishDllThreats(parsed.threats, parsed.ground);
-    }
+    const parsed = decodeThreatPayload(payload);
+    publishDllThreats(parsed.threats, parsed.ground, parsed.truncated);
+  }
+
+  private handleAim(msg: DllMessage): void {
+    const payload = typeof msg.aim === 'string' ? msg.aim : '';
+    publishDllAim(decodeAimPayload(payload));
   }
 
   private handleUnresolvedClasses(msg: DllMessage): void {
     const classes = typeof msg.classes === 'string' ? msg.classes : '';
-    if (!this.verifyIncomingSignedMessage(msg, classes)) {
-      Logger.warn('InternalBridge', 'Dropped unsigned unresolvedClasses message');
-      return;
-    }
     const list = classes ? classes.split(',').filter(Boolean) : [];
     this.emit('unresolvedClasses', list);
   }
@@ -644,11 +346,12 @@ export class InternalBridge extends EventEmitter {
   private startHeartbeat(): void {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
 
+    this.awaitingHeartbeat = false;
     this.heartbeatTimer = setInterval(() => {
-      if (!this.authenticated || !this.socket) return;
+      if (!this.connected || !this.socket) return;
 
-      // Check if previous challenge went unanswered
-      if (this.pendingChallenge) {
+      // Check if the previous heartbeat went unanswered.
+      if (this.awaitingHeartbeat) {
         this.missCount++;
         if (this.missCount >= MAX_MISSES) {
           Logger.error('InternalBridge', `${this.missCount} heartbeat misses — disconnecting`);
@@ -657,18 +360,9 @@ export class InternalBridge extends EventEmitter {
         }
       }
 
-      // Send new challenge
-      const nonce = randomNonce();
-      this.pendingChallenge = nonce;
-      const signed = this.signOutgoingMessage({
-        type: 'heartbeat',
-        nonce,
-      });
-      if (!signed) {
-        this.disconnect();
-        return;
-      }
-      this.writeMessage(JSON.stringify(signed));
+      // handleHeartbeatResp clears `awaitingHeartbeat` + resets missCount on reply.
+      this.awaitingHeartbeat = true;
+      this.writeMessage(JSON.stringify({ type: DllMessageType.Heartbeat }));
     }, HEARTBEAT_INTERVAL);
   }
 }

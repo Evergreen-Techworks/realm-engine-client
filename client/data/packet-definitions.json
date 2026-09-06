@@ -12,7 +12,8 @@
           "name": "errorMessage",
           "type": "string"
         }
-      ]
+      ],
+      "protocolName": "FAILURE"
     },
     "1": {
       "name": "TELEPORT",
@@ -26,7 +27,8 @@
           "name": "playerName",
           "type": "string"
         }
-      ]
+      ],
+      "protocolName": "TELEPORT"
     },
     "3": {
       "name": "CLAIMDAILYLOGINREWARD",
@@ -40,12 +42,14 @@
           "name": "claimType",
           "type": "string"
         }
-      ]
+      ],
+      "protocolName": "CLAIM_LOGIN_REWARD_MSG"
     },
     "4": {
       "name": "DELETEPETMESSAGE",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "DELETE_PET"
     },
     "5": {
       "name": "REQUESTTRADE",
@@ -55,17 +59,20 @@
           "name": "name",
           "type": "string"
         }
-      ]
+      ],
+      "protocolName": "REQUESTTRADE"
     },
     "6": {
       "name": "QUESTFETCHRESPONSE",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "QUEST_FETCH_RESPONSE"
     },
     "7": {
       "name": "JOINGUILD",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "JOINGUILD"
     },
     "8": {
       "name": "PING",
@@ -75,7 +82,8 @@
           "name": "serial",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "PING"
     },
     "9": {
       "name": "PLAYERTEXT",
@@ -85,7 +93,8 @@
           "name": "text",
           "type": "string"
         }
-      ]
+      ],
+      "protocolName": "PLAYERTEXT"
     },
     "10": {
       "name": "NEWTICK",
@@ -113,12 +122,14 @@
           "lengthType": "int16",
           "elementType": "Status"
         }
-      ]
+      ],
+      "protocolName": "NEWTICK"
     },
     "11": {
       "name": "SHOWEFFECT",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "SHOWEFFECT"
     },
     "12": {
       "name": "SERVERPLAYERSHOOT",
@@ -168,9 +179,10 @@
           "name": "angleInc",
           "type": "float",
           "optional": true,
-          "default": -1.0
+          "default": -1
         }
-      ]
+      ],
+      "protocolName": "SERVERPLAYERSHOOT"
     },
     "13": {
       "name": "USEITEM",
@@ -196,7 +208,8 @@
           "name": "unknownInt",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "USEITEM"
     },
     "14": {
       "name": "TRADEACCEPTED",
@@ -214,22 +227,27 @@
           "lengthType": "int16",
           "elementType": "bool"
         }
-      ]
+      ],
+      "protocolName": "TRADEACCEPTED"
     },
     "15": {
       "name": "GUILDREMOVE",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "GUILDREMOVE"
     },
     "16": {
       "name": "PETUPGRADEREQUEST",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "PETUPGRADEREQUEST"
     },
     "17": {
       "name": "ENTERARENA",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "ENTER_ARENA",
+      "protocolDirection": "Outgoing"
     },
     "18": {
       "name": "GOTO",
@@ -247,7 +265,8 @@
           "name": "unknown",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "GOTO"
     },
     "19": {
       "name": "INVDROP",
@@ -261,7 +280,8 @@
           "name": "unknownByte",
           "type": "sbyte"
         }
-      ]
+      ],
+      "protocolName": "INVDROP"
     },
     "20": {
       "name": "OTHERHIT",
@@ -283,22 +303,26 @@
           "name": "targetId",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "OTHERHIT"
     },
     "21": {
       "name": "NAMERESULT",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "NAMERESULT"
     },
     "22": {
       "name": "BUYRESULT",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "BUYRESULT"
     },
     "23": {
       "name": "HATCHPET",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "HATCH_PET"
     },
     "24": {
       "name": "ACTIVEPETPDATEREQ",
@@ -313,7 +337,8 @@
           "type": "uint32"
         }
       ],
-      "note": "Same wire as EK ActivePetUpdateRequest."
+      "note": "Same wire as EK ActivePetUpdateRequest.",
+      "protocolName": "ACTIVE_PET_UPDATE_REQUEST"
     },
     "25": {
       "name": "ENEMYHIT",
@@ -343,17 +368,20 @@
           "name": "unknownId",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "ENEMYHIT"
     },
     "26": {
       "name": "GUILDRESULT",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "GUILDRESULT"
     },
     "27": {
       "name": "EDITACCOUNTLIST",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "EDITACCOUNTLIST"
     },
     "28": {
       "name": "TRADECHANGED",
@@ -365,7 +393,8 @@
           "lengthType": "int16",
           "elementType": "bool"
         }
-      ]
+      ],
+      "protocolName": "TRADECHANGED"
     },
     "30": {
       "name": "PLAYERSHOOT",
@@ -407,7 +436,8 @@
           "name": "playerPosition",
           "type": "Location"
         }
-      ]
+      ],
+      "protocolName": "PLAYERSHOOT"
     },
     "31": {
       "name": "PONG",
@@ -421,12 +451,14 @@
           "name": "time",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "PONG"
     },
     "33": {
       "name": "CHANGEPETSKIN",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "PET_CHANGE_SKIN_MSG"
     },
     "34": {
       "name": "TRADEDONE",
@@ -440,7 +472,8 @@
           "name": "description",
           "type": "string"
         }
-      ]
+      ],
+      "protocolName": "TRADEDONE"
     },
     "35": {
       "name": "ENEMYSHOOT",
@@ -480,9 +513,10 @@
           "name": "angleInc",
           "type": "float",
           "optional": true,
-          "default": 0.0
+          "default": 0
         }
-      ]
+      ],
+      "protocolName": "ENEMYSHOOT"
     },
     "36": {
       "name": "ACCEPTTRADE",
@@ -500,22 +534,26 @@
           "lengthType": "int16",
           "elementType": "bool"
         }
-      ]
+      ],
+      "protocolName": "ACCEPTTRADE"
     },
     "37": {
       "name": "CHANGEGUILDRANK",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "CHANGEGUILDRANK"
     },
     "38": {
       "name": "PLAYSOUND",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "PLAYSOUND"
     },
     "39": {
       "name": "VERIFYEMAIL",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "VERIFY_EMAIL"
     },
     "40": {
       "name": "SQUAREHIT",
@@ -533,7 +571,8 @@
           "name": "objectId",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "SQUAREHIT"
     },
     "41": {
       "name": "NEWABILITYMESSAGE",
@@ -543,7 +582,8 @@
           "name": "abilityType",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "NEW_ABILITY"
     },
     "42": {
       "name": "UPDATE",
@@ -575,7 +615,8 @@
           "lengthType": "compressedInt",
           "elementType": "compressedInt"
         }
-      ]
+      ],
+      "protocolName": "UPDATE"
     },
     "44": {
       "name": "TEXT",
@@ -617,7 +658,8 @@
           "name": "starBg",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "TEXT"
     },
     "45": {
       "name": "RECONNECT",
@@ -647,7 +689,8 @@
           "name": "key",
           "type": "byteArray16"
         }
-      ]
+      ],
+      "protocolName": "RECONNECT"
     },
     "46": {
       "name": "DEATH",
@@ -682,7 +725,8 @@
           "type": "compressedInt"
         }
       ],
-      "note": "Partial definition \u2014 fameBonuses and pcStats have complex encoding. Remaining bytes pass through as unreadData."
+      "note": "Partial definition — fameBonuses and pcStats have complex encoding. Remaining bytes pass through as unreadData.",
+      "protocolName": "DEATH"
     },
     "47": {
       "name": "USEPORTAL",
@@ -692,12 +736,14 @@
           "name": "objectId",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "USEPORTAL"
     },
     "48": {
       "name": "GOTOQUESTROOM",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "QUEST_ROOM_MSG"
     },
     "49": {
       "name": "ALLYSHOOT",
@@ -711,27 +757,33 @@
           "name": "unknownShort",
           "type": "int16"
         }
-      ]
+      ],
+      "protocolName": "ALLYSHOOT"
     },
     "50": {
       "name": "IMMINENTARENAWAVE",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "IMMINENT_ARENA_WAVE"
     },
     "51": {
       "name": "RESKIN",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "RESKIN"
     },
     "52": {
       "name": "RESETDAILYQUESTS",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "RESET_DAILY_QUESTS"
     },
     "53": {
       "name": "PETCHANGEFORMMSG",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "PET_CHANGE_FORM_MSG",
+      "protocolDirection": "Outgoing"
     },
     "55": {
       "name": "INVENTORYSWAP",
@@ -759,7 +811,8 @@
           "optional": true,
           "default": 0
         }
-      ]
+      ],
+      "protocolName": "INVSWAP"
     },
     "56": {
       "name": "CHANGETRADE",
@@ -771,7 +824,8 @@
           "lengthType": "int16",
           "elementType": "bool"
         }
-      ]
+      ],
+      "protocolName": "CHANGETRADE"
     },
     "57": {
       "name": "CREATE",
@@ -793,17 +847,20 @@
           "name": "isSeasonal",
           "type": "bool"
         }
-      ]
+      ],
+      "protocolName": "CREATE"
     },
     "58": {
       "name": "QUESTREDEEM",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "QUEST_REDEEM"
     },
     "59": {
       "name": "CREATEGUILD",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "CREATEGUILD"
     },
     "60": {
       "name": "SETCONDITION",
@@ -817,7 +874,8 @@
           "name": "conditionDuration",
           "type": "float"
         }
-      ]
+      ],
+      "protocolName": "SETCONDITION"
     },
     "61": {
       "name": "LOAD",
@@ -831,7 +889,8 @@
           "name": "isFromArena",
           "type": "bool"
         }
-      ]
+      ],
+      "protocolName": "LOAD"
     },
     "62": {
       "name": "MOVE",
@@ -851,12 +910,14 @@
           "lengthType": "int16",
           "elementType": "LocationRecord"
         }
-      ]
+      ],
+      "protocolName": "MOVE"
     },
     "63": {
       "name": "KEYINFORESPONSE",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "KEY_INFO_RESPONSE"
     },
     "64": {
       "name": "AOE",
@@ -894,7 +955,8 @@
           "name": "armorPierce",
           "type": "bool"
         }
-      ]
+      ],
+      "protocolName": "AOE"
     },
     "65": {
       "name": "GOTOACK",
@@ -908,7 +970,8 @@
           "name": "unknownByte",
           "type": "byte"
         }
-      ]
+      ],
+      "protocolName": "GOTOACK"
     },
     "66": {
       "name": "GLOBALNOTIFICATION",
@@ -922,7 +985,8 @@
           "name": "text",
           "type": "string"
         }
-      ]
+      ],
+      "protocolName": "GLOBAL_NOTIFICATION"
     },
     "67": {
       "name": "NOTIFICATION",
@@ -937,12 +1001,14 @@
           "type": "byte"
         }
       ],
-      "note": "Complex conditional packet - extra fields depend on typeValue. Remaining bytes stored in unreadData for passthrough."
+      "note": "Complex conditional packet - extra fields depend on typeValue. Remaining bytes stored in unreadData for passthrough.",
+      "protocolName": "NOTIFICATION"
     },
     "68": {
       "name": "ARENADEATH",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "ARENA_DEATH"
     },
     "69": {
       "name": "CLIENTSTAT",
@@ -956,7 +1022,8 @@
           "name": "value",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "CLIENTSTAT"
     },
     "74": {
       "name": "HELLO",
@@ -1002,7 +1069,8 @@
           "name": "clientIdentification",
           "type": "string"
         }
-      ]
+      ],
+      "protocolName": "HELLO"
     },
     "75": {
       "name": "DAMAGE",
@@ -1034,37 +1102,45 @@
           "name": "objectId",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "DAMAGE"
     },
     "76": {
       "name": "ACTIVEPET",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "ACTIVEPETUPDATE"
     },
     "77": {
       "name": "INVITEDTOGUILD",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "INVITEDTOGUILD"
     },
     "78": {
       "name": "PETYARDUPDATE",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "PETYARDUPDATE"
     },
     "79": {
       "name": "PASSWORDPROMPT",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "PASSWORD_PROMPT"
     },
     "80": {
       "name": "ACCEPTARENADEATH",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "ACCEPT_ARENA_DEATH",
+      "protocolDirection": "Outgoing"
     },
     "81": {
       "name": "UPDATEACK",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "UPDATEACK"
     },
     "82": {
       "name": "QUESTOBJECTID",
@@ -1074,12 +1150,14 @@
           "name": "objectId",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "QUESTOBJID"
     },
     "83": {
       "name": "PIC",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "PIC"
     },
     "84": {
       "name": "REALMHEROESRESPONSE",
@@ -1089,7 +1167,8 @@
           "name": "numberOfRealmHeros",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "REALM_HERO_LEFT_MSG"
     },
     "85": {
       "name": "BUY",
@@ -1103,7 +1182,8 @@
           "name": "quantity",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "BUY"
     },
     "86": {
       "name": "TRADESTART",
@@ -1125,12 +1205,14 @@
           "lengthType": "int16",
           "elementType": "TradeItem"
         }
-      ]
+      ],
+      "protocolName": "TRADESTART"
     },
     "87": {
       "name": "EVOLVEPET",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "EVOLVE_PET"
     },
     "88": {
       "name": "TRADEREQUESTED",
@@ -1140,7 +1222,8 @@
           "name": "name",
           "type": "string"
         }
-      ]
+      ],
+      "protocolName": "TRADEREQUESTED"
     },
     "89": {
       "name": "AOEACK",
@@ -1154,7 +1237,8 @@
           "name": "position",
           "type": "Location"
         }
-      ]
+      ],
+      "protocolName": "AOEACK"
     },
     "90": {
       "name": "PLAYERHIT",
@@ -1168,12 +1252,14 @@
           "name": "objectId",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "PLAYERHIT"
     },
     "91": {
       "name": "CANCELTRADE",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "CANCELTRADE"
     },
     "92": {
       "name": "MAPINFO",
@@ -1281,7 +1367,8 @@
           "optional": true,
           "default": 0
         }
-      ]
+      ],
+      "protocolName": "MAPINFO"
     },
     "93": {
       "name": "CLAIMDAILYLOGINRESPONSE",
@@ -1299,12 +1386,14 @@
           "name": "gold",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "LOGIN_REWARD_MSG"
     },
     "94": {
       "name": "KEYINFOREQUEST",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "KEY_INFO_REQUEST"
     },
     "95": {
       "name": "INVRESULT",
@@ -1334,27 +1423,32 @@
           "name": "unknownInt2",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "INVRESULT"
     },
     "96": {
       "name": "QUESTREDEEMRESPONSE",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "QUEST_REDEEM_RESPONSE"
     },
     "97": {
       "name": "CHOOSENAME",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "CHOOSENAME"
     },
     "98": {
       "name": "QUESTFETCHASK",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "QUEST_FETCH_ASK"
     },
     "99": {
       "name": "ACCOUNTLIST",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "ACCOUNTLIST"
     },
     "100": {
       "name": "SHOOTACK",
@@ -1364,7 +1458,9 @@
           "name": "time",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "SHOOTACK",
+      "protocolNote": "DIVERGENCE D2 (plan 107): Layer B has no id 100. Its SHOOTACK is the orphan PacketType member aliased to SHOOT_ACK (id 121, two fields: time int32 + ack int16), while Layer A calls id 121 SHOOTACKCOUNTER. Layer A id 100 has no consumer and is probably stale. Preserved verbatim pending a human decision; do not renumber or delete here."
     },
     "101": {
       "name": "CREATESUCCESS",
@@ -1382,12 +1478,14 @@
           "name": "stats",
           "type": "string"
         }
-      ]
+      ],
+      "protocolName": "CREATE_SUCCESS"
     },
     "102": {
       "name": "CHECKCREDITS",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "CHECKCREDITS"
     },
     "103": {
       "name": "GROUNDDAMAGE",
@@ -1401,22 +1499,26 @@
           "name": "position",
           "type": "Location"
         }
-      ]
+      ],
+      "protocolName": "GROUNDDAMAGE"
     },
     "104": {
       "name": "GUILDINVITE",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "GUILDINVITE"
     },
     "105": {
       "name": "ESCAPE",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "ESCAPE"
     },
     "106": {
       "name": "FILE",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "FILE"
     },
     "107": {
       "name": "RESKINUNLOCK",
@@ -1426,17 +1528,20 @@
           "name": "isPetSkin",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "RESKIN_UNLOCK"
     },
     "108": {
       "name": "NEWCHARACTERINFO",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "NEW_CHARACTER_INFORMATION"
     },
     "109": {
       "name": "UNLOCKINFORMATION",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "UNLOCK_INFORMATION"
     },
     "112": {
       "name": "QUEUEMESSAGE",
@@ -1451,7 +1556,8 @@
           "type": "uint16"
         }
       ],
-      "note": "RealmShark QUEUE_INFORMATION (112, incoming)."
+      "note": "RealmShark QUEUE_INFORMATION (112, incoming).",
+      "protocolName": "QUEUE_INFORMATION"
     },
     "113": {
       "name": "QUEUECANCEL",
@@ -1461,7 +1567,8 @@
           "name": "queueType",
           "type": "string"
         }
-      ]
+      ],
+      "protocolName": "QUEUE_CANCEL"
     },
     "114": {
       "name": "EXALTATIONBONUSCHANGED",
@@ -1503,7 +1610,8 @@
           "name": "lifeProgress",
           "type": "compressedInt"
         }
-      ]
+      ],
+      "protocolName": "EXALTATION_BONUS_CHANGED"
     },
     "115": {
       "name": "REDEEMEXALTATIONREWARD",
@@ -1513,43 +1621,117 @@
           "name": "itemType",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "REDEEM_EXALTATION_REWARD"
     },
     "117": {
       "name": "VAULTCONTENT",
       "direction": "server",
       "fields": [
-        { "name": "lastVaultUpdate",          "type": "bool"          },
-        { "name": "vaultChestObjectId",        "type": "compressedInt" },
-        { "name": "materialChestObjectId",     "type": "compressedInt" },
-        { "name": "giftChestObjectId",         "type": "compressedInt" },
-        { "name": "potionStorageObjectId",     "type": "compressedInt" },
-        { "name": "seasonalSpoilChestObjectId","type": "compressedInt" },
-        { "name": "vaultContents",      "type": "array", "lengthType": "compressedInt", "elementType": "compressedInt" },
-        { "name": "materialContents",   "type": "array", "lengthType": "compressedInt", "elementType": "compressedInt" },
-        { "name": "giftContents",       "type": "array", "lengthType": "compressedInt", "elementType": "compressedInt" },
-        { "name": "potionContents",     "type": "array", "lengthType": "compressedInt", "elementType": "compressedInt" },
-        { "name": "seasonalSpoilContent","type": "array", "lengthType": "compressedInt", "elementType": "compressedInt" },
-        { "name": "vaultUpgradeCost",    "type": "int16" },
-        { "name": "materialUpgradeCost", "type": "int16" },
-        { "name": "seasonalSpoilUpgradeCost", "type": "int16" },
-        { "name": "potionUpgradeCost",   "type": "int16" },
-        { "name": "currentPotionMax",    "type": "int16" },
-        { "name": "nextPotionMax",       "type": "int16" },
-        { "name": "vaultChestEnchants",  "type": "string" },
-        { "name": "giftChestEnchants",   "type": "string" },
-        { "name": "spoilsChestEnchants", "type": "string" }
-      ]
+        {
+          "name": "lastVaultUpdate",
+          "type": "bool"
+        },
+        {
+          "name": "vaultChestObjectId",
+          "type": "compressedInt"
+        },
+        {
+          "name": "materialChestObjectId",
+          "type": "compressedInt"
+        },
+        {
+          "name": "giftChestObjectId",
+          "type": "compressedInt"
+        },
+        {
+          "name": "potionStorageObjectId",
+          "type": "compressedInt"
+        },
+        {
+          "name": "seasonalSpoilChestObjectId",
+          "type": "compressedInt"
+        },
+        {
+          "name": "vaultContents",
+          "type": "array",
+          "lengthType": "compressedInt",
+          "elementType": "compressedInt"
+        },
+        {
+          "name": "materialContents",
+          "type": "array",
+          "lengthType": "compressedInt",
+          "elementType": "compressedInt"
+        },
+        {
+          "name": "giftContents",
+          "type": "array",
+          "lengthType": "compressedInt",
+          "elementType": "compressedInt"
+        },
+        {
+          "name": "potionContents",
+          "type": "array",
+          "lengthType": "compressedInt",
+          "elementType": "compressedInt"
+        },
+        {
+          "name": "seasonalSpoilContent",
+          "type": "array",
+          "lengthType": "compressedInt",
+          "elementType": "compressedInt"
+        },
+        {
+          "name": "vaultUpgradeCost",
+          "type": "int16"
+        },
+        {
+          "name": "materialUpgradeCost",
+          "type": "int16"
+        },
+        {
+          "name": "seasonalSpoilUpgradeCost",
+          "type": "int16"
+        },
+        {
+          "name": "potionUpgradeCost",
+          "type": "int16"
+        },
+        {
+          "name": "currentPotionMax",
+          "type": "int16"
+        },
+        {
+          "name": "nextPotionMax",
+          "type": "int16"
+        },
+        {
+          "name": "vaultChestEnchants",
+          "type": "string"
+        },
+        {
+          "name": "giftChestEnchants",
+          "type": "string"
+        },
+        {
+          "name": "spoilsChestEnchants",
+          "type": "string"
+        }
+      ],
+      "protocolName": "VAULT_UPDATE"
     },
     "118": {
       "name": "FORGEREQUEST",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "FORGE_REQUEST"
     },
     "119": {
       "name": "FORGERESULT",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "FORGE_RESULT"
     },
     "120": {
       "name": "FORGEUNLOCKEDBLUEPRINTS",
@@ -1565,7 +1747,8 @@
           "lengthType": "compressedInt",
           "elementType": "compressedInt"
         }
-      ]
+      ],
+      "protocolName": "FORGE_UNLOCKED_BLUEPRINTS"
     },
     "121": {
       "name": "SHOOTACKCOUNTER",
@@ -1580,7 +1763,8 @@
           "type": "int16"
         }
       ],
-      "note": "RealmShark SHOOT_ACK (121, outgoing)."
+      "note": "RealmShark SHOOT_ACK (121, outgoing).",
+      "protocolName": "SHOOT_ACK"
     },
     "122": {
       "name": "SHOWALLYSHOOT",
@@ -1591,37 +1775,48 @@
           "type": "int32"
         }
       ],
-      "note": "RealmShark CHANGE_ALLYSHOOT (122, outgoing)."
+      "note": "RealmShark CHANGE_ALLYSHOOT (122, outgoing).",
+      "protocolName": "CHANGE_ALLYSHOOT"
     },
     "123": {
       "name": "GETPLAYERSLISTMESSAGE",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "GET_PLAYERS_LIST_MESSAGE",
+      "protocolMapComment": "admin only"
     },
     "124": {
       "name": "MODERATORACTIONMESSAGE",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "MODERATOR_ACTION_MESSAGE",
+      "protocolMapComment": "admin only"
     },
     "126": {
       "name": "CREEPMOVEMESSAGE",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "CREEP_MOVE_MESSAGE"
     },
     "129": {
       "name": "CUSTOMMAPDELETE",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "CUSTOM_MAP_DELETE",
+      "protocolMapComment": "admin only"
     },
     "131": {
       "name": "CUSTOMMAPLIST",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "CUSTOM_MAP_LIST",
+      "protocolMapComment": "admin only"
     },
     "133": {
       "name": "CREEPHIT",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "CREEP_HIT"
     },
     "134": {
       "name": "PLAYERCALLOUT",
@@ -1635,7 +1830,8 @@
           "name": "value",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "PLAYER_CALLOUT"
     },
     "136": {
       "name": "BUYREFINEMENT",
@@ -1649,17 +1845,20 @@
           "name": "action",
           "type": "int16"
         }
-      ]
+      ],
+      "protocolName": "BUY_REFINEMENT"
     },
     "137": {
       "name": "DASH",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "DASH"
     },
     "138": {
       "name": "DASHACK",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "DASH_ACK"
     },
     "139": {
       "name": "STATS",
@@ -1670,12 +1869,14 @@
           "type": "compressedInt"
         }
       ],
-      "note": "RealmShark StatsPacket: charId then StatsStateData; remainder stays in unreadData until schema is extended."
+      "note": "RealmShark StatsPacket: charId then StatsStateData; remainder stays in unreadData until schema is extended.",
+      "protocolName": "STATS"
     },
     "140": {
       "name": "BUYCUSTOMISATIONSOCKET",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "BUY_CUSTOMISATION_SOCKET"
     },
     "145": {
       "name": "FAVORPET",
@@ -1685,7 +1886,8 @@
           "name": "petId",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "FAVOUR_PET"
     },
     "146": {
       "name": "SKINRECYCLE",
@@ -1695,17 +1897,20 @@
           "name": "item",
           "type": "SlotObject"
         }
-      ]
+      ],
+      "protocolName": "SKIN_RECYCLE"
     },
     "147": {
       "name": "UNKNOWN147",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "UNKNOWN147"
     },
     "148": {
       "name": "DAMAGEBOOST",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "DAMAGE_BOOST"
     },
     "149": {
       "name": "CLAIMBATTLEPASS",
@@ -1715,7 +1920,8 @@
           "name": "item",
           "type": "sbyte"
         }
-      ]
+      ],
+      "protocolName": "CLAIM_BATTLE_PASS"
     },
     "150": {
       "name": "CLAIMBATTLEPASSRESPONSE",
@@ -1726,7 +1932,8 @@
           "type": "bool"
         }
       ],
-      "note": "RealmShark CLAIM_BP_MILESTONE_RESULT (150, incoming). EK ClaimBPMilestoneResult."
+      "note": "RealmShark CLAIM_BP_MILESTONE_RESULT (150, incoming). EK ClaimBPMilestoneResult.",
+      "protocolName": "CLAIM_BP_MILESTONE_RESULT"
     },
     "151": {
       "name": "BOOSTBPMILESTONE",
@@ -1736,12 +1943,14 @@
           "name": "milestoneIndex",
           "type": "byte"
         }
-      ]
+      ],
+      "protocolName": "BOOST_BP_MILESTONE"
     },
     "154": {
       "name": "CONVERTSEASONALCHARACTER",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "CONVERT_SEASONAL_CHARACTER"
     },
     "155": {
       "name": "RETITLE",
@@ -1755,12 +1964,14 @@
           "name": "suffix",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "RETITLE"
     },
     "156": {
       "name": "SETGRAVESTONE",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "SET_GRAVE_STONE"
     },
     "157": {
       "name": "SETABILITY",
@@ -1774,7 +1985,8 @@
           "name": "abilityIndex",
           "type": "sbyte"
         }
-      ]
+      ],
+      "protocolName": "SET_ABILITY"
     },
     "159": {
       "name": "EMOTE",
@@ -1793,7 +2005,8 @@
           "type": "bool"
         }
       ],
-      "note": "RealmShark EMOTE (159). EK Emote uses bool, not sbyte."
+      "note": "RealmShark EMOTE (159). EK Emote uses bool, not sbyte.",
+      "protocolName": "EMOTE"
     },
     "160": {
       "name": "BUYEMOTE",
@@ -1803,12 +2016,14 @@
           "name": "emoteId",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "BUY_EMOTE"
     },
     "162": {
       "name": "SETTRACKEDSEASON",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "SET_TRACKED_SEASON"
     },
     "163": {
       "name": "CLAIMMISSION",
@@ -1830,12 +2045,14 @@
           "name": "unknownShort",
           "type": "uint16"
         }
-      ]
+      ],
+      "protocolName": "CLAIM_MISSION"
     },
     "164": {
       "name": "UNKNOWN164",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "CLAIM_MISSION_RESULT"
     },
     "165": {
       "name": "UNKNOWN165",
@@ -1845,17 +2062,20 @@
           "name": "unknownStr",
           "type": "string"
         }
-      ]
+      ],
+      "protocolName": "PROGRESS_UPDATE"
     },
     "166": {
       "name": "STASIS",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "STASIS"
     },
     "167": {
       "name": "SETDISCOVERABLE",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "SET_DISCOVERABLE"
     },
     "169": {
       "name": "REALMSCOREUPDATE",
@@ -1865,37 +2085,44 @@
           "name": "score",
           "type": "int32"
         }
-      ]
+      ],
+      "protocolName": "REALM_SCORE_UPDATE"
     },
     "170": {
       "name": "CLAIMREWARDSINFOPROMPT",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "CLAIM_REWARDS_INFO_PROMPT"
     },
     "171": {
       "name": "CLAIMCHESTREWARD",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "CLAIM_CHEST_REWARD"
     },
     "172": {
       "name": "CHESTREWARDRESULT",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "CHEST_REWARD_RESULT"
     },
     "173": {
       "name": "UNLOCKENCHANTMENTSLOT",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "UNLOCK_ENCHANTMENT_SLOT"
     },
     "175": {
       "name": "UNLOCKENCHANTMENT",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "UNLOCK_ENCHANTMENT"
     },
     "177": {
       "name": "APPLYENCHANTMENT",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "APPLY_ENCHANTMENT"
     },
     "180": {
       "name": "ACTIVATECRUCIBLE",
@@ -1909,12 +2136,14 @@
           "name": "activate",
           "type": "bool"
         }
-      ]
+      ],
+      "protocolName": "ACTIVATE_CRUCIBLE"
     },
     "181": {
       "name": "UNKNOWN181",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "UNKNOWN181"
     },
     "182": {
       "name": "CRUCIBLEREQUEST",
@@ -1926,7 +2155,8 @@
           "lengthType": "int16",
           "elementType": "int32"
         }
-      ]
+      ],
+      "protocolName": "CRUCIBLE_REQUEST"
     },
     "183": {
       "name": "CRUCIBLERESPONSE",
@@ -1944,32 +2174,38 @@
           "lengthType": "int16",
           "elementType": "string"
         }
-      ]
+      ],
+      "protocolName": "CRUCIBLE_RESPONSE"
     },
     "185": {
       "name": "UPGRADEENCHANTER",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "UPGRADE_ENCHANTER"
     },
     "187": {
       "name": "UPGRADEENCHANTMENT",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "UPGRADE_ENCHANTMENT"
     },
     "189": {
       "name": "REROLLALLENCHANTMENTS",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "REROLL_ALL_ENCHANTMENTS"
     },
     "190": {
       "name": "UNKNOWN190",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "ENCHANT"
     },
     "191": {
       "name": "RESETENCHANTMENTREROLLCOUNT",
       "direction": "client",
-      "fields": []
+      "fields": [],
+      "protocolName": "RESET_ENCHANTMENT_REROLL_COUNT"
     },
     "200": {
       "name": "CREATEPARTYMESSAGE",
@@ -2003,7 +2239,8 @@
           "name": "serverIndex",
           "type": "byte"
         }
-      ]
+      ],
+      "protocolName": "CREATE_PARTY_MESSAGE"
     },
     "204": {
       "name": "PARTYACTIONRESULT",
@@ -2018,7 +2255,9 @@
           "type": "byte"
         }
       ],
-      "note": "C→S (EK PartyActionResult). playerId 0xFFFF often self; actionId drives party UI (e.g. list refresh)."
+      "note": "C→S (EK PartyActionResult). playerId 0xFFFF often self; actionId drives party UI (e.g. list refresh).",
+      "protocolName": "PARTY_ACTION_RESULT",
+      "protocolDirection": "Incoming"
     },
     "207": {
       "name": "PARTYACTION",
@@ -2033,7 +2272,9 @@
           "type": "byte"
         }
       ],
-      "note": "S→C (EK PartyAction). Server echo / result for party actions."
+      "note": "S→C (EK PartyAction). Server echo / result for party actions.",
+      "protocolName": "PARTY_ACTION",
+      "protocolDirection": "Outgoing"
     },
     "208": {
       "name": "INCOMINGPARTYINVITE",
@@ -2047,7 +2288,8 @@
           "name": "inviterName",
           "type": "string"
         }
-      ]
+      ],
+      "protocolName": "INCOMING_PARTY_INVITE"
     },
     "209": {
       "name": "PARTYINVITERESPONSE",
@@ -2061,7 +2303,8 @@
           "name": "accept",
           "type": "byte"
         }
-      ]
+      ],
+      "protocolName": "PARTY_INVITE_RESPONSE"
     },
     "210": {
       "name": "INCOMINGPARTYMEMBERINFO",
@@ -2090,7 +2333,8 @@
           "type": "string"
         }
       ],
-      "note": "EK IncomingPartyMemberInfo.Read order; PartyPlayer matches EK PartyPlayer."
+      "note": "EK IncomingPartyMemberInfo.Read order; PartyPlayer matches EK PartyPlayer.",
+      "protocolName": "INCOMING_PARTY_MEMBER_INFO"
     },
     "212": {
       "name": "PARTYMEMBERADDED",
@@ -2112,7 +2356,8 @@
           "name": "skinId",
           "type": "uint16"
         }
-      ]
+      ],
+      "protocolName": "PARTY_MEMBER_ADDED"
     },
     "214": {
       "name": "PARTYLISTMESSAGE",
@@ -2129,7 +2374,8 @@
           "elementType": "PartyInfo"
         }
       ],
-      "note": "EK PartyList; activity/privacy are bytes (PartyActivity, PartyPrivacy enums)."
+      "note": "EK PartyList; activity/privacy are bytes (PartyActivity, PartyPrivacy enums).",
+      "protocolName": "PARTY_LIST_MESSAGE"
     },
     "215": {
       "name": "PARTYJOINREQUEST",
@@ -2144,7 +2390,9 @@
           "type": "byte"
         }
       ],
-      "note": "C→S: client requests to join a party (partyId + byte; matches EK PartyJoinRequest)."
+      "note": "C→S: client requests to join a party (partyId + byte; matches EK PartyJoinRequest).",
+      "protocolName": "PARTY_JOIN_REQUEST",
+      "protocolDirection": "Incoming"
     },
     "217": {
       "name": "PARTYJOINREQUESTRESPONSE",
@@ -2166,17 +2414,20 @@
           "name": "state",
           "type": "byte"
         }
-      ]
+      ],
+      "protocolName": "PARTY_REQUEST_RESPONSE"
     },
     "218": {
       "name": "FORRECONNECT",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "FOR_RECONNECT"
     },
     "222": {
       "name": "LOADINGSCREEN",
       "direction": "server",
-      "fields": []
+      "fields": [],
+      "protocolName": "LOADING_SCREEN"
     }
   },
   "dataObjects": {
@@ -2438,5 +2689,105 @@
         }
       ]
     }
+  },
+  "protocolOnlyPackets": {
+    "192": {
+      "name": "RESET_ENCHANTMENT_REROLL_COUNT_RESULT",
+      "direction": "Incoming"
+    },
+    "195": {
+      "name": "BLACKSMITH_REQUEST",
+      "direction": "Outgoing"
+    },
+    "196": {
+      "name": "BLACKSMITH_DISMANTLE",
+      "direction": "Incoming"
+    },
+    "197": {
+      "name": "SELECT_ENTRANCE",
+      "direction": "Outgoing"
+    },
+    "219": {
+      "name": "REDEEM_VOUCHER",
+      "direction": "Outgoing"
+    },
+    "220": {
+      "name": "VOUCHER_RESULT",
+      "direction": "Incoming"
+    },
+    "224": {
+      "name": "UNKNOWN224",
+      "direction": "Outgoing"
+    },
+    "232": {
+      "name": "CLAIM_ACCOUNT_LEVEL_REWARD",
+      "direction": "Outgoing"
+    },
+    "233": {
+      "name": "CLAIM_ACCOUNT_LEVEL_REWARD_RESULT",
+      "direction": "Incoming"
+    },
+    "234": {
+      "name": "CLAIM_REWARD",
+      "direction": "Outgoing"
+    },
+    "235": {
+      "name": "CLAIM_REWARD_RESULT",
+      "direction": "Incoming"
+    },
+    "237": {
+      "name": "CLAIM_DAILY_ITEM",
+      "direction": "Incoming"
+    },
+    "239": {
+      "name": "CLAIM_REWARDS_INFO_REQUEST",
+      "direction": "Outgoing"
+    },
+    "1000": {
+      "name": "IP_ADDRESS",
+      "direction": "Incoming"
+    }
+  },
+  "protocolOrphanNames": {
+    "CHANGE_ALLY_SHOOT": "Outgoing",
+    "CHATHELLO": "Outgoing",
+    "CHATTOKEN": "Incoming",
+    "SHOOTACK": "Outgoing",
+    "UNKNOWN164": "Incoming",
+    "UNKNOWN165": "Incoming",
+    "UNKNOWN190": "Incoming",
+    "VAULT_CONTENT": "Incoming"
+  },
+  "protocolAliases": {
+    "VAULT_CONTENT": "VAULT_UPDATE",
+    "SHOOTACK": "SHOOT_ACK",
+    "CHANGE_ALLY_SHOOT": "CHANGE_ALLYSHOOT"
+  },
+  "protocolDirectionNotes": {
+    "ACCEPT_ARENA_DEATH": "verified against realmlib incoming/outgoing dir",
+    "ARENA_DEATH": "verified against realmlib incoming/outgoing dir",
+    "BLACKSMITH_DISMANTLE": "verified against realmlib incoming/outgoing dir (was Outgoing heuristic)",
+    "BLACKSMITH_REQUEST": "verified against realmlib incoming/outgoing dir",
+    "CHANGE_ALLY_SHOOT": "verified against realmlib incoming/outgoing dir (was Incoming heuristic)",
+    "CHATHELLO": "verified against realmlib incoming/outgoing dir (was Incoming heuristic)",
+    "CHATTOKEN": "verified against realmlib incoming/outgoing dir",
+    "CLAIM_ACCOUNT_LEVEL_REWARD": "verified against realmlib incoming/outgoing dir",
+    "CLAIM_ACCOUNT_LEVEL_REWARD_RESULT": "verified against realmlib incoming/outgoing dir",
+    "CLAIM_DAILY_ITEM": "verified against realmlib incoming/outgoing dir (was Outgoing heuristic)",
+    "CLAIM_MISSION_RESULT": "verified against realmlib incoming/outgoing dir",
+    "CLAIM_REWARD": "verified against realmlib incoming/outgoing dir",
+    "CLAIM_REWARDS_INFO_REQUEST": "verified against realmlib incoming/outgoing dir",
+    "CLAIM_REWARD_RESULT": "verified against realmlib incoming/outgoing dir",
+    "ENCHANT": "verified against realmlib incoming/outgoing dir",
+    "ENTER_ARENA": "verified against realmlib incoming/outgoing dir",
+    "IMMINENT_ARENA_WAVE": "verified against realmlib incoming/outgoing dir",
+    "PROGRESS_UPDATE": "verified against realmlib incoming/outgoing dir",
+    "REDEEM_VOUCHER": "verified against realmlib incoming/outgoing dir",
+    "RESET_ENCHANTMENT_REROLL_COUNT_RESULT": "verified against realmlib incoming/outgoing dir",
+    "SELECT_ENTRANCE": "verified against realmlib incoming/outgoing dir",
+    "SHOOTACK": "verified against realmlib incoming/outgoing dir",
+    "UNKNOWN224": "verified against realmlib incoming/outgoing dir (was Incoming heuristic)",
+    "VAULT_CONTENT": "verified against realmlib incoming/outgoing dir",
+    "VOUCHER_RESULT": "verified against realmlib incoming/outgoing dir"
   }
 }

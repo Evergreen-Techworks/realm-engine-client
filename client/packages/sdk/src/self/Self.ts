@@ -202,6 +202,11 @@ export class Self {
         throw new Error('Must be run inside RealmEngine client');
     }
 
+    /** Current character level (1–20). */
+    static getLevel(): number {
+        throw new Error('Must be run inside RealmEngine client');
+    }
+
     static isDead(): boolean {
         throw new Error('Must be run inside RealmEngine client');
     }

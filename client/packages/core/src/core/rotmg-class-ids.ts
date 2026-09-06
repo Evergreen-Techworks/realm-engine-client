@@ -1,4 +1,8 @@
-/** PyRelay `Constants/ClassIds` — playable classes (for discovering own player in UPDATE). */
+/**
+ * PyRelay `Constants/ClassIds` — playable classes (for discovering own player in UPDATE).
+ * Mirror of `src/constants/ClassId.ts` in the proxy app (separate build tree, no shared
+ * import edge — keep in sync by hand). 784 (Priest) is included in both.
+ */
 export const WIZARD_CLASS_ID = 782;
 
 export const PLAYER_CLASS_TYPE_IDS: ReadonlySet<number> = new Set([

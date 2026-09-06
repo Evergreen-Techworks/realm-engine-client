@@ -24,6 +24,9 @@ export const POTION_SLOT_TYPE = 10;
 export const FALLBACK_HP_POT_IDS = [2594, 2736, 2795]; // Health / Minor Health / Greater Health
 export const FALLBACK_MP_POT_IDS = [2595, 2781, 2796]; // Magic  / Minor Magic  / Greater Magic
 
+/** Restore assumed for a potion whose `<Activate amount="...">` is unreadable. */
+export const FALLBACK_POT_AMOUNT = 100;
+
 /** Clamp a percentage into the [5, 95] drink-threshold range. */
 export function clampPct(v: number): number {
   return Math.max(5, Math.min(95, Math.trunc(Number(v) || 0)));

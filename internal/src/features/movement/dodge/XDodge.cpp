@@ -1,6 +1,6 @@
 #include "pch-il2cpp.h"
 #include "XDodge.h"
-#include "AutoAim.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
 #include "DangerPlanner.h"
 #include "ProjectileTracking.h"
 #include "DodgeHit.h"

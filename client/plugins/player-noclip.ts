@@ -1,7 +1,5 @@
-import type { PluginContext } from '../src/plugins/PluginContext.js';
-import type { ClientConnection } from '../src/proxy/ClientConnection.js';
-import { RuntimeScheduler } from '../src/util/RuntimeScheduler.js';
-import { sendDllFeature } from '../src/bridge/DllFeatureBus.js';
+import type { PluginContext, ClientConnection } from './api.js';
+import { sendDllFeature, RuntimeScheduler } from './api.js';
 
 /**
  * Player Noclip.

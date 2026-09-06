@@ -2,7 +2,8 @@
 #include "NoclipHook.h"
 #include "Noclip.h"
 #include "Il2CppResolver.h"
-#include "minhook/MinHook.h"
+#include "Il2CppHook.h"
+#include "MemRead.h"
 
 #include <Windows.h>
 #include <array>
@@ -52,28 +53,6 @@ static bool     s_resolved   = false;
 static bool     s_installed  = false;
 static uint64_t s_nextTryMs  = 0;
 
-static inline bool AddrOk(const void* p)
-{
-    const uintptr_t a = reinterpret_cast<uintptr_t>(p);
-    return a > 0x10000u && a < 0x7FFFFFFFFFFFull;
-}
-
-static bool EnsureIl2CppThreadAttached()
-{
-    static thread_local bool attached = false;
-    if (attached)
-        return true;
-    if (!il2cpp_domain_get || !il2cpp_thread_attach)
-        return false;
-
-    Il2CppDomain* domain = il2cpp_domain_get();
-    if (!domain)
-        return false;
-
-    attached = il2cpp_thread_attach(domain) != nullptr;
-    return attached;
-}
-
 template <int I>
 static bool __fastcall Detour(void* self, float x, float y, void* method)
 {
@@ -103,42 +82,23 @@ static void ResolveTargets()
         return;
     s_nextTryMs = now + 1000;
 
-    if (!EnsureIl2CppThreadAttached())
+    if (!Il2CppHook::EnsureThreadAttached())
         return;
 
-    Il2CppClass* map = nullptr;
-    Resolver::Protection::safe_call([&]() {
-        map = Resolver::GetClass("", "HJMBOMEHGDJ");
-    });
-    if (!map)
-        return;
-
+    // Resolve every predicate through the sanctioned resolver. ResolveMethod uses
+    // FindClassLoose — a namespace-ignoring exact-name scan, NOT rename proof —
+    // then the argc-2 method pointer, so a renamed Map class does NOT resolve
+    // here. One resolved predicate is enough to start hooking; the rest retry on
+    // the next 1 Hz pass.
     int found = 0;
     for (int i = 0; i < kCount; ++i) {
-        const MethodInfo* mi = nullptr;
-        Resolver::Protection::safe_call([&]() {
-            mi = il2cpp_class_get_method_from_name(map, kTargets[i].name, 2);
-        });
-        if (mi && AddrOk(mi->methodPointer)) {
-            s_target[i] = reinterpret_cast<void*>(mi->methodPointer);
+        void* p = Il2CppHook::ResolveMethod("HJMBOMEHGDJ", kTargets[i].name, 2, /*loose*/true);
+        if (Mem::AddrOk(p)) {
+            s_target[i] = p;
             ++found;
         }
     }
     s_resolved = found > 0;
-}
-
-static bool EnsureMinHook()
-{
-    static bool mhInitialized = false;
-    if (mhInitialized)
-        return true;
-
-    const MH_STATUS st = MH_Initialize();
-    if (st != MH_OK && st != MH_ERROR_ALREADY_INITIALIZED)
-        return false;
-
-    mhInitialized = true;
-    return true;
 }
 
 // Per-entry install: one predicate failing to hook must not sink the others.
@@ -148,21 +108,16 @@ static void TryInstall()
         return;
 
     ResolveTargets();
-    if (!s_resolved || !EnsureMinHook())
+    if (!s_resolved || !Il2CppHook::EnsureRuntime("NoclipHook"))
         return;
 
+    // Per-entry install through the sanctioned helper: one predicate failing to
+    // hook must not sink the others.
     for (int i = 0; i < kCount; ++i) {
         if (s_hooked[i] || !s_target[i])
             continue;
-        s_orig[i] = reinterpret_cast<PredFn>(s_target[i]);
-        if (MH_CreateHook(s_target[i], s_detour[i],
-                reinterpret_cast<void**>(&s_orig[i])) != MH_OK) {
-            s_orig[i] = nullptr;
-            s_target[i] = nullptr;
-            continue;
-        }
-        if (MH_EnableHook(s_target[i]) != MH_OK) {
-            MH_RemoveHook(s_target[i]);
+        if (!Il2CppHook::InstallMinHook(s_target[i], s_detour[i],
+                reinterpret_cast<void**>(&s_orig[i]), kTargets[i].name)) {
             s_orig[i] = nullptr;
             s_target[i] = nullptr;
             continue;
@@ -189,10 +144,8 @@ void Uninstall()
     for (int i = kCount - 1; i >= 0; --i) {
         if (!s_hooked[i])
             continue;
-        MH_DisableHook(s_target[i]);
-        MH_RemoveHook(s_target[i]);
+        Il2CppHook::UninstallMinHook(s_target[i], "NoclipHook");
         s_hooked[i] = false;
-        s_target[i] = nullptr;
         s_orig[i]   = nullptr;
     }
     s_installed = false;

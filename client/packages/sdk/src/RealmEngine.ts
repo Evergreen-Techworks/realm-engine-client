@@ -19,21 +19,27 @@ import { events } from './events';
 import { loot } from './loot';
 import { discord } from './discord';
 import { panel } from './ui/Panel';
+import { Dodge } from './dodge/Dodge';
 
 export const RealmEngine = {
     self: Self,
     walking: Walking,
+    dodge: Dodge,
     combat: Combat,
     players: Players,
     enemies: Enemies,
     inventory,
     vault: Vault,
     world: {
-        isNexus: World.isNexus,
-        isRealm: World.isRealm,
-        isDungeon: World.isDungeon,
-        isVault: World.isVault,
-        getName: World.getName,
+        // Delegate at call time instead of copying the initial SDK stubs.
+        // The host installs its implementations onto World after this facade
+        // has been created, so captured references would keep throwing the
+        // standalone-SDK "Must be run inside RealmEngine client" error.
+        isNexus: () => World.isNexus(),
+        isRealm: () => World.isRealm(),
+        isDungeon: () => World.isDungeon(),
+        isVault: () => World.isVault(),
+        getName: () => World.getName(),
         tiles: Tiles,
         objects: Objects,
         projectiles: Projectiles,

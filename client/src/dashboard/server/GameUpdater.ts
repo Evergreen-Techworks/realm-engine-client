@@ -214,6 +214,7 @@ export class GameUpdater {
     private readonly getGameRoot: () => string | null,
     private readonly isGameRunning: () => boolean,
     private readonly onChange: (status: GameUpdateStatus) => void,
+    private readonly onUpdated?: (gameRoot: string, buildId: string) => Promise<void>,
   ) {}
 
   getStatus(): GameUpdateStatus {
@@ -302,6 +303,20 @@ export class GameUpdater {
       this.pendingInit = null;
       this.emit({ state: 'idle', filesToUpdate: 0, bytesToUpdate: 0, error: null });
       Logger.log('GameUpdater', `Updated ${queue.length} file(s) to build ${init.buildId}.`);
+
+      // Game XML is derived from the Unity assets we just replaced. Refresh it
+      // only after every game file landed so objects/tiles can never represent
+      // a half-updated installation.
+      if (this.onUpdated) {
+        try {
+          await this.onUpdated(root, init.buildId);
+          Logger.log('GameUpdater', `Refreshed game metadata for build ${init.buildId}.`);
+        } catch (metadataErr) {
+          const message = `Game updated, but metadata refresh failed: ${(metadataErr as Error).message}`;
+          this.emit({ error: message });
+          Logger.warn('GameUpdater', message);
+        }
+      }
     } catch (err) {
       this.emit({ state: 'idle', error: (err as Error).message || 'Update failed' });
       Logger.warn('GameUpdater', `Update failed: ${(err as Error).message}`);

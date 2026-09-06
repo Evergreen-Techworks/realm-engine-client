@@ -36,8 +36,11 @@ bool ReadMovementKeys(bool& outMoving, float& outDx, float& outDy)
 
     outDx = 0.f;
     outDy = 0.f;
-    if (w) outDy += 1.f;
-    if (s) outDy -= 1.f;
+    // RotMG world-space: +X is east/right, +Y is SOUTH/down. Up (W) must
+    // therefore DECREASE Y. (This is the axis the dirY contract promises;
+    // screen-space +Y-up here inverted vertical movement.)
+    if (w) outDy -= 1.f;
+    if (s) outDy += 1.f;
     if (d) outDx += 1.f;
     if (a) outDx -= 1.f;
     outMoving = (w || a || s || d);

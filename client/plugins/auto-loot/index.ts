@@ -9,7 +9,7 @@
  * those modules.
  */
 
-import type { PluginContext } from '../../src/plugins/PluginContext.js';
+import type { PluginContext } from '../api.js';
 import { LootCatalog } from './catalog.js';
 import { AutoLootSettings } from './settings.js';
 import { StateStore } from './state.js';
@@ -27,7 +27,7 @@ export function register(ctx: PluginContext) {
 
   const settings = new AutoLootSettings(ctx);
   settings.reloadLists();
-  settings.register();
+  settings.register(catalog);
 
   const store = new StateStore();
   const rules = new LootRules(ctx, settings, catalog);

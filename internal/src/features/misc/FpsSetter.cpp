@@ -11,6 +11,7 @@ namespace {
 
 static std::atomic<int>  s_targetFps{ -1 };
 static std::atomic<bool> s_dirty{ false };
+static bool s_backgroundApplied = false;
 
 static void ApplyFps(int fps)
 {
@@ -25,6 +26,14 @@ static void ApplyFps(int fps)
 
 void Tick()
 {
+    // Unity otherwise throttles/stops player updates when Exalt loses focus,
+    // starving dodge/auto-nexus of the frames they need to react.
+    if (!s_backgroundApplied && app::Application_set_runInBackground) {
+        Resolver::Protection::safe_call([&]() {
+            app::Application_set_runInBackground(true, nullptr);
+        });
+        s_backgroundApplied = true;
+    }
     if (s_dirty.exchange(false, std::memory_order_acq_rel))
         ApplyFps(s_targetFps.load(std::memory_order_relaxed));
 }

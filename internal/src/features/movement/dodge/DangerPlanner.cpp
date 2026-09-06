@@ -7,6 +7,7 @@
 #include "ZDodge.h"
 #include "RePP.h"
 #include "PJDodge.h"
+#include "features/movement/udodge/UDodge.h"
 #include "DbgFileLog.h"
 #include "SteerInput.h"
 #include "GhostHit.h"
@@ -15,16 +16,17 @@
 #include "GameState.h"
 #include "Il2CppResolver.h"
 #include "RuntimeOffsets.h"
+#include "MemRead.h"
+#include "game/objects/GameObjects.h"
+#include "Il2CppHook.h"
 #include "BootGate.h"
 #include "helpers.h"
-#include "AutoAim.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
 #include "ChatToast.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
 
 #include <cstdio>
-
-#include "minhook/MinHook.h"
 
 #include <algorithm>
 #include <atomic>
@@ -61,14 +63,7 @@ bool ReadLivePlayerPosition(void* player, float& outX, float& outY)
     outX = 0.f;
     outY = 0.f;
     if (!player) return false;
-    __try {
-        const uint8_t* lp = reinterpret_cast<const uint8_t*>(player);
-        outX = *reinterpret_cast<const float*>(lp + RuntimeOffsets::PosX);
-        outY = *reinterpret_cast<const float*>(lp + RuntimeOffsets::PosY);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-    return std::isfinite(outX) && std::isfinite(outY);
+    return Game::Entity(player).TryPosFinite(outX, outY);
 }
 
 // ── Dodge hit-scale (shared with MovementCorrector) ──────────────────────
@@ -106,38 +101,27 @@ bool s_moveResolved = false, s_cmsResolved = false, s_dtResolved = false;
 void ResolveMoveTo()
 {
     if (s_moveResolved) return;
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* klass = Resolver::FindClassLoose("FKALGHJIADI");
-        if (!klass) return;
-        const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, "DGLCONCOIBO", 2);
-        if (!mi || !mi->methodPointer) return;
-        s_fnMoveTo = reinterpret_cast<MoveToFn>(mi->methodPointer);
-        s_moveResolved = true;
-    });
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached("FKALGHJIADI", "DGLCONCOIBO", 2);
+    if (!mi) return;
+    s_fnMoveTo = reinterpret_cast<MoveToFn>(mi->methodPointer);
+    s_moveResolved = true;
 }
 void ResolveCalcMoveSpeed()
 {
     if (s_cmsResolved) return;
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* klass = Resolver::FindClassLoose("FKALGHJIADI");
-        if (!klass) return;
-        const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, "GCFKGLKAPND", 0);
-        if (!mi || !mi->methodPointer) return;
-        s_fnCalcMoveSpeed = reinterpret_cast<CalcMoveSpeedFn>(mi->methodPointer);
-        s_cmsResolved = true;
-    });
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached("FKALGHJIADI", "GCFKGLKAPND", 0);
+    if (!mi) return;
+    s_fnCalcMoveSpeed = reinterpret_cast<CalcMoveSpeedFn>(mi->methodPointer);
+    s_cmsResolved = true;
 }
 void ResolveDeltaTime()
 {
     if (s_dtResolved) return;
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* klass = Resolver::FindClass("UnityEngine", "Time");
-        if (!klass) return;
-        const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, "get_deltaTime", 0);
-        if (!mi || !mi->methodPointer) return;
-        s_fnGetDeltaTime = reinterpret_cast<GetDeltaTimeFn>(mi->methodPointer);
-        s_dtResolved = true;
-    });
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached("Time", "get_deltaTime", 0,
+                                                            false, "UnityEngine");
+    if (!mi) return;
+    s_fnGetDeltaTime = reinterpret_cast<GetDeltaTimeFn>(mi->methodPointer);
+    s_dtResolved = true;
 }
 
 float s_lastDeltaTime = 0.016f;
@@ -248,6 +232,12 @@ std::atomic<bool>   s_hazardRebuildFlag{ false };
 std::atomic<float>  s_extGoalX{ 0.f };
 std::atomic<float>  s_extGoalY{ 0.f };
 std::atomic<bool>   s_extGoalActive{ false };
+
+// Walk-to-spot goal (Shift+Click empty ground). Dedicated UDodge-consumed slot,
+// independent of the external-goal (IPC) channel and the enemy lock.
+std::atomic<float>  s_walkGoalX{ 0.f };
+std::atomic<float>  s_walkGoalY{ 0.f };
+std::atomic<bool>   s_walkGoalActive{ false };
 
 // Enemy lock state.
 std::atomic<int32_t> s_lockEnemyId{ 0 };
@@ -741,7 +731,8 @@ static void RunDodgeTickBody()
     const bool zaclinOn = ZDodge::IsEnabled();
     const bool reppOn   = RePP::IsEnabled();
     const bool pjOn     = PJDodge::IsEnabled();
-    if (xdodgeOn || rolloutOn || zaclinOn || reppOn || pjOn) {
+    const bool uniOn    = UDodge::IsEnabled();
+    if (xdodgeOn || rolloutOn || zaclinOn || reppOn || pjOn || uniOn) {
         // BootGate safety gate: on a patched/degraded game the entity/projectile
         // offsets are stale. The dodge sensors fill fixed-size buffers from counts
         // read at those offsets, so a garbage count overruns a buffer and hard-
@@ -784,7 +775,8 @@ static void RunDodgeTickBody()
         // shared external goal that dodge engines can consume.
         SteerInput::Tick();
         ResolveEnemyLock(px, py);
-        if (pjOn)           PJDodge::Tick(p, px, py, dt);
+        if (uniOn)          UDodge::Tick(p, px, py, dt);
+        else if (pjOn)      PJDodge::Tick(p, px, py, dt);
         else if (reppOn)    RePP::Tick(p, px, py, dt);
         else if (zaclinOn)  ZDodge::Tick(p, px, py, dt);
         else if (rolloutOn) RolloutDodge::Tick(p, px, py, dt);
@@ -827,15 +819,8 @@ void TryInstall()
 {
     if (s_hookInstalled) return;
 
-    void* target = nullptr;
-    int   failStage = 0;   // 1 = class unresolved, 2 = method unresolved
-    Resolver::Protection::safe_call([&]() {
-        Il2CppClass* klass = Resolver::FindClassLoose("AppEngineManager");
-        if (!klass) { failStage = 1; return; }
-        const MethodInfo* mi = il2cpp_class_get_method_from_name(klass, "Update", 0);
-        if (!mi || !mi->methodPointer) { failStage = 2; return; }
-        target = reinterpret_cast<void*>(mi->methodPointer);
-    });
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached("AppEngineManager", "Update", 0);
+    void* target = mi ? reinterpret_cast<void*>(mi->methodPointer) : nullptr;
     if (!target) {
         // Throttled so a stuck resolve doesn't flood the log. This is the
         // single most likely reason dodge "does nothing" on an updated game
@@ -843,28 +828,18 @@ void TryInstall()
         static int s_unresolvedN = 0;
         if ((s_unresolvedN++ % 240) == 0)
             DBG_FILE_LOG("[DangerPlanner] TryInstall: AppEngineManager::Update UNRESOLVED "
-                         "(failStage=" << failStage << " [1=class 2=method], attempt="
-                         << s_unresolvedN << ") — hook NOT installed, XDodge will not run");
+                         "(attempt=" << s_unresolvedN
+                         << ") — hook NOT installed, XDodge will not run");
         return;
     }
 
-    static bool s_mhInit = false;
-    if (!s_mhInit) {
-        const MH_STATUS st = MH_Initialize();
-        if (st != MH_OK && st != MH_ERROR_ALREADY_INITIALIZED) {
-            DBG_FILE_LOG("[DangerPlanner] TryInstall: MH_Initialize failed st=" << (int)st);
-            return;
-        }
-        s_mhInit = true;
-    }
-    if (MH_CreateHook(target,
-                      reinterpret_cast<void*>(&Detour_AppEngineUpdate),
-                      reinterpret_cast<void**>(&s_origUpdate)) != MH_OK) {
-        DBG_FILE_LOG("[DangerPlanner] TryInstall: MH_CreateHook FAILED");
-        return;
-    }
-    if (MH_EnableHook(target) != MH_OK) {
-        DBG_FILE_LOG("[DangerPlanner] TryInstall: MH_EnableHook FAILED");
+    if (!Il2CppHook::EnsureRuntime("DangerPlanner")) return;
+
+    if (!Il2CppHook::InstallMinHook(target,
+                                    reinterpret_cast<void*>(&Detour_AppEngineUpdate),
+                                    reinterpret_cast<void**>(&s_origUpdate),
+                                    "DangerPlanner")) {
+        DBG_FILE_LOG("[DangerPlanner] TryInstall: hook install FAILED");
         return;
     }
 
@@ -889,9 +864,7 @@ void Uninstall()
     s_execTargetValid.store(false, std::memory_order_release);
     ProjectileTracking::ClearHazardSpawnCallback();
     if (s_hookInstalled && s_hookTarget) {
-        MH_DisableHook(s_hookTarget);
-        MH_RemoveHook(s_hookTarget);
-        s_hookTarget    = nullptr;
+        Il2CppHook::UninstallMinHook(s_hookTarget, "DangerPlanner");
         s_origUpdate    = nullptr;
         s_hookInstalled = false;
     }
@@ -930,6 +903,22 @@ bool GetExternalGoal(float& outX, float& outY)
     if (!s_extGoalActive.load(std::memory_order_acquire)) return false;
     outX = s_extGoalX.load(std::memory_order_relaxed);
     outY = s_extGoalY.load(std::memory_order_relaxed);
+    return true;
+}
+
+void SetWalkGoal(float x, float y)
+{
+    s_walkGoalX.store(x, std::memory_order_relaxed);
+    s_walkGoalY.store(y, std::memory_order_relaxed);
+    s_walkGoalActive.store(true, std::memory_order_release);
+}
+void ClearWalkGoal() { s_walkGoalActive.store(false, std::memory_order_release); }
+bool GetWalkGoal(float& outX, float& outY, bool& outActive)
+{
+    outActive = s_walkGoalActive.load(std::memory_order_acquire);
+    if (!outActive) return false;
+    outX = s_walkGoalX.load(std::memory_order_relaxed);
+    outY = s_walkGoalY.load(std::memory_order_relaxed);
     return true;
 }
 

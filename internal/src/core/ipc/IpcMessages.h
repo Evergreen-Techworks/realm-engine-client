@@ -1,23 +1,44 @@
 // Purpose: JSON builders for all DLL-to-client IPC message types.
 
 // Helpful notes:
-// - Callers own output buffers and pass sequence/MAC values for signed messages.
-// - BuildPlayerSigPayload produces the canonical payload string used when
-//   signing player updates.
+// - Callers own output buffers.
+// - Messages are plaintext, dispatched by "type" — no seq/mac envelope.
 
 #pragma once
-#include <cstdint>
+
+#include "IpcBridge.h"   // IpcThreat / IpcGround
 
 namespace IpcMessages {
 
-int BuildHello(char* buf, int bufSize, const char* challenge);
-int BuildAuthResult(char* buf, int bufSize, bool ok, const char* response);
-int BuildHeartbeat(char* buf, int bufSize, const char* nonce, uint64_t seq, const char* mac);
-int BuildHeartbeatResp(char* buf, int bufSize, const char* response, uint64_t seq, const char* mac);
-int BuildUnresolvedClasses(char* buf, int bufSize, const char* classes, uint64_t seq, const char* mac);
-int BuildPlayer(char* buf, int bufSize, uint64_t seq, const char* mac);
-int BuildHotkeyEvent(char* buf, int bufSize, const char* pluginId, const char* action, bool value, uint64_t seq, const char* mac);
-int BuildThreats(char* buf, int bufSize, const char* threats, uint64_t seq, const char* mac);
-void BuildPlayerSigPayload(char* outBuf, int outBufSize);
+// Threat wire schema version. Bump only in lockstep with the TS decoder's
+// THREAT_SCHEMA_VERSION in client/src/bridge/DllThreatBus.ts. A version skew is
+// rejected loud on the client (empty threat list) rather than silently misread.
+//
+// Wire layout (version 1), emitted by EncodeThreats and parsed by
+// decodeThreatPayload — the two must agree byte-for-byte:
+//   1;<ground>;<threats>;<T>
+//     <ground>  = <rawDamage>:<tHitMs>[|<rawDamage>:<tHitMs>]*
+//     <threats> = <attackerObjId>:<bulletId>:<tHitMs>:<fallbackDamage>:<fallbackArmorPiercing>
+//                 (comma-separated; field order is authoritative here and in the decoder)
+//     <T>       = 0 | 1  truncated flag (the DLL shed threats/ground under load)
+constexpr int THREAT_SCHEMA_VERSION = 1;
+
+int BuildHello(char* buf, int bufSize);
+int BuildHeartbeat(char* buf, int bufSize);       // {"type":"heartbeat"}
+int BuildHeartbeatResp(char* buf, int bufSize);   // {"type":"heartbeatResp"}
+int BuildUnresolvedClasses(char* buf, int bufSize, const char* classes);
+int BuildPlayer(char* buf, int bufSize);
+int BuildHotkeyEvent(char* buf, int bufSize, const char* pluginId, const char* action, bool value);
+int BuildThreats(char* buf, int bufSize, const char* threats);
+int BuildAim(char* buf, int bufSize, const char* payload);
+
+// The ONE home that serializes threat objects to the compact wire string
+// (see THREAT_SCHEMA_VERSION above). Returns bytes written, or -1 on failure.
+int EncodeThreats(char* out, int outSize, const IpcThreat* threats, int count,
+                  const IpcGround& ground, bool truncated);
+
+// The ONE home that serializes the killaura aim state to its compact wire
+// string (see AIM_SCHEMA_VERSION in IpcBridge.h). Returns bytes written, or -1.
+int EncodeAim(char* out, int outSize, const IpcAim& aim);
 
 } // namespace IpcMessages

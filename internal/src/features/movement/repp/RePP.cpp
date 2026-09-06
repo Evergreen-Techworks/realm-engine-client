@@ -9,7 +9,7 @@
 #include "MovementRuntime.h"
 #include "ProjectileTracking.h"
 #include "SteerInput.h"
-#include "AutoAim.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
 
@@ -193,24 +193,6 @@ void SetEnabled(bool enabled)
 }
 bool IsEnabled() { return g_enabled.load(std::memory_order_relaxed); }
 
-DiagView GetDiagView()
-{
-    DiagView v{};
-    v.enabled = IsEnabled();
-    std::lock_guard<std::mutex> lock(g_debugMutex);
-    const DebugSnapshot& d = DebugSlot();
-    v.status            = static_cast<int>(d.status);
-    v.playerX           = d.player.x;          v.playerY = d.player.y;
-    v.hasSelectedTarget = d.hasSelectedTarget;
-    v.selX              = d.selectedTarget.x;  v.selY    = d.selectedTarget.y;
-    v.hasLockTarget     = d.hasLockTarget;
-    v.lockX             = d.lockTarget.x;      v.lockY   = d.lockTarget.y;
-    v.candidateCount    = d.candidateCount;
-    v.threatCount       = d.sensors.threatCount;
-    v.blockerCount      = d.sensors.blockerCount;
-    v.tileSpeedAtPlayer = d.sensors.tileSpeedAtPlayer;
-    return v;
-}
 void OnEnter()
 {
     ProjectileTracking::Install();

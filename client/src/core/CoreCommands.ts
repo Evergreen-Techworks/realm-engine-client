@@ -3,6 +3,7 @@ import { join } from 'path';
 import type { Proxy } from '../proxy/Proxy.js';
 import type { ClientConnection } from '../proxy/ClientConnection.js';
 import { Logger } from '../util/Logger.js';
+import { GAME_PORT } from '../constants/GameId.js';
 
 /** Simple IPv4 validator for /con <ip>. */
 const IPV4_REGEX = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
@@ -68,13 +69,13 @@ export function attachCoreCommands(proxy: Proxy, dataDir: string, bakedServers?:
     Logger.log('CoreCommands', `Switching to ${serverName} (${ip})...`);
     sendNotification(client, 'Proxy', `Connecting to ${serverName}...`);
     client.state.conTargetAddress = ip;
-    client.state.conTargetPort = 2050;
+    client.state.conTargetPort = GAME_PORT;
     client.state.conRealKey = Buffer.alloc(0);
     const reconnect = proxy.packetFactory.createByName('RECONNECT');
     reconnect.data = {
       name: serverName,
       host: '127.0.0.1',
-      port: 2050,
+      port: GAME_PORT,
       gameId: -2,
       keyTime: -1,
       key: Buffer.from(client.state.guid, 'utf8'),
