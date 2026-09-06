@@ -172,7 +172,14 @@ README.md
 # ...but the bare rule above matches at any depth. data/README.md documents the
 # canonical packet data and its generator, and must ship (plan 107).
 !/data/README.md
-native/
+# Was a bare `native/`, which matches a directory of that name at ANY depth —
+# so it swallowed src/native/ as well, keeping src/native/injector.ts out of
+# the repo entirely. A fresh clone then failed to bundle: DevServer.ts imports
+# ../../native/injector.js and esbuild could not resolve it. Ignore only what
+# scripts/build-native.mjs actually generates.
+/electron/native/build/
+/src/native/hello-event.js
+/src/native/rotmg-shared.js
 assets/internal.bin
 assets/internal.dll
 assets/version.dll
