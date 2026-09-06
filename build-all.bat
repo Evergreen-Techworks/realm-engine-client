@@ -121,8 +121,11 @@ pushd "%ROOT%client\assets"
 REM  UNICODE is required: injector.cpp calls LookupPrivilegeValueW but passes
 REM  SE_DEBUG_NAME, a TCHAR macro that expands narrow without it, so the file
 REM  will not compile. VS C++ projects define it by default; bare cl does not.
+REM  advapi32 for the token APIs (OpenProcessToken, AdjustTokenPrivileges,
+REM  LookupPrivilegeValueW); everything else in the file is kernel32.
 cl /nologo /O2 /MT /W3 /EHsc /std:c++17 /DWIN32_LEAN_AND_MEAN /DUNICODE /D_UNICODE ^
-   "%ROOT%internal\tools\injector\injector.cpp" /Fe:injector.exe || ( popd & goto :fail )
+   "%ROOT%internal\tools\injector\injector.cpp" /Fe:injector.exe ^
+   /link advapi32.lib || ( popd & goto :fail )
 del /q injector.obj 2>nul
 popd
 if not exist "%ROOT%client\assets\injector.exe" ( echo   [ERROR] injector.exe not produced. & goto :fail )
