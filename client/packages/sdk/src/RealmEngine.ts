@@ -40,6 +40,7 @@ export const RealmEngine = {
         isDungeon: () => World.isDungeon(),
         isVault: () => World.isVault(),
         getName: () => World.getName(),
+        getSize: () => World.getSize(),
         tiles: Tiles,
         objects: Objects,
         projectiles: Projectiles,

@@ -19,11 +19,11 @@ constexpr float kTwoPi           = 6.28318530717958647692f;
 
 // ── Map capacities (fixed buffers — zero per-frame heap allocation) ─────────
 // Dense exaltation/O3 patterns can exceed the old 96-shot buffer. Overflow was
-// order-dependent and silently removed real lanes. 192 remains a bounded,
-// allocation-free snapshot within Temporal::Ctx's stack budget; Sensors also
+// order-dependent and silently removed real lanes. 512 remains a bounded,
+// allocation-free snapshot with thread-local temporal scratch; Sensors also
 // orders shots nearest-first before filling it.
-constexpr int kMaxProjectiles = 192;
-constexpr int kMaxAoes        = 32;
+constexpr int kMaxProjectiles = 512;
+constexpr int kMaxAoes        = 128; // retain the complete AoE tracker snapshot
 // 192, raised from 64: within the 16-tile blocker cull a dungeon corridor or a
 // horde routinely exceeds 64 entities. Overflow used to DROP the newcomer, and
 // PopulateEnemies fills in snapshot order — so a breakable wall one tile ahead
@@ -247,6 +247,9 @@ constexpr uint8_t kUMaxDampTicks       = 3;      // max consecutive soft-damped 
 // to have ARRIVED at the walk target — the walk goal clears (UDodge::Tick) and
 // the solver stops actively progressing toward it (repositionToward gate).
 constexpr float kUWalkArriveTiles = 0.5f;
+// Intermediate corridor bends must be reached closely enough to clear corners.
+// The final user waypoint still uses kUWalkArriveTiles in the walk controller.
+constexpr float kUNavAnchorArriveTiles = 0.05f;
 constexpr float kULookaheadTiles = 6.0f;  // horizon radius for the durable-pocket search (tiles)
 // Comfort slack (tiles) the TEMPORAL arrival test adds beyond the exact server
 // hit boundary (which already folds bulletHalf·scale + kUPlayerHalf). This is
@@ -683,7 +686,7 @@ constexpr float kTraceStepMs      = 30.f;   // sensor-internal geometry tracing 
                                             // time never leaves the sensor
 // 36 points × 30 ms = 1050 ms of coverage at the SAME 30 ms resolution as before
 // (raising the step instead would have chorded wavy/turning shots more coarsely).
-// Memory: 12 B/point (Vec2 + float) × kMaxProjectiles(192) = 2.25 KB per extra
+// Memory: 12 B/point (Vec2 + float) × kMaxProjectiles(512) = 6 KB per extra
 // point, so 24 → 36 costs ~13.8 KB per DangerMap (29.6 → 43.4 KB). There are a
 // handful of DangerMaps (g_map, two PlannerSnapshots, the debug slot) and they
 // are all statics/globals, so this is ~70 KB of BSS, not stack.
@@ -694,6 +697,8 @@ constexpr float kHugeClearance    = 1.0e9f; // "no danger anywhere" sentinel
 constexpr float kServerTickSec    = 0.2f;   // planning quantum: one server tick of motion
 
 struct LaneThreat {
+    bool beam = false; // all points are occupied simultaneously, not a moving head
+    float remainingLifeMs = -1.f; // known remaining lifetime; negative means unavailable
     int32_t  bulletId      = 0;   // identity for mid-tick re-anchoring...
     int32_t  attackerObjId = 0;   // ...(bulletId alone is not globally unique)
     uint32_t ownerObjId    = 0;

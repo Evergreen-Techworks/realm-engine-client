@@ -107,7 +107,8 @@ function nearbyGuildsFromRows(rows: PlayerRawStatsRowForDashboard[]): string[] {
 export class BridgePlayers {
   static install(deps: BridgeDeps): void {
     Players.getAll = (): PlayerEntity[] => {
-      return playerRows(deps).map(rowToPlayerEntity);
+      return playerRows(deps).map(row => ({ ...rowToPlayerEntity(row),
+        lastUpdate: deps.worldState.getEntity(row.objectId)?.lastUpdate }));
     };
 
     Players.getNearest = (): PlayerEntity | null => {

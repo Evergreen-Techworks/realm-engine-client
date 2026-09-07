@@ -1,5 +1,6 @@
 #include "pch-il2cpp.h"
 #include "AoeTracking.h"
+#include "AoeCapturePolicy.h"
 #include "Il2CppResolver.h"
 #include "GameState.h"
 #include "RuntimeOffsets.h"
@@ -152,9 +153,6 @@ static CRITICAL_SECTION      g_Cs;
 static bool                  g_CsInit = false;
 
 static std::atomic<uint32_t> g_DbgFhohRecordLogs{ 0 };
-static std::atomic<uint32_t> g_DbgFhohBadSelfLogs{ 0 };
-static std::atomic<uint32_t> g_DbgFhohSkipOriginLogs{ 0 };
-static std::atomic<uint32_t> g_DbgFhohSehOnce{ 0 };
 static std::atomic<uint32_t> g_DbgExplLogs{ 0 };
 
 static bool TryReadAnchorXY(void* anchor, float& outX, float& outY)
@@ -177,38 +175,25 @@ static bool TryReadCeeSpeedUnsafe(void* ep, float& outSpeed)
     return Mem::TryRead(ep, RuntimeOffsets::Cee_Speed, outSpeed);
 }
 
-static bool TryReadGjjFromSelf(void* self, float& ox, float& oy, float& dx, float& dy,
-    int32_t& durMs)
-{
-    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_OriginX,    ox))    return false;
-    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_OriginY,    oy))    return false;
-    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_DestX,      dx))    return false;
-    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_DestY,      dy))    return false;
-    if (!Mem::TryRead(self, RuntimeOffsets::Gjj_DurationMs, durMs)) return false;
-    return true;
-}
-
-// FHOH field reader.
-// Origin (ox/oy) comes from the inherited BMO world position (Game::Entity::TryPos).
-static bool TryReadFhohFromSelf(void* self, float& ox, float& oy, float& dx, float& dy,
-    int32_t& durMs)
-{
-    if (!Game::Entity(self).TryPos(ox, oy))                          return false;
-    if (!Mem::TryRead(self, RuntimeOffsets::Fhoh_DestX,      dx))    return false;
-    if (!Mem::TryRead(self, RuntimeOffsets::Fhoh_DestY,      dy))    return false;
-    if (!Mem::TryRead(self, RuntimeOffsets::Fhoh_DurationMs, durMs)) return false;
-    return true;
-}
-
-// Returns true if there is already an active AOE entry with dest within kDedupTolSq of (tdx,tdy).
+// Match duplicate observations of one flight by origin, destination and deadline.
 // Must be called with g_Cs held.
-static bool HasActiveAoeAtDest(float tdx, float tdy)
+static bool HasActiveAoeAtDest(float ox, float oy, float tdx, float tdy, float flightMs)
 {
     const ULONGLONG now = GetTickCount64();
     for (int i = 0; i < kMaxAoes; ++i) {
         const WorldAoe& a = g_Aoes[i];
         if (!a.valid) continue;
-        if (static_cast<float>(now - a.spawnTick) >= a.lifetime) continue;
+        const float age = static_cast<float>(now - a.spawnTick);
+        // Match a duplicate capture of the SAME flight, not an older bomb or
+        // friendly effect at the same destination. Repeated fast throws can land
+        // on one spot while a previous effect is still alive.
+        if (age > 50.f || age >= a.lifetime || !a.isDamaging ||
+            (a.isEnemyChecked && !a.isEnemy)) continue;
+        if (a.source != kAoeSrcGjj && a.source != kAoeSrcFhoh &&
+            !(a.source == kAoeSrcSfx && a.sfxEffectType == kSfxType_Throw)) continue;
+        if (std::fabs((a.arcMs - age) - flightMs) > 25.f) continue;
+        const float odx = a.x - ox, ody = a.y - oy;
+        if (odx * odx + ody * ody > kDedupTolSq) continue;
         float ddx = a.destX - tdx;
         float ddy = a.destY - tdy;
         if (ddx * ddx + ddy * ddy <= kDedupTolSq) return true;
@@ -239,7 +224,7 @@ static int FindOwnerIsEnemyAtPos(float targetX, float targetY)
     const float kTol = 0.5f;          // half-tile tolerance
     int result = 0;                   // 0=unresolved, 1=enemy, 2=friendly
     Il2CppC::WalkDict(dictPtr, 4096, [&](int32_t /*key*/, void* entity) {
-        if (result != 0) return;      // first match at throw origin wins
+        if (result == 1) return;      // keep looking past non-enemy props/throwables
         Game::Entity e(entity);
         if (!e.Ok()) return;
 
@@ -330,10 +315,19 @@ static void RecordAoe(float originX, float originY,
         radius = kDefaultAoeRadiusTiles;
     if (!std::isfinite(innerR) || innerR < 0.f)
         innerR = 0.f;
-    if (lifetimeMs < 100.f || !std::isfinite(lifetimeMs))
-        lifetimeMs = 3000.f;
+    lifetimeMs = AoeCapturePolicy::DurationMs(lifetimeMs);
     if (!std::isfinite(arcMs) || arcMs < 0.f)
         arcMs = 0.f;
+    const bool telegraphed = source == kAoeSrcGjj || source == kAoeSrcFhoh ||
+        (source == kAoeSrcSfx && (sfxEffectType == kSfxType_Throw ||
+                                sfxEffectType == kSfxType_CircleTelegraph));
+    if (telegraphed) {
+        // Keep the landing deadline separate from retention. Previously the
+        // warning vanished at the exact instant of impact, before a separate
+        // explosion hook was guaranteed to arrive (or if that hook was missing).
+        if (arcMs <= 0.f) arcMs = lifetimeMs;
+        lifetimeMs = std::max(lifetimeMs, arcMs) + 200.f;
+    }
 
     EnterCriticalSection(&g_Cs);
     const uint32_t idx = g_WriteIdx.fetch_add(1, std::memory_order_relaxed) % kMaxAoes;
@@ -356,6 +350,14 @@ static void RecordAoe(float originX, float originY,
     a.ptr             = livePtr;
     a.ownerObjId      = ownerObjId;
     LeaveCriticalSection(&g_Cs);
+    static std::atomic<uint32_t> captures{0};
+    const uint32_t capture = captures.fetch_add(1, std::memory_order_relaxed);
+    if (capture < 16u || capture % 128u == 0u)
+        DBG_FILE_LOG("[AoeTracking] capture source=" << (int)source
+            << " effect=" << sfxEffectType << " dest=(" << destX << "," << destY
+            << ") radius=" << radius << " landingMs=" << (telegraphed ? arcMs : 0.f)
+            << " retainedMs=" << lifetimeMs << " ownerChecked=" << isEnemyChecked
+            << " enemy=" << isEnemy);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -374,32 +376,6 @@ using GjjKobFn = void* (__fastcall*)(void* self, int64_t origin, int64_t dest,
 static GjjKobFn g_OrigGjjKob = nullptr;
 static void*    g_GjjTarget   = nullptr;
 
-// ── GJJ field-offset self-heal via param-match ──────────────────────────────
-// KOBMINBDOBD is handed the true origin/dest as params, so we can recover the
-// (BeeByte-renamed) origin/dest FIELD offsets deterministically: match each param
-// value against the instance's float pairs. Runs until resolved; one throwable
-// (e.g. a Medusa cast in the Godlands) is enough.
-static std::atomic<bool> g_gjjFieldsResolved{ false };
-
-// Scan `self` for the Vector2 field (two consecutive floats) equal to (vx,vy).
-// SEH-guarded, POD-only (no C++ unwinding in the __try) — a read past the object
-// faults into __except and returns 0. Returns the byte offset, or 0 if not found.
-static uint32_t FindVec2FieldOffset(void* self, float vx, float vy)
-{
-    if (!Mem::AddrOk(self)) return 0;
-    __try {
-        const uint8_t* base = reinterpret_cast<const uint8_t*>(self);
-        for (uint32_t off = 0x10u; off + 8u <= 0x800u; off += 4u) {
-            const float fx = *reinterpret_cast<const float*>(base + off);
-            const float fy = *reinterpret_cast<const float*>(base + off + 4u);
-            if (fabsf(fx - vx) < 0.01f && fabsf(fy - vy) < 0.01f) return off;
-        }
-        return 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0;
-    }
-}
-
 static void* __fastcall GjjKobDetour(void* self, int64_t origin, int64_t dest,
                                      void* colorPtr, int32_t dur, void* method)
 {
@@ -407,70 +383,13 @@ static void* __fastcall GjjKobDetour(void* self, int64_t origin, int64_t dest,
     if (g_OrigGjjKob)
         ret = g_OrigGjjKob(self, origin, dest, colorPtr, dur, method);
 
-    // Self-heal the GJJ origin/dest field offsets from the method params (ground
-    // truth, rename-proof). One matched throwable corrects RuntimeOffsets::Gjj_*,
-    // so TryReadGjjFromSelf below reads the right place even after a BeeByte rename.
-    if (Mem::AddrOk(self) && !g_gjjFieldsResolved.load(std::memory_order_relaxed)) {
-        const uint32_t olo = static_cast<uint32_t>(static_cast<uint64_t>(origin));
-        const uint32_t ohi = static_cast<uint32_t>(static_cast<uint64_t>(origin) >> 32);
-        const uint32_t dlo = static_cast<uint32_t>(static_cast<uint64_t>(dest));
-        const uint32_t dhi = static_cast<uint32_t>(static_cast<uint64_t>(dest) >> 32);
-        float pox, poy, pdx, pdy;
-        std::memcpy(&pox, &olo, 4); std::memcpy(&poy, &ohi, 4);
-        std::memcpy(&pdx, &dlo, 4); std::memcpy(&pdy, &dhi, 4);
-        if (std::isfinite(pox) && std::isfinite(poy) && (pox != 0.f || poy != 0.f)) {
-            const uint32_t oOff = FindVec2FieldOffset(self, pox, poy);
-            if (oOff) {
-                RuntimeOffsets::Gjj_OriginX = oOff;
-                RuntimeOffsets::Gjj_OriginY = oOff + 4u;
-                uint32_t dOff = (std::isfinite(pdx) && std::isfinite(pdy))
-                                ? FindVec2FieldOffset(self, pdx, pdy) : 0u;
-                if (dOff) { RuntimeOffsets::Gjj_DestX = dOff; RuntimeOffsets::Gjj_DestY = dOff + 4u; }
-                g_gjjFieldsResolved.store(true, std::memory_order_relaxed);
-                DBG_FILE_LOG("[AoeTracking] GJJ fields self-healed via param-match: origin=0x"
-                    << std::hex << oOff << " dest=0x" << dOff << std::dec
-                    << " (fallbacks were 0x368/0x370)");
-            }
-        }
-    }
-
-    // #region agent log
-    if (!Mem::AddrOk(self)) {
-        const uint32_t n = g_DbgFhohBadSelfLogs.fetch_add(1, std::memory_order_relaxed);
-        if (n < 5u)
-            AgentLogAoe("H3", "AoeTracking.cpp:GjjKobDetour", "bad_self",
-                "{\"self\":0}");
-        return ret;
-    }
-    // #endregion
-
+    // These are the actual initializer arguments. Reading obfuscated fields
+    // after initialization can silently turn valid bombs into missing/wrong discs.
     float ox = 0.f, oy = 0.f, dx = 0.f, dy = 0.f;
-    int32_t durMs = 0;
-    if (!TryReadGjjFromSelf(self, ox, oy, dx, dy, durMs)) {
-        // #region agent log
-        if (g_DbgFhohSehOnce.fetch_add(1, std::memory_order_relaxed) < 4u)
-            AgentLogAoe("H3", "AoeTracking.cpp:GjjKobDetour", "seh_after_orig",
-                "{\"reason\":\"TryReadGjjFromSelf\"}");
-        // #endregion
-        return ret;
-    }
-
-    if (!std::isfinite(ox) || !std::isfinite(oy)) {
-        // #region agent log
-        const uint32_t n = g_DbgFhohSkipOriginLogs.fetch_add(1, std::memory_order_relaxed);
-        if (n < 12u || (n % 40u) == 0u) {
-            std::ostringstream d;
-            d << "{\"self\":" << static_cast<uint64_t>(reinterpret_cast<uintptr_t>(self))
-              << ",\"ox\":" << ox << ",\"oy\":" << oy << ",\"reason\":\"nonfinite_origin\"}";
-            AgentLogAoe("H3", "AoeTracking.cpp:GjjKobDetour", "skip_record", d.str());
-        }
-        // #endregion
-        return ret;
-    }
-    if (!std::isfinite(dx) || !std::isfinite(dy)) { dx = ox; dy = oy; }
-
-    float lifeMs = (durMs > 100 && durMs < 120000)
-        ? static_cast<float>(durMs) : 3000.f;
+    if (!AoeCapturePolicy::DecodePosition(origin, ox, oy) ||
+        !AoeCapturePolicy::DecodePosition(dest, dx, dy)) return ret;
+    const int32_t durMs = dur;
+    const float lifeMs = AoeCapturePolicy::DurationMs(static_cast<float>(dur));
 
     // GJJCEFJMNMK itself is an "object", not an "enemy" — its isEnemy is always false.
     // Ownership is resolved in CopyActiveForDraw by position-matching the throw origin
@@ -518,21 +437,16 @@ static void __fastcall FhohKobDetour(void* self, int32_t animIdx, void* colorPtr
     if (g_OrigFhohKob)
         g_OrigFhohKob(self, animIdx, colorPtr, durMs, origin, dest, method);
 
-    if (!Mem::AddrOk(self)) return;
-
     float ox = 0.f, oy = 0.f, dx = 0.f, dy = 0.f;
-    int32_t fhohDurMs = 0;
-    if (!TryReadFhohFromSelf(self, ox, oy, dx, dy, fhohDurMs)) return;
-    if (!std::isfinite(ox) || !std::isfinite(oy)) return;
-    if (!std::isfinite(dx) || !std::isfinite(dy)) { dx = ox; dy = oy; }
-
-    float lifeMs = (fhohDurMs > 100 && fhohDurMs < 120000)
-        ? static_cast<float>(fhohDurMs) : 3000.f;
+    if (!AoeCapturePolicy::DecodePosition(origin, ox, oy) ||
+        !AoeCapturePolicy::DecodePosition(dest, dx, dy)) return;
+    const int32_t fhohDurMs = durMs;
+    const float lifeMs = AoeCapturePolicy::DurationMs(static_cast<float>(durMs));
 
     // Skip if GJJ already recorded this throwable (dedup by dest position)
     if (g_CsInit) {
         EnterCriticalSection(&g_Cs);
-        bool dup = HasActiveAoeAtDest(dx, dy);
+        bool dup = HasActiveAoeAtDest(ox, oy, dx, dy, lifeMs);
         LeaveCriticalSection(&g_Cs);
         if (dup) return;
     }
@@ -598,13 +512,13 @@ static void __fastcall ExplSpawnDetour(void* self, void* anchor, void* ep, float
     // FGOFPGIIEPC only fires for actual explosions — always damaging.
     // Read isEnemy from anchor→ObjectProperties→isEnemy.
     bool isEnemy = false;
-    TryReadIsEnemy(anchor, isEnemy);
+    const bool isEnemyChecked = TryReadIsEnemy(anchor, isEnemy);
 
     // ownerObjId: anchor entity's HHPOJBFICAH (BMO +0x034) — identifies the thrower.
     const int32_t anchorObjId = TryReadObjectId(anchor);
     if (originX != 0.f || originY != 0.f)
         RecordAoe(originX, originY, originX, originY, r, 0.f, lifeMs, /*isDamaging=*/true, isEnemy, nullptr, anchorObjId,
-                  /*isEnemyChecked=*/true, kAoeSrcExpl, /*sfxEffectType=*/0, arcMs);
+                  isEnemyChecked, kAoeSrcExpl, /*sfxEffectType=*/0, arcMs);
 
     // #region agent log
     const uint32_t le = g_DbgExplLogs.fetch_add(1, std::memory_order_relaxed);
@@ -660,8 +574,20 @@ static void __fastcall ShowEffectDetour(void* self, void* reader, void* method)
     if (effectType != kSfxType_Throw &&
         effectType != kSfxType_Nova  &&
         effectType != kSfxType_CircleTelegraph &&
-        effectType != kSfxType_AoE)
+        effectType != kSfxType_AoE) {
+        // Preserve evidence for effect variants whose geometry is not decoded
+        // yet; do not invent a landing location from an unrelated effect field.
+        if (effectType == 16 || effectType == 26) {
+            static std::atomic<uint32_t> unsupported{0};
+            const uint32_t n = unsupported.fetch_add(1, std::memory_order_relaxed);
+            if (n < 8u || n % 128u == 0u)
+                DBG_FILE_LOG("[AoeTracking] unmodeled effect=" << effectType
+                    << " source=" << targetObjId << " p1=(" << p1x << "," << p1y
+                    << ") p2=(" << p2x << "," << p2y << ") hasP2=" << hasP2
+                    << " duration=" << dur);
+        }
         return;
+    }
 
     // Duration: float field — if <= 120 treat as seconds, else already ms.
     float lifeMs;
@@ -682,7 +608,7 @@ static void __fastcall ShowEffectDetour(void* self, void* reader, void* method)
         // Skip if GJJ/FHOH already recorded this same throwable
         if (g_CsInit) {
             EnterCriticalSection(&g_Cs);
-            bool dup = HasActiveAoeAtDest(destX, destY);
+            bool dup = HasActiveAoeAtDest(originX, originY, destX, destY, lifeMs);
             LeaveCriticalSection(&g_Cs);
             if (dup) return;
         }
@@ -995,29 +921,18 @@ void CopyActiveForDraw(std::vector<WorldAoe>& out)
         //    Correct for GJJ/FHOH entries (thrower stands at throw origin).
         //    May fail for effects far from the source (e.g. remote nova).
         //
-        // Rule: "enemy" wins — mark enemy if EITHER strategy returns enemy.
-        //       Only mark friendly if ALL successful lookups agree.
+        // Only a known source ID establishes friendly ownership. Position
+        // matching may establish danger, but never prove an effect harmless.
         if (!a.isEnemyChecked) {
-            bool resolved = false;
-            bool resultIsEnemy = false;
-
-            if (a.ownerObjId > 0) {
-                int r = FindEntityIsEnemyById(a.ownerObjId);
-                if (r == 1) { resolved = true; resultIsEnemy = true; }
-                else if (r == 2) { resolved = true; /* resultIsEnemy stays false */ }
-            }
-
-            // If ID lookup didn't find enemy, try position match (authoritative for GJJ/FHOH).
-            if (!resultIsEnemy) {
-                int r = FindOwnerIsEnemyAtPos(a.x, a.y);
-                if (r == 1) { resolved = true; resultIsEnemy = true; }
-                else if (r == 2 && !resolved) { resolved = true; }
-            }
-
-            if (resolved) {
-                a.isEnemy        = resultIsEnemy;
+            const bool idIsOwner = a.source == kAoeSrcSfx || a.source == kAoeSrcExpl;
+            const int byId = idIsOwner && a.ownerObjId > 0
+                ? FindEntityIsEnemyById(a.ownerObjId) : 0;
+            const int byPosition = byId == 0 ? FindOwnerIsEnemyAtPos(a.x, a.y) : 0;
+            const int side = AoeCapturePolicy::ResolveOwner(idIsOwner, byId, byPosition);
+            if (side != 0) {
+                a.isEnemy = side == 1;
                 a.isEnemyChecked = true;
-                g_Aoes[i].isEnemy        = a.isEnemy;
+                g_Aoes[i].isEnemy = a.isEnemy;
                 g_Aoes[i].isEnemyChecked = true;
             }
         }

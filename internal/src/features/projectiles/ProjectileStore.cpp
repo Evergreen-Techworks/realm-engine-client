@@ -14,7 +14,7 @@
 
 namespace {
 
-constexpr int kMaxTrackedProj = 256;
+constexpr int kMaxTrackedProj = 1024;
 constexpr int kMaxLocalProj = 64;
 constexpr float kProjVisualTimeOffsetMs = 0.f;
 
@@ -127,6 +127,11 @@ static void FillOutFromSlot(WorldProjectile& dst, WorldProjectile& src, ULONGLON
     dst = src;
     if (!src.valid) return;
     if (Mem::AddrOk(src.ptr)) {
+        // Rotating beams keep their origin; their live angle is the geometry.
+        if (src.laser) {
+            const float angle = Mem::ReadOr<float>(src.ptr, RuntimeOffsets::Hbeak_Angle, src.angle);
+            if (std::isfinite(angle)) dst.angle = angle;
+        }
         float runtimeHalf = 0.f;
         ProjectileRuntimeReader::TryReadRuntimeChebyshevHalf(src.ptr, runtimeHalf);
         dst.runtimeChebyshevHalf = (runtimeHalf > 1e-5f) ? runtimeHalf : src.runtimeChebyshevHalf;

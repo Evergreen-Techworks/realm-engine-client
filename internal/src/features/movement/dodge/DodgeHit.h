@@ -46,6 +46,10 @@ inline float EffectiveHalf(const WorldProjectile& b, float hitScale, float pad =
 inline bool Hits(const WorldProjectile& b, float bx, float by,
                  float px, float py, float hitScale, float pad = 0.f)
 {
+    if (b.laser && std::isfinite(b.laserDistance) && b.laserDistance > 0.f && std::isfinite(b.angle))
+        return DodgeGeometry::SegmentHitsBox(bx, by,
+            bx + std::cos(b.angle) * b.laserDistance, by + std::sin(b.angle) * b.laserDistance,
+            px, py, EffectiveHalf(b, hitScale, pad));
     return DodgeGeometry::InProjAabb(bx, by, px, py, EffectiveHalf(b, hitScale, pad));
 }
 

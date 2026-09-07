@@ -225,7 +225,7 @@ export class LootEngine {
     if (capped || this.onCooldown(state, attemptKey, now)) return false;
 
     this.diag(`SEND autodrink USEITEM bag#${bag.objectId} slot=${bagSlot} item=${this.itemLabel(itemId)}`);
-    sendUseItemFromBag(this.ctx, client, bag, bagSlot, itemId);
+    if (!sendUseItemFromBag(this.ctx, client, bag, bagSlot, itemId)) return false;
     state.lastPickupAt = now;
     state.recentActions.push(now);
     state.recentAttempts.set(attemptKey, now);

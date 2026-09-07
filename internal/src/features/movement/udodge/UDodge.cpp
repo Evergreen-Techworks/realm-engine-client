@@ -4,6 +4,7 @@
 #include "UDodgeCore.h"
 #include "UDodgeSolver.h"
 #include "UDodgePathfinder.h"
+#include "UDodgeNavigation.h"
 #include "UDodgeWorker.h"
 #include "UDodgeSensors.h"
 #include "UDodgeDebug.h"
@@ -84,7 +85,7 @@ std::atomic<float>    g_wedgePlayerX{ 0.f }, g_wedgePlayerY{ 0.f };
 std::atomic<uint32_t> g_wedgeStampMs{ 0 };
 
 // Game-update thread only.
-CoreState  g_state;
+MovementCommitment g_commitment;
 DangerMap  g_map;
 
 // ── Nav route cache (walk-to) ────────────────────────────────────────────────
@@ -101,6 +102,8 @@ struct NavCache {
     bool partial = false;        // route only reaches toward the goal (needs extending near its end)
 };
 NavCache g_navCache;
+Navigation::Progress g_navProgress;
+bool g_navAwaiting = false;
 // Distance-sampled dungeon breadcrumbs. Global (rather than Tick-local statics)
 // so realm/location transitions can invalidate them explicitly.
 Vec2 g_trail[16]{};       // newest at [0]
@@ -294,11 +297,13 @@ void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls)
 // Cheap: one mutex lock, kUNavCells hashmap probes, only when a walk-to is active.
 void FillNavGrid(Path::NavGrid& grid, Vec2 player, bool safeWalk)
 {
-    grid.center = player;
-    const float originX = player.x - static_cast<float>(kUNavRadCells) * kUNavCellTiles;
-    const float originY = player.y - static_cast<float>(kUNavRadCells) * kUNavCellTiles;
+    // Stable tile centres preserve clearance in one-tile corridors; a grid
+    // anchored to the player's fractional position can put every cell on a wall edge.
+    grid.center = {std::floor(player.x) + 0.5f, std::floor(player.y) + 0.5f};
+    const float originX = grid.center.x - static_cast<float>(kUNavRadCells) * kUNavCellTiles;
+    const float originY = grid.center.y - static_cast<float>(kUNavRadCells) * kUNavCellTiles;
     WorldTAB::CopyBoxBlocked(originX, originY, kUNavSide, kUNavCellTiles,
-                             kUOccPlayerHalfEdge, /*foldHazard=*/safeWalk, grid.flags);
+                             kUOccPlayerHalfEdge + Navigation::kWallPadding, /*foldHazard=*/safeWalk, grid.flags);
     for (int i = 0; i < kUNavCells; ++i)
         if (grid.flags[i] & 0x8) grid.flags[i] |= 0x1; // never A* into blank map void
 }
@@ -308,38 +313,13 @@ void FillNavGrid(Path::NavGrid& grid, Vec2 player, bool safeWalk)
 // FROM the route (deviation) and whether they've reached its end — the re-plan
 // triggers. Returns the raw player position when there is no usable cached route.
 Vec2 NavStepFromCache(const NavCache& c, Vec2 player, float lookahead,
-                      float& outDev, bool& outNearEnd)
+                      float& outDev, bool& outNearEnd, const MapInput& in)
 {
     outDev = 0.f; outNearEnd = false;
     if (!c.valid || c.n < 2) return player;
 
-    // Nearest point on the polyline + which segment it's on.
-    float bestD2 = 1e18f; int bestSeg = 0; Vec2 bestProj = c.wpts[0];
-    for (int i = 0; i + 1 < c.n; ++i) {
-        const Vec2 a = c.wpts[i], bpt = c.wpts[i + 1];
-        const Vec2 ab = Sub(bpt, a);
-        const float len2 = LenSq(ab);
-        const float t = len2 > 1e-6f ? Clamp(Dot(Sub(player, a), ab) / len2, 0.f, 1.f) : 0.f;
-        const Vec2 proj = Add(a, Mul(ab, t));
-        const float d2 = LenSq(Sub(player, proj));
-        if (d2 < bestD2) { bestD2 = d2; bestSeg = i; bestProj = proj; }
-    }
-    outDev = std::sqrt(bestD2);
-
-    // Walk forward from the projection by `lookahead` tiles along the polyline.
-    Vec2 cur = bestProj; float acc = 0.f;
-    for (int i = bestSeg + 1; i < c.n; ++i) {
-        const Vec2 w = c.wpts[i];
-        const float seg = Len(Sub(w, cur));
-        if (acc + seg >= lookahead) {
-            const float rem = lookahead - acc;
-            const Vec2 dir = Normalize(Sub(w, cur));
-            return LenSq(dir) > 1e-6f ? Add(cur, Mul(dir, rem)) : w;
-        }
-        acc += seg; cur = w;
-    }
-    outNearEnd = true;                 // ran off the end of the cached route
-    return c.wpts[c.n - 1];
+    return Navigation::Follow(c.wpts, c.n, player, lookahead, outDev, outNearEnd,
+        [&](Vec2 from, Vec2 to) { return Navigation::PaddedPathClear(in, from, to); });
 }
 
 // ── Autopilot auto-lock ──────────────────────────────────────────────────────
@@ -406,7 +386,7 @@ void SetEnabled(bool enabled)
         Worker::Stop();                  // JOIN the worker before releasing state it never touches
         UpdateAutopilotLock(false);      // release any autopilot-owned enemy lock (never a manual one)
         DangerPlanner::ClearWalkGoal();  // drop any pending walk-to spot
-        g_state.Reset();
+        g_commitment.Reset();
         g_solve = Solver::SolveResult{};
         g_route = Path::PlanResult{};
         g_lastPubSeq = 0;
@@ -460,10 +440,12 @@ void OnEnter()
     // the worker before accepting any route in the new location.
     Worker::Stop();
     Worker::Start();
-    g_state.Reset();
+    g_commitment.Reset();
     g_solve = Solver::SolveResult{};
     g_route = Path::PlanResult{};
     g_navCache = NavCache{};
+    g_navAwaiting = false;
+    g_navProgress.Reset();
     g_trailCount = 0;
     for (Vec2& p : g_trail) p = {};
     // Every one of these stores world coordinates/object ids and is therefore
@@ -530,7 +512,7 @@ void Tick(void* player, float px, float py, float dt)
         }
     }
     if (g_map.projectileSourceUnavailable) {
-        g_state.Reset();
+        g_commitment.Reset();
         PublishMinimal(Decision::None, { px, py });
         return;
     }
@@ -541,9 +523,9 @@ void Tick(void* player, float px, float py, float dt)
     in.speed = std::max(0.f, std::isfinite(tilesPerSec) ? tilesPerSec : 0.f) / 1000.f;
     in.stepTiles = settings.stepTiles > 0.f
         ? settings.stepTiles
-        : std::clamp(std::max(0.f, tilesPerSec) * kServerTickSec, 0.4f, 3.0f);
+        : std::clamp(std::max(0.f, tilesPerSec) * kServerTickSec, 0.f, 3.0f);
     in.tickId = g_map.tickId;
-    in.movementLocked = false;
+    in.movementLocked = in.speed <= 0.f;
     in.playerOnHazard = settings.safeWalk && Sensors::IsHazardAt(px, py);
     in.settings = settings;
     in.env.canOccupy = &Sensors::CanOccupy;
@@ -552,6 +534,7 @@ void Tick(void* player, float px, float py, float dt)
 
     // in.stepTiles IS the per-tick move budget (tilesPerSec × kServerTickSec).
     const float b = in.stepTiles;
+    CoreState proposedState = g_commitment.state;
 
     // ── Goal (soft preference only) ─────────────────────────────────────────
     // The goal is consumed ONLY through the solver's wGoal term over the SAFE set,
@@ -636,18 +619,20 @@ void Tick(void* player, float px, float py, float dt)
     // Follow the cached route and only re-run the A* on a real trigger. navStep is
     // the steering target ~lookahead budgets ahead along the cached polyline.
     bool navReplan = false;
+    bool navWaiting = g_navAwaiting;
     Vec2 navStep{ walkX, walkY };
     if (walkActive) {
         const Vec2  wg{ walkX, walkY };
         const float lookahead = std::max(b, 1.f) * kUNavLookaheadBudgets;
         float dev = 0.f; bool nearEnd = false;
-        navStep = NavStepFromCache(g_navCache, in.player, lookahead, dev, nearEnd);
+        navStep = NavStepFromCache(g_navCache, in.player, lookahead, dev, nearEnd, in);
         const bool goalMoved = g_navCache.valid &&
             LenSq(Sub(wg, g_navCache.goal)) > kNavGoalMoveTiles * kNavGoalMoveTiles;
         // Never take even one more step along the previous waypoint's corridor.
         // It may point directly behind the player after a quest/portal handoff.
         if (goalMoved) {
             g_navCache.valid = false;
+            g_navAwaiting = navWaiting = false;
             navStep = wg;
         }
         navReplan = !g_navCache.valid
@@ -655,23 +640,20 @@ void Tick(void* player, float px, float py, float dt)
             || (nearEnd && g_navCache.partial)                                          // consumed a partial route → extend
             || (nearEnd && LenSq(Sub(in.player, wg)) > kNavEndTiles * kNavEndTiles);    // at route end but not the goal
 
-        // STUCK detector: if we stop making progress toward the goal for a while
-        // (wedged on a wall the cached route didn't know about, or the route runs
-        // through undiscovered geometry), force a re-plan with a freshly-rasterized
-        // window so the A* can route around it. Tracks the best distance-to-goal;
-        // any real progress resets the timer.
-        static ULONGLONG s_navProgressMs = 0;
-        static float     s_navBestDist   = 1e18f;
-        const ULONGLONG  nowNav   = GetTickCount64();
-        const float      distGoal = std::sqrt(LenSq(Sub(wg, in.player)));
-        if (!g_navCache.valid || distGoal < s_navBestDist - 1.0f) {
-            s_navBestDist = distGoal; s_navProgressMs = nowNav;      // made progress → reset
-            g_wedged.store(false, std::memory_order_relaxed);        // plan 89: observe only
-        } else if (nowNav - s_navProgressMs > 1500ULL) {
-            navReplan = true;                                        // no progress for 1.5s → stuck → re-plan
-            s_navBestDist = distGoal; s_navProgressMs = nowNav;
-            g_wedged.store(true, std::memory_order_relaxed);         // plan 89: observe only
+        // Blocked corridor: replan immediately. Small alternating nudges do
+        // not count as progress; real movement around a wall does, even when
+        // temporarily moving away from the final destination.
+        const ULONGLONG nowNav = GetTickCount64();
+        if (goalMoved) g_navProgress.Reset();
+        const bool blocked = g_navCache.valid && !Navigation::PaddedPathClear(in, in.player, navStep);
+        const bool stalled = in.speed > 0.f && g_navProgress.Stalled(in.player, nowNav);
+        if (blocked || stalled) {
+            navReplan = true;
+            g_navAwaiting = navWaiting = true;
+            g_navCache.valid = false;
+            navStep = in.player;
         }
+        g_wedged.store(blocked || stalled, std::memory_order_relaxed);
         // Plan 89: publish the wedge observation (goal, player, freshness stamp).
         g_wedgeWalkActive.store(true, std::memory_order_relaxed);
         g_wedgeGoalX.store(wg.x, std::memory_order_relaxed);
@@ -679,8 +661,11 @@ void Tick(void* player, float px, float py, float dt)
         g_wedgePlayerX.store(in.player.x, std::memory_order_relaxed);
         g_wedgePlayerY.store(in.player.y, std::memory_order_relaxed);
         g_wedgeStampMs.store(static_cast<uint32_t>(nowNav), std::memory_order_relaxed);
-        if (!g_navCache.valid) navStep = wg;   // no cache yet → head to the raw goal until the first plan lands
-    } else if (g_navCache.valid) {
+        if (navWaiting) navStep = in.player;
+        else if (!g_navCache.valid) navStep = wg;   // no cache yet → head to the raw goal until the first plan lands
+    } else {
+        g_navProgress.Reset();
+        g_navAwaiting = false;
         g_navCache.valid = false;              // walk-to ended → drop the cache
         g_wedged.store(false, std::memory_order_relaxed);            // plan 89: walk-to ended
         g_wedgeWalkActive.store(false, std::memory_order_relaxed);
@@ -808,6 +793,7 @@ void Tick(void* player, float px, float py, float dt)
             PhaseTimer _p(g_tRaster);
             FillOccGrid(s_snap.grid, gridCenter, true);
         }
+        s_snap.commitment       = g_commitment;
         s_snap.tickId           = g_map.tickId;
         s_snap.player           = in.player;
         s_snap.moveBudget       = b;
@@ -858,6 +844,7 @@ void Tick(void* player, float px, float py, float dt)
     // last route on contention / cold start).
     Worker::Result fresh{};
     bool rejectedFreshWalk = false;
+    bool commitmentChanged = false;
     if (Worker::TryGetLatest(fresh)) {
         const bool seqFresh = fresh.plan.forSeq != 0 && g_lastPubSeq >= fresh.plan.forSeq
             && (g_lastPubSeq - fresh.plan.forSeq) <= kUPlanMaxStaleSeq;
@@ -869,8 +856,15 @@ void Tick(void* player, float px, float py, float dt)
         const bool acceptFresh = seqFresh && walkMatches && originFresh;
         if (acceptFresh) {
             g_route = fresh.plan;
-            g_solve = fresh.solve;
-            g_solveSeq = fresh.plan.forSeq;
+            if (g_commitment.Accepts(fresh.commitmentRevision)) {
+                g_solve = fresh.solve;
+                proposedState = fresh.solveState;
+                g_solveSeq = fresh.plan.forSeq;
+            } else {
+                // Keep the route as a hint, but score a new immediate decision
+                // from the movement accepted since this worker snapshot.
+                commitmentChanged = true;
+            }
         } else {
             rejectedFreshWalk = walkActive;
             DBG_FILE_LOG("[UDodge] Discard stale worker result seq=" << fresh.plan.forSeq
@@ -900,7 +894,9 @@ void Tick(void* player, float px, float py, float dt)
         // Only updates when the worker actually ran the nav A* (navFound) — which is
         // only when we requested a re-plan (navActive), so the cache holds the last
         // committed route until the next trigger.
+        if (acceptFresh && g_route.navArrived) g_navAwaiting = false;
         if (acceptFresh && g_route.navFound && g_route.navWptCount >= 2) {
+            g_navAwaiting = false;
             g_navCache.valid   = true;
             g_navCache.goal    = { walkX, walkY };
             g_navCache.n       = std::min(g_route.navWptCount, kMaxNavWpts);
@@ -937,9 +933,11 @@ void Tick(void* player, float px, float py, float dt)
     // A cold/late worker must not stall navigation or leave an old absolute
     // target behind the player. The expensive grid search stays asynchronous;
     // this is only the small live safety solver, at server-tick cadence.
-    if (walkActive && tickChanged && (!g_navCache.valid || rejectedFreshWalk)) {
+    if (navWaiting) routeForSolve = Path::PlanResult{};
+    if (navWaiting || commitmentChanged ||
+        (walkActive && tickChanged && (!g_navCache.valid || rejectedFreshWalk))) {
         PhaseTimer _p(g_tSolve);
-        Solver::Solve(in, b, goal, routeForSolve, g_state, g_solve);
+        Solver::Solve(in, b, goal, routeForSolve, proposedState, g_solve);
     }
 
     // Normal temporal solving is performed with the path search on the worker.
@@ -950,80 +948,14 @@ void Tick(void* player, float px, float py, float dt)
     Vec2 moveTarget = in.player;
     bool moveFailed = false;
 
-    // ── Re-validate the occupied cell against the re-anchored map (plan 78) ───
-    // Every frame — regardless of shouldMove — confirm the cell the player is
-    // about to STAND or MOVE on is still safe on THIS frame's re-anchored lanes.
-    // Previously only the MOVING branch re-checked its cached target; a
-    // HOLD/Surrounded stand was never re-checked between server ticks, so a lane
-    // re-anchoring closer to the stand (no structural change → no forced rebuild)
-    // clipped the player until the next tick's BuildMap (Fix A). On failure force
-    // a same-frame BuildMap + re-solve so the dodge reacts NOW, not next tick —
-    // preserving today's structural-change reflex without waiting on the worker.
-    bool needResolve = false;
-    if (g_solve.shouldMove) {
-        // Enemy bodies are a HARD no-go for EVERY target kind — a moving add can
-        // walk onto a spot the route chose a tick ago — so re-check the cached
-        // target against the CURRENT (re-anchored, frame-fresh) enemy positions.
-        // SWEPT (finding J): the committed step must not cross a body either, not
-        // just end clear of one — and a mob that walked into the middle of the step
-        // since the solve is exactly what this per-frame re-check exists to catch.
-        // EXCEPT a Fallback, the surround-escape, which the solver admits on the
-        // ENDPOINT rule: this gate must never be stricter than the rule that chose
-        // the target, or a boxed-in player would be refused the only way out.
-        const bool enemyClearNow = (g_solve.kind == Solver::SolveKind::Fallback)
-            ? !Core::EnemyBlocked(in, g_solve.target)
-            : !Core::EnemyPathBlocked(in, in.player, g_solve.target);
-        const bool occupancyClearNow = OccupancyPathClear(in, in.player, g_solve.target);
-        bool targetOk;
-        if (!enemyClearNow || !occupancyClearNow) {
-            targetOk = false;
-        } else if (g_solve.kind == Solver::SolveKind::Fallback || g_solve.prePosition) {
-            // Fix C (plan 78): a pre-position/fallback step is deliberately
-            // spatially-unsafe NOW (it threads a time-gap) and was validated
-            // temporally at SOLVE time. Re-run the temporal PathClear on THIS
-            // frame's re-anchored lanes so a re-anchor that CLOSES the threaded gap
-            // forces a re-solve — previously only a STRUCTURAL change did, so a lane
-            // sliding onto the threaded path went uncaught until the next tick. The
-            // ctx is rebuilt from the re-anchored map (cheap; shared Core::Temporal).
-            Core::Temporal::Ctx ctx;
-            Core::Temporal::Build(*in.map, in.settings.hitScale, in.settings.positionUncertainty, in.player,
-                                  kUTemporalCullTiles, ctx);
-            // Zone floor first: Temporal is lane-only, so a bomb that armed since the
-            // solve would not invalidate the target on its own. This is the per-frame
-            // "is my committed target still good?" check — exactly where a newly
-            // active blast disc must cancel a walk that is heading into it, or
-            // THROUGH it (swept, same as the solver's admission).
-            targetOk = Core::ZonePathClear(in, in.player, g_solve.target) &&
-                       Core::Temporal::PathClear(ctx, in.player, in.speed, g_solve.target);
-        } else {
-            // Plain reflex target: must still be spatially safe on the re-anchored lanes.
-            targetOk = Core::PointSafe(in, g_solve.target, kULatencyPad);
-        }
-        needResolve = !targetOk;
-    } else {
-        // Fix A (perf-tuned): re-check the HELD stand against THIS frame's
-        // re-anchored lanes with the CHEAP INSTANTANEOUS safety only — a lane that
-        // re-anchored onto/near the stand forces an immediate dodge this frame.
-        // The temporal "a bullet WILL sweep the stand within the horizon"
-        // durability is the SOLVER's job and is re-evaluated every server tick;
-        // rebuilding a full temporal Ctx every frame here (and the BuildMap+Solve
-        // it triggered when it speculatively failed) was a 60fps→5fps regression
-        // and could self-loop (rebuild → re-Hold → fail → rebuild). Instantaneous
-        // clearance catches the only case a per-frame check must: a bullet arriving
-        // AT the stand right now.
-        needResolve = Core::PointSafety(in, in.player) < kULatencyPad;
-    }
-
-    if (needResolve && !rebuilt) {
-        // Re-solve on the ALREADY RE-ANCHORED map (this is a non-rebuilt frame, so
-        // ReanchorMap ran above and g_map's lanes are live). Do NOT do a full
-        // Sensors::BuildMap here — the re-anchor is exactly what closed the gap on
-        // the cached target, so the live lanes are what the re-solve needs, and a
-        // full danger rebuild on every such frame was pure cost. A genuinely NEW
-        // projectile spawn is still caught by the separate structural-rebuild path
-        // (rebuilt), which does its own BuildMap + solve.
+    // Validate against this frame's map and replace unsafe decisions before
+    // driving. A rebuild must not suppress the immediate solve while the worker
+    // is still processing its snapshot.
+    {
         PhaseTimer _p(g_tSolve);
-        Solver::Solve(in, b, goal, routeForSolve, g_state, g_solve);
+        CoreState safetyState = g_commitment.state;
+        if (Solver::RevalidateAndSolve(in, b, goal, routeForSolve, safetyState, g_solve, rebuilt))
+            proposedState = safetyState;
     }
 
     // ── Drive toward the (possibly re-solved) target ─────────────────────────
@@ -1032,7 +964,13 @@ void Tick(void* player, float px, float py, float dt)
     const bool enemyDriveClear = (g_solve.kind == Solver::SolveKind::Fallback)
         ? !Core::EnemyBlocked(in, g_solve.target)                       // surround-escape: endpoint rule
         : !Core::EnemyPathBlocked(in, in.player, g_solve.target);       // finding J: swept
-    if (g_solve.shouldMove && enemyDriveClear) {
+    // Re-solving can choose a new emergency fallback. Apply its zone/ground
+    // rules again at execution, rather than assuming rejection made it safe.
+    const bool drivePathClear = OccupancyPathClear(in, in.player, g_solve.target) &&
+        (g_solve.kind == Solver::SolveKind::Fallback
+            ? Core::ZoneEscapePathClear(in, in.player, g_solve.target)
+            : Core::ZonePathClear(in, in.player, g_solve.target));
+    if (g_solve.shouldMove && enemyDriveClear && drivePathClear) {
         const Vec2 to = Sub(g_solve.target, in.player);
         const float d = Len(to);
         const Vec2 dir = d > 1e-4f ? Mul(to, 1.f / d) : Vec2{};
@@ -1042,6 +980,7 @@ void Tick(void* player, float px, float py, float dt)
         moveTarget = Add(in.player, Mul(dir, std::min(d, in.speed * frameMs)));
         const bool ok = DodgeRuntime::CallMoveTo(player, moveTarget.x, moveTarget.y);
         if (!ok) moveFailed = true;
+        g_commitment.Record(proposedState, Sub(moveTarget, in.player), ok);
         static int s_mvN = 0;
         if ((s_mvN++ % 120) == 0)
             DBG_FILE_LOG("[UDodge] MOVE kind=" << (int)g_solve.kind

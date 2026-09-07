@@ -2,12 +2,14 @@ import { RealmEngine } from '@realmengine/sdk';
 
 const LOOP_MS = 100;
 const TARGET_RADIUS = 8;
+const TARGET_RELEASE_RADIUS = 12;
 const LOOT_RADIUS = 24;
 const BAG_ARRIVE = 0.7;
 const BAG_SETTLE_MS = 750;
 const ITEM_ACTION_MS = 1300;
 const PORTAL_RANGE = 1.2;
 const PORTAL_RETRY_MS = 3000;
+const NEXUS_RETRY_MS = 3000;
 // Realm portals are straight ahead of the Nexus arrival point. Commit to one
 // long corridor instead of issuing short, periodically regenerated waypoints;
 // the portal tracker takes over as soon as an open Realm enters visibility.
@@ -23,27 +25,39 @@ const QUEST_VISIBLE_RANGE = 12;
 // A quest target can sit across terrain the nav window cannot route around — a
 // wide lake, most often. Realms are dotted with teleport beacons, so when one is
 // much closer to the boss than we are, riding it beats the walk.
-const BEACON_MIN_SAVING  = 30;    // only teleport when it cuts at least this much off the trip
+const BEACON_MIN_SAVING  = 8;    // only teleport when it cuts at least this much off the trip
 const BEACON_RETRY_MS    = 5000;  // never spam TELEPORT — one attempt per window
-const BEACON_VERIFY_MS   = 1500;  // settle time before judging whether an attempt worked
+const BEACON_VERIFY_MS   = 3000;  // settle time before judging whether an attempt worked
 const BEACON_MOVED_TILES = 8;     // moved at least this far ⇒ the teleport really happened
-// getBeacons() categorises by NAME SUBSTRING (GameDataLoader: id.includes('beacon')),
-// so it ALSO returns "Beacon Guardian <biome>" — the boss that guards the beacon —
-// along with its minions, decoys, orbs, patrol points and attack anchors. Teleporting
-// onto one of those would drop us into a boss fight. Only these families are real
-// destinations, and anything Guardian-flavoured is rejected outright.
-const BEACON_NAME_OK  = /^(teleport|active|actual active|captured)\s+beacon\b/i;
-const BEACON_NAME_BAD = /guardian/i;
+// Prefer the actual game-data class. Name fallback supports older snapshots,
+// but never accepts guardian enemies or explicitly inactive destinations.
+const BEACON_NAME_OK = /^(teleport|active|actual active|captured)\s+beacon\b|\bbeacon(?:\s*\([^)]*\))?$/i;
+const BEACON_NAME_BAD = /guardian|inactive|decoy|anchor|patrol/i;
 
 export default class Farmer {
   constructor() {
     this.mapName = '';
+    this.lastCastleEscapeAt = null;
+    this.beaconSkipReason = null;
     this.zoneGoal = null;
+    this.centerTripDone = false;
+    this.bossEncounter = null;
+    this.bossMissingAt = null;
+    this.eventGoal = null;
+    this.eventMissingAt = null;
+    this.eventScanAt = 0;
+    this.eventCandidates = [];
+    this.finishedEvents = new Set();
+    this.searchBeaconVisits = new Map();
+    this.searchBeaconGoal = null;
+    this.centerGoal = null;
     this.lootBagId = 0;
     this.lootArrivedAt = 0;
     this.lastItemActionAt = 0;
     this.lastPortalUseAt = 0;
     this.nexusSearchGoal = null;
+    this.nexusReady = false;
+    this.nexusPortalId = 0;
     this.lockId = 0;
     this.patrolStep = 0;
     this.lastGoalAt = 0;
@@ -52,9 +66,7 @@ export default class Farmer {
     this.questMissingAt = 0;
     this.lastBeaconAt = 0;
     this.beaconPending = null;       // attempt awaiting verification
-    this.beaconUnsupported = false;  // set once a verified attempt did nothing — SESSION-wide,
-                                     // because "the server ignores TELEPORT to a beacon" is a
-                                     // fact about the server, not about this map.
+    this.beaconRetryAfter = new Map();
     this.beaconListedFor = '';       // map whose beacon candidates we already logged
   }
 
@@ -65,6 +77,7 @@ export default class Farmer {
   }
 
   onStart() {
+    RealmEngine.dodge.clearWaypoint();
     RealmEngine.dodge.setMode('unified');
     RealmEngine.dodge.setSafeWalk(true);
     RealmEngine.dodge.setLockFollow(false);
@@ -81,8 +94,8 @@ export default class Farmer {
     // — it owns AutoAim's master switch, which no script API can set.
     RealmEngine.combat.setKillAura(false);
     this.setFiring(false);
-    RealmEngine.ui.status('Farmer starting');
-    RealmEngine.log.info('Farmer started with Unified Dodge, safe-walk, loot detours, and target switching.');
+    RealmEngine.ui.status('Realm Farmer starting');
+    RealmEngine.log.info('Realm Farmer started with Unified Dodge, safe-walk, loot detours, and target switching.');
   }
 
   onStop() {
@@ -95,29 +108,50 @@ export default class Farmer {
 
   resetMap(name) {
     this.mapName = name;
+    this.lastCastleEscapeAt = null;
+    this.beaconSkipReason = null;
     this.zoneGoal = null;
+    this.centerTripDone = false;
+    this.bossEncounter = null;
+    this.bossMissingAt = null;
+    this.eventGoal = null;
+    this.eventMissingAt = null;
+    this.eventScanAt = 0;
+    this.eventCandidates = [];
+    this.finishedEvents = new Set();
+    this.searchBeaconVisits = new Map();
+    this.searchBeaconGoal = null;
+    this.centerGoal = null;
     this.lootBagId = 0;
     this.lootArrivedAt = 0;
     this.lockId = 0;
     this.patrolStep = 0;
     this.lastGoalAt = 0;
     this.nexusSearchGoal = null;
+    this.nexusReady = false;
+    this.nexusPortalId = 0;
     this.questGoal = null;
     this.questMissingAt = 0;
     this.lastBeaconAt = 0;
     this.beaconPending = null;
+    this.beaconRetryAfter.clear();
     // A destination is scoped to the map that created it. Drop the old Realm
     // quest/loot route before Nexus installs its forward-search corridor.
     RealmEngine.dodge.clearWaypoint();
     RealmEngine.dodge.clearEnemyLock();
+    RealmEngine.combat.stopAiming();
+    this.setFiring(false);
   }
 
   updateTarget(preferredId = 0, enabled = true) {
     const px = RealmEngine.self.getX();
     const py = RealmEngine.self.getY();
     const eligible = enabled ? RealmEngine.enemies.getAll()
-      .filter((e) => e.isTargetable && Math.hypot(e.position.x - px, e.position.y - py) <= TARGET_RADIUS)
+      .filter((e) => e.hp > 0 && (e.isTargetable || e.objectId === this.lockId)
+        && Math.hypot(e.position.x - px, e.position.y - py)
+          <= (e.objectId === this.lockId ? TARGET_RELEASE_RADIUS : TARGET_RADIUS))
       .sort((a, b) => Number(b.objectId === preferredId) - Number(a.objectId === preferredId)
+        || Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
         || b.maxHp - a.maxHp || b.hp - a.hp
         || Math.hypot(a.position.x - px, a.position.y - py)
           - Math.hypot(b.position.x - px, b.position.y - py)) : [];
@@ -131,13 +165,87 @@ export default class Farmer {
       }
       return null;
     }
+    RealmEngine.dodge.clearWaypoint();
     if (target.objectId !== this.lockId) {
       this.lockId = target.objectId;
       RealmEngine.dodge.lockEnemy(target.objectId);
       RealmEngine.combat.aimAt(target.objectId);
     }
-    this.setFiring(true);
+    this.setFiring(target.isTargetable);
     return target;
+  }
+
+  handleBossAdds(enemies, boss, label) {
+    // Keep add-clearing inside the encounter, even if an add or a dodge pulls
+    // the player outward. Navigation returns to the boss's eight-tile ring.
+    const center = boss.position;
+    const distance = RealmEngine.self.distanceTo(center);
+    if (distance > 14) {
+      this.updateTarget(0, false);
+      const dx = RealmEngine.self.getX() - center.x, dy = RealmEngine.self.getY() - center.y;
+      RealmEngine.dodge.navigateToPosition({ x: center.x + dx / distance * 8, y: center.y + dy / distance * 8 });
+      RealmEngine.ui.status(`${label}: returning to boss area`);
+      return;
+    }
+    const add = enemies.filter(e => e.objectId !== boss.objectId && e.hp > 0 && e.isTargetable
+      && Math.hypot(e.position.x - center.x, e.position.y - center.y) <= 12)
+      .sort((a, b) => Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
+        || RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position))[0];
+    if (!add) {
+      this.updateTarget(0, false); RealmEngine.dodge.clearWaypoint();
+      RealmEngine.ui.status(`${label}: waiting for adds or vulnerable boss`);
+      return;
+    }
+    if (RealmEngine.self.distanceTo(add.position) > (this.lockId === add.objectId ? 12 : 8)) {
+      this.updateTarget(0, false); RealmEngine.dodge.navigateToPosition(add.position);
+    } else {
+      RealmEngine.dodge.clearWaypoint();
+      if (this.lockId !== add.objectId) {
+        this.updateTarget(0, false); this.lockId = add.objectId;
+        RealmEngine.dodge.lockEnemy(add.objectId); RealmEngine.combat.aimAt(add.objectId);
+      }
+      this.setFiring(true);
+    }
+    RealmEngine.ui.status(`${label}: clearing adds — ${add.name}`);
+  }
+
+  handleBossEncounter(quest, now) {
+    const enemies = RealmEngine.enemies.getAll();
+    if (!this.bossEncounter && quest) {
+      const boss = enemies.find(e => e.objectId === quest.objectId && e.hp > 0);
+      const anchor = boss ?? (quest.isEventBoss ? quest : null);
+      if (anchor && RealmEngine.self.distanceTo(anchor.position) <= 12)
+        this.bossEncounter = { objectId: anchor.objectId, position: { ...anchor.position }, name: anchor.name };
+    }
+    if (!this.bossEncounter) return false;
+    const boss = enemies.find(e => e.objectId === this.bossEncounter.objectId);
+    if (boss && boss.hp <= 0 && boss.maxHp > 0) {
+      this.bossEncounter = null; this.bossMissingAt = null; this.updateTarget(0, false); return false;
+    }
+    if (boss) { this.bossEncounter.position = { ...boss.position }; this.bossMissingAt = null; }
+    else {
+      if (this.bossMissingAt === null) this.bossMissingAt = now;
+      if (now - this.bossMissingAt >= 30000 && quest && quest.objectId !== this.bossEncounter.objectId) {
+        this.bossEncounter = null; this.bossMissingAt = null; this.updateTarget(0, false); return false;
+      }
+    }
+    if (!boss || !boss.isTargetable) {
+      this.handleBossAdds(enemies, this.bossEncounter, this.bossEncounter.name);
+      return true;
+    }
+    const distance = RealmEngine.self.distanceTo(boss.position);
+    if (distance > (this.lockId === boss.objectId ? 12 : 8)) {
+      this.updateTarget(0, false); RealmEngine.dodge.navigateToPosition(boss.position);
+    } else {
+      RealmEngine.dodge.clearWaypoint();
+      if (this.lockId !== boss.objectId) {
+        this.updateTarget(0, false); this.lockId = boss.objectId;
+        RealmEngine.dodge.lockEnemy(boss.objectId); RealmEngine.combat.aimAt(boss.objectId);
+      }
+      this.setFiring(true);
+    }
+    RealmEngine.ui.status(`Fighting: ${boss.name}`);
+    return true;
   }
 
   bagIsUseful(bag) {
@@ -185,7 +293,7 @@ export default class Farmer {
   }
 
   handleLoot(now) {
-    this.useInventoryUpgradesAndPots(now);
+    if (this.useInventoryUpgradesAndPots(now)) return true;
     let bag = this.lootBagId
       ? RealmEngine.loot.getBags().find((b) => b.objectId === this.lootBagId && this.bagIsUseful(b))
       : null;
@@ -237,6 +345,10 @@ export default class Farmer {
         return true;
       }
     }
+    // Another sender may still be waiting for the first slot update. Keep
+    // standing on the bag through that bounded wait instead of reinstalling a
+    // quest waypoint between the first and second item.
+    if (now - this.lastItemActionAt < 5000) return true;
     this.lootBagId = 0;
     return false;
   }
@@ -257,20 +369,20 @@ export default class Farmer {
       - Math.hypot(b.position.x - desired.x, b.position.y - desired.y))[0]?.position ?? null;
   }
 
-  // Real teleport destinations only — see BEACON_NAME_OK/BAD. Logs the candidate
-  // split once per realm so the live name families are visible in the log (the
-  // game data has five, and which ones actually spawn is not documented anywhere).
+  // Rank real destinations by distance to the travel goal, not to the player.
   chooseBeacon(questPosition) {
     const all = RealmEngine.world.objects.getBeacons();
     const usable = all.filter((b) => {
       const name = String(b?.name ?? '');
-      return BEACON_NAME_OK.test(name) && !BEACON_NAME_BAD.test(name)
+      return (b.objectClass === 'Beacon' || (!b.objectClass && BEACON_NAME_OK.test(name)))
+        && !BEACON_NAME_BAD.test(name)
+        && (this.beaconRetryAfter.get(b.objectId) ?? 0) <= Date.now()
         && Number.isFinite(b.position?.x) && Number.isFinite(b.position?.y);
     });
     if (this.beaconListedFor !== this.mapName) {
       this.beaconListedFor = this.mapName;
       const names = [...new Set(all.map((b) => String(b?.name ?? '?')))].join(', ');
-      RealmEngine.log.info(`Farmer: ${all.length} beacon-category objects here, `
+      RealmEngine.log.info(`Realm Farmer: ${all.length} beacon-category objects here, `
         + `${usable.length} usable as teleport targets · ${names || 'none'}`);
     }
     if (!usable.length) return null;
@@ -279,61 +391,201 @@ export default class Farmer {
       - Math.hypot(b.position.x - questPosition.x, b.position.y - questPosition.y))[0];
   }
 
+  chooseTeleportTarget(position, now) {
+    const beacon = this.chooseBeacon(position);
+    const candidates = beacon ? [{ ...beacon, teleportKind: 'beacon' }] : [];
+    for (const player of RealmEngine.players?.getAll?.() ?? []) {
+      if (!(player.hp > 0) || !player.name || player.name === '?'
+        || !Number.isFinite(player.lastUpdate) || now - player.lastUpdate > 3000
+        || !Number.isFinite(player.position?.x) || !Number.isFinite(player.position?.y)
+        || (this.beaconRetryAfter.get(player.objectId) ?? 0) > now) continue;
+      candidates.push({ ...player, teleportKind: 'player' });
+    }
+    return candidates.sort((a,b) => Math.hypot(a.position.x-position.x,a.position.y-position.y)
+      - Math.hypot(b.position.x-position.x,b.position.y-position.y))[0] ?? null;
+  }
+
   // Resolve the previous attempt. A TELEPORT the server ignored looks exactly like
   // one it honoured, except that we did not move — so measure that directly. One
-  // wasted attempt is the entire cost of discovering whether this works at all.
+  // failed attempt backs off only that target; later attempts remain available.
   verifyBeaconTeleport(now) {
     const pending = this.beaconPending;
     if (!pending || now - pending.at < BEACON_VERIFY_MS) return;
     this.beaconPending = null;
     const moved = Math.hypot(RealmEngine.self.getX() - pending.x,
                              RealmEngine.self.getY() - pending.y);
-    if (moved >= BEACON_MOVED_TILES) {
-      RealmEngine.log.info(`Farmer: beacon teleport confirmed — moved ${moved.toFixed(0)} `
+    const livePlayer = pending.teleportKind === 'player'
+      ? RealmEngine.players?.getAll?.().find(p => p.objectId === pending.objectId && p.hp > 0
+          && Number.isFinite(p.lastUpdate) && now - p.lastUpdate <= 3000) : null;
+    const landed = RealmEngine.self.distanceTo(pending.position) <= 5
+      || (livePlayer && RealmEngine.self.distanceTo(livePlayer.position) <= 5);
+    if (moved >= BEACON_MOVED_TILES && landed) {
+      RealmEngine.log.info(`Realm Farmer: teleport confirmed — moved ${moved.toFixed(0)} `
         + `tiles to "${pending.name}".`);
       return;
     }
-    this.beaconUnsupported = true;
-    RealmEngine.log.info(`Farmer: beacon teleport did nothing (moved ${moved.toFixed(1)} tiles) — `
-      + `the server did not honour TELEPORT to "${pending.name}". Walking from here on.`);
+    this.beaconRetryAfter.set(pending.objectId, now + 30000);
+    RealmEngine.log.info(`Realm Farmer: teleport did nothing (moved ${moved.toFixed(1)} tiles) — `
+      + `the server did not honour TELEPORT to "${pending.name}". Retrying this target after 30 seconds.`);
   }
 
   tryBeaconTeleport(now, quest) {
-    if (this.beaconUnsupported || this.beaconPending) return false;
-    if (now - this.lastBeaconAt < BEACON_RETRY_MS) return false;
+    this.beaconSkipReason = null;
+    if (this.beaconPending) return true;
+    if (now - this.lastBeaconAt < BEACON_RETRY_MS) {
+      this.beaconSkipReason = `teleport retry in ${Math.ceil((BEACON_RETRY_MS - (now - this.lastBeaconAt)) / 1000)}s`;
+      return false;
+    }
     if (!RealmEngine.walking.canTeleport()) {
+      this.beaconSkipReason = "map reports teleport disabled";
       // Say so once per map. Without this the whole feature is a silent no-op when
       // MAPINFO withholds allowPlayerTeleport, which is indistinguishable from
       // "there were no beacons" or "it never got far enough to try".
       if (this.beaconListedFor !== this.mapName) {
         this.beaconListedFor = this.mapName;
-        RealmEngine.log.info('Farmer: beacon teleport skipped — this map does not allow teleport.');
+        RealmEngine.log.info('Realm Farmer: beacon teleport skipped — this map does not allow teleport.');
       }
       return false;
     }
 
-    const beacon = this.chooseBeacon(quest.position);
-    if (!beacon) return false;
+    const beacon = this.chooseTeleportTarget(quest.position, now);
+    if (!beacon) {
+      this.beaconSkipReason = 'no eligible beacon or player available (untracked, filtered, or retrying)';
+      return false;
+    }
+    const retryAt = this.beaconRetryAfter.get(beacon.objectId) ?? 0;
+    if (retryAt > now) {
+      this.beaconSkipReason = `last teleport unconfirmed; retry in ${Math.ceil((retryAt - now) / 1000)}s`;
+      return false;
+    }
 
     const myDistance = RealmEngine.self.distanceTo(quest.position);
     const beaconDistance = Math.hypot(beacon.position.x - quest.position.x,
                                       beacon.position.y - quest.position.y);
     const saving = myDistance - beaconDistance;
-    if (saving < BEACON_MIN_SAVING) return false;
+    if (saving < BEACON_MIN_SAVING) {
+      this.beaconSkipReason = `teleport saves ${saving.toFixed(1)} tiles; minimum ${BEACON_MIN_SAVING}`;
+      return false;
+    }
 
     this.lastBeaconAt = now;
-    RealmEngine.log.info(`Farmer: beacon TP -> "${beacon.name}" #${beacon.objectId} · `
-      + `me->boss ${myDistance.toFixed(0)}, beacon->boss ${beaconDistance.toFixed(0)} `
+    RealmEngine.log.info(`Realm Farmer: ${beacon.teleportKind} TP -> "${beacon.name}" #${beacon.objectId} · `
+      + `me->goal ${myDistance.toFixed(0)}, target->goal ${beaconDistance.toFixed(0)} `
       + `(saves ${saving.toFixed(0)})`);
-    if (!RealmEngine.walking.teleportToBeacon(beacon.objectId)) return false;
+    RealmEngine.dodge.clearWaypoint();
+    const sent = beacon.teleportKind === 'player'
+      ? RealmEngine.walking.teleportToPlayer(beacon.name)
+      : RealmEngine.walking.teleportToBeacon(beacon.objectId);
+    if (!sent) {
+      this.beaconRetryAfter.set(beacon.objectId, now + 30000);
+      this.beaconSkipReason = 'client could not send teleport; check connection/log';
+      return false;
+    }
     this.beaconPending = {
       at: now,
+      teleportKind: beacon.teleportKind,
       name: beacon.name,
+      objectId: beacon.objectId,
+      position: { ...beacon.position },
       x: RealmEngine.self.getX(),
       y: RealmEngine.self.getY(),
     };
-    RealmEngine.ui.status(`Beacon teleport → ${beacon.name}`);
+    RealmEngine.ui.status(`${beacon.teleportKind === 'player' ? 'Player' : 'Beacon'} teleport → ${beacon.name}`);
     return true;
+  }
+
+  handleLevel20Travel(now) {
+    if (RealmEngine.self.getLevel() < 20 || this.centerTripDone) return false;
+    if (!this.centerGoal) {
+      const size = RealmEngine.world.getSize();
+      if (!(size.width > 0 && size.height > 0)) {
+        RealmEngine.ui.status('Level 20: waiting for Realm dimensions');
+        this.updateTarget(0, false);
+        RealmEngine.dodge.clearWaypoint();
+        return true;
+      }
+      this.centerGoal = {
+        position: { x: size.width / 2, y: size.height / 2 },
+        radius: Math.max(12, Math.min(size.width, size.height) * 0.15),
+      };
+      this.questGoal = null;
+      this.questMissingAt = 0;
+      this.zoneGoal = null;
+      RealmEngine.log.info('Realm Farmer: level 20 — relocating to central Realm before choosing another quest.');
+    }
+    this.updateTarget(0, false);
+    if (RealmEngine.self.distanceTo(this.centerGoal.position) <= this.centerGoal.radius) {
+      this.centerTripDone = true;
+      this.questGoal = null;
+      this.questMissingAt = 0;
+      RealmEngine.dodge.clearWaypoint();
+      RealmEngine.log.info('Realm Farmer: reached central Realm; resuming farming quests.');
+      return false;
+    }
+    if (this.tryBeaconTeleport(now, this.centerGoal)) return true;
+    RealmEngine.dodge.navigateToPosition(this.centerGoal.position);
+    RealmEngine.ui.status('Level 20: travelling to central Realm');
+    return true;
+  }
+
+  getEventGoal(now) {
+    if (now - this.eventScanAt >= 1000 || !this.eventScanAt) {
+      this.eventScanAt = now;
+      this.eventCandidates = RealmEngine.world.objects.getAll().filter(o => o.isEventBoss
+        && Number.isFinite(o.position?.x) && Number.isFinite(o.position?.y)
+        && !(o.hp <= 0 && o.maxHp > 0)
+        && !RealmEngine.world.objects.isDead?.(o.objectId));
+    }
+    if (this.eventGoal) {
+      const live = RealmEngine.world.objects.getById(this.eventGoal.objectId);
+      const dead = RealmEngine.world.objects.isDead?.(this.eventGoal.objectId)
+        || (live && live.hp <= 0 && live.maxHp > 0);
+      if (live && !dead) { this.eventGoal = live; this.eventMissingAt = null; }
+      else if (dead || RealmEngine.self.distanceTo(this.eventGoal.position) <= 12) {
+        if (this.eventMissingAt === null) this.eventMissingAt = now;
+        if (dead || now - this.eventMissingAt >= 30000) {
+          RealmEngine.log.info(`Realm Farmer: event ended — ${this.eventGoal.name}; selecting another boss.`);
+          this.finishedEvents.add(this.eventGoal.objectId);
+          this.eventGoal = null; this.eventMissingAt = null; this.bossEncounter = null;
+          this.updateTarget(0, false); RealmEngine.dodge.clearWaypoint();
+        }
+      } else this.eventMissingAt = null;
+    }
+    if (!this.eventGoal) {
+      this.eventGoal = this.eventCandidates.filter(o => !this.finishedEvents.has(o.objectId)
+        && !RealmEngine.world.objects.isDead?.(o.objectId))
+        .sort((a,b) => RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position))[0] ?? null;
+      if (this.eventGoal) {
+        this.searchBeaconGoal = null;
+        RealmEngine.log.info(`Realm Farmer: purple/white boss selected — ${this.eventGoal.name}`);
+      }
+    }
+    return this.eventGoal;
+  }
+
+  searchForEvents(now) {
+    // With no event markers, retain the level-20 inward trip, then visit
+    // different known beacons to expose more of the Realm instead of miniquests.
+    if (this.handleLevel20Travel(now)) return;
+    if (this.searchBeaconGoal && RealmEngine.self.distanceTo(this.searchBeaconGoal.position) <= 4) {
+      this.searchBeaconVisits.set(this.searchBeaconGoal.objectId, now);
+      this.searchBeaconGoal = null;
+    }
+    if (!this.searchBeaconGoal) {
+      this.searchBeaconGoal = RealmEngine.world.objects.getBeacons().filter(b => b.objectClass === 'Beacon'
+        && !BEACON_NAME_BAD.test(b.name) && RealmEngine.self.distanceTo(b.position) > 8
+        && now - (this.searchBeaconVisits.get(b.objectId) ?? -Infinity) > 30000)
+        .sort((a,b) => (this.searchBeaconVisits.get(a.objectId) ?? 0) - (this.searchBeaconVisits.get(b.objectId) ?? 0)
+          || RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position))[0] ?? null;
+    }
+    if (this.searchBeaconGoal) {
+      if (this.tryBeaconTeleport(now, this.searchBeaconGoal)) return;
+      RealmEngine.dodge.navigateToPosition(this.searchBeaconGoal.position);
+      RealmEngine.ui.status('Realm Farmer: searching other beacon areas for purple/white bosses');
+    } else {
+      RealmEngine.dodge.clearWaypoint();
+      RealmEngine.ui.status('Realm Farmer: waiting for purple/white boss markers');
+    }
   }
 
   getQuestGoal(now) {
@@ -381,11 +633,27 @@ export default class Farmer {
   }
 
   handleNexus(now) {
+    this.updateTarget(0, false);
+    // MAPINFO may arrive before the local player's position and HP. A route
+    // created then would be anchored at (0,0), not the Nexus spawn corridor.
+    if (RealmEngine.self.getHP() <= 0) {
+      if (this.nexusReady || this.nexusSearchGoal) RealmEngine.dodge.clearWaypoint();
+      this.nexusReady = false; this.nexusSearchGoal = null; this.nexusPortalId = 0;
+      RealmEngine.ui.status('Nexus: waiting for player spawn');
+      return;
+    }
+    if (!this.nexusReady) {
+      RealmEngine.dodge.clearWaypoint();
+      RealmEngine.dodge.clearEnemyLock();
+      RealmEngine.combat.stopAiming();
+      this.nexusReady = true;
+    }
     const portals = RealmEngine.world.objects.getOpenPortals()
       .filter((portal) => portal.isRealm)
       .sort((a, b) => RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position)
         || a.playerCount - b.playerCount);
-    const portal = portals[0];
+    const portal = portals.find(p => p.objectId === this.nexusPortalId) ?? portals[0];
+    this.nexusPortalId = portal?.objectId ?? 0;
     if (!portal) {
       if (!this.nexusSearchGoal) {
         this.nexusSearchGoal = {
@@ -416,25 +684,62 @@ export default class Farmer {
     const now = Date.now();
     const map = RealmEngine.world.getName();
     if (map !== this.mapName) this.resetMap(map);
+    // Realm completion transfers us to the castle. Exit before loot, combat,
+    // or travel can take ownership, and rate-limit retries while awaiting Nexus.
+    const normalizedMap = String(map).toLowerCase().replace(/[^a-z]/g, '');
+    if (normalizedMap === 'oryxscastle' || normalizedMap === 'oryxcastle') {
+      this.updateTarget(0, false);
+      RealmEngine.combat.stopAiming();
+      RealmEngine.dodge.clearWaypoint();
+      RealmEngine.ui.status("Realm Farmer: leaving Oryx's Castle for Nexus");
+      if (this.lastCastleEscapeAt === null || now - this.lastCastleEscapeAt >= NEXUS_RETRY_MS) {
+        this.lastCastleEscapeAt = now;
+        RealmEngine.log.info("Realm Farmer: entered Oryx's Castle — returning to Nexus.");
+        RealmEngine.walking.nexus();
+      }
+      return LOOP_MS;
+    }
     this.verifyBeaconTeleport(now);
 
     if (RealmEngine.world.isNexus()) {
-      this.updateTarget();
       this.handleNexus(now);
       return LOOP_MS;
     }
 
-    const quest = RealmEngine.world.isRealm() ? this.getQuestGoal(now) : null;
-    const questDistance = quest ? RealmEngine.self.distanceTo(quest.position) : Infinity;
-    // Navigation owns movement while travelling. On arrival, release it before
-    // arming combat so UDodge's boss orbit—not the old waypoint—owns steering.
-    if (quest && questDistance <= QUEST_AREA_ARRIVE) {
-      RealmEngine.dodge.clearWaypoint();
+    // A useful bag takes movement ownership before combat. Do not clear and
+    // recreate its waypoint by running target selection during the detour.
+    if (this.eventGoal && RealmEngine.world.objects.isDead?.(this.eventGoal.objectId)) {
+      this.getEventGoal(now);
+      // The packet already sent cannot be cancelled, but stop waiting for the
+      // old destination and route to the new event from wherever we land.
+      this.beaconPending = null;
     }
+    if (this.beaconPending) return LOOP_MS;
+    if (this.handleLoot(now)) {
+      this.updateTarget(0, false);
+      return LOOP_MS;
+    }
+    const eventMode = RealmEngine.world.isRealm() && RealmEngine.self.getLevel() >= 20;
+    if (eventMode && this.bossEncounter && !this.eventGoal) {
+      this.bossEncounter = null; this.questGoal = null; this.updateTarget(0, false);
+    }
+    const quest = RealmEngine.world.isRealm()
+      ? (eventMode ? this.getEventGoal(now) : this.getQuestGoal(now)) : null;
+    if (eventMode && !quest) {
+      this.updateTarget(0, false); this.searchForEvents(now); return LOOP_MS;
+    }
+    if (this.handleBossEncounter(quest, now)) return LOOP_MS;
+    const questDistance = quest ? RealmEngine.self.distanceTo(quest.position) : Infinity;
+    // Combat owns movement until the engaged target leaves the release radius
+    // or dies. Crossing the four-tile quest arrival threshold is not a disengage.
     const target = this.updateTarget(quest?.objectId ?? 0,
-      !quest || questDistance <= QUEST_AREA_ARRIVE);
-
-    if (this.handleLoot(now)) return LOOP_MS;
+      !eventMode && (!!this.lockId || !quest || questDistance <= TARGET_RADIUS));
+    if (target) {
+      this.lootBagId = 0;
+      this.lootArrivedAt = 0;
+      RealmEngine.ui.status(`Fighting: ${target.name}`);
+      return LOOP_MS;
+    }
 
     if (RealmEngine.world.isRealm()) {
       const level = RealmEngine.self.getLevel();

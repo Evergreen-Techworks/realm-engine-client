@@ -76,7 +76,11 @@ export class StateManager {
   }
 
   private onCreateSuccess(client: ClientConnection, packet: Packet): void {
+    // MAPINFO normally precedes CREATESUCCESS. Reset character data while
+    // retaining the current connection's already received map metadata.
+    const { mapName, mapWidth, mapHeight, teleportAllowed } = client.playerData;
     client.playerData = new PlayerData();
+    Object.assign(client.playerData, { mapName, mapWidth, mapHeight, teleportAllowed });
     client.playerData.ownerObjectId = packet.data.objectId;
     client.lastTeleportSentAt = 0;
     client.lastTeleportGotoAt = 0;

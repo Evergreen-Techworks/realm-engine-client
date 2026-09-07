@@ -27,6 +27,11 @@ export class Objects {
     }
 
     /** Tracked object by runtime `objectId`, or `null` if it left the map. */
+    /** True only when the server has confirmed this object's death in this map. */
+    static isDead(objectId: number): boolean {
+        throw new Error('Must be run inside RealmEngine client');
+    }
+
     static getById(objectId: number): GameObject | null {
         throw new Error('Must be run inside RealmEngine client');
     }

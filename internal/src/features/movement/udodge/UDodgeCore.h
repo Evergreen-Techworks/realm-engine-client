@@ -45,9 +45,13 @@ bool ZoneClear(const MapInput& in, Vec2 pos);
 // an active disc. A solver step is up to ~1.9 tiles and can cross a 1-tile disc
 // with both endpoints clear, and Temporal::PathClear is zone-blind, so any
 // temporal admission of a MOVE must use this rather than the endpoint ZoneClear.
-// Falls back to the endpoint rule when `from` is already inside a disc — see the
-// definition for why that escape hatch has to stay.
+// Uses the endpoint rule only for each disc containing `from`; other discs
+// still receive a swept check while escaping.
 bool ZonePathClear(const MapInput& in, Vec2 from, Vec2 to);
+
+// Emergency progress may remain inside a large blast, but must move outward
+// throughout the segment and must not enter any other active blast.
+bool ZoneEscapePathClear(const MapInput& in, Vec2 from, Vec2 to);
 
 // Hard safety predicate used by the solver: occupancy-clear AND
 // PointSafety(pos) >= pad. `pad` lets the solver require the latency margin.
@@ -118,6 +122,7 @@ constexpr float kHorizonMs = kUTemporalSteps * kUTemporalStepMs;  // bounded hor
 // + kUPlayerHalf). Fixed-size, no heap; the caller owns the storage.
 struct Ctx {
     int   count = 0;
+    bool  beam[kMaxProjectiles]{};
     Vec2  pos[kMaxProjectiles][kSamples];   // bullet position at t = k·stepMs
     float half[kMaxProjectiles];            // hitHalf·scale + kUPlayerHalf
     // Fast-lane refinement (kUTemporalMaxSweepTiles): for lanes whose per-step
@@ -127,14 +132,12 @@ struct Ctx {
     // of one chord. Only valid where sub[i]; slow lanes never read it.
     Vec2  mid[kMaxProjectiles][kUTemporalSteps];
     bool  sub[kMaxProjectiles];             // this lane needs the half-step samples
-    // SPEED-SCALED ARRIVAL MARGIN (see kUPredErrMs, UDodgeTypes.h). `speed[i]` is
-    // the lane's fastest per-step travel over the march grid expressed in
-    // tiles/ms — free, because Build already measures that chord for the fast-lane
-    // test. `arrPad[i]` is the arrival margin it implies, precomputed
-    // (kUArrivalMargin + speed·kUPredErrMs, capped) so the queries still do ONE
-    // add per lane and the per-candidate cost is unchanged.
-    float speed[kMaxProjectiles];           // tiles/ms, max per-step over the horizon
-    float arrPad[kMaxProjectiles];          // kUArrivalMargin + speed·kUPredErrMs (capped)
+    // Source-segment speed determines the timing margin. Resampling error is
+    // bounded against the source polyline and added to that margin once during
+    // Build, so query cost and Ctx size do not grow for curved shots.
+    float speed[kMaxProjectiles];           // tiles/ms, max over source segments
+    float arrPad[kMaxProjectiles];          // comfort + capped timing pad + curve error
+    float expiresMs[kMaxProjectiles];       // known expiry + timing grace; <=0 means unknown
     // TRUSTED PREFIX (the honest freeze). `trust[i]` is the last march index whose
     // sample is a real prediction; kUTemporalSteps means the lane is traced all the
     // way to the horizon (or to the shot's death) and needs no special handling —
@@ -145,11 +148,9 @@ struct Ctx {
     // instead. See the UNKNOWN TAIL comment in UDodgeCore.cpp.
     int   trust[kMaxProjectiles];
 };
-// Ctx is a STACK LOCAL in Solver::Solve and in UDodge.cpp's per-frame step
-// re-validation (the worker pathfinder keeps a static). About 29 KB at
-// kMaxProjectiles = 192 — keep it inside a stack frame's budget; if this
-// starts approaching the ceiling, the arrays are what to shrink, not the horizon.
-static_assert(sizeof(Ctx) <= 32768, "Temporal::Ctx must stay small enough to be a stack local in Solve()");
+// Solver contexts are thread-local (game thread and worker never share scratch).
+// Keep an explicit memory ceiling as projectile capacity increases.
+static_assert(sizeof(Ctx) <= 96 * 1024, "Temporal::Ctx exceeds its per-thread memory budget");
 
 // Sample one lane's spacetime polyline at each march time (clamp past the traced
 // horizon — never invents "safe"). outPos must hold kSamples entries.

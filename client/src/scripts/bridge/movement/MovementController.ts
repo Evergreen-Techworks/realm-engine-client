@@ -41,7 +41,8 @@ export class MovementController {
   }
 
   clearWaypoint(): void {
-    if (!this.target) return;
+    // Native/manual waypoints may exist even when this adapter has no target.
+    // A clear command must reach the movement owner, including on map entry.
     if (sendDllFeature('walkTargetActive', false)) this.target = null;
   }
 

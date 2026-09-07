@@ -310,6 +310,10 @@ export function register(ctx: PluginContext) {
     if (!packet.isDefined) return;
     const b = getShowEffectTypeByte(packet);
     if (b === null) return;
+    // These effects carry attack/landing warnings. Dropping them also prevents
+    // the native AoE tracker from ever observing the packet or spawned visual.
+    // Preserve ThrowProjectile and Meteor too, even before all consumers decode them.
+    if ([4, 5, 16, 23, 26, 39].includes(b)) return;
     const block = parseBlockedEffectTypeSet(ctx);
     if (block.size === 0) return;
     if (block.has(b)) {

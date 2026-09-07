@@ -18,6 +18,7 @@ export class BridgeObjects {
     Objects.getAll = (): GameObject[] => {
       return world.all();
     };
+    Objects.isDead = (objectId: number): boolean => deps.worldState.isObjectDead(objectId);
     Objects.getById = (objectId: number): GameObject | null => {
       const entity = world.entity(objectId);
       return entity ? world.toGameObject(entity) : null;

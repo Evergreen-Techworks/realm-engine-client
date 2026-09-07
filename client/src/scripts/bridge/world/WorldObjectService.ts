@@ -21,8 +21,17 @@ export class WorldObjectService {
   }
 
   toGameObject(entity: TrackedEntity): GameObject {
+    const def = this.deps.gameData.getObject(entity.objectType);
+    const hp = Number(entity.stats?.[String(StatType.HP)]);
+    const maxHp = Number(entity.stats?.[String(StatType.MaxHP)] ?? def?.maxHp);
     return {
+      isEventBoss: def?.isEventBoss,
+      minimapIcon: def?.minimapIcon,
+      minimapColor: def?.minimapColor,
+      hp: Number.isFinite(hp) ? hp : undefined,
+      maxHp: Number.isFinite(maxHp) ? maxHp : undefined,
       objectType: entity.objectType,
+      objectClass: def?.objectClass,
       objectId: entity.objectId,
       name: this.nameOf(entity),
       position: new Position(entity.pos.x, entity.pos.y),

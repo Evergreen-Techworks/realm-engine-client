@@ -1878,7 +1878,7 @@ const grid = RealmEngine.inventory.getAll();
                 <thead><tr><th>Method</th><th>Returns</th><th>Description</th></tr></thead>
                 <tbody>
                   <tr><td><code>pickup(bag, slotIndex, opts?)</code></td><td><code>boolean</code></td><td>Send <code>INVENTORYSWAP</code> for the item in <code>bag</code> at <code>slotIndex</code>. Automatically finds the first free inventory or backpack slot. Returns <code>true</code> if the packet was sent. <strong>opts:</strong> <code>{ useBackpack?: boolean }</code> (default <code>true</code>).</td></tr>
-                  <tr><td><code>pickupId(bagObjectId, opts?)</code></td><td><code>number</code></td><td>Pick up every item from the bag with the given objectId, provided it is within <code>maxDistance</code> tiles (default <code>1.0</code>). Sends one <code>INVENTORYSWAP</code> per filled slot, tracking claimed destination slots within the call so no slot is double-targeted. Returns the number of packets sent, or <code>-1</code> if the bag was not found or is too far away. <strong>opts:</strong> <code>{ maxDistance?: number; useBackpack?: boolean }</code>.</td></tr>
+                  <tr><td><code>pickupId(bagObjectId, opts?)</code></td><td><code>number</code></td><td>Pick up the next available item from the bag with the given objectId, provided it is within <code>maxDistance</code> tiles (default <code>1.0</code>). Sends at most one <code>INVENTORYSWAP</code>; call again after inventory updates to drain the bag. Returns 0 while another automatic inventory action is settling. Returns the number of packets sent, or <code>-1</code> if the bag was not found or is too far away. <strong>opts:</strong> <code>{ maxDistance?: number; useBackpack?: boolean }</code>.</td></tr>
                   <tr><td><code>useFromBag(bag, slotIndex)</code></td><td><code>boolean</code></td><td>Send <code>USEITEM</code> to use/drink the item directly from the bag slot (e.g. stat pots). No inventory slot required. Returns <code>true</code> if sent.</td></tr>
                 </tbody>
               </table>
@@ -2103,6 +2103,7 @@ readonly [number, number]</code></pre></div></details>
                   <tr><td><code>isDungeon()</code></td><td><code>boolean</code></td><td>True if the current map is a dungeon.</td></tr>
                   <tr><td><code>isVault()</code></td><td><code>boolean</code></td><td>True if the current map is the player's vault.</td></tr>
                   <tr><td><code>getName()</code></td><td><code>string</code></td><td>Name of the current map.</td></tr>
+                  <tr><td><code>getSize()</code></td><td><code>{ width: number; height: number }</code></td><td>Full server map dimensions, independent of explored tiles. Both are zero before map information arrives.</td></tr>
                 </tbody>
               </table>
             </div>

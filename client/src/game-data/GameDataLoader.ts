@@ -39,10 +39,15 @@ export type ObjectCategory =
   | 'Other';
 
 export interface ObjectDef {
+  biome?: string;
+  group?: string;
   type: number;
   id: string;
   displayId: string;
   objectClass: string;
+  minimapIcon?: string;
+  minimapColor?: number;
+  isEventBoss?: boolean;
   textureFile: string;
   textureIndex: number;
   projectiles: Map<number, ProjectileDef>;
@@ -269,6 +274,13 @@ export class GameDataLoader {
         id,
         displayId,
         objectClass,
+        minimapIcon: String(obj.MinimapIcon?.['@_piece'] ?? ''),
+        minimapColor: obj.Color === undefined ? undefined : Number(obj.Color),
+        isEventBoss: String(obj.MinimapIcon?.['@_piece'] ?? '') === 'Boss'
+          // Untinted Boss icons use the default marker; MV shrine uses an off-white tint.
+          && (obj.Color === undefined || [0x8f04a8, 0x1b006d, 0xffffff, 0xd6d6bf].includes(Number(obj.Color))),
+        biome: String(obj.Terrain ?? obj.RealmScore?.Biome ?? '').trim(),
+        group: String(obj.Group ?? '').trim(),
         textureFile: readFirstTextureFile(obj.Texture),
         textureIndex: readFirstTextureIndex(obj.Texture),
         projectiles: new Map(),

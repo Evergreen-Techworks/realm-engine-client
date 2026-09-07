@@ -1,9 +1,11 @@
 #include "pch-il2cpp.h"
 #include "UDodgePathfinder.h"
+#include "UDodgeNavigation.h"
 #include "UDodgeCore.h"   // Core::PointSafety — the cheap per-cell danger (plain-data)
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 
 // UDodge grid pathfinder (plan 65) — WORKER-THREAD compute.
 //
@@ -957,41 +959,49 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
     // Forward order [0]=start; collinear-reduce to turn points, cap at kMaxNavWpts.
     out.navWpts[0] = in.player;
     int wn = 1;
-    int prevGx = s_navChain[len - 1] % kNS, prevGy = s_navChain[len - 1] / kNS;
-    int lastDx = 0, lastDy = 0;
+    // A* searches from a tile centre. Keep that alignment point when the live
+    // player is off-centre; replacing it with the player cuts the first leg
+    // diagonally across the very obstacle we are trying to get around.
+    const Vec2 startCenter = NavCellWorld(center, startGx, startGy);
+    if (LenSq(Sub(startCenter, in.player)) > 1e-6f)
+        out.navWpts[wn++] = startCenter;
+    // Preserve the vertex BEFORE each change of direction. Saving the first
+    // cell after the turn cuts across the inside of obstacles.
+    int remaining = len - 1;
     for (int i = len - 2; i >= 0 && wn < kMaxNavWpts; --i) {
-        const int gx = s_navChain[i] % kNS, gy = s_navChain[i] / kNS;
-        const int dx = (gx > prevGx) - (gx < prevGx);
-        const int dy = (gy > prevGy) - (gy < prevGy);
-        const bool turn = (dx != lastDx || dy != lastDy);
-        const bool last = (i == 0);
-        if (turn || last) out.navWpts[wn++] = NavCellWorld(center, gx, gy);
-        lastDx = dx; lastDy = dy; prevGx = gx; prevGy = gy;
+        const int previous = s_navChain[i + 1];
+        const int current = s_navChain[i];
+        bool turn = false;
+        if (i > 0) {
+            const int next = s_navChain[i - 1];
+            turn = current % kNS - previous % kNS != next % kNS - current % kNS ||
+                   current / kNS - previous / kNS != next / kNS - current / kNS;
+        }
+        if (turn || i == 0) {
+            out.navWpts[wn++] = NavCellWorld(center, current % kNS, current / kNS);
+            remaining = i;
+        }
     }
     out.navWptCount = wn;
     out.navFound    = true;
-    out.navPartial  = !reached || !goalInWindow;
+    out.navPartial  = !reached || !goalInWindow || remaining > 0;
     out.navArrived  = false;
     out.navGoalCell = NavCellWorld(center, target % kNS, target / kNS);
 
-    // Steering target: ~one move budget ahead along the polyline (smooth straight
-    // drive that approximates the corridor; the driver re-plans each tick).
-    const float b = std::max(in.moveBudget, 1.f) * kUNavLookaheadBudgets;
-    Vec2  cur2 = in.player;
-    Vec2  stepT = out.navWpts[wn - 1];      // default: the far end
-    float acc = 0.f; bool set = false;
-    for (int i = 1; i < wn; ++i) {
-        const Vec2 w = out.navWpts[i];
-        const float seg = Len(Sub(w, cur2));
-        if (!set && acc + seg >= b) {
-            const float rem = b - acc;
-            const Vec2 dir = Normalize(Sub(w, cur2));
-            stepT = LenSq(dir) > 1e-6f ? Add(cur2, Mul(dir, rem)) : w;
-            set = true; break;
-        }
-        acc += seg; cur2 = w;
-    }
-    out.navStepTarget = stepT;
+    // Use the same corner-aware follower as the live driver. The worker only
+    // reads its snapshot; no game-object calls are made here.
+    MapInput navInput{};
+    navInput.settings = in.settings;
+    navInput.env.occFlags = in.navGrid.flags;
+    navInput.env.occCenter = center;
+    navInput.env.occSide = kNS;
+    navInput.env.occRadius = kNR;
+    navInput.env.occCellTiles = kUNavCellTiles;
+    float deviation = 0.f; bool nearEnd = false;
+    out.navStepTarget = Navigation::Follow(out.navWpts, wn, in.player,
+        std::max(in.moveBudget, 1.f) * kUNavLookaheadBudgets, deviation, nearEnd,
+        [&](Vec2 from, Vec2 to) { return OccupancyPathClear(navInput, from, to); });
+
 }
 
 } // namespace

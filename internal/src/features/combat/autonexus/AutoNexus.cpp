@@ -222,7 +222,7 @@ static constexpr float kLivenessGraceMs  = 60.f;
 // hook for it. If there is, please let me know and I'll change this. 
 static bool InstanceLooksAlive(const WorldProjectile& proj, float elapsedNow)
 {
-    if (!proj.ptr) return true;
+    if (proj.laser || !proj.ptr) return true;
     if (elapsedNow < kLivenessGraceMs) return true;
     float bx = proj.x, by = proj.y;
     ProjectileTracking::ComputePosAtSafe(proj, elapsedNow, bx, by);
@@ -276,7 +276,7 @@ static bool OverlapsAt(const WorldProjectile& proj, float tAbsMs,
                        float plx, float ply)
 {
     float bx = proj.x, by = proj.y;
-    ProjectileTracking::ComputePosAtSafe(proj, tAbsMs, bx, by);
+    if (!proj.laser) ProjectileTracking::ComputePosAtSafe(proj, tAbsMs, bx, by);
     if (!std::isfinite(bx) || !std::isfinite(by)) return false;
     return DodgeHit::Hits(proj, bx, by, plx, ply, 1.f, kNexusHitPadTiles);
 }
@@ -316,6 +316,14 @@ static float FindHitMsUntil(const WorldProjectile& proj, float elapsedNow,
     if (!(span > 0.f)) return -1.f;
 
     if (OverlapsAt(proj, elapsedNow, pm.x, pm.y)) return 0.f;
+
+    if (proj.laser) {
+        for (float t = kFineStepMs; t < span + kFineStepMs; t += kFineStepMs) {
+            const float tc = std::min(t, span);
+            if (OverlapsAt(proj, elapsedNow + tc, pm.x + pm.vx * tc, pm.y + pm.vy * tc)) return tc;
+        }
+        return -1.f;
+    }
 
     // First a board pass, we calculate larger intervals and do a sweep against the player's position.
     // I'm increasing the player hitbox size by 2x to determine if the sweep would hit because I'd rather
@@ -578,7 +586,7 @@ static void RunAutoNexus()
                 // missed threat → death. When speed is unknown, DON'T cull (scan it).
                 const float spd = (proj.speed / 10000.f) * (proj.speedMul > 0.f ? proj.speedMul : 1.f);
                 if (std::isfinite(spd) && spd > 1e-5f) {
-                    const float maxReach = spd * horizon + 4.0f;
+                    const float maxReach = spd * horizon + 4.0f + (proj.laser ? proj.laserDistance : 0.f);
                     const float pdx = proj.x - pm.x, pdy = proj.y - pm.y;
                     const float sdx = proj.x - serverPm.x, sdy = proj.y - serverPm.y;
                     if (pdx * pdx + pdy * pdy > maxReach * maxReach &&
@@ -587,7 +595,7 @@ static void RunAutoNexus()
                 }
             }
 
-            if (retroMs > 0.f &&
+            if (!proj.laser && retroMs > 0.f &&
                 CrossedPlayerInPast(proj, alreadyElapsed, retroMs, prevPx, prevPy, pm.x, pm.y)) {
                 ProjectileTracking::RetireProjectile(proj);
                 continue;
@@ -614,64 +622,11 @@ static void RunAutoNexus()
                   [](const Threat& a, const Threat& b) { return a.tHitMs < b.tHitMs; });
     }
 
-    // ── AOE bombs (never-die backstop) ────────────────────────────────────────
-    // AutoNexus previously ignored AOE entirely, so a bomb landing on you was
-    // never a threat → no nexus → death. Predict every enemy damaging AOE: if the
-    // player's predicted position AT DETONATION is inside the blast (and detonation
-    // is within the horizon) report it as a conservatively-lethal threat so the
-    // client nexuses. The dodge now avoids bombs, so this only fires when the dodge
-    // FAILED to clear the blast — exactly a last-resort. Not gated by any toggle.
-    {
-        static std::vector<WorldAoe> s_naoes;
-        s_naoes.clear();
-        AoeTracking::EnsureInstalled();
-        AoeTracking::CopyActiveForDraw(s_naoes);
-        const ULONGLONG nowA = GetTickCount64();
-        int aoeIdx = 0;
-        bool added = false;
-        for (const WorldAoe& a : s_naoes) {
-            if (!a.valid || !a.isDamaging) continue;
-            if (a.isEnemyChecked && !a.isEnemy) continue;
-            if (!std::isfinite(a.destX) || !std::isfinite(a.destY)) continue;
-
-            const float radius   = (std::isfinite(a.radius) && a.radius > 0.f) ? std::min(a.radius, 12.f) : 1.5f;
-            const float elapsed  = static_cast<float>(nowA > a.spawnTick ? nowA - a.spawnTick : 0ULL);
-            const float lifeMs   = AoeTracking::LifetimeMs(a);
-            // PER-SOURCE ARMING (shared with udodge/pjdodge — AoeTracking.cpp).
-            // An explosion-controller (kAoeSrcExpl) entry is captured AT detonation:
-            // its arcMs is travel time ALREADY SPENT, so reading it as a landing
-            // delay treated up to ~2.1 s of live, full-strength blast as inert and
-            // AutoNexus simply did not fire. Observed state only — this is a
-            // capture-path fact, never anything the dodge intends to do.
-            const float landAtMs = AoeTracking::LandDelayMs(a);
-            const float detonMs  = landAtMs - elapsed;          // ms until blast (≤0 = already blasting)
-            if (elapsed >= lifeMs + 50.f) continue;             // expired
-            if (detonMs > horizon) continue;                    // too far out — re-check next poll
-
-            const float t   = std::max(0.f, detonMs);
-            const float plx = pm.x + pm.vx * t;
-            const float ply = pm.y + pm.vy * t;                 // predicted player pos at detonation
-            const float dx  = plx - a.destX, dy = ply - a.destY;
-            const float rr  = radius + DodgeHit::kPlayerHalf + kNexusHitPadTiles;
-            const float splx = serverPm.x + serverPm.vx * t;
-            const float sply = serverPm.y + serverPm.vy * t;
-            const float sdx = splx - a.destX, sdy = sply - a.destY;
-            if (dx * dx + dy * dy > rr * rr &&
-                (!hasServerAnchor || sdx * sdx + sdy * sdy > rr * rr)) continue;
-
-            Threat th{};
-            th.attackerObjId = static_cast<int32_t>(a.ownerObjId);
-            th.bulletId      = 20000 + (aoeIdx++);
-            th.tHitMs        = t;
-            th.rawDamage     = 9999;                            // conservatively lethal (dodge already failed to clear it)
-            th.armorPiercing = false;
-            threats.push_back(th);
-            added = true;
-        }
-        if (added)
-            std::sort(threats.begin(), threats.end(),
-                      [](const Threat& a, const Threat& b) { return a.tHitMs < b.tHitMs; });
-    }
+    // Visual AoE tracking supplies geometry/timing but no measured damage.
+    // Do not turn each zone into a fabricated 9999-damage projectile. Multiple
+    // overlapping captures previously summed into fictitious ~30000 HP losses.
+    // UDodge still avoids these zones; client AOE/AOEACK handling uses packet
+    // damage for the health ledger. Unknown damage is not a numeric forecast.
 
     // Ground damage is a distinct hazard udodge's safeWalk may or may not avoid —
     // it is NEVER gated by the projectile suppression above. Always predict and

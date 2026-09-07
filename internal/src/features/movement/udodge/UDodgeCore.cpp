@@ -174,12 +174,40 @@ bool ZoneClear(const MapInput& in, Vec2 pos)
 bool ZonePathClear(const MapInput& in, Vec2 from, Vec2 to)
 {
     if (!in.map) return true;
-    if (!ZoneClear(in, from)) return ZoneClear(in, to);   // escaping a disc: endpoint rule
     const float playerHalf = PlayerSafetyHalf(in);
     for (int i = 0; i < in.map->zoneCount; ++i) {
         const ZoneThreat& z = in.map->zones[i];
         if (!z.active) continue;                          // pending zones stay cost-only
-        if (PointSegDistEuclid(z.pos, from, to) - (z.radius + playerHalf) < 0.f) return false;
+        const float radius = z.radius + playerHalf;
+        // Relax only the disc we are escaping. Being inside one blast must not
+        // allow the escape segment to cross a different blast with clear ends.
+        if (Len(Sub(from, z.pos)) < radius) {
+            if (Len(Sub(to, z.pos)) < radius) return false;
+        } else if (PointSegDistEuclid(z.pos, from, to) < radius) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ZoneEscapePathClear(const MapInput& in, Vec2 from, Vec2 to)
+{
+    if (!in.map) return true;
+    const Vec2 step = Sub(to, from);
+    const float playerHalf = PlayerSafetyHalf(in);
+    for (int i = 0; i < in.map->zoneCount; ++i) {
+        const ZoneThreat& z = in.map->zones[i];
+        if (!z.active) continue;
+        const float radius = z.radius + playerHalf;
+        const Vec2 start = Sub(from, z.pos);
+        if (Len(start) < radius) {
+            // Squared distance along a straight step has derivative
+            // 2*(dot(start,step) + t*dot(step,step)). Nonnegative at t=0
+            // means the whole step moves outward, even if escape takes ticks.
+            if (Dot(start, step) < 0.f) return false;
+        } else if (PointSegDistEuclid(z.pos, from, to) < radius) {
+            return false;
+        }
     }
     return true;
 }
@@ -377,44 +405,93 @@ void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2
     for (int i = 0; i < map.laneCount && out.count < kMaxProjectiles; ++i) {
         const LaneThreat& L = map.lanes[i];
         if (L.pointCount <= 0) continue;
+        // Cull against the SOURCE polyline, not isolated march samples. A fast
+        // shot can cross the entire search region between two sampled endpoints.
+        float minD = Len(Sub(L.points[0], cullCenter));
+        float maxSpeed = 0.f;
+        for (int j = 1; j < L.pointCount; ++j) {
+            minD = std::min(minD, PointSegDistEuclid(cullCenter, L.points[j - 1], L.points[j]));
+            const float dt = L.pointTimesMs[j] - L.pointTimesMs[j - 1];
+            if (dt > 1e-3f)
+                maxSpeed = std::max(maxSpeed, Len(Sub(L.points[j], L.points[j - 1])) / dt);
+        }
+        const float hitHalf = std::clamp(L.hitHalf, 0.05f, 2.5f) * scale + kUPlayerHalf +
+                              std::clamp(positionUncertainty, 0.f, 0.35f);
+        const float timingPad = kUArrivalMargin + std::min(maxSpeed * kUPredErrMs, kUPredPadMaxTiles);
+        // Euclidean broad phase encloses the complete Chebyshev hit square.
+        if (minD > cullTiles + 1.414214f * (hitHalf + timingPad)) continue;
+        if (L.beam && L.pointCount >= 2) {
+            const int idx = out.count++;
+            out.beam[idx] = true;
+            out.pos[idx][0] = L.points[0];
+            for (int k = 1; k < kSamples; ++k) out.pos[idx][k] = L.points[L.pointCount - 1];
+            out.half[idx] = hitHalf;
+            out.arrPad[idx] = kUArrivalMargin;
+            out.speed[idx] = 0.f;
+            out.sub[idx] = false;
+            out.trust[idx] = kUTemporalSteps;
+            out.expiresMs[idx] = L.remainingLifeMs >= 0.f ? L.remainingLifeMs + kUPredErrMs : 0.f;
+            continue;
+        }
         Vec2 samples[kSamples];
         SampleLane(L, samples);
-        float minD = kHugeClearance;
-        for (int k = 0; k < kSamples; ++k)
-            minD = std::min(minD, Len(Sub(samples[k], cullCenter)));
-        if (minD > cullTiles) continue;                  // far/receding — irrelevant
         const int idx = out.count++;
+        out.beam[idx] = false;
         for (int k = 0; k < kSamples; ++k) out.pos[idx][k] = samples[k];
-        out.half[idx] = std::clamp(L.hitHalf, 0.05f, 2.5f) * scale + kUPlayerHalf +
-                        std::clamp(positionUncertainty, 0.f, 0.35f);
+        out.half[idx] = hitHalf;
         // FAST LANE? The swept-segment queries chord this lane between march
         // samples; if it travels far enough per step for that chord to diverge
         // from its real (possibly curving) path, sample the half-steps too so the
         // queries follow the path in two pieces instead of one. Only fast lanes
         // pay for this — one extra SampleLaneTimes here and one extra segment
         // test per step in the queries.
-        float maxSweep = 0.f;
-        for (int k = 0; k < kUTemporalSteps; ++k)
-            maxSweep = std::max(maxSweep, Len(Sub(samples[k + 1], samples[k])));
-        out.sub[idx] = (maxSweep > kUTemporalMaxSweepTiles);
-        // Lane SPEED (tiles/ms) from the same chord — one divide per lane, once
-        // per solve. MAX over the steps, not mean: the margin has to hold at the
-        // lane's fastest moment, and a lane whose trace ran short reads slow on
-        // the clamped tail (taking the max keeps the moving part honest).
-        out.speed[idx]  = maxSweep / kUTemporalStepMs;
-        out.arrPad[idx] = kUArrivalMargin +
-            std::min(out.speed[idx] * kUPredErrMs, kUPredPadMaxTiles);
+        out.sub[idx] = (maxSpeed * kUTemporalStepMs > kUTemporalMaxSweepTiles);
+        // Use the fastest SOURCE segment: returning endpoints can hide both
+        // fast motion and the timing error that motion needs to absorb.
+        out.speed[idx]  = maxSpeed;
+        out.arrPad[idx] = timingPad;
         if (out.sub[idx])
             SampleLaneTimes(L, kUTemporalStepMs * 0.5f, kUTemporalSteps, out.mid[idx]);
-        // TRUSTED PREFIX. Samples past the polyline's last point are the clamp, not
-        // a prediction. They are still a FACT when that point is where the shot
-        // ENDS (tailAtShotEnd) — a dead bullet genuinely stops. Otherwise trust only
-        // the marched steps the trace actually reached; the queries fall back to the
+        // Bound the geometry lost when resampling the source trace. Even 50 ms
+        // samples can alias an oscillation into a stationary point. Between the
+        // union of source vertices and march knots, both paths are linear, so
+        // their max Chebyshev difference occurs at a vertex. At march knots the
+        // difference is zero by construction; testing source vertices suffices.
+        // Fold the bound into query clearance once per lane, with no new arrays
+        // or per-candidate work. This bounds the supplied trace, not unobserved
+        // motion between the sensor's own samples.
+        float curveError = 0.f;
+        for (int j = 0; j < L.pointCount; ++j) {
+            const float t = L.pointTimesMs[j];
+            if (t < 0.f || t >= kHorizonMs) continue;
+            const int k = static_cast<int>(t / kUTemporalStepMs);
+            const float f = (t - k * kUTemporalStepMs) / kUTemporalStepMs;
+            Vec2 approx;
+            if (out.sub[idx]) {
+                const Vec2 a = f <= 0.5f ? out.pos[idx][k] : out.mid[idx][k];
+                const Vec2 b = f <= 0.5f ? out.mid[idx][k] : out.pos[idx][k + 1];
+                approx = Add(a, Mul(Sub(b, a), f <= 0.5f ? 2.f * f : 2.f * f - 1.f));
+            } else {
+                approx = Add(out.pos[idx][k], Mul(Sub(out.pos[idx][k + 1], out.pos[idx][k]), f));
+            }
+            const Vec2 error = Sub(L.points[j], approx);
+            curveError = std::max(curveError, Cheb(error.x, error.y));
+        }
+        out.arrPad[idx] += curveError;
+        // TRUSTED PREFIX. A trace covering the known lifetime can use its final
+        // point during the short expiry grace; queries ignore it after expiry.
+        // Otherwise trust only the marched steps the trace actually reached;
+        // the queries fall back to the
         // present-tense floor past that. Note this also catches COVERAGE DECAY: a
         // lane traced at the last server tick loses time-from-now on every mid-tick
         // re-anchor, which no per-trace flag would ever see.
         const float tracedMs = L.pointTimesMs[L.pointCount - 1];
-        if (L.tailAtShotEnd || !(tracedMs < kHorizonMs)) {
+        const float life = std::isfinite(L.remainingLifeMs) && L.remainingLifeMs >= 0.f
+            ? L.remainingLifeMs : (L.tailAtShotEnd ? tracedMs : -1.f);
+        // Keep the existing timing uncertainty as a short late-expiry grace.
+        // Unknown trace ends are NOT evidence that the projectile has died.
+        out.expiresMs[idx] = life >= 0.f ? life + kUPredErrMs : 0.f;
+        if ((life >= 0.f && tracedMs >= life) || !(tracedMs < kHorizonMs)) {
             out.trust[idx] = kUTemporalSteps;
         } else {
             const int t = static_cast<int>(std::floor(tracedMs / kUTemporalStepMs));
@@ -551,6 +628,11 @@ static inline Vec2 BulletInStep(const Ctx& c, int li, int k, float f)
 // loads per lane per step over arrays that are ≤ a few KB and stay hot in L1 for
 // the whole solve (one Ctx serves all 131 candidates), and c.pos[li][k..k+1] is
 // two adjacent floats either way.
+static float ExpiryMs(const Ctx& c, int li)
+{
+    return c.expiresMs[li] > 0.f ? c.expiresMs[li] : kHugeClearance;
+}
+
 float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P, float scanUntilMs)
 {
     const Vec2  to = Sub(P, player);
@@ -581,7 +663,7 @@ float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P, float scanUnt
         // they are built ONCE per step here rather than per lane.
         const float tMid = t0 + kUTemporalStepMs * 0.5f;
         const bool  useArr = (tArrive > t0 && tArrive < t1);
-        float ts[4]; Vec2 ps[4]; float fs[4]; bool isMid[4];
+        float ts[4]; Vec2 ps[4]; bool isMid[4];
         int   n = 0;
         ts[n] = t0;                                         isMid[n] = false; ++n;
         if (useArr && tArrive <  tMid) { ts[n] = tArrive;    isMid[n] = false; ++n; }
@@ -590,10 +672,16 @@ float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P, float scanUnt
         ts[n] = t1;                                         isMid[n] = false; ++n;
         for (int i = 0; i < n; ++i) {
             ps[i] = playerAt(ts[i]);
-            fs[i] = (ts[i] - t0) * (1.f / kUTemporalStepMs);
         }
 
         for (int li = 0; li < c.count; ++li) {
+            const float expiry = ExpiryMs(c, li);
+            if (t0 >= expiry) continue;
+            if (c.beam[li]) {
+                const float end = std::min({t1, tEnd, expiry});
+                if (!TracedPathClear(c, li, playerAt(t0), playerAt(end), c.half[li] + c.arrPad[li])) return t0;
+                continue;
+            }
             const int trust = c.trust[li];
             if (k > trust) continue;                 // untrusted tail already judged at k == trust
             const float half = c.half[li] + c.arrPad[li];   // speed-scaled (kUPredErrMs)
@@ -605,11 +693,12 @@ float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P, float scanUnt
                 // this violation is attributed to — the same gate the old shape wrote as
                 // `tCheckEnd > tTrust`, since we only reach step k when t0 < tEnd.
                 Vec2 pa = ps[0];
-                if (tArrive > t0 && tArrive < tEnd) {
+                const float tailEnd = std::min(tEnd, expiry);
+                if (tArrive > t0 && tArrive < tailEnd) {
                     if (!TracedPathClear(c, li, pa, P, half)) return t0;
                     pa = P;
                 }
-                if (!TracedPathClear(c, li, pa, playerAt(tEnd), half)) return t0;
+                if (!TracedPathClear(c, li, pa, playerAt(tailEnd), half)) return t0;
                 continue;
             }
             const bool useMid = c.sub[li];
@@ -617,11 +706,13 @@ float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P, float scanUnt
             Vec2 bPrev = BulletInStep(c, li, k, 0.f);
             for (int i = 1; i < n; ++i) {
                 if (isMid[i] && !useMid) continue;   // slow lane: one chord across the step
-                const Vec2 pCur = ps[i];
-                const Vec2 bCur = BulletInStep(c, li, k, fs[i]);
+                const float curTime = std::min(ts[i], expiry);
+                const Vec2 pCur = curTime == ts[i] ? ps[i] : playerAt(curTime);
+                const Vec2 bCur = BulletInStep(c, li, k, (curTime - t0) / kUTemporalStepMs);
                 if (MinChebOnSegment(bPrev.x - pPrev.x, bPrev.y - pPrev.y,
                                      bCur.x  - pCur.x,  bCur.y  - pCur.y) <= half) return t0;
                 pPrev = pCur; bPrev = bCur;
+                if (curTime >= expiry) break;
             }
         }
     }
@@ -685,34 +776,32 @@ float EvidenceHorizonMs(const Ctx& c)
 // and the route's final cell is not held open for the rest of the horizon. So the
 // dwell fix does not apply here.
 //
-// A FAST lane is followed piecewise across the stored (half-)samples inside the
-// window instead of chorded end-to-end: an edge window can span more than one
-// march step, and chording a fast lane across several steps straightens away the
-// very crossing this test exists to catch. Bounded — an edge window is one cell
-// of travel, and the walk is hard-capped anyway.
+// Follow every stored segment within the arrival window. A slow curve can
+// cross the queried point between the window endpoints too; fast lanes use
+// their additional half-step samples.
 bool ArrivalClear(const Ctx& c, Vec2 B, float tA, float tB)
 {
     for (int li = 0; li < c.count; ++li) {
+        const float laneEnd = std::min(tB, ExpiryMs(c, li));
+        if (tA >= ExpiryMs(c, li)) continue;
         const float half = c.half[li] + c.arrPad[li];   // speed-scaled (kUPredErrMs)
+        if (c.beam[li]) {
+            if (!TracedPathClear(c, li, B, B, half)) return false;
+            continue;
+        }
         // UNKNOWN TAIL: this edge's window runs past what the lane's trace covers,
         // so past that point the lane is judged against its whole traced path
         // (see TracedPathClear). One test covers the entire untrusted remainder —
         // B is a fixed point here, so there is no player path to split.
         if (c.trust[li] < kUTemporalSteps) {
             const float tTrust = static_cast<float>(c.trust[li]) * kUTemporalStepMs;
-            if (tB > tTrust && !TracedPathClear(c, li, B, B, half)) return false;
+            if (laneEnd > tTrust && !TracedPathClear(c, li, B, B, half)) return false;
         }
-        if (!c.sub[li]) {
-            const Vec2 b0 = BulletPosAt(c, li, tA);
-            const Vec2 b1 = BulletPosAt(c, li, tB);
-            if (MinChebOnSegment(b0.x - B.x, b0.y - B.y,
-                                 b1.x - B.x, b1.y - B.y) <= half) return false;
-            continue;
-        }
-        // Fast lane: step from tA to tB, breaking at every stored half-step sample.
-        const float dt = kUTemporalStepMs * 0.5f;
+        // Follow every stored segment, including for slow lanes. A long window
+        // can contain a turn even when no individual step needs refinement.
+        const float dt = c.sub[li] ? kUTemporalStepMs * 0.5f : kUTemporalStepMs;
         float t = std::max(tA, 0.f);
-        const float tEnd = std::min(std::max(tB, t), kHorizonMs);
+        const float tEnd = std::min(std::max(laneEnd, t), kHorizonMs);
         Vec2  prev = BulletPosFine(c, li, t);
         bool  tested = false;
         for (int guard = 0; guard < 2 * kUTemporalSteps + 2 && t < tEnd; ++guard) {
@@ -728,7 +817,7 @@ bool ArrivalClear(const Ctx& c, Vec2 B, float tA, float tB)
         // Degenerate window (tB == tA, or both past the horizon): still test the
         // single instant, so the fast path can never be laxer than the slow one.
         if (!tested && Cheb(prev.x - B.x, prev.y - B.y) <= half) return false;
-        if (tB > kHorizonMs) {
+        if (laneEnd > kHorizonMs) {
             // Beyond the horizon the lane is frozen at its last sample (the
             // CONSERVATIVE-FREEZE contract) — one endpoint test covers the rest.
             const Vec2 bFrozen = c.pos[li][kUTemporalSteps];
@@ -747,9 +836,15 @@ bool EdgeClear(const Ctx& c, Vec2 A, Vec2 B, float tA, float tB)
     };
 
     for (int li = 0; li < c.count; ++li) {
+        const float laneEnd = std::min(tB, ExpiryMs(c, li));
+        if (tA >= ExpiryMs(c, li)) continue;
         const float half = c.half[li] + c.arrPad[li];
+        if (c.beam[li]) {
+            if (!TracedPathClear(c, li, A, playerAt(laneEnd), half)) return false;
+            continue;
+        }
         const float tTrust = static_cast<float>(c.trust[li]) * kUTemporalStepMs;
-        const float trustedEnd = std::min(tB, tTrust);
+        const float trustedEnd = std::min(laneEnd, tTrust);
 
         float t = std::max(tA, 0.f);
         const float tEnd = std::min(std::max(trustedEnd, t), kHorizonMs);
@@ -771,14 +866,14 @@ bool EdgeClear(const Ctx& c, Vec2 A, Vec2 B, float tA, float tB)
         // An untrusted prediction tail cannot be time-threaded honestly. Preserve
         // the existing conservative traced-prefix floor, but apply it only to the
         // portion of the player edge that lies beyond the trusted time.
-        if (tB > tTrust) {
+        if (laneEnd > tTrust) {
             const Vec2 u0 = playerAt(std::max(tA, tTrust));
-            if (!TracedPathClear(c, li, u0, B, half)) return false;
+            if (!TracedPathClear(c, li, u0, playerAt(laneEnd), half)) return false;
         }
         if (tA >= kHorizonMs) {
             const Vec2 frozen = c.pos[li][kUTemporalSteps];
             if (MinChebOnSegment(frozen.x - A.x, frozen.y - A.y,
-                                 frozen.x - B.x, frozen.y - B.y) <= half) return false;
+                                 frozen.x - playerAt(laneEnd).x, frozen.y - playerAt(laneEnd).y) <= half) return false;
         }
     }
     return true;

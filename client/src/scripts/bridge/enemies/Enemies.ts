@@ -5,6 +5,8 @@ import { warnUnimplemented } from '../stubWarn.js';
 import { StatType } from '../../../constants/StatType.js';
 import { ConditionEffect } from '../../../constants/ConditionEffect.js';
 
+const ENEMY_MAX_STALE_MS = 3000;
+
 function hasEffect(mask0: number, mask1: number, bit: number): boolean {
   return bit < 31 ? ((mask0 >>> 0) & (1 << bit)) !== 0
     : ((mask1 >>> 0) & (1 << (bit - 31))) !== 0;
@@ -14,7 +16,10 @@ export class BridgeEnemies {
   static install(deps: BridgeDeps): void {
     const build = (objectId: number): Enemy | null => {
       const e = deps.worldState.getEntity(objectId);
-      if (!e || deps.gameData.getObjectCategory(e.objectType) !== 'Enemy') return null;
+      if (!deps.clientRef.current?.connected || !e
+          || deps.gameData.getObjectCategory(e.objectType) !== 'Enemy'
+          || !Number.isFinite(e.lastUpdate) || Date.now() - e.lastUpdate > ENEMY_MAX_STALE_MS
+          || !Number.isFinite(e.pos.x) || !Number.isFinite(e.pos.y)) return null;
       const def = deps.gameData.getObject(e.objectType);
       const s = e.stats ?? {};
       const hp = Number(s[String(StatType.HP)] ?? 0);
@@ -22,12 +27,18 @@ export class BridgeEnemies {
       const defense = Number(s[String(StatType.Defense)] ?? def?.defense ?? 0);
       const effects0 = Number(s[String(StatType.Effects)] ?? 0);
       const effects1 = Number(s[String(StatType.Effects2)] ?? 0);
+      // Hidden entities can remain in the wire snapshot with positive HP.
+      // Do not acquire or indefinitely retain an invisible helper/phase.
+      if (hasEffect(effects0, effects1, ConditionEffect.Invisible)) return null;
       const invulnerable = hasEffect(effects0, effects1, ConditionEffect.Invulnerable)
         || hasEffect(effects0, effects1, ConditionEffect.Invincible)
         || hasEffect(effects0, effects1, ConditionEffect.Stasis);
       return {
         objectId: e.objectId,
         objectType: e.objectType,
+        isEventBoss: def?.isEventBoss,
+        biome: def?.biome,
+        group: def?.group,
         name: def?.displayId ?? def?.id ?? `Enemy 0x${e.objectType.toString(16)}`,
         position: new Position(e.pos.x, e.pos.y),
         hp: Number.isFinite(hp) ? hp : 0,
@@ -48,12 +59,7 @@ export class BridgeEnemies {
       return deps.worldState.getEnemiesMatching(deps.gameData, p)
         .map((row) => build(row.objectId)).filter((e): e is Enemy => e != null);
     };
-    Enemies.getNearest = (): Enemy | null => {
-      const p = deps.clientRef.current?.playerData.pos;
-      if (!p) return null;
-      const row = deps.worldState.getNearestEnemy(deps.gameData, p);
-      return row ? build(row.objectId) : null;
-    };
+    Enemies.getNearest = (): Enemy | null => Enemies.getAll()[0] ?? null;
     Enemies.getNearestTo = (_position: Position): Enemy | null => {
       warnUnimplemented('Enemies.getNearestTo');
       return null;

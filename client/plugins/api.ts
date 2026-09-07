@@ -35,3 +35,5 @@ export { ClassId } from '../src/constants/ClassId.js';
 export { RuntimeScheduler } from '../src/util/RuntimeScheduler.js';
 export { getDllThreats, getDllGround, getDllThreatsAgeMs, getDllThreatsTruncated } from '../src/bridge/DllThreatBus.js';
 export { getDllAim, getDllAimAgeMs } from '../src/bridge/DllAimBus.js';
+
+export { tryInventoryAction } from '../src/util/InventoryActions.js';

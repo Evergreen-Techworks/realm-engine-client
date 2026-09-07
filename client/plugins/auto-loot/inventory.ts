@@ -7,6 +7,7 @@
  * {@link QUICKSLOT_PACKET_BASE}.
  */
 
+import { tryInventoryAction, StatType } from '../api.js';
 import type { PluginContext } from '../api.js';
 import type { ClientConnection } from '../api.js';
 import type { TrackedEntity } from '../api.js';
@@ -173,7 +174,7 @@ export function sendUseItemFromBag(
   bag: TrackedEntity,
   bagSlot: number,
   itemId: number,
-): void {
+): boolean {
   const packet = ctx.createPacket('USEITEM');
   packet.data.time = Math.trunc(client.time);
   packet.data.slotObject = { objectId: bag.objectId, slotId: bagSlot, objectType: itemId };
@@ -181,7 +182,9 @@ export function sendUseItemFromBag(
   packet.data.useType = 0;
   packet.data.unknownInt = 0;
   packet.modified = true;
-  client.sendToServer(packet);
+  return tryInventoryAction(client,
+    () => String(ctx.worldState?.getEntity(bag.objectId)?.stats?.[String(StatType.Inventory0 + bagSlot)] ?? -1),
+    () => client.sendToServer(packet));
 }
 
 /**
@@ -221,6 +224,12 @@ export function sendLootSwap(
     objectType: destination.currentObjectType,
   };
   packet.modified = true;
-  client.sendToServer(packet);
-  return true;
+  const readDestination = () => isQuickslotPacketSlot(destination.packetSlotId)
+    ? JSON.stringify(readQuickSlot(client, destination.packetSlotId - QUICKSLOT_PACKET_BASE))
+    : String(getPlayerSlotObjectType(client, destination.packetSlotId));
+  const beforeDestination = readDestination();
+  return tryInventoryAction(client,
+    () => Number(ctx.worldState?.getEntity(bag.objectId)?.stats?.[String(StatType.Inventory0 + bagSlot)] ?? -1) !== itemId
+      && readDestination() !== beforeDestination ? 'settled' : 'pending',
+    () => client.sendToServer(packet));
 }

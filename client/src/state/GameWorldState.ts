@@ -98,6 +98,16 @@ export interface NearestEnemyFilter {
  */
 export class GameWorldState {
   private entities = new Map<number, TrackedEntity>();
+  private deadObjects = new Set<number>();
+
+  /** Only confirmed death; stream-out drops do not prove a kill. */
+  isObjectDead(objectId: number): boolean { return this.deadObjects.has(objectId); }
+
+  private rememberDeath(objectId: number): void {
+    if (!Number.isInteger(objectId) || objectId < 0) return;
+    this.deadObjects.add(objectId);
+    if (this.deadObjects.size > 4096) this.deadObjects.delete(this.deadObjects.values().next().value!);
+  }
   // Packed tile map: key = (x << 16) | y → tile type
   private tileMap = new Map<number, number>();
   private lastMapIdentity = '';
@@ -199,6 +209,7 @@ export class GameWorldState {
   }
 
   private applyStatus(entity: TrackedEntity, status: any): void {
+    const previousHp = Number(entity.stats?.[String(StatType.HP)]);
     if (status.position) {
       entity.pos = { ...status.position };
     }
@@ -210,11 +221,18 @@ export class GameWorldState {
         }
       }
     }
+    if (Number(entity.stats?.[String(StatType.HP)]) <= 0
+      && (previousHp > 0 || Number(entity.stats?.[String(StatType.MaxHP)]) > 0))
+      this.rememberDeath(entity.objectId);
     entity.lastUpdate = Date.now();
   }
 
   attach(proxy: Proxy): void {
     proxy.hookPacket('UPDATE', (c, p) => this.onUpdate(c, p));
+    proxy.hookPacket('DAMAGE', (c, p) => {
+      this.ensureMapIdentity(c);
+      if (p.isDefined && p.data.kill === true) this.rememberDeath(Number(p.data.targetId));
+    });
     proxy.hookPacket('NEWTICK', (c, p) => this.onNewTick(c, p));
     proxy.hookPacket('MAPINFO', (c) => {
       this.clear();
@@ -247,6 +265,7 @@ export class GameWorldState {
           lastUpdate: Date.now(),
           stats: undefined,
         };
+        this.deadObjects.delete(status.objectId);
         this.applyStatus(tracked, status);
         this.entities.set(status.objectId, tracked);
       }
@@ -272,6 +291,7 @@ export class GameWorldState {
 
   clear(): void {
     this.entities.clear();
+    this.deadObjects.clear();
     this.tileMap.clear();
   }
 
@@ -291,6 +311,23 @@ export class GameWorldState {
     maxY: number,
     visitor: (x: number, y: number, tileType: number) => void,
   ): void {
+    const left = Math.max(0, Math.ceil(minX));
+    const right = Math.min(32767, Math.floor(maxX));
+    const top = Math.max(0, Math.ceil(minY));
+    const bottom = Math.min(65535, Math.floor(maxY));
+    if (left > right || top > bottom) return;
+    // Local queries should scale with the requested area, not the entire
+    // explored Realm. For sparse or large queries, scanning known tiles wins.
+    const area = (right - left + 1) * (bottom - top + 1);
+    if (area < this.tileMap.size) {
+      for (let x = left; x <= right; x++) {
+        for (let y = top; y <= bottom; y++) {
+          const tileType = this.tileMap.get((x << 16) | (y & 0xffff));
+          if (tileType !== undefined) visitor(x, y, tileType);
+        }
+      }
+      return;
+    }
     for (const [packed, tileType] of this.tileMap.entries()) {
       const x = packed >> 16;
       const y = packed & 0xffff;

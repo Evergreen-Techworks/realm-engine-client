@@ -256,7 +256,8 @@ void Render(const DebugSnapshot& snap,
         const int ni = std::min(t.instantCount, n);
         for (int j = 0; j + 1 < n; ++j)
             DrawLine(d, cam, t.points[j], t.points[j + 1],
-                     (j + 1 < ni) ? IM_COL32(235, 80, 80, 110) : IM_COL32(235, 80, 80, 40), 1.5f);
+                     t.beam ? IM_COL32(255, 100, 40, 230) :
+                     ((j + 1 < ni) ? IM_COL32(235, 80, 80, 110) : IM_COL32(235, 80, 80, 40)), t.beam ? 3.f : 1.5f);
         if (n > 0) DrawDot(d, cam, t.points[0], 3.f, IM_COL32(255, 90, 90, 220));
     }
 

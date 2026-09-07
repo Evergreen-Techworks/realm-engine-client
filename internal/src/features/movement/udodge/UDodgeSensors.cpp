@@ -59,7 +59,7 @@ constexpr float kAoeCullPad      = 16.f;
 // that an ACTIVE zone is an untraversable block for the pathfinder and a swept
 // veto in the solver (not a soft cost), it over-blocked on small ones.
 //
-//   armWindow = clamp((radius + kUPlayerHalf) / speed + kAoeArmReactionMs, lo, hi)
+//   armWindow = max((radius + kUPlayerHalf) / speed + kAoeArmReactionMs, lo)
 //
 // speed is the player's REAL tiles/ms — the same TestTAB::ReadDodgePlayerStats
 // source the solver's in.speed comes from, so the window and the motion it is
@@ -73,12 +73,8 @@ constexpr float kAoeArmReactionMs   = 2.f * kServerTickSec * 1000.f;   // 400 ms
 // Floor: below ~1.5 server ticks the bot cannot act on the warning at all, so a
 // shorter window is just a zone that flickers active for one frame before it lands.
 constexpr float kAoeArmWindowMinMs  = 1.5f * kServerTickSec * 1000.f;  // 300 ms
-// Ceiling: an armed disc HARD-BLOCKS routing, so this bounds how long one bomb may
-// wall off its radius before it even lands. 8 server ticks covers a ~7.8-tile blast
-// at SPD-50 speed outright (and more for a faster character, since the walk-out term
-// scales with speed); a rarer 12-tile blast gets a truncated — not absent — warning
-// rather than fencing off half the room for 2.5 s.
-constexpr float kAoeArmWindowMaxMs  = 8.f * kServerTickSec * 1000.f;   // 1600 ms
+// Do not cap the computed walk-out time: a slow player in a large blast
+// needs the full warning, even when that temporarily blocks a large region.
 // Speed unreadable (pre-first-NEWTICK, between worlds): fall back to the flat value
 // this formula replaced rather than guessing a speed.
 constexpr float kAoeArmWindowFallbackMs = 900.f;
@@ -117,6 +113,8 @@ bool CouldReachThreatRegion(const WorldProjectile& p, float playerX, float playe
                             float elapsedMs)
 {
     const float d = std::sqrt(DistSq(p.x, p.y, playerX, playerY));
+    if (p.laser && IsFinite(p.laserDistance) && p.laserDistance > 0.f)
+        return d <= kThreatCullTiles + p.laserDistance;
     if (d <= kThreatCullTiles) return true;
 
     const float speedMul = (IsFinite(p.speedMul) && p.speedMul > 0.f) ? p.speedMul : 1.f;
@@ -261,7 +259,7 @@ struct PacketShot {
     float speed = 0.f, lifetimeMs = 0.f, hitHalf = 0.5f;
     uint64_t receivedMs = 0;
 };
-constexpr int kMaxPacketShots = 256;
+constexpr int kMaxPacketShots = 1024;
 constexpr uint64_t kPacketRecoveryMs = 750;
 std::mutex s_packetMutex;
 PacketShot s_packetShots[kMaxPacketShots]{};
@@ -279,7 +277,7 @@ bool RuntimeHasShot(const PacketShot& s)
 
 void AppendPacketLanes(DangerMap& out, float playerX, float playerY, float laneCap, uint64_t nowMs)
 {
-    PacketShot local[kMaxPacketShots];
+    static thread_local PacketShot local[kMaxPacketShots];
     int n = 0;
     {
         std::lock_guard<std::mutex> lk(s_packetMutex);
@@ -320,6 +318,7 @@ void AppendPacketLanes(DangerMap& out, float playerX, float playerY, float laneC
         lane.ownerObjId = static_cast<uint32_t>(s.owner);
         lane.hitHalf = std::clamp(s.hitHalf, 0.05f, 2.5f);
         lane.provisional = true;
+        lane.remainingLifeMs = s.lifetimeMs > 0.f ? std::max(0.f, s.lifetimeMs - ageMs) : -1.f;
         lane.points[0] = live;
         lane.pointTimesMs[0] = 0.f;
         lane.pointCount = 1;
@@ -577,6 +576,16 @@ void SetInstantSpan(LaneThreat& lane, float laneCap)
 // to a single-point threat (the live disc still blocks).
 void TraceLane(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, float laneCap)
 {
+    lane.beam = p.laser && IsFinite(p.laserDistance) && p.laserDistance > 0.f && IsFinite(p.angle);
+    if (lane.beam) {
+        lane.pointCount = lane.instantCount = 2;
+        lane.points[0] = {p.x, p.y};
+        lane.points[1] = {p.x + std::cos(p.angle) * p.laserDistance,
+                          p.y + std::sin(p.angle) * p.laserDistance};
+        lane.pointTimesMs[0] = lane.pointTimesMs[1] = 0.f;
+        lane.tailAtShotEnd = false;
+        return;
+    }
     const char* src = nullptr;
     bool clamped = false;
     const float span = LaneSpanBound(p, laneCap);
@@ -624,8 +633,7 @@ float ZoneArmWindowMs(float radius, float speedTilesPerMs)
         return kAoeArmWindowFallbackMs;
     const float walkOutMs = (radius + kUPlayerHalf) / speedTilesPerMs;
     if (!IsFinite(walkOutMs)) return kAoeArmWindowFallbackMs;
-    return std::clamp(walkOutMs + kAoeArmReactionMs,
-                      kAoeArmWindowMinMs, kAoeArmWindowMaxMs);
+    return std::max(walkOutMs + kAoeArmReactionMs, kAoeArmWindowMinMs);
 }
 
 // Zone pass — present-tense classification only: every not-yet-expired zone
@@ -639,10 +647,10 @@ void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& 
     AoeTracking::CopyActiveForDraw(s_aoes);
 
     // AoeTracking retains up to 128 entries while DangerMap is deliberately
-    // smaller. Its ring-buffer order is not spatial, so taking the first 32 made
+    // equally sized. Its ring-buffer order is not spatial; the old first-32 cap made
     // nearby blasts disappear whenever older/farther effects filled the map.
-    // Nearest-first makes overflow deterministic and preserves every zone that
-    // can affect the player before decorative/distant entries consume capacity.
+    // The map now retains all 128 tracker entries. Sorting keeps nearby entries
+    // first without discarding bombs from a smaller downstream buffer.
     std::stable_sort(s_aoes.begin(), s_aoes.end(), [&](const WorldAoe& a,
                                                        const WorldAoe& b) {
         const float ad = IsFinitePoint(a.destX, a.destY)
@@ -914,7 +922,7 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
         // a wall tile, so this can NEVER drop a live shot. The age guard avoids a shot
         // that spawned right next to a wall being culled on its very first frames.
         {
-            if (elapsedMs > 80.f &&
+            if (!p.laser && elapsedMs > 80.f &&
                 WorldTAB::IsTileBlocked(static_cast<int>(std::floor(p.x)),
                                         static_cast<int>(std::floor(p.y)))) {
                 ProjectileTracking::RetireProjectile(p);
@@ -926,6 +934,8 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
 
         LaneThreat& lane = out.lanes[out.laneCount];
         lane = LaneThreat{};
+        lane.remainingLifeMs = IsFinite(p.lifetime) && p.lifetime > 0.f
+            ? std::max(0.f, p.lifetime - elapsedMs) : -1.f;
         lane.bulletId = static_cast<int32_t>(p.bulletId);
         lane.attackerObjId = p.attackerObjId;
         lane.ownerObjId = p.ownerObjId;
@@ -1014,6 +1024,8 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
         // projectile's LIVE position (mid-tick frames ride the game's own
         // interpolation — nothing is extrapolated by our clock).
         LaneThreat& lane = map.lanes[laneIdx];
+        lane.remainingLifeMs = IsFinite(p.lifetime) && p.lifetime > 0.f
+            ? std::max(0.f, p.lifetime - elapsedMs) : -1.f;
 
         // CURVED / non-linear shots (wavy, parametric, boomerang, turning,
         // accelerating) must NOT be re-anchored by a rigid nearest-point shift:
@@ -1024,7 +1036,7 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
         // Straight shots keep the cheap exact rigid shift below.
         const bool curved = IsCurvedShot(p);   // ONE definition, shared with CachedAnchorIndex
         const float laneCap = std::clamp(settings.laneTiles, 2.f, 16.f);
-        if (curved) {
+        if (curved || p.laser) {
             TraceLane(lane, p, elapsedMs, laneCap);   // identity + hitHalf preserved (TraceLane only sets the polyline)
         } else {
             // Re-anchor: rebase the polyline so the nearest lane point becomes the

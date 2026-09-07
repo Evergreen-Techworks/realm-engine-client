@@ -38,7 +38,6 @@ uint32_t                 g_seq = 0;            // monotonic publish sequence
 std::mutex               g_planMutex;
 Result                   g_latest;
 bool                     g_havePlan = false;
-CoreState                 g_solveState;
 
 void WorkerLoop()
 {
@@ -88,12 +87,15 @@ void WorkerLoop()
         goal.maxRange = local.weaponRangeTiles;
         goal.innerStandoff = local.innerStandoffTiles;
 
+        CoreState solveState = local.commitment.state;
         Solver::SolveResult solve{};
-        Solver::Solve(in, local.moveBudget, goal, plan, g_solveState, solve);
+        Solver::Solve(in, local.moveBudget, goal, plan, solveState, solve);
         {
             std::lock_guard<std::mutex> lk(g_planMutex);
             g_latest.plan = plan;
             g_latest.solve = solve;
+            g_latest.solveState = solveState;
+            g_latest.commitmentRevision = local.commitment.revision;
             g_latest.snapshotPlayer = local.player;
             g_latest.walkGoal = local.navGoal;
             g_latest.walkActive = local.goalWalkTo;
@@ -112,7 +114,6 @@ void Start()
     g_stop.store(false, std::memory_order_relaxed);
     { std::lock_guard<std::mutex> lk(g_snapMutex); g_haveSnap = false; }
     { std::lock_guard<std::mutex> lk(g_planMutex); g_havePlan = false; }
-    g_solveState.Reset();
     g_thread = std::thread(WorkerLoop);
 }
 

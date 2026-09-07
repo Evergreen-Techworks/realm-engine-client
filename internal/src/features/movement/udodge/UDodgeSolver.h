@@ -67,7 +67,7 @@ struct Goal {
     Vec2  lockPos{};        // locked boss position (for the stay-in-range preference)
     bool  walkTo = false;   // true = Shift+Click walk-to-spot: the solver ACTIVELY progresses
                             // toward goal.pos even while the current stand is safe (overriding
-                            // the durable-hold), until arrival (kUWalkArriveTiles). Distinct
+                            // the durable-hold), until anchor arrival (kUNavAnchorArriveTiles). Distinct
                             // from fromLock (orbit) and from a plain WASD/idle goal (bias only).
     float maxRange = 0.f;   // weapon range (tiles): the max distance from the boss at which
                             // it is still hittable. When fromLock && maxRange>0 this is the
@@ -99,7 +99,7 @@ struct SolveResult {
     // to be threatened. false = the move is an immediate dodge / hold.
     bool      prePosition = false;
     float     pocketDist  = 0.f; // reach to the nearest durable pocket (0 = none, or standing in one)
-    uint8_t   tempLanes   = 0;   // relevant bullets fed to the temporal test (post-cull) — diagnostics
+    uint16_t  tempLanes   = 0;   // relevant bullets fed to the temporal test (post-cull) — diagnostics
     // TEMPORAL DURABILITY of the chosen target, in [0,1] (kSolveDurableW): 0 = it
     // clears the dwell window and nothing more, 1 = nothing reaches it anywhere in
     // the horizon. Diagnostics ONLY — the term that acts on it is a score over the
@@ -151,5 +151,12 @@ struct SolveResult {
 //   state.lastMoveDir is read (commitment term) and updated (chosen heading).
 void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
            const Path::PlanResult& route, CoreState& state, SolveResult& out);
+
+// Validate the committed decision on the current map and replace it immediately
+// if unsafe. Rebuilt maps also recheck a held position's prediction horizon.
+// Returns true when a new solve was performed; never waits for the worker.
+bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
+                        const Path::PlanResult& route, CoreState& state,
+                        SolveResult& committed, bool mapRebuilt);
 
 } } // namespace UDodge::Solver

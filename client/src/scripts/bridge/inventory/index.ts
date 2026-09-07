@@ -13,6 +13,7 @@ import type { BridgeDeps } from '../BridgeDeps.js';
 import type { PlayerData } from '../../../state/PlayerData.js';
 import { depositToVault, withdrawFromVault } from './vaultTransfer.js';
 import { installVaultStoreHooks, getVaultStore } from './VaultStore.js';
+import { tryInventoryAction } from '../../../util/InventoryActions.js';
 import { warnUnimplemented } from '../stubWarn.js';
 
 function playerData(deps: BridgeDeps): PlayerData | null {
@@ -171,7 +172,7 @@ export function install(deps: BridgeDeps): void {
       pkt.data.useType = 0;
       pkt.data.unknownInt = 0;
       pkt.modified = true;
-      c.sendToServer(pkt);
+      tryInventoryAction(c, () => String(typeIdAtSlot(c.playerData, slotIndex)), () => c.sendToServer(pkt));
     } catch {
       // Void SDK API: a disconnect or stale slot simply leaves the item alone.
     }
@@ -190,7 +191,7 @@ export function install(deps: BridgeDeps): void {
       pkt.data.slotObject1 = { objectId: c.objectId, slotId: slotA, objectType: a };
       pkt.data.slotObject2 = { objectId: c.objectId, slotId: slotB, objectType: b };
       pkt.modified = true;
-      c.sendToServer(pkt);
+      tryInventoryAction(c, () => `${typeIdAtSlot(c.playerData, slotA)}:${typeIdAtSlot(c.playerData, slotB)}`, () => c.sendToServer(pkt));
     } catch {
       // Void API: ignore stale-slot/disconnect races.
     }

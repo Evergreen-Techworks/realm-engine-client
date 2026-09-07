@@ -9,6 +9,10 @@ function mapNameLower(deps: BridgeDeps): string {
 
 export class BridgeWorld {
   static install(deps: BridgeDeps): void {
+    World.getSize = () => {
+      const p = deps.clientRef.current?.playerData;
+      return { width: p?.mapWidth ?? 0, height: p?.mapHeight ?? 0 };
+    };
     World.isNexus = () => {
       const gid = deps.clientRef.current?.state?.gameId;
       if (gid === GameId.Nexus) return true;

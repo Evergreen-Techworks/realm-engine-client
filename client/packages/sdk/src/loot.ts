@@ -70,10 +70,10 @@ export const loot = {
   },
 
   /**
-   * Pick up all items from the bag with the given objectId, provided the bag is
+   * Pick up the next available item from the bag with the given objectId, provided the bag is
    * within `maxDistance` tiles of the player (default: 1.0).
-   * Sends one INVENTORYSWAP per non-empty slot, tracking claimed destinations within
-   * the call so the same inventory slot is never targeted twice.
+   * Sends at most one INVENTORYSWAP. Call again after inventory updates to drain
+   * the bag; returns 0 while another automatic inventory action is settling.
    *
    * Returns the number of INVENTORYSWAP packets sent, or `-1` if the bag was not
    * found in the world or is outside the distance threshold.

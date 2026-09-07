@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <algorithm>
 
 // DodgeGeometry — small inline helpers shared by DangerPlanner (planner /
 // frame phases) and MovementCorrector (last-mile veto hook). Kept in one
@@ -24,6 +25,21 @@ inline bool InProjAabb(float cx, float cy, float px, float py, float effR)
     const float dx = cx - px;
     const float dy = cy - py;
     return std::fabs(dx) < effR && std::fabs(dy) < effR;
+}
+
+// Segment against an inflated player box (finite beam, including end caps).
+inline bool SegmentHitsBox(float ax, float ay, float bx, float by,
+                           float px, float py, float half)
+{
+    float lo = 0.f, hi = 1.f;
+    const auto axis = [&](float start, float delta) {
+        if (std::fabs(delta) < 1e-8f) return std::fabs(start) <= half;
+        float a = (-half - start) / delta, b = (half - start) / delta;
+        if (a > b) std::swap(a, b);
+        lo = std::max(lo, a); hi = std::min(hi, b);
+        return lo <= hi;
+    };
+    return axis(ax - px, bx - ax) && axis(ay - py, by - ay);
 }
 
 inline float MinDistPointToSegment(float px, float py,

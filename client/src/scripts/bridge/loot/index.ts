@@ -1,3 +1,4 @@
+import { tryInventoryAction } from '../../../util/InventoryActions.js';
 import { loot } from '@realmengine/sdk';
 import type { LootBag, LootItem, LootRarity, PickupOptions } from '@realmengine/sdk';
 import type { BridgeDeps } from '../BridgeDeps.js';
@@ -228,6 +229,7 @@ const QUICKSLOT_PACKET_BASE = 1000000;
 const QUICK_SLOT_COUNT = 3;
 
 function getCurrentBagSlotItem(deps: BridgeDeps, bagObjectId: number, slotIndex: number): number {
+  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= 8) return -1;
   const entity = deps.worldState.getEntity(bagObjectId);
   if (!entity) return -1;
   const raw = entity.stats?.[String(StatType.Inventory0 + slotIndex)];
@@ -247,7 +249,7 @@ function findFreeSlot(
     if (objectType === -1) return { packetSlotId: slot, currentObjectType: -1 };
   }
   if (useBackpack && client.playerData.hasBackpack) {
-    for (let slot = 0; slot < 16; slot++) {
+    for (let slot = 0; slot < (client.playerData.hasBackpackExtender ? 16 : 8); slot++) {
       const packetSlotId = 12 + slot;
       if (exclude?.has(packetSlotId)) continue;
       const objectType = Number(client.playerData.backpack[slot] ?? -1);
@@ -264,19 +266,25 @@ function findQuickslotForItem(
 ): { packetSlotId: number; currentObjectType: number } | null {
   const info = catalog.get(itemId);
   if (!info?.quickslotAllowed) return null;
-  // Check if already in a quick slot
-  for (let slot = 0; slot < QUICK_SLOT_COUNT; slot++) {
-    const packetSlotId = QUICKSLOT_PACKET_BASE + slot;
-    if (exclude?.has(packetSlotId)) continue;
-    const objectType = Number(client.playerData.quickSlots[slot] ?? -1);
-    if (objectType === itemId) return { packetSlotId, currentObjectType: objectType };
+  const count = client.playerData.hasThirdQuickSlot ? QUICK_SLOT_COUNT : 2;
+  const read = (slot: number) => {
+    const raw = client.playerData.quickSlots[slot];
+    return typeof raw === 'number'
+      ? { itemType: raw, quantity: 0 }
+      : (raw ?? { itemType: -1, quantity: 0 });
+  };
+  for (let slot = 0; slot < count; slot++) {
+    const current = read(slot);
+    if (current.itemType !== itemId) continue;
+    if (exclude?.has(QUICKSLOT_PACKET_BASE + slot)) return null;
+    return current.quantity > 0 && current.quantity < 6
+      ? { packetSlotId: QUICKSLOT_PACKET_BASE + slot, currentObjectType: itemId }
+      : null;
   }
-  // Find empty quick slot
-  for (let slot = 0; slot < QUICK_SLOT_COUNT; slot++) {
-    const packetSlotId = QUICKSLOT_PACKET_BASE + slot;
-    if (exclude?.has(packetSlotId)) continue;
-    const objectType = Number(client.playerData.quickSlots[slot] ?? -1);
-    if (objectType === -1) return { packetSlotId, currentObjectType: -1 };
+  for (let slot = 0; slot < count; slot++) {
+    if (exclude?.has(QUICKSLOT_PACKET_BASE + slot)) continue;
+    if (read(slot).itemType <= 0)
+      return { packetSlotId: QUICKSLOT_PACKET_BASE + slot, currentObjectType: -1 };
   }
   return null;
 }
@@ -288,7 +296,7 @@ function sendInventorySwap(
   bagSlot: number,
   itemId: number,
   dest: { packetSlotId: number; currentObjectType: number },
-): void {
+): boolean {
   const pkt = deps.proxy.packetFactory.createByName('INVENTORYSWAP');
   pkt.data.time = Math.trunc(c.time);
   pkt.data.position = {
@@ -298,7 +306,15 @@ function sendInventorySwap(
   pkt.data.slotObject1 = { objectId: bagObjectId, slotId: bagSlot, objectType: itemId };
   pkt.data.slotObject2 = { objectId: c.objectId, slotId: dest.packetSlotId, objectType: dest.currentObjectType };
   pkt.modified = true;
-  c.sendToServer(pkt);
+  const readDestination = () => JSON.stringify(dest.packetSlotId >= QUICKSLOT_PACKET_BASE
+    ? c.playerData.quickSlots[dest.packetSlotId - QUICKSLOT_PACKET_BASE]
+    : dest.packetSlotId >= 12 ? c.playerData.backpack[dest.packetSlotId - 12]
+    : c.playerData.inventory[dest.packetSlotId]);
+  const beforeDestination = readDestination();
+  return tryInventoryAction(c,
+    () => getCurrentBagSlotItem(deps, bagObjectId, bagSlot) !== itemId
+      && readDestination() !== beforeDestination ? 'settled' : 'pending',
+    () => c.sendToServer(pkt));
 }
 
 // ─── shouldPickup logic ───────────────────────────────────────────────────────
@@ -431,14 +447,15 @@ export function install(deps: BridgeDeps): void {
 
     const itemId = getCurrentBagSlotItem(deps, bag.objectId, slotIndex);
     if (itemId <= 0) return false;
+    const pos = deps.worldState.getEntity(bag.objectId)?.pos;
+    if (!pos || Math.hypot(pos.x - c.playerData.pos.x, pos.y - c.playerData.pos.y) > 1) return false;
 
     const useBackpack = opts?.useBackpack ?? true;
     const destination = findQuickslotForItem(c, itemId) ?? findFreeSlot(c, useBackpack);
     if (!destination) return false;
 
     try {
-      sendInventorySwap(c, deps, bag.objectId, slotIndex, itemId, destination);
-      return true;
+      return sendInventorySwap(c, deps, bag.objectId, slotIndex, itemId, destination);
     } catch (err) {
       Logger.warn('BridgeLoot', `pickup failed: ${(err as Error).message}`);
       return false;
@@ -476,8 +493,8 @@ export function install(deps: BridgeDeps): void {
 
       claimedSlots.add(destination.packetSlotId);
       try {
-        sendInventorySwap(c, deps, bagObjectId, slot, itemId, destination);
-        sent++;
+        if (sendInventorySwap(c, deps, bagObjectId, slot, itemId, destination)) sent++;
+        break; // One authoritative inventory operation at a time.
       } catch (err) {
         Logger.warn('BridgeLoot', `pickupId slot ${slot} failed: ${(err as Error).message}`);
       }
@@ -492,6 +509,8 @@ export function install(deps: BridgeDeps): void {
 
     const itemId = getCurrentBagSlotItem(deps, bag.objectId, slotIndex);
     if (itemId <= 0) return false;
+    const pos = deps.worldState.getEntity(bag.objectId)?.pos;
+    if (!pos || Math.hypot(pos.x - c.playerData.pos.x, pos.y - c.playerData.pos.y) > 1) return false;
 
     try {
       const pkt = deps.proxy.packetFactory.createByName('USEITEM');
@@ -505,8 +524,9 @@ export function install(deps: BridgeDeps): void {
       pkt.data.useType = 0;
       pkt.data.unknownInt = 0;
       pkt.modified = true;
-      c.sendToServer(pkt);
-      return true;
+      return tryInventoryAction(c,
+        () => String(getCurrentBagSlotItem(deps, bag.objectId, slotIndex)),
+        () => c.sendToServer(pkt));
     } catch (err) {
       Logger.warn('BridgeLoot', `useFromBag failed: ${(err as Error).message}`);
       return false;
@@ -587,16 +607,17 @@ export function install(deps: BridgeDeps): void {
     if (!c?.connected) return false;
     const itemId = getCurrentBagSlotItem(deps, bag.objectId, slotIndex);
     if (!loot.isEquipmentUpgrade(itemId)) return false;
+    const pos = deps.worldState.getEntity(bag.objectId)?.pos;
+    if (!pos || Math.hypot(pos.x - c.playerData.pos.x, pos.y - c.playerData.pos.y) > 1) return false;
     const info = catalog.get(itemId);
     const category = info ? getGearCategory(info.slotType) : null;
     if (!category) return false;
     const equipSlot = gearSlotIndex(category);
     try {
-      sendInventorySwap(c, deps, bag.objectId, slotIndex, itemId, {
+      return sendInventorySwap(c, deps, bag.objectId, slotIndex, itemId, {
         packetSlotId: equipSlot,
         currentObjectType: Number(c.playerData.inventory[equipSlot] ?? -1),
       });
-      return true;
     } catch (err) {
       Logger.warn('BridgeLoot', `equipFromBag failed: ${(err as Error).message}`);
       return false;

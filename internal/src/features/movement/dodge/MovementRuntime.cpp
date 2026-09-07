@@ -1,5 +1,6 @@
 #include "pch-il2cpp.h"
 #include "MovementRuntime.h"
+#include "MovementSpeed.h"
 
 #include "Il2CppResolver.h"
 #include "Il2CppHook.h"
@@ -67,14 +68,14 @@ MoveToFn ResolveMoveToForObject(void* player)
 }
 
 // Raw CalcMoveSpeed (FKALGHJIADI::GCFKGLKAPND) call, SEH-guarded. Returns
-// <= 0 on failure so the caller can distinguish "unresolved" from a value.
+// a negative sentinel on failure; zero remains a valid measured value.
 float CallCalcMoveSpeedRaw(void* player)
 {
-    if (!s_fnCalcMoveSpeed || !player) return 0.f;
+    if (!s_fnCalcMoveSpeed || !player) return DodgeRuntime::kUnknownSpeed;
     float v = 0.f;
     __try { v = s_fnCalcMoveSpeed(player, nullptr); }
-    __except (EXCEPTION_EXECUTE_HANDLER) { return 0.f; }
-    if (!std::isfinite(v) || v <= 0.f) return 0.f;
+    __except (EXCEPTION_EXECUTE_HANDLER) { return DodgeRuntime::kUnknownSpeed; }
+    if (!std::isfinite(v) || v < 0.f) return DodgeRuntime::kUnknownSpeed;
     return v;
 }
 
@@ -125,15 +126,8 @@ float GetDeltaTime()
 
 float GetMoveSpeedMul(void* player)
 {
-    if (!s_fnCalcMoveSpeed || !player) return 1.f;
-    float result = 1.f;
-    __try {
-        result = s_fnCalcMoveSpeed(player, nullptr);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        result = 1.f;
-    }
-    if (!std::isfinite(result) || result <= 0.f) result = 1.f;
-    return result;
+    ResolveCalcMoveSpeed();
+    return SpeedOrFallback(CallCalcMoveSpeedRaw(player), 1.f);
 }
 
 bool CallMoveTo(void* player, float x, float y)
@@ -152,37 +146,13 @@ bool CallMoveTo(void* player, float x, float y)
 
 float GetTilesPerSec(void* player)
 {
-    // Server-authoritative SPD stat, pushed each NEWTICK from the client
-    // (FeatureState::clientSpeed). This is name/offset independent — the old
-    // in-DLL read at player+0x478 broke on the 2026-08 layout shift, and the
-    // game's CalcMoveSpeed (GCFKGLKAPND) returns a ~1.0 MULTIPLIER, not tiles/s.
-    const int32_t clientSpd = FeatureState::GetClientSpeed();
-    if (clientSpd >= 0) {
-        // Flash speed curve, capped at SPD 75 (rings/pets past 75 don't add
-        // server-authorized movement, so extrapolating rubber-bands).
-        const float spd = std::clamp(static_cast<float>(clientSpd), 0.f, 75.f);
-        float tps = 4.0f + 5.6f * (spd / 75.0f);
-
-        // Refine with the game's own live multiplier (Speedy / Slowed / tile
-        // speed), which the flat curve can't see. ~1.0 in the common case.
-        ResolveCalcMoveSpeed();
-        const float mul = CallCalcMoveSpeedRaw(player);
-        if (mul > 0.2f && mul < 5.f) tps *= mul;
-
-        static bool s_logged = false;
-        if (!s_logged) {
-            s_logged = true;
-            char buf[160];
-            snprintf(buf, sizeof(buf),
-                     "[DodgeRuntime] clientSpd=%d mul=%.3f -> tilesPerSec=%.3f",
-                     clientSpd, mul, tps);
-            DbgFileLogWrite(buf);
-        }
-        if (tps < 0.5f || tps > 40.f) return 0.f;
-        return tps;
-    }
-    // clientSpeed not yet pushed (auto-aim plugin off or pre-first-NEWTICK).
-    return 0.f;   // caller applies its own SPD-50 fallback
+    ResolveCalcMoveSpeed();
+    const int32_t spd = FeatureState::GetClientSpeed();
+    const float mul = CallCalcMoveSpeedRaw(player);
+    // A readable multiplier still applies before the first SPD packet. Retain
+    // the existing SPD-50 fallback only for the missing base stat, not the slow.
+    const float speed = ResolveTilesPerSec(spd >= 0 ? spd : 50, SpeedOrFallback(mul, 1.f));
+    return speed;
 }
 
 void Reset()

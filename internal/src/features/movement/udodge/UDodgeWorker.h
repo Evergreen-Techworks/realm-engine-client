@@ -16,6 +16,8 @@
 namespace UDodge { namespace Worker {
 
 struct Result {
+    CoreState solveState{};
+    uint64_t commitmentRevision = 0; // snapshot state this decision was computed from
     Path::PlanResult plan{};
     Solver::SolveResult solve{};
     Vec2 snapshotPlayer{};

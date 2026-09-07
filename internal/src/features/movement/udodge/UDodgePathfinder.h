@@ -1,4 +1,5 @@
 #pragma once
+#include "UDodgeCommitment.h"
 #include "UDodgeTypes.h"
 
 // UDodge grid pathfinder (plan 65; TIME-EXPANDED per plan 64 temporal model) — a
@@ -87,6 +88,7 @@ struct NavGrid {
 // Everything the pathfinder needs — PLAIN DATA ONLY (no IL2CPP handles, no void*,
 // no function pointers). Safe to copy across the thread boundary.
 struct PlannerSnapshot {
+    MovementCommitment commitment{}; // successful movement history at capture time
     uint32_t seq = 0;              // monotonic publish sequence (freshness plumbing)
     uint32_t tickId = 0;
     Vec2     player{};
