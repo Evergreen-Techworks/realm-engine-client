@@ -65,6 +65,7 @@ import { Logger } from './util/Logger.js';
 import { ensureRotmgMetadataXml } from './util/ensureRotmgMetadataXml.js';
 import { getRealmengineDataDir } from './util/rotmgAssetExtractor.js';
 import { ensureSdkDeployed } from './util/ensureSdkDeployed.js';
+import { LovenseDamageFeedback, parseLovenseConfig, type LovenseConfig } from './services/LovenseDamageFeedback.js';
 import { getBakedPacketDefinitions, getBakedServers, getBakedStatTypes } from './config/BakedData.js';
 import {
   readMergedClientConfigRaw,
@@ -91,6 +92,7 @@ type ClientDataConfig = {
   rotmgPath: string | null;
   /** Debug: skip copying winhttp.dll (same as REALM_ENGINE_SKIP_WINHTTP_INSTALL=1). */
   skipWinhttpInstall: boolean;
+  lovense: LovenseConfig;
 };
 
 
@@ -98,6 +100,7 @@ function loadClientDataConfig(): ClientDataConfig {
   const empty: ClientDataConfig = {
     rotmgPath: null,
     skipWinhttpInstall: false,
+    lovense: parseLovenseConfig(undefined),
   };
   try {
     const raw = readMergedClientConfigRaw(ROOT);
@@ -105,6 +108,7 @@ function loadClientDataConfig(): ClientDataConfig {
     return {
       rotmgPath,
       skipWinhttpInstall: truthyConfigFlag(raw?.skipWinhttpInstall),
+      lovense: parseLovenseConfig(raw?.lovense),
     };
   } catch (err) {
     Logger.warn('Main', `Failed to read config.json: ${(err as Error).message}`);
@@ -215,6 +219,9 @@ async function main() {
   // 4. Attach core handlers (built-in, not plugins)
   const stateManager = new StateManager();
   stateManager.attach(proxy);
+
+  const lovenseDamageFeedback = new LovenseDamageFeedback(clientDataConfig.lovense);
+  lovenseDamageFeedback.attach(proxy);
 
   const worldState = new GameWorldState();
   worldState.attach(proxy);

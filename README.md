@@ -86,6 +86,23 @@
   npm run build
   ```
 
+  ### Lovense damage feedback
+
+  The client can trigger a Lovense toy when your character loses HP. It uses
+  Lovense Remote's local Game Mode API; no developer token or cloud service is
+  required.
+
+  1. Pair the toy in Lovense Remote and enable **Discover → Game Mode → Enable LAN**.
+  2. Edit `client/data/config.json` and set `lovense.enabled` to `true`.
+  3. For Lovense Remote on the same PC, keep the default endpoint. For mobile,
+     replace `lovense.endpoint` with the HTTP or HTTPS `/command` URL shown by
+     Game Mode (for example, `http://192.168.1.20:20010/command`).
+  4. Leave `toyId` empty to control all connected toys, or enter one toy ID.
+
+  Strength scales with damage as a percentage of maximum HP. Tune
+  `minStrength`, `maxStrength`, `damagePercentForMaxStrength`, `pulseSeconds`,
+  and `cooldownMs` in the same config block.
+
   ---
 
   ## ❓ FAQ

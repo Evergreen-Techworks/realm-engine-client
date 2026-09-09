@@ -1,5 +1,15 @@
 {
   "rotmgPath": null,
   "lastPluginConfigId": "default",
-  "singleClientOnly": true
+  "singleClientOnly": true,
+  "lovense": {
+    "enabled": false,
+    "endpoint": "https://127-0-0-1.lovense.club:30010/command",
+    "toyId": "",
+    "minStrength": 3,
+    "maxStrength": 20,
+    "damagePercentForMaxStrength": 35,
+    "pulseSeconds": 2,
+    "cooldownMs": 250
+  }
 }
