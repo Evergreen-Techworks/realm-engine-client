@@ -1,5 +1,8 @@
 #include "pch-il2cpp.h"
 #include "UDodgeSensors.h"
+#include "UDodgeEnemyHazards.h"
+#include "UDodgeTrajectoryPhase.h"
+#include "UDodgeLaneMotion.h"
 
 #include "AoeTracking.h"
 #include "GameState.h"
@@ -140,8 +143,11 @@ bool CouldReachThreatRegion(const WorldProjectile& p, float playerX, float playe
 // "curved" means.
 bool IsCurvedShot(const WorldProjectile& p)
 {
+    // useAccel is the per-shot enable for isAccelerating (the game applies
+    // acceleration only when both are set); either flag means the sampled path
+    // is not a constant-velocity line, so it takes the curved-shot anchoring.
     return p.wavy || p.parametric || p.boomerang || p.isTurning ||
-           p.isTurningDelayed || p.isCircleTurnDelayed || p.isAccelerating;
+           p.isTurningDelayed || p.isCircleTurnDelayed || p.isAccelerating || p.useAccel;
 }
 
 // Anchor index (which cached sample is the bullet's live position) — the sample
@@ -166,6 +172,11 @@ bool IsCurvedShot(const WorldProjectile& p)
 // live bullet) and remains the primary for straight shots, where the polyline
 // never doubles back and nearest-point is exact and cheaper. The reversal is safe
 // because the elapsed clock was ALREADY trusted enough to be the fallback here.
+// 5 tiles (25 tiles²). Same number in both directions: as the ceiling on how
+// far a believable anchor may sit from the live bullet, and as the sanity
+// bound on the clock's answer. Shared with the fractional-phase anchor below.
+constexpr float kMaxLiveAnchorDistSq = 25.f;
+
 int CachedAnchorIndex(const WorldProjectile& p, float elapsedMs)
 {
     const int count = std::clamp(p.pathSampleCount, 0, kWorldProjectilePathSampleCap);
@@ -201,11 +212,6 @@ int CachedAnchorIndex(const WorldProjectile& p, float elapsedMs)
         outDistSq = bestDistSq;
         return bi;
     };
-
-    // 5 tiles (25 tiles²). Same number in both directions: as the ceiling on how
-    // far a believable anchor may sit from the live bullet, and as the sanity
-    // bound on the clock's answer.
-    constexpr float kMaxLiveAnchorDistSq = 25.f;
 
     if (IsCurvedShot(p)) {
         const int ti = byElapsed();
@@ -359,13 +365,28 @@ bool LaneFromCachedPath(LaneThreat& lane, const WorldProjectile& p, float elapse
     if (IsFinite(p.lifetime) && p.lifetime > 0.f && elapsedMs >= p.lifetime) return false;
 
     const int count = std::min(p.pathSampleCount, kWorldProjectilePathSampleCap);
-    const int anchor = CachedAnchorIndex(p, elapsedMs);
+    int anchor = CachedAnchorIndex(p, elapsedMs);
     if (anchor < 0 || anchor >= count) return false;
-    const float ax = p.pathX[anchor], ay = p.pathY[anchor];
+    float ax = p.pathX[anchor], ay = p.pathY[anchor];
     if (!IsFinitePoint(ax, ay)) return false;
     // Time base: the cached sample times are ms-since-spawn; rebase onto the live
     // anchor so pointTimesMs is ms-from-NOW (points[0] = live = t 0).
-    const float tAnchor = IsFinite(p.pathSampleTimesMs[anchor]) ? p.pathSampleTimesMs[anchor] : 0.f;
+    float tAnchor = IsFinite(p.pathSampleTimesMs[anchor]) ? p.pathSampleTimesMs[anchor] : 0.f;
+    // FRACTIONAL PHASE (curved shots). The clock-led anchor above snaps to the
+    // NEAREST cached sample, so a shot 70 ms into a 50 ms-step cache is rebased as
+    // if it were at 50 ms: every future point on the lane is then up to half a
+    // sample step early or late, and the whole curve is translated by the arc the
+    // shot covered in that time. Interpolate the live phase between the two
+    // bracketing samples instead and continue the trace from the later one. The
+    // same 5-tile sanity bound as CachedAnchorIndex guards a bad spawn clock;
+    // failing it keeps the snapped anchor. Straight shots are exact either way.
+    if (IsCurvedShot(p)) {
+        int seg = -1; Vec2 phase{};
+        if (FractionalPathAnchor(p.pathSampleTimesMs, p.pathX, p.pathY, count, elapsedMs, seg, phase) &&
+            DistSq(phase.x, phase.y, p.x, p.y) <= kMaxLiveAnchorDistSq) {
+            anchor = seg; ax = phase.x; ay = phase.y; tAnchor = elapsedMs;
+        }
+    }
 
     lane.pointCount = 0;
     lane.pointTimesMs[lane.pointCount] = 0.f;
@@ -576,6 +597,7 @@ void SetInstantSpan(LaneThreat& lane, float laneCap)
 // to a single-point threat (the live disc still blocks).
 void TraceLane(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, float laneCap)
 {
+    lane.hasLinearMotion = false; lane.linearVelocity = {};
     lane.beam = p.laser && IsFinite(p.laserDistance) && p.laserDistance > 0.f && IsFinite(p.angle);
     if (lane.beam) {
         lane.pointCount = lane.instantCount = 2;
@@ -594,6 +616,14 @@ void TraceLane(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, floa
     else if (LaneFromStraightExtrapolation(lane, p, elapsedMs, laneCap)) { clamped = ClampLaneToAnchor(lane, span); src = "straight"; }
     if (src) SetInstantSpan(lane, laneCap);
     if (src) {
+        // VERIFIED constant motion (see UDodgeLaneMotion.h). Only a lane whose
+        // own traced samples are exactly a straight line at a steady speed may
+        // be projected past its trace by a consumer. A CLAMPED lane was cut
+        // short by the trace budget rather than by the shot, and a curved model
+        // is never linear by definition, so both stay unknown-tailed.
+        if (!clamped && !IsCurvedShot(p) && lane.pointCount >= 2)
+            lane.hasLinearMotion = LaneMotion::DetectLinear(lane.points, lane.pointTimesMs,
+                                                            lane.pointCount, lane.linearVelocity);
         if (clamped) {
             static int s_ghostN = 0;
             if ((s_ghostN++ % 8) == 0)
@@ -642,6 +672,13 @@ float ZoneArmWindowMs(float radius, float speedTilesPerMs)
 void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& /*settings*/, uint64_t nowMs)
 {
     out.zoneCount = 0;
+    // Some enemies repeatedly blast themselves without a throwable warning.
+    // Rebuild their known keepout envelopes from live positions every frame;
+    // death/despawn therefore removes them without an arbitrary timer.
+    EnemyTracker::Tick();
+    for (const auto& enemy : EnemyTracker::GetSnapshot())
+        EnemyHazards::Append(out, enemy.objType, enemy.hp,
+            {enemy.x, enemy.y}, {playerX, playerY});
     AoeTracking::EnsureInstalled();
     s_aoes.clear();
     AoeTracking::CopyActiveForDraw(s_aoes);
@@ -790,6 +827,7 @@ void PopulateEnemies(DangerMap& out, float playerX, float playerY)
                 EnemyBlocker& b = out.enemies[out.enemyCount++];
                 b.pos = { e.x, e.y };
                 b.radius = BlockerRadiusFor(e);
+                b.passiveScenery = !e.hasHealthBar || e.isScenery;
                 if (out.enemyCount == kMaxEnemies) refreshFarthest();   // just filled
             } else {
                 // Full: the snapshot exceeded capacity (still reported via
@@ -800,6 +838,7 @@ void PopulateEnemies(DangerMap& out, float playerX, float playerY)
                     EnemyBlocker& b = out.enemies[farthestIdx];
                     b.pos = { e.x, e.y };
                     b.radius = BlockerRadiusFor(e);
+                    b.passiveScenery = !e.hasHealthBar || e.isScenery;
                     refreshFarthest();
                 }
             }
@@ -936,12 +975,17 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
         lane = LaneThreat{};
         lane.remainingLifeMs = IsFinite(p.lifetime) && p.lifetime > 0.f
             ? std::max(0.f, p.lifetime - elapsedMs) : -1.f;
+        lane.damageEstimate = p.damage > 0 ? static_cast<float>(p.damage) : -1.f;
         lane.bulletId = static_cast<int32_t>(p.bulletId);
         lane.attackerObjId = p.attackerObjId;
         lane.ownerObjId = p.ownerObjId;
+        // Per-shot contact threshold T: the live runtime value, else the XML
+        // CollisionMult-derived half (collHalf), else the standard 0.5. The
+        // sprite-derived projHalfSize is deliberately NOT a source any more — it
+        // describes the drawn skin, not the hit test (PR 60 hit model).
         lane.hitHalf = (IsFinite(p.runtimeChebyshevHalf) && p.runtimeChebyshevHalf > 1e-4f)
                            ? p.runtimeChebyshevHalf
-                           : ((IsFinite(p.projHalfSize) && p.projHalfSize > 1e-4f) ? p.projHalfSize : 0.5f);
+                           : ((IsFinite(p.collHalf) && p.collHalf > 1e-4f) ? p.collHalf : 0.5f);
 
         // Coarse elapsed only — the calibrated clock is deliberately unused
         // here: the live position is the anchor.
@@ -1024,6 +1068,7 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
         // projectile's LIVE position (mid-tick frames ride the game's own
         // interpolation — nothing is extrapolated by our clock).
         LaneThreat& lane = map.lanes[laneIdx];
+        lane.damageEstimate = p.damage > 0 ? static_cast<float>(p.damage) : -1.f;
         lane.remainingLifeMs = IsFinite(p.lifetime) && p.lifetime > 0.f
             ? std::max(0.f, p.lifetime - elapsedMs) : -1.f;
 

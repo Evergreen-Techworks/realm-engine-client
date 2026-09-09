@@ -74,12 +74,30 @@ float PointSegDistEuclid(Vec2 c, Vec2 a, Vec2 b)
     return Len(Sub(c, Add(a, Mul(ab, t))));
 }
 
-float PlayerSafetyHalf(const MapInput& in)
+float PositionUncertainty(const MapInput& in)
 {
-    return kUPlayerHalf + std::clamp(in.settings.positionUncertainty, 0.f, 0.35f);
+    return std::clamp(in.settings.positionUncertainty, 0.f, 0.35f);
+}
+
+// Projectile tests: point player (default) or the legacy padded half.
+float LanePlayerHalf(const MapInput& in)
+{
+    return ProjectilePlayerHalf(in.settings) + PositionUncertainty(in);
+}
+
+// Zones describe damage discs against the player's physical footprint; they are
+// not governed by the projectile threshold model and keep the full pad.
+float ZonePlayerHalf(const MapInput& in)
+{
+    return kUPlayerHalf + PositionUncertainty(in);
 }
 
 } // namespace
+
+float ProjectilePlayerHalf(const Settings& settings)
+{
+    return settings.pointPlayer ? 0.f : kUPlayerHalf;
+}
 
 // "Could the player stand at `pos` right now?" — on standable ground, outside
 // every danger lane (Chebyshev > hitHalf × hitScale) and outside every ACTIVE
@@ -146,7 +164,7 @@ float PointClearance(const MapInput& in, Vec2 pos)
 bool ZoneClear(const MapInput& in, Vec2 pos)
 {
     if (!in.map) return true;
-    const float playerHalf = PlayerSafetyHalf(in);
+    const float playerHalf = ZonePlayerHalf(in);
     for (int i = 0; i < in.map->zoneCount; ++i) {
         const ZoneThreat& z = in.map->zones[i];
         if (!z.active) continue;
@@ -174,7 +192,7 @@ bool ZoneClear(const MapInput& in, Vec2 pos)
 bool ZonePathClear(const MapInput& in, Vec2 from, Vec2 to)
 {
     if (!in.map) return true;
-    const float playerHalf = PlayerSafetyHalf(in);
+    const float playerHalf = ZonePlayerHalf(in);
     for (int i = 0; i < in.map->zoneCount; ++i) {
         const ZoneThreat& z = in.map->zones[i];
         if (!z.active) continue;                          // pending zones stay cost-only
@@ -194,7 +212,7 @@ bool ZoneEscapePathClear(const MapInput& in, Vec2 from, Vec2 to)
 {
     if (!in.map) return true;
     const Vec2 step = Sub(to, from);
-    const float playerHalf = PlayerSafetyHalf(in);
+    const float playerHalf = ZonePlayerHalf(in);
     for (int i = 0; i < in.map->zoneCount; ++i) {
         const ZoneThreat& z = in.map->zones[i];
         if (!z.active) continue;
@@ -216,18 +234,19 @@ float PointSafety(const MapInput& in, Vec2 pos)
 {
     if (!in.map) return 0.f;
     const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
-    const float playerHalf = PlayerSafetyHalf(in);
+    const float laneHalf = LanePlayerHalf(in);
+    const float zoneHalf = ZonePlayerHalf(in);
     float best = kHugeClearance;
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
         if (L.instantCount <= 0) continue;
-        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + playerHalf;
+        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + laneHalf;
         best = std::min(best, LaneDistCheb(L, pos) - half);
     }
     for (int i = 0; i < in.map->zoneCount; ++i) {
         const ZoneThreat& z = in.map->zones[i];
         // Pending zones are cost-only (soft) — only active discs subtract clearance.
-        if (z.active) best = std::min(best, Len(Sub(z.pos, pos)) - (z.radius + playerHalf));
+        if (z.active) best = std::min(best, Len(Sub(z.pos, pos)) - (z.radius + zoneHalf));
     }
     return best;
 }
@@ -249,13 +268,14 @@ float SegmentSafety(const MapInput& in, Vec2 a, Vec2 b)
 {
     if (!in.map) return 0.f;
     const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
-    const float playerHalf = PlayerSafetyHalf(in);
+    const float laneHalf = LanePlayerHalf(in);
+    const float zoneHalf = ZonePlayerHalf(in);
     float best = kHugeClearance;
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
         const int n = L.instantCount;   // PAINT span, same as LaneDistCheb
         if (n <= 0) continue;
-        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + playerHalf;
+        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + laneHalf;
         float dCheb;
         if (n == 1) {
             // Point lane: min Cheb from the single bullet point to the swept segment.
@@ -271,7 +291,7 @@ float SegmentSafety(const MapInput& in, Vec2 a, Vec2 b)
     for (int i = 0; i < in.map->zoneCount; ++i) {
         const ZoneThreat& z = in.map->zones[i];
         if (!z.active) continue;   // pending zones are cost-only
-        best = std::min(best, PointSegDistEuclid(z.pos, a, b) - (z.radius + playerHalf));
+        best = std::min(best, PointSegDistEuclid(z.pos, a, b) - (z.radius + zoneHalf));
     }
     return best;
 }
@@ -293,7 +313,7 @@ bool EnemyBlocked(const MapInput& in, Vec2 pos)
         // observed as NO-MOVE kind=3 clr=1e+09 for 15 s at a time after a kill, on a
         // loot detour, or when a new quest goal arrived. The soft term still pushes
         // the player off mobs; it just no longer freezes them.
-        if (Len(Sub(pos, e.pos)) < e.radius + kUPlayerHalf) return true;
+        if (Len(Sub(pos, e.pos)) < EnemyAvoidanceRadius(e, in.settings)) return true;
     }
     return false;
 }
@@ -317,9 +337,26 @@ bool EnemyPathBlocked(const MapInput& in, Vec2 from, Vec2 to)
     for (int i = 0; i < in.map->enemyCount; ++i) {
         const EnemyBlocker& e = in.map->enemies[i];
         if (PointSegDistEuclid(e.pos, from, to) <
-            e.radius + kUPlayerHalf) return true;   // physical body only — see EnemyBlocked
+            EnemyAvoidanceRadius(e, in.settings)) return true;   // physical body only — see EnemyBlocked
     }
     return false;
+}
+
+bool EnemyEscapePathClear(const MapInput& in, Vec2 from, Vec2 to)
+{
+    if (!in.map) return true;
+    const Vec2 step = Sub(to, from);
+    for (int i = 0; i < in.map->enemyCount; ++i) {
+        const EnemyBlocker& enemy = in.map->enemies[i];
+        const float radius = EnemyAvoidanceRadius(enemy, in.settings);
+        const Vec2 start = Sub(from, enemy.pos);
+        if (Len(start) < radius) {
+            if (Dot(start, step) < 0.f) return false;
+        } else if (PointSegDistEuclid(enemy.pos, from, to) < radius) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Pending-zone penetration sum (finding G-2). Deliberately NOT folded into
@@ -398,7 +435,7 @@ void SampleLane(const LaneThreat& L, Vec2* outPos)
 // cull lanes whose whole traced path stays > cullTiles from cullCenter over the
 // horizon (far / receding shots contribute nothing to the search region).
 void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2 cullCenter,
-           float cullTiles, Ctx& out)
+           float cullTiles, Ctx& out, float playerHalf)
 {
     out.count = 0;
     const float scale = std::clamp(hitScale, 0.25f, 2.5f);
@@ -415,7 +452,7 @@ void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2
             if (dt > 1e-3f)
                 maxSpeed = std::max(maxSpeed, Len(Sub(L.points[j], L.points[j - 1])) / dt);
         }
-        const float hitHalf = std::clamp(L.hitHalf, 0.05f, 2.5f) * scale + kUPlayerHalf +
+        const float hitHalf = std::clamp(L.hitHalf, 0.05f, 2.5f) * scale + std::max(playerHalf, 0.f) +
                               std::clamp(positionUncertainty, 0.f, 0.35f);
         const float timingPad = kUArrivalMargin + std::min(maxSpeed * kUPredErrMs, kUPredPadMaxTiles);
         // Euclidean broad phase encloses the complete Chebyshev hit square.

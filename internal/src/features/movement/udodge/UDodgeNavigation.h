@@ -24,7 +24,8 @@ struct Progress {
     uint64_t since = 0;
     bool active = false;
     void Reset() { active = false; }
-    bool Stalled(Vec2 player, uint64_t now) {
+    bool Stalled(Vec2 player, uint64_t now, bool waitingForRoute = false) {
+        if (waitingForRoute) { Reset(); return false; }
         if (!active || LenSq(Sub(player, anchor)) >= 0.25f * 0.25f) {
             anchor = player; since = now; active = true; return false;
         }
@@ -33,6 +34,28 @@ struct Progress {
         return true;
     }
 };
+
+// Resolve navigation after the asynchronous route cache has been refreshed.
+// The pre-refresh awaiting flag is useful only for detecting transitions; it
+// must not overwrite a newly delivered corridor with a HOLD at the player.
+struct Handoff {
+    Vec2 step{};
+    bool solve = false;
+};
+inline Handoff FinishRefresh(bool walkTo, bool wasWaiting, bool awaiting,
+                             bool cacheValid, Vec2 player, Vec2 corridorStep,
+                             bool cadenceDue, bool commitmentChanged, bool rejectedFreshWalk,
+                             bool steeringChanged = false)
+{
+    Handoff out;
+    out.step = awaiting ? player : corridorStep;
+    out.solve = commitmentChanged || (walkTo && (
+        steeringChanged ||
+        (awaiting && (!wasWaiting || cadenceDue)) ||
+        (wasWaiting && !awaiting) ||
+        (cadenceDue && (!cacheValid || rejectedFreshWalk))));
+    return out;
+}
 
 // Keep lookahead on the visible part of the corridor. A bend is only skipped
 // when the player can sweep directly to the farther target.

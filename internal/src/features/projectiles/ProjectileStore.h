@@ -38,9 +38,13 @@ namespace ProjectileStore {
 
     // Retire every tracked slot whose projectile instance is NOT in `live` (the set
     // of pointers the game still has), i.e. shots the game deleted early (hit a wall/
-    // enemy/player). SAFETY: does nothing if `live` is empty (a failed/empty pool read
-    // must never prune), keeps any slot younger than minAgeMs (a fresh spawn may not
-    // be in the read yet), and keeps slots with no ptr. Returns how many were retired.
+    // enemy/player). CONTRACT: `live` MUST come from a read the caller verified
+    // succeeded (WorldTAB::CollectLiveProjectilePtrs returning true) — a failed read
+    // must skip reconciliation, never be passed as an empty set. A verified empty set
+    // is valid and means every tracked shot despawned. Absence is corroborated across
+    // consecutive reads before a slot is dropped (ProjectileRetirePolicy.h), so one
+    // incomplete read cannot remove a live shot. Keeps slots younger than minAgeMs (a
+    // fresh spawn may not be in the read yet) and slots with no ptr. Returns the count.
     int RetireNotInLiveSet(const std::unordered_set<uintptr_t>& live, float minAgeMs);
 
     void SnapshotToWorld(std::vector<WorldProjectile>& out);

@@ -17,11 +17,40 @@ int main() {
     Solver::Solve(cornerInput, 0.2f, cornerGoal, emptyRoute, cornerState, cornerResult);
     Check(cornerResult.shouldMove && cornerResult.target.x > 0.f,
           "intermediate bend within half a tile still advances");
+    const Vec2 corridorStep{2.f, 0.f};
+    auto waiting=Navigation::FinishRefresh(true,false,true,false,{},corridorStep,true,false,false);
+    Check(waiting.solve && LenSq(waiting.step)==0.f, "first blocked-route wait requests one hold solve");
+    waiting=Navigation::FinishRefresh(true,true,true,false,{},corridorStep,false,false,false);
+    Check(!waiting.solve, "unchanged waiting frame does not repeat the full solver");
+    waiting=Navigation::FinishRefresh(true,true,true,false,{},corridorStep,true,false,false);
+    Check(waiting.solve, "waiting still refreshes on a new map/tick");
+    auto arrived=Navigation::FinishRefresh(true,true,false,true,{},corridorStep,false,false,false);
+    Check(arrived.solve && LenSq(Sub(arrived.step,corridorStep))==0.f,
+          "fresh worker route releases HOLD and immediately steers along its corridor");
+    cornerGoal.pos=arrived.step;
+    Solver::Solve(cornerInput,0.2f,cornerGoal,emptyRoute,cornerState,cornerResult);
+    Check(cornerResult.shouldMove && cornerResult.target.x>0.f,
+          "resumed corridor drives the production solver instead of overwriting movement with HOLD");
+    Check(Navigation::FinishRefresh(false,false,false,false,{},corridorStep,false,true,false).solve,
+          "commitment changes still re-solve manual movement");
+    auto redirected=Navigation::FinishRefresh(true,false,false,true,{},corridorStep,
+        false,false,false,true);
+    Check(redirected.solve, "late worker steering for an old goal is replaced even without a wait transition");
+    cornerGoal.pos=redirected.step;
+    cornerResult.shouldMove=true; cornerResult.target={0.f,0.2f};
+    Solver::Solve(cornerInput,0.2f,cornerGoal,emptyRoute,cornerState,cornerResult);
+    Check(cornerResult.target.x>0.f && cornerResult.target.y==0.f,
+          "live corridor replaces a safe but wrongly directed worker move");
+    Check(!Navigation::FinishRefresh(true,false,false,true,{},corridorStep,
+        false,false,false,false).solve, "unchanged corridor avoids redundant live solves");
     Navigation::Progress progress;
     Check(!progress.Stalled({}, 1000), "progress starts with a fresh observation");
     Check(!progress.Stalled({0.1f,0}, 1250), "short nudge does not replan immediately");
     Check(progress.Stalled({}, 1500), "left-right nudges trigger a replan after 500ms");
     Check(!progress.Stalled({-0.4f,0}, 1800), "real motion away from goal still counts as progress");
+    Check(!progress.Stalled({-0.4f,0}, 4000, true), "worker waiting time does not count as stuck movement");
+    Check(!progress.Stalled({-0.4f,0}, 5000), "fresh route receives a fresh movement-progress window");
+    Check(progress.Stalled({-0.4f,0}, 5500), "a real stall after route arrival still triggers recovery");
     MapInput padded{};
     padded.env.canOccupy = [](float, float y, bool) { return y > 0.f; };
     Check(!Navigation::PaddedPathClear(padded, {0,1}, {2,0.1f}), "navigation refuses wall-hugging shortcut");
@@ -103,5 +132,10 @@ int main() {
     Path::Compute(snap,plan);
     Check(plan.navWptCount>=3 && LenSq(Sub(plan.navWpts[1],{-4,0}))<1e-6f,
           "off-centre start retains tile alignment before compressed first leg");
+    for (auto& f : snap.navGrid.flags) f=1;
+    snap.player={0,0}; snap.navGoal={4,4}; open(0,0);
+    Path::Compute(snap,plan);
+    Check(!plan.navArrived && plan.navWptCount==1 && LenSq(plan.navStepTarget)==0.f,
+          "boxed-in A* never returns the raw destination as a steering step");
     std::puts("Navigation regressions passed (real A*, corner compression, swept steering, completion).");
 }

@@ -1,4 +1,5 @@
 #include "UDodgeCore.h"
+#include "UDodgeTrajectoryPhase.h"
 #include <cstdio>
 
 using namespace UDodge;
@@ -106,6 +107,45 @@ int main()
         }
     }
     Check(retainedAll, "1600 known curve hits survive temporal resampling");
+    // Fractional-phase anchor for a sampled curved path: the live phase between
+    // two cached samples is interpolated, not snapped to the nearer sample.
+    {
+        const float times[4] = {0.f, 50.f, 100.f, 150.f};
+        const float xs[4]    = {0.f, 1.f, 2.f, 3.f};
+        const float ys[4]    = {0.f, 0.f, 1.f, 1.f};   // a bend between samples 1 and 2
+        int idx = -1; Vec2 pos{};
+        Check(FractionalPathAnchor(times, xs, ys, 4, 70.f, idx, pos) && idx == 1 &&
+              std::fabs(pos.x - 1.4f) < 1e-5f && std::fabs(pos.y - 0.4f) < 1e-5f,
+              "fractional anchor interpolates phase inside the containing sample segment");
+        Check(FractionalPathAnchor(times, xs, ys, 4, 50.f, idx, pos) && idx == 1 &&
+              std::fabs(pos.x - 1.f) < 1e-5f, "fractional anchor at a sample time uses that sample as segment start");
+        Check(!FractionalPathAnchor(times, xs, ys, 4, 150.f, idx, pos), "phase at the final sample has no forward segment");
+        Check(!FractionalPathAnchor(times, xs, ys, 4, -1.f, idx, pos), "negative phase is rejected");
+        Check(!FractionalPathAnchor(times, xs, ys, 1, 0.f, idx, pos), "a single sample cannot anchor a phase");
+        const float badTimes[3] = {0.f, 100.f, 50.f};   // clock stops advancing after sample 1
+        Check(!FractionalPathAnchor(badTimes, xs, ys, 3, 100.f, idx, pos), "phase inside a non-advancing segment is rejected");
+    }
+    // POINT-PLAYER contact model: the game's per-shot threshold T is the whole
+    // hit box; the player is a point. A stationary shot 0.65 tiles away with
+    // T = 0.5 clears under the point model (0.5 + 0.10 arrival margin) and is
+    // blocked under the legacy padded model (0.5 + 0.2139 + 0.10).
+    {
+        static DangerMap pm{};
+        pm.laneCount = 1;
+        auto& l = pm.lanes[0];
+        l = LaneThreat{};
+        l.pointCount = l.instantCount = 2;
+        l.hitHalf = 0.5f;
+        l.points[0] = l.points[1] = {0.65f, 0.f};
+        l.pointTimesMs[0] = 0.f; l.pointTimesMs[1] = 1200.f;
+        Core::Temporal::Ctx pc{};
+        Core::Temporal::Build(pm, 1.f, 0.f, {}, 4.f, pc, /*playerHalf=*/0.f);
+        Check(pc.count == 1 && Core::Temporal::PathClear(pc, {}, 0.f, {}),
+              "point-player temporal contact clears a stand just outside the shot threshold");
+        Core::Temporal::Build(pm, 1.f, 0.f, {}, 4.f, pc, kUPlayerHalf);
+        Check(!Core::Temporal::PathClear(pc, {}, 0.f, {}),
+              "padded temporal contact still blocks the same stand when the player half is folded in");
+    }
     std::printf("Temporal regression tests: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

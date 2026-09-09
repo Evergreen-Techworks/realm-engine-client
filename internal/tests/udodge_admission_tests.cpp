@@ -37,7 +37,8 @@ int main()
     lane.pointTimesMs[1] = 250.f;
     lane.tailAtShotEnd = true;
     Core::Temporal::Ctx ctx{};
-    Core::Temporal::Build(map, 1.f, 0.f, {}, kUTemporalCullTiles, ctx);
+    Core::Temporal::Build(map, 1.f, 0.f, {}, kUTemporalCullTiles, ctx,
+                          Core::ProjectilePlayerHalf(in.settings));   // same model as the solver
     Check(Core::SegmentSafety(in, {}, {1.f, 0.f}) >= kULatencyPad,
           "fixture passes shortened spatial lane check");
     Check(!Core::Temporal::PathClear(ctx, {}, in.speed, {1.f, 0.f}),
@@ -89,7 +90,8 @@ int main()
     in.speed = 0.01f;
     state.Reset();
     state.lastMoveDir = {-1.f, 0.f};
-    Core::Temporal::Build(map, 1.f, 0.f, {}, kUTemporalCullTiles, ctx);
+    Core::Temporal::Build(map, 1.f, 0.f, {}, kUTemporalCullTiles, ctx,
+                          Core::ProjectilePlayerHalf(in.settings));   // same model as the solver
     // Use a longer retreat to put the route's endpoint beyond the shot lifetime.
     route.stepTarget = {-2.f, 0.f};
     Check(Core::Temporal::PathClear(ctx, {}, in.speed, route.stepTarget),
@@ -128,6 +130,55 @@ int main()
     Check(!Core::Temporal::PathClear(ctx, {0,-2}, 0.01f, {0,2}), "live movement gate rejects crossing beam");
     Check(DodgeGeometry::SegmentHitsBox(-10,0,10,0,0,0,0.3f) &&
           !DodgeGeometry::SegmentHitsBox(-10,0,10,0,12,0,0.3f), "beam collision covers middle but stops at endpoint");
+    // OccupancyPathClear while standing ON damaging ground: the escape rule may
+    // cross more hazard, but it must never let the sweep skip a physical wall.
+    {
+        static DangerMap emptyMap{};
+        MapInput hz{};
+        hz.map = &emptyMap;
+        hz.playerOnHazard = true;
+        hz.settings.safeWalk = true;
+        // Wall strip at x in [1.0, 1.4] (blocks regardless of safeWalk); every
+        // other tile with x < 2 is damaging ground (blocks only with safeWalk).
+        hz.env.canOccupy = [](float x, float, bool safeWalk) {
+            if (x >= 1.0f && x <= 1.4f) return false;
+            if (safeWalk && x < 2.f) return false;
+            return true;
+        };
+        Check(!OccupancyPathClear(hz, {0.f, 0.f}, {2.5f, 0.f}),
+              "hazard escape sweep still rejects a wall between hazard and safe ground");
+        hz.env.canOccupy = [](float x, float, bool safeWalk) {
+            if (safeWalk && x < 2.f) return false;   // hazard only, no wall
+            return true;
+        };
+        Check(OccupancyPathClear(hz, {0.f, 0.f}, {2.5f, 0.f}),
+              "hazard escape may cross remaining hazard to a safe endpoint");
+        hz.playerOnHazard = false;
+        Check(!OccupancyPathClear(hz, {0.f, 0.f}, {2.5f, 0.f}),
+              "off-hazard sweep still refuses to cross damaging ground");
+    }
+    // POINT-PLAYER spatial safety: PointSafety/SegmentSafety subtract only the
+    // shot threshold when settings.pointPlayer is set; the legacy padded model
+    // stays available behind the flag. Zones keep their player-half pad.
+    {
+        static DangerMap sm{};
+        sm.laneCount = 1;
+        auto& l = sm.lanes[0];
+        l = LaneThreat{};
+        l.pointCount = l.instantCount = 1;
+        l.hitHalf = 0.5f;
+        l.points[0] = {0.65f, 0.f};
+        MapInput pin{}; pin.map = &sm;
+        pin.settings.pointPlayer = true;
+        Check(std::fabs(Core::PointSafety(pin, {}) - 0.15f) < 1e-5f, "point-player PointSafety subtracts only the shot threshold");
+        Check(std::fabs(Core::SegmentSafety(pin, {}, {0.f, 0.2f}) - 0.15f) < 1e-5f, "point-player SegmentSafety subtracts only the shot threshold");
+        pin.settings.pointPlayer = false;
+        Check(Core::PointSafety(pin, {}) < 0.f, "padded PointSafety still folds the player half in");
+        sm.laneCount = 0; sm.zoneCount = 1;
+        sm.zones[0].pos = {1.f, 0.f}; sm.zones[0].radius = 0.9f; sm.zones[0].active = true;
+        pin.settings.pointPlayer = true;
+        Check(Core::PointSafety(pin, {}) < 0.f, "active zones keep the player-half pad under the point-player model");
+    }
     std::printf("Admission/rebuild regression tests: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

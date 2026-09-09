@@ -599,9 +599,27 @@ inline float MinChebOnSegment(float x0, float y0, float x1, float y1)
 struct EnemyBlocker {
     Vec2  pos{};
     float radius = 0.5f;
+    // Static scenery (a wall segment, a destructible with no health bar). It
+    // still constrains a route, but it is not a live mob whose keep-out the
+    // clearance preference should widen — see EnemyAvoidanceRadius.
+    bool  passiveScenery = false;
 };
 
 struct Settings {
+    // PROJECTILE CONTACT MODEL. true (default): the player is a POINT and the
+    // per-shot threshold T (runtime Chebyshev half, else CollisionMult × 0.5) is
+    // the whole hit box — |dx| < T && |dy| < T. This adopts the model from the
+    // Spacetime dodge (PR 60) at the user's direction; the previous model
+    // additionally folded kUPlayerHalf into every projectile test and is kept
+    // behind this flag (false) so the padded behaviour can be restored without a
+    // rebuild of the solver. Enemy bodies and AoE discs are NOT affected: they
+    // keep kUPlayerHalf, which describes the player's physical footprint.
+    bool  pointPlayer = true;
+    // Multiplies the keep-out radius around LIVE enemy bodies. 1.0 is the
+    // legacy radius and the UDodge default; a consumer that wants more standoff
+    // (the timed planner) passes its own scaled copy of these settings rather
+    // than changing the shared value.
+    float enemyAvoidanceScale = 1.f;
     float hitScale    = 1.0f;    // × per-shot hit threshold [0.25, 2.5]
     float positionUncertainty = 0.f; // local desired vs server-visible MOVE position [0, .35]
     bool  safeWalk    = true;    // avoid damaging ground in path checks
@@ -631,6 +649,15 @@ struct Settings {
     int   planRadius = 20;   // planner window radius (grid cells) [8, 40]
                              // shrinks the rasterized window to cut cost
 };
+
+// Keep-out radius around one enemy body: its physical radius plus the player's
+// footprint, scaled for live mobs only. Scenery is never scaled — widening a
+// wall segment would close corridors that are genuinely walkable.
+inline float EnemyAvoidanceRadius(const EnemyBlocker& enemy, const Settings& settings)
+{
+    const float scale = enemy.passiveScenery ? 1.f : settings.enemyAvoidanceScale;
+    return (enemy.radius + kUPlayerHalf) * scale;
+}
 
 // Host environment probe (kept as function pointers so the core stays free of
 // game headers and unit-testable).
@@ -699,6 +726,14 @@ constexpr float kServerTickSec    = 0.2f;   // planning quantum: one server tick
 struct LaneThreat {
     bool beam = false; // all points are occupied simultaneously, not a moving head
     float remainingLifeMs = -1.f; // known remaining lifetime; negative means unavailable
+    // Raw per-shot damage, for ranking least-damage recovery when nothing is
+    // safe. Negative means unavailable — a consumer must not read that as "harmless".
+    float damageEstimate = -1.f;
+    // Runtime-VERIFIED constant motion (UDodgeLaneMotion.h): the traced samples
+    // are exactly a straight line at a steady speed, so this lane alone may be
+    // projected past its trace. Packet guesses and curved models never set it.
+    bool  hasLinearMotion = false;
+    Vec2  linearVelocity{};   // tiles/ms, only meaningful while hasLinearMotion
     int32_t  bulletId      = 0;   // identity for mid-tick re-anchoring...
     int32_t  attackerObjId = 0;   // ...(bulletId alone is not globally unique)
     uint32_t ownerObjId    = 0;
@@ -780,17 +815,20 @@ inline bool CanOccupyAt(const MapInput& in, Vec2 pos)
 // diagonal to clip the corner of a damaging tile even though both ends are safe.
 // Sample densely enough to cover the player's half-width; the live game-thread
 // callback evaluates the real footprint, while worker snapshots use their 0.5-tile
-// raster. When already on damaging ground, retain the existing escape rule: only
-// require a safe endpoint so the starting tile cannot imprison the player.
+// raster. When already on damaging ground, the escape rule relaxes only the
+// HAZARD half of the test: the sweep may cross more damaging ground so the
+// starting tile cannot imprison the player, but it still refuses to pass through
+// a wall — the endpoint being safe says nothing about the tiles between.
 inline bool OccupancyPathClear(const MapInput& in, Vec2 from, Vec2 to)
 {
     if (!CanOccupyAt(in, to)) return false;
-    if (in.playerOnHazard) return true;
+    MapInput sweep = in;
+    if (in.playerOnHazard) sweep.settings.safeWalk = false;   // walls only
     const float d = Len(Sub(to, from));
     const int steps = std::max(1, static_cast<int>(std::ceil(d / 0.20f)));
     for (int i = 1; i < steps; ++i) {
         const float t = static_cast<float>(i) / static_cast<float>(steps);
-        if (!CanOccupyAt(in, Add(from, Mul(Sub(to, from), t)))) return false;
+        if (!CanOccupyAt(sweep, Add(from, Mul(Sub(to, from), t)))) return false;
     }
     return true;
 }

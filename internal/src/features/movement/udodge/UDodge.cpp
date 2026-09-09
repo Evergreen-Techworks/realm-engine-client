@@ -114,6 +114,11 @@ constexpr float kNavEndTiles      = 3.0f;   // within this of the route's end �
 // Per-tick safe-position solver result — game-thread-owned, cached for one
 // server tick and re-validated (or re-solved) every frame (plan 64).
 Solver::SolveResult g_solve;
+// Latest temporal-planner advice accepted from the worker, with the publish
+// sequence it was computed for so the same staleness gate as the grid route
+// applies. Advisory: the solver re-tests it against every hard floor.
+Solver::TimedAdvice g_timed{};
+uint32_t g_timedSeq = 0;
 uint32_t            g_solveSeq = 0;
 // Latest grid route from the async worker (plan 65). Game-thread-owned cache,
 // refreshed from Worker::TryGetLatestPlan when the worker isn't busy; consumed by
@@ -619,6 +624,7 @@ void Tick(void* player, float px, float py, float dt)
     // Follow the cached route and only re-run the A* on a real trigger. navStep is
     // the steering target ~lookahead budgets ahead along the cached polyline.
     bool navReplan = false;
+    const bool wasNavWaiting = g_navAwaiting;
     bool navWaiting = g_navAwaiting;
     Vec2 navStep{ walkX, walkY };
     if (walkActive) {
@@ -646,7 +652,7 @@ void Tick(void* player, float px, float py, float dt)
         const ULONGLONG nowNav = GetTickCount64();
         if (goalMoved) g_navProgress.Reset();
         const bool blocked = g_navCache.valid && !Navigation::PaddedPathClear(in, in.player, navStep);
-        const bool stalled = in.speed > 0.f && g_navProgress.Stalled(in.player, nowNav);
+        const bool stalled = in.speed > 0.f && g_navProgress.Stalled(in.player, nowNav, g_navAwaiting);
         if (blocked || stalled) {
             navReplan = true;
             g_navAwaiting = navWaiting = true;
@@ -662,7 +668,15 @@ void Tick(void* player, float px, float py, float dt)
         g_wedgePlayerY.store(in.player.y, std::memory_order_relaxed);
         g_wedgeStampMs.store(static_cast<uint32_t>(nowNav), std::memory_order_relaxed);
         if (navWaiting) navStep = in.player;
-        else if (!g_navCache.valid) navStep = wg;   // no cache yet → head to the raw goal until the first plan lands
+        else if (!g_navCache.valid) {
+            // A destination is not a corridor. Only use it directly when the
+            // entire padded sweep is known clear; otherwise wait for A*.
+            if (Navigation::PaddedPathClear(in, in.player, wg)) navStep = wg;
+            else {
+                g_navAwaiting = navWaiting = true;
+                navStep = in.player;
+            }
+        }
     } else {
         g_navProgress.Reset();
         g_navAwaiting = false;
@@ -845,6 +859,10 @@ void Tick(void* player, float px, float py, float dt)
     Worker::Result fresh{};
     bool rejectedFreshWalk = false;
     bool commitmentChanged = false;
+    bool navCacheRefreshed = false;
+    bool navArrivedFresh = false;
+    bool acceptedWalkSolve = false;
+    Vec2 acceptedWalkStep{};
     if (Worker::TryGetLatest(fresh)) {
         const bool seqFresh = fresh.plan.forSeq != 0 && g_lastPubSeq >= fresh.plan.forSeq
             && (g_lastPubSeq - fresh.plan.forSeq) <= kUPlanMaxStaleSeq;
@@ -856,8 +874,12 @@ void Tick(void* player, float px, float py, float dt)
         const bool acceptFresh = seqFresh && walkMatches && originFresh;
         if (acceptFresh) {
             g_route = fresh.plan;
+            g_timed = fresh.timed;
+            g_timedSeq = fresh.plan.forSeq;
             if (g_commitment.Accepts(fresh.commitmentRevision)) {
                 g_solve = fresh.solve;
+                acceptedWalkSolve = walkActive;
+                acceptedWalkStep = fresh.solveGoal;
                 proposedState = fresh.solveState;
                 g_solveSeq = fresh.plan.forSeq;
             } else {
@@ -894,31 +916,45 @@ void Tick(void* player, float px, float py, float dt)
         // Only updates when the worker actually ran the nav A* (navFound) — which is
         // only when we requested a re-plan (navActive), so the cache holds the last
         // committed route until the next trigger.
-        if (acceptFresh && g_route.navArrived) g_navAwaiting = false;
+        if (acceptFresh && g_route.navArrived) {
+            g_navAwaiting = false;
+            navArrivedFresh = true;
+        }
         if (acceptFresh && g_route.navFound && g_route.navWptCount >= 2) {
             g_navAwaiting = false;
             g_navCache.valid   = true;
+            navCacheRefreshed = true;
             g_navCache.goal    = { walkX, walkY };
             g_navCache.n       = std::min(g_route.navWptCount, kMaxNavWpts);
             for (int i = 0; i < g_navCache.n; ++i) g_navCache.wpts[i] = g_route.navWpts[i];
             g_navCache.partial = g_route.navPartial;
         } else if (acceptFresh && g_route.navPops > 0 &&
                    g_route.navWptCount < 2 && !g_route.navArrived) {
-            // DEADLOCK GUARD. The A* ran (navPops > 0) and came back with no usable
-            // route — ComputeNav's `target == start` branch, i.e. nothing reachable
-            // beat the player's own cell. The cache is (correctly) not updated with a
-            // 1-point route, but leaving the OLD one valid is a trap: the player is
-            // standing on its far end, so NavStepFromCache hands back that end point,
-            // goal.pos lands within kUWalkArriveTiles of the player, the solver's
-            // `repositionToward` goes false and it HOLDS (NO-MOVE kind=0). Holding
-            // means the map never streams, so the next A* returns the same dead
-            // result — a permanent stall that only broke when the walk goal itself
-            // moved kNavGoalMoveTiles (for a committed quest target: minutes, or
-            // never). Dropping the cache falls through to `navStep = wg` below,
-            // steering straight at the raw goal exactly as on a cold start; moving
-            // streams new map and the A* recovers on its own.
+            // No reachable route is not permission to drive at the raw goal.
+            // Keep requesting A* as the map streams and preserve dodge safety.
             g_navCache.valid = false;
+            g_navAwaiting = true;
         }
+    }
+
+    // The worker may have released the wait and replaced the corridor above.
+    // Refresh BOTH the local waiting flag and steering goal before any fallback
+    // solve; otherwise an accepted route is immediately overwritten by HOLD.
+    navWaiting = g_navAwaiting;
+    if (goal.walkTo && navArrivedFresh) navStep = {walkX, walkY};
+    else if (goal.walkTo && navCacheRefreshed && g_navCache.valid && !navWaiting) {
+        float dev = 0.f; bool nearEnd = false;
+        navStep = NavStepFromCache(g_navCache, in.player,
+            std::max(b, 1.f) * kUNavLookaheadBudgets, dev, nearEnd, in);
+    }
+    const auto navHandoff = Navigation::FinishRefresh(goal.walkTo, wasNavWaiting, navWaiting,
+        g_navCache.valid, in.player, navStep, rebuilt || tickChanged || throttleFallback,
+        commitmentChanged, rejectedFreshWalk,
+        acceptedWalkSolve && LenSq(Sub(acceptedWalkStep, navWaiting ? in.player : navStep))
+            > kUNavAnchorArriveTiles * kUNavAnchorArriveTiles);
+    if (goal.walkTo) {
+        navStep = navHandoff.step;
+        goal.pos = navStep;
     }
 
     // Staleness gate: only feed the solver a route recent enough to trust as a
@@ -930,14 +966,23 @@ void Tick(void* player, float px, float py, float dt)
         routeForSolve = g_route;
     }
 
+    // The timed advice is a lookahead exactly like the route above, so it gets
+    // the same freshness rule: an advice computed for a snapshot too many
+    // publishes back is dropped rather than steered by. A commanded walk-to owns
+    // direction, so the advice is withheld there too — dodging still happens
+    // through the reflex, which the walk-to path already defers to.
+    Solver::TimedAdvice timedForSolve{};
+    if (g_timed.valid && g_timedSeq != 0 && g_lastPubSeq >= g_timedSeq &&
+        (g_lastPubSeq - g_timedSeq) <= kUPlanMaxStaleSeq && !goal.walkTo)
+        timedForSolve = g_timed;
+
     // A cold/late worker must not stall navigation or leave an old absolute
     // target behind the player. The expensive grid search stays asynchronous;
     // this is only the small live safety solver, at server-tick cadence.
     if (navWaiting) routeForSolve = Path::PlanResult{};
-    if (navWaiting || commitmentChanged ||
-        (walkActive && tickChanged && (!g_navCache.valid || rejectedFreshWalk))) {
+    if (navHandoff.solve) {
         PhaseTimer _p(g_tSolve);
-        Solver::Solve(in, b, goal, routeForSolve, proposedState, g_solve);
+        Solver::Solve(in, b, goal, routeForSolve, proposedState, g_solve, timedForSolve);
     }
 
     // Normal temporal solving is performed with the path search on the worker.
@@ -948,13 +993,23 @@ void Tick(void* player, float px, float py, float dt)
     Vec2 moveTarget = in.player;
     bool moveFailed = false;
 
+    // ── One movement allowance per game update ───────────────────────────────
+    // The game's own update already moved the player from input (and the server
+    // may have corrected them) before this tick runs. Charge that travel against
+    // this update's allowance so our step does not stack on top of it: the solver
+    // validated a step of one frame's travel, and two frames of travel is not the
+    // motion it approved. When the accounting is unavailable we keep the previous
+    // pure per-frame clamp, so this can only ever tighten the step, never widen it.
+    const auto frameMove = DodgeRuntime::BeginMovementFrame(player, frameMs, in.speed);
+
     // Validate against this frame's map and replace unsafe decisions before
     // driving. A rebuild must not suppress the immediate solve while the worker
     // is still processing its snapshot.
     {
         PhaseTimer _p(g_tSolve);
         CoreState safetyState = g_commitment.state;
-        if (Solver::RevalidateAndSolve(in, b, goal, routeForSolve, safetyState, g_solve, rebuilt))
+        if (Solver::RevalidateAndSolve(in, b, goal, routeForSolve, safetyState, g_solve, rebuilt,
+                                       timedForSolve))
             proposedState = safetyState;
     }
 
@@ -962,7 +1017,7 @@ void Tick(void* player, float px, float py, float dt)
     // Enemy bodies stay a hard no-go even after a re-solve; a target that is
     // enemy-blocked now is not driven (the next tick's fresh solve re-picks).
     const bool enemyDriveClear = (g_solve.kind == Solver::SolveKind::Fallback)
-        ? !Core::EnemyBlocked(in, g_solve.target)                       // surround-escape: endpoint rule
+        ? Core::EnemyEscapePathClear(in, in.player, g_solve.target)    // partial outward escape
         : !Core::EnemyPathBlocked(in, in.player, g_solve.target);       // finding J: swept
     // Re-solving can choose a new emergency fallback. Apply its zone/ground
     // rules again at execution, rather than assuming rejection made it safe.
@@ -977,8 +1032,14 @@ void Tick(void* player, float px, float py, float dt)
         // Per-frame step, clamped to the player's speed; MoveTo clamps again
         // internally. Converges onto the target by the tick boundary without
         // ever exceeding the per-tick budget.
-        moveTarget = Add(in.player, Mul(dir, std::min(d, in.speed * frameMs)));
-        const bool ok = DodgeRuntime::CallMoveTo(player, moveTarget.x, moveTarget.y);
+        float reach = std::min(d, in.speed * frameMs);
+        if (frameMove.budgeted) reach = std::min(reach, frameMove.tiles);
+        moveTarget = Add(in.player, Mul(dir, reach));
+        // A fully consumed allowance means the game already moved the player a
+        // frame's worth this update; issuing a zero-length MoveTo would only
+        // re-assert the position, so skip the call and keep the commitment.
+        const bool ok = reach > 1e-4f
+            ? DodgeRuntime::CallMoveTo(player, moveTarget.x, moveTarget.y) : true;
         if (!ok) moveFailed = true;
         g_commitment.Record(proposedState, Sub(moveTarget, in.player), ok);
         static int s_mvN = 0;
@@ -989,6 +1050,9 @@ void Tick(void* player, float px, float py, float dt)
                                ? (g_solve.prePosition ? " DISK-OOR-PREPOS" : " DISK-OOR")
                                : (g_solve.prePosition ? " INRANGE-PREPOS" : " INRANGE"))
                         : (g_solve.prePosition ? " PREPOS(temporal)" : " IMMED"))
+                // This step came from the bounded temporal planner's advice
+                // rather than the route/reflex ladder (it still passed every floor).
+                << (g_solve.timedEscape ? " TIMED" : "")
                 // Route tag: following a curved multi-waypoint grid route around
                 // an obstacle (PATH) vs a straight immediate/pre-position step.
                 << (g_solve.followedRoute
@@ -1020,9 +1084,12 @@ void Tick(void* player, float px, float py, float dt)
         static int s_noMvN = 0;
         if ((s_noMvN++ % 120) == 0)
             DBG_FILE_LOG("[UDodge] NO-MOVE kind=" << (int)g_solve.kind
+                << (g_solve.timedEscape ? " TIMED-WAIT" : "")
                 << " pocketDist=" << g_solve.pocketDist
                 << " clr=" << g_solve.clearance);
     }
+
+    DodgeRuntime::EndMovementFrame(player);
 
     // Server-accurate clearance at the player (≤ 0 ⇒ danger covers the stand).
     // Computed once here (unconditional): it feeds both the debug snapshot below

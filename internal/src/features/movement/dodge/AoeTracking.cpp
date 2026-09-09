@@ -589,22 +589,23 @@ static void __fastcall ShowEffectDetour(void* self, void* reader, void* method)
         return;
     }
 
-    // Duration: float field — if <= 120 treat as seconds, else already ms.
-    float lifeMs;
-    if (dur > 0.f && dur <= 120.f && std::isfinite(dur))
-        lifeMs = dur * 1000.f;
-    else if (dur > 120.f && dur <= 120000.f && std::isfinite(dur))
-        lifeMs = dur;
-    else
-        lifeMs = 2000.f;
+    const float lifeMs = AoeCapturePolicy::ShowEffectDurationMs(dur, effectType == kSfxType_Throw);
 
     float originX, originY, destX, destY;
     if (effectType == kSfxType_Throw) {
-        // THROW: pos1=source position, pos2=landing spot. Without a readable pos2
-        // there is no landing spot to stamp — drop rather than stamp the thrower.
-        if (!hasP2) return;
-        originX = p1x; originY = p1y;
-        destX   = p2x; destY   = p2y;
+        // THROW: pos1 is the LANDING position; TargetObjectId identifies the
+        // thrower; pos2 is auxiliary and may be absent or (0,0). The previous
+        // decode (pos1 = source, pos2 = landing, drop when pos2 absent) hid
+        // bombs whose packet carried no pos2. Origin (drawing/flight only) is the
+        // thrower's live position when it can be found, else the landing spot.
+        if (!AoeCapturePolicy::ThrowLanding(p1x, p1y, destX, destY)) return;
+        originX = destX; originY = destY;
+        if (targetObjId > 0) {
+            void* dict = Mem::ReadPtr(GameState::GetWorldMgr(), RuntimeOffsets::WM_AllDict);
+            Il2CppC::WalkDict(dict, 4096, [&](int32_t key, void* entity) {
+                if (key == targetObjId) TryReadAnchorXY(entity, originX, originY);
+            });
+        }
         // Skip if GJJ/FHOH already recorded this same throwable
         if (g_CsInit) {
             EnterCriticalSection(&g_Cs);

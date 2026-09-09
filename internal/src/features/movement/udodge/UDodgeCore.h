@@ -8,6 +8,11 @@
 // chooses among reachable points using these tests.
 namespace UDodge { namespace Core {
 
+// Player half-extent folded into PROJECTILE contact tests (not enemy bodies or
+// zones): 0 under Settings::pointPlayer, kUPlayerHalf under the legacy padded
+// model. Position uncertainty is added separately by the callers.
+float ProjectilePlayerHalf(const Settings& settings);
+
 // "Could the player stand at `pos` right now?" — on standable ground
 // (walls always block; hazard blocks when safeWalk), outside every danger
 // lane (Chebyshev > hitHalf × hitScale) and outside every ACTIVE zone.
@@ -91,6 +96,9 @@ bool EnemyBlocked(const MapInput& in, Vec2 pos);
 // least-bad fallback path, which is the surround-escape and must stay as
 // permissive as it was.
 bool EnemyPathBlocked(const MapInput& in, Vec2 from, Vec2 to);
+// Emergency escape may take multiple budgets to leave an overlapping body.
+// Every step must move outward and must not enter another body.
+bool EnemyEscapePathClear(const MapInput& in, Vec2 from, Vec2 to);
 
 // Total PENDING-zone penetration (tiles) at `pos`: summed over every telegraphed,
 // not-yet-landed disc, how far `pos` sits INSIDE (radius + kUPlayerHalf). 0 =
@@ -161,8 +169,11 @@ void SampleLane(const LaneThreat& L, Vec2* outPos);
 // cullCenter/cullTiles are PARAMETERS — the solver culls relative to the player
 // (kUTemporalCullTiles), the pathfinder relative to the grid center (window
 // extent + margin) so a far-side-of-disk lane survives (see plan 72).
+// `playerHalf` is the projectile-contact player half (Core::ProjectilePlayerHalf);
+// it defaults to the legacy padded value so existing callers/tests keep their
+// contract, and production passes the setting-derived value.
 void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2 cullCenter,
-           float cullTiles, Ctx& out);
+           float cullTiles, Ctx& out, float playerHalf = kUPlayerHalf);
 
 // Bullet position at arbitrary t within the march grid (clamped to [0,horizon]).
 Vec2 BulletPosAt(const Ctx& c, int li, float tMs);

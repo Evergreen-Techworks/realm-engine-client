@@ -1,11 +1,13 @@
 #include "pch-il2cpp.h"
 #include "UDodgeWorker.h"
 #include "UDodgePathfinder.h"
+#include "UDodgeTimedPlanner.h"
 
 #include <thread>
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+#include <chrono>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // IL2CPP-FREE ZONE. Nothing in this file — and nothing WorkerLoop reaches —
@@ -87,13 +89,30 @@ void WorkerLoop()
         goal.maxRange = local.weaponRangeTiles;
         goal.innerStandoff = local.innerStandoffTiles;
 
+        // ── Bounded temporal search (advisory) ──────────────────────────────
+        // Runs here, never on the game thread: it allocates inside its search
+        // and is bounded by an expansion count and a wall-clock budget. A search
+        // that finds nothing certified publishes an INVALID advice, which the
+        // solver treats exactly as "no advice" — today's behaviour.
+        static SpacetimeDodge::State timedState;   // retained plan across cycles
+        SpacetimeDodge::Input timedIn{};
+        const double nowMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        Timed::BuildInput(in, nowMs, 16.7f, Timed::Budget{}, timedIn);
+        SpacetimeDodge::Output timedOut{};
+        SpacetimeDodge::Evaluate(timedIn, timedState, timedOut);
+        const Solver::TimedAdvice timed =
+            Timed::ToAdvice(timedOut, in.player, local.moveBudget);
+
         CoreState solveState = local.commitment.state;
         Solver::SolveResult solve{};
-        Solver::Solve(in, local.moveBudget, goal, plan, solveState, solve);
+        Solver::Solve(in, local.moveBudget, goal, plan, solveState, solve, timed);
         {
             std::lock_guard<std::mutex> lk(g_planMutex);
             g_latest.plan = plan;
             g_latest.solve = solve;
+            g_latest.solveGoal = goal.pos;
+            g_latest.timed = timed;
             g_latest.solveState = solveState;
             g_latest.commitmentRevision = local.commitment.revision;
             g_latest.snapshotPlayer = local.player;

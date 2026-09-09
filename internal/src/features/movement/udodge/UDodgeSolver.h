@@ -80,6 +80,25 @@ struct Goal {
                             // so a player who starts inside can always move outward.
 };
 
+// ── Timed escape advice (SpacetimeCore, produced on the worker thread) ──────
+// The bounded temporal planner searches control space over (position, time) and
+// optimises LATEST DEPARTURE: it prefers to leave the player where they are for
+// as long as that is provably safe, then move — including turns the one-budget
+// candidate set and the grid Dijkstra cannot express.
+//
+// It is an ADVISOR. This struct carries a step target and nothing else; the
+// solver re-tests that step against every hard floor before driving it, and
+// discards it otherwise. It is consulted only where the solver would already
+// have fallen through to the conservative reflex, so it can never make a solve
+// worse than it is today. See internal/docs/udodge-timed-escape-design.md.
+struct TimedAdvice {
+    bool  valid = false;      // a plan was validated against this snapshot
+    bool  moves = false;      // its first slice commands motion
+    bool  waiting = false;    // its first slice deliberately holds position
+    Vec2  stepTarget{};       // where that slice ends (world; clamped to the budget)
+    float departureMs = 0.f;  // when the plan first deviates from standing still
+};
+
 enum class SolveKind : uint8_t {
     Hold,        // player is already safe and nothing better is worth moving for
     Safe,        // moved to a provably-safe reachable cell
@@ -98,6 +117,10 @@ struct SolveResult {
     // safe (a wall is closing), so we walk into the gap now instead of waiting
     // to be threatened. false = the move is an immediate dodge / hold.
     bool      prePosition = false;
+    // This tick's decision came from the timed planner's advice rather than the
+    // route/reflex/fallback ladder. Diagnostics only — the step still passed
+    // every floor the other paths pass.
+    bool      timedEscape = false;
     float     pocketDist  = 0.f; // reach to the nearest durable pocket (0 = none, or standing in one)
     uint16_t  tempLanes   = 0;   // relevant bullets fed to the temporal test (post-cull) — diagnostics
     // TEMPORAL DURABILITY of the chosen target, in [0,1] (kSolveDurableW): 0 = it
@@ -150,13 +173,15 @@ struct SolveResult {
 //                     is cold / the route is too stale → pure immediate dodge.
 //   state.lastMoveDir is read (commitment term) and updated (chosen heading).
 void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
-           const Path::PlanResult& route, CoreState& state, SolveResult& out);
+           const Path::PlanResult& route, CoreState& state, SolveResult& out,
+           const TimedAdvice& timed = {});
 
 // Validate the committed decision on the current map and replace it immediately
 // if unsafe. Rebuilt maps also recheck a held position's prediction horizon.
 // Returns true when a new solve was performed; never waits for the worker.
 bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
                         const Path::PlanResult& route, CoreState& state,
-                        SolveResult& committed, bool mapRebuilt);
+                        SolveResult& committed, bool mapRebuilt,
+                        const TimedAdvice& timed = {});
 
 } } // namespace UDodge::Solver

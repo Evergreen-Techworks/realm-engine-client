@@ -21,6 +21,10 @@ struct Result {
     Path::PlanResult plan{};
     Solver::SolveResult solve{};
     Vec2 snapshotPlayer{};
+    Vec2 solveGoal{}; // actual corridor point used by the worker solver
+    // Bounded temporal-planner advice for this snapshot (UDodgeTimedPlanner.h).
+    // Advisory only: the game thread re-tests it against every hard floor.
+    Solver::TimedAdvice timed{};
     Vec2 walkGoal{};
     bool walkActive = false;
 };

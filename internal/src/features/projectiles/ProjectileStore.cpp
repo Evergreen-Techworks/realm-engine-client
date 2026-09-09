@@ -1,6 +1,7 @@
 #include "pch-il2cpp.h"
 
 #include "ProjectileStore.h"
+#include "ProjectileRetirePolicy.h"
 #include "ProjectileRuntimeReader.h"
 #include "ProjectileTrajectory.h"
 #include "RuntimeOffsets.h"
@@ -42,6 +43,11 @@ CRITICAL_SECTION g_LocalCs;
 std::atomic<uint32_t> g_WriteIdx{0};
 std::atomic<uint32_t> g_LocalWriteIdx{0};
 WorldProjectile g_Slots[kMaxTrackedProj]{};
+// Per-slot consecutive-miss counter for the live-pool reconcile (see
+// ProjectileRetirePolicy.h). Parallel to g_Slots rather than a WorldProjectile
+// field: it is store bookkeeping, not projectile data handed to consumers.
+// Mutated only under g_RingCs.
+uint8_t g_MissStreak[kMaxTrackedProj]{};
 WorldProjectile g_LocalSlots[kMaxLocalProj]{};
 bool g_CsInit = false;
 bool g_LocalCsInit = false;
@@ -244,6 +250,8 @@ WorldProjectile StoreProjectile(bool enemyShot, const WorldProjectile& projectil
     EnterCriticalSection(cs);
     const uint32_t idx = writeIdx->fetch_add(1, std::memory_order_relaxed) % maxSlots;
     slots[idx] = projectile;
+    // A reused ring slot must not inherit the previous shot's absence evidence.
+    if (enemyShot) g_MissStreak[idx] = 0;
     const WorldProjectile snap = slots[idx];
     LeaveCriticalSection(cs);
     return snap;
@@ -261,6 +269,7 @@ bool RetireProjectile(const WorldProjectile& projectile)
         if (slot.spawnTick != projectile.spawnTick) continue;
         if (slot.ptr && projectile.ptr && slot.ptr != projectile.ptr) continue;
         slot.valid = false;
+        g_MissStreak[i] = 0;
         retired = true;
         break;
     }
@@ -268,44 +277,30 @@ bool RetireProjectile(const WorldProjectile& projectile)
     return retired;
 }
 
-// A single reconcile should only ever catch a handful of just-deleted shots. If it
-// would retire MORE than this, the live-pool read is INCOMPLETE (it didn't see shots
-// that are actually alive — observed live=1 during a boss firing dozens), and pruning
-// them would drop LIVE shots → the dodge misses them → death. In that case we abort
-// and prune NOTHING. A lingering phantom lane is safe; a wrongly-dropped live shot is
-// not. Genuine mass-deletions above this just wait for the next reconcile.
-static constexpr int kMaxSafeRetirePerReconcile = 4;
-
 int RetireNotInLiveSet(const std::unordered_set<uintptr_t>& live, float minAgeMs)
 {
-    if (live.empty()) return 0;   // SAFETY: empty = failed/partial pool read → prune NOTHING
     Initialize();
     const ULONGLONG now = GetTickCount64();
 
+    // The caller guarantees this set came from a VERIFIED pool read (see
+    // WorldTAB::CollectLiveProjectilePtrs); a failed read never reaches here, so
+    // an empty set legitimately means every tracked shot has despawned. Absence
+    // still has to be corroborated across consecutive reads before it retires a
+    // slot — see ProjectileRetirePolicy.h for why that replaced the old per-pass
+    // cap, which made ghost-lane latency proportional to volley size.
     EnterCriticalSection(&g_RingCs);
-    // Pass 1 — DRY COUNT how many would be retired; if implausibly many, the read is
-    // incomplete and we must not trust it. Abort without touching a single slot.
-    int wouldRetire = 0;
-    for (int i = 0; i < kMaxTrackedProj; ++i) {
-        const WorldProjectile& slot = g_Slots[i];
-        if (!slot.valid || !slot.ptr) continue;
-        if (static_cast<float>(now - slot.spawnTick) < minAgeMs) continue;
-        if (live.count(reinterpret_cast<uintptr_t>(slot.ptr)) == 0) ++wouldRetire;
-    }
-    if (wouldRetire > kMaxSafeRetirePerReconcile) {
-        LeaveCriticalSection(&g_RingCs);
-        return 0;   // incomplete read → prune nothing (never risk a live shot)
-    }
-
-    // Pass 2 — actually retire the (few, confidently-dead) slots.
     int retired = 0;
     for (int i = 0; i < kMaxTrackedProj; ++i) {
         WorldProjectile& slot = g_Slots[i];
-        if (!slot.valid || !slot.ptr) continue;
-        if (static_cast<float>(now - slot.spawnTick) < minAgeMs) continue;
-        if (live.count(reinterpret_cast<uintptr_t>(slot.ptr)) != 0) continue;  // still alive → keep
-        slot.valid = false;                                                    // game deleted it → drop the lane
-        ++retired;
+        if (!slot.valid || !slot.ptr) { g_MissStreak[i] = 0; continue; }
+        const bool present = live.count(reinterpret_cast<uintptr_t>(slot.ptr)) != 0;
+        const float ageMs = static_cast<float>(now - slot.spawnTick);
+        if (ProjectileRetirePolicy::Reconcile(present, ageMs, minAgeMs, g_MissStreak[i])
+                == ProjectileRetirePolicy::Action::Retire) {
+            slot.valid = false;          // game deleted it → drop the lane
+            g_MissStreak[i] = 0;
+            ++retired;
+        }
     }
     LeaveCriticalSection(&g_RingCs);
     return retired;

@@ -414,3 +414,91 @@ User requested removal of predictive escapes. Replaced the prediction-ledger plu
 Native AutoNexus was verified to publish forecasts, not send ESCAPE. The plugin now disarms its scanner and both prediction feature flags; no DLL rebuild is needed. Server packets and outgoing hit reports are forwarded normally. Delta ticks without HP do not overwrite intervening confirmed damage; explicit HP updates replace the ledger, including zero. Hooks run after StateManager to use current effective max HP. Map/character changes and enable toggles reset health; disconnect/disable/unload cancel retries.
 
 Validation: 94 client tests and test-inclusive TypeScript pass. Seven Auto Nexus regressions cover ignored lethal forecasts/client hits, current packet HP, confirmed damage accounting, heals, safe zones/reset, invalid inputs/zero HP, and retry cleanup. This mode reacts to confirmed damage, not impending hits.
+
+## Realm Farmer encounter departure and loot grace
+
+Previously getEventGoal immediately released an event on object death, clearing bossEncounter before the next teleport opportunity. Added persistent eventArrived ownership (within 12 tiles) so combat displacement cannot re-enable travel. Shared teleport helper refuses new travel while an encounter or loot owns movement. An arrived event whose object dies/disappears follows a live eligible event marker within 20 tiles, or retains the old encounter while nearby living adds remain. Explicit death then waits 10 seconds without adds for delayed loot/phase updates; unexplained absence retains the existing 30-second grace. Useful bag handling continues to own movement past the grace. Remote confirmed death before arrival still switches immediately.
+
+Boss phases may restore HP with NEWTICK while retaining their object ID. GameWorldState now clears the death marker only on an explicit positive HP update, not on unrelated position updates using stale cached HP.
+
+Validation: all 104 client tests and test-inclusive TypeScript check pass. Added arrival pin/displacement, delayed white bag, replacement phase, persistent nearby adds, reset, and same-ID HP restoration regressions. Exact reported live boss was not captured. No native changes needed.
+
+## Route worker handoff and lagging/flashing follow-up
+
+Found the per-frame local navWaiting and goal.pos being computed before Worker::TryGetLatest. Accepting a fresh route cleared g_navAwaiting but left navWaiting=true and goal.pos=player for that frame. The unconditional waiting fallback Solve then overwrote the accepted worker movement with HOLD. Waiting also ran the full temporal candidate solve every render frame despite no new map/tick.
+
+After worker refresh, the driver now synchronizes waiting and updates the steering goal from a newly accepted corridor (or the final raw position when arrival is reported). Navigation::FinishRefresh requests a solve on wait entry/exit, new map/tick cadence, or commitment changes, rather than every unchanged waiting frame. Per-frame RevalidateAndSolve and execution collision/zone gates remain intact. Cached route following is recomputed only when a fresh route actually replaces the cache, avoiding duplicate full follower work on ordinary frames.
+
+Validation: all six native regression suites pass. New handoff cases cover entry HOLD, unchanged waiting frames, cadence refresh, immediate movement on route arrival using the production solver, and manual commitment refresh. The specific live wall/path geometry and FPS impact remain unmeasured.
+
+Additional timing correction: Navigation::Progress now pauses/resets while awaiting a worker route. Waiting itself is not failed movement; a newly delivered route gets a full progress window before another stall-triggered invalidation. Regression covers a long worker wait, resumption, and a genuine subsequent stall.
+
+Final Windows Release build: zero warnings/errors. Installed workspace and Windows DLL SHA-256 e00e3c0ebb33b046de46d490c594b90d70ce9371e8c5306ce00e9e90302a92f9; hashes match, previous Windows DLL retained as backup. Restart game to load the new native navigation code.
+
+## Nexus corridor versus direct-goal steering
+
+Cold or invalid navigation caches previously steered at the raw destination without verifying the entire route. The boxed-in A* case also returned the destination as its steering point, despite finding no way out. Cold direct movement now requires a padded clear sweep to the destination; unsuccessful searches hold navigation while continuing to request routes. Emergency dodge safety remains active.
+
+Worker results now include the actual goal used by their solver. On acceptance, the driver compares that goal to the current corridor point after cache refresh and re-solves when they differ by more than the intermediate-anchor tolerance. This prevents a spatially safe but wrongly directed old decision from surviving merely because collision revalidation passes. Matching decisions avoid this additional solve. The straight destination overlay is still a goal indicator.
+
+Validation: all six native regression suites pass, including boxed-in A*, late worker steering replacement through the production solver, and avoiding redundant solves when steering is unchanged. The user's live Nexus session has not been reproduced.
+
+Windows Release build succeeded with zero warnings/errors. Installed workspace and Windows DLL SHA-256 1be414b70f52121d15d47666c960b45ec7fe6e5193f787b566494204e03797f0; previous Windows DLL retained as backup. Restart the game to activate.
+
+## Mushroom Brawler self-blasts and overlapping-body escape
+
+User supplied a RealmEye Mushroom Brawler PDF (page 1–2: consecutive self-centred blasts, 200/160/120 damage at radii 1/2/3). Local game XML at /home/jesse/realm-engine/client/data/objects.xml identifies GC Mushroom Slammer Melee (0xb2a9) and Melee E (0xb502), both DisplayId Mushroom Brawler. Their XML has no projectile definitions to derive these self-blasts from. No packet capture of the reported death was available.
+
+UDodge now adds a 3.35-tile enemy-centred avoidance envelope for these two known types while alive. This is a conservative encounter policy, not evidence of a currently detonating explosion. It is rebuilt from live enemy positions on full and intermediate map refreshes, disappears on death/despawn, and uses existing zone drawing/collision/escape math. It does not publish damage to Auto Nexus. It may keep short-range weapons outside firing range; survival takes precedence over closing inside this enemy's attack envelope.
+
+A production-solver regression reproduced a separate freeze with a blast active and the player overlapping the enemy body: every candidate ended inside the body, so the fallback refused all progress. Added a shared emergency enemy-escape sweep used by fallback selection, revalidation and actual drive. It allows incremental outward movement from an existing overlap, rejects paths through the body centre or a new body, and retains physical wall and zone checks. The previously failing test now passes.
+
+Auto Nexus remains confirmed-health-only per prior user direction. A burst can kill before confirmed HP/DAMAGE reaches the proxy, so this mode cannot guarantee prevention. Saved Windows default configuration was verified at 5%, not the plugin's 25% initial default. Added death diagnostics for killer, last confirmed HP/evidence age, configured threshold, safe-zone state and whether escape was requested. ESCAPE now precedes the optional notification; notification/initial-send exceptions no longer prevent bounded retries. No estimated AoE ledger was restored.
+
+Validation: 163 client tests and test-inclusive TypeScript check pass. All six native suites pass, including Brawler approach/partial escape, overlapping-body regression, centre crossing, other-body crossing, physical walls, dead/unknown-type filtering and moving-anchor handling. Live Fungal Cavern survival remains unverified.
+
+Windows Release build passed with zero warnings/errors. Workspace and installed Windows DLL SHA-256 e3c2d254231b98cc29e7618f29f326c1a391bbfaee7dccdefb7c2d3b5a705634; matching Auto Nexus plugin also installed. Previous DLL retained. Game/client restart needed for all changes. Saved threshold remains 5% pending user preference.
+
+## Realm Farmer stale encounter / vulnerability follow-up
+
+Enemy bridge previously expired entities three seconds after their own last delta. World membership is controlled by UPDATE adds/drops; stationary entities need not receive deltas each tick. Added world-snapshot freshness based on valid UPDATE/NEWTICK receipt, reset on map clear, while preserving per-entity lastUpdate for other consumers. The enemy bridge uses snapshot freshness, continues filtering invisible entities, and excludes confirmed deaths even if cached HP is positive. This prevents stationary bosses from disappearing during a healthy tick stream and allows explicit effect clearing to restore targetability.
+
+Normal quest/encounter ownership now checks death memory. Missing encounters release after a bounded grace even with no new quest, and switch to a different quest immediately while absent. Status distinguishes invisible/missing encounter visibility from actual invulnerability and confirmed event defeat. Event loot/phase grace and shared local add-clearing remain.
+
+Validation: all 166 client tests pass, TypeScript test-inclusive check and script syntax pass. New integration test uses real world packet processing for stationary delta ticks, invulnerability clearing, death with stale positive HP, same-ID revival, drops and disconnect-age expiry. Farmer regressions cover no-movement kill release, no-replacement timeout and reacquiring a vulnerable boss. Four Windows script/bridge/state files installed and byte-verified; restart client to load the bridge/state changes. No native rebuild required.
+
+## PR 60 (Spacetime) review: pieces adopted into UDodge near-dodge
+
+Reviewed the user-submitted Spacetime dodge (PR 60, branch `codex/spacetime-upstream`, one commit on upstream 565c3b0). It is a standalone DodgeMode 8 with its own bounded latest-departure planner and a native MoveTo input filter; DangerPlanner runs it instead of UDodge when both are enabled and it switches the farmer scripts to mode 8. It was not merged. Its projectile contact test (continuous per-axis slab on the relative segment) is the same test UDodge Temporal already performs via MinChebOnSegment on the relative sweep, so no contact-geometry change was needed.
+
+Adopted into UDodge, each behind a host regression:
+
+- OccupancyPathClear while standing on damaging ground now relaxes only the hazard half of the sweep. Previously the whole intermediate sweep was skipped, so a hazard escape could be driven through a wall whose far side was clear. Walls are still checked; crossing more hazard to a safe endpoint remains allowed.
+- Curved cached paths are rebased on the shot's fractional phase (new UDodgeTrajectoryPhase.h) instead of the nearest cached sample, removing up to half a 50 ms sample of timing shift and the matching arc translation on wavy/boomerang/turning lanes. The existing 5-tile live-anchor sanity bound applies; failing it keeps the snapped anchor. Straight shots are unchanged.
+- IsCurvedShot counts `useAccel` alongside `isAccelerating`, so a shot with only the per-shot enable set takes the curved-shot anchoring and re-anchor path.
+
+Not adopted, pending in-game evidence: PR 60 drops the player half-extent from the projectile hit box (treats the player as a point) and reinterprets the SHOWEFFECT Throw first position as the landing spot. Both contradict this repository's documented reverse engineering (DodgeHit.h / AoeTracking.cpp) and the PR supplied only synthetic validation.
+
+Validation: all six native host suites pass (temporal 22 checks, admission 26 checks; new cases cover hazard-escape wall rejection, hazard-crossing allowance, off-hazard hazard rejection, and fractional-anchor interpolation/edge rejection). Windows Debug DLL compile-check: 0 warnings, 0 errors. Raw-access lint clean. Not yet built for Release or installed into the game; live curved-shot behaviour remains unverified.
+
+## PR 60 follow-up: point-player projectile contact and THROW landing decode
+
+At the user's direction (PR 60's author's model is trusted), UDodge now uses the point-player projectile contact model: the per-shot threshold T is the whole hit box (|dx| < T && |dy| < T) and no player half-extent is added to projectile tests. This is `Settings::pointPlayer` (default true); false restores the previous padded model without a rebuild of the solver. It changes `Core::PointSafety`, `Core::SegmentSafety` and `Temporal::Build` (new `playerHalf` parameter, fed by `Core::ProjectilePlayerHalf`). Enemy bodies and AoE discs still fold `kUPlayerHalf` in: they describe the player's physical footprint, which the projectile model does not govern. The lane threshold source order is now runtime T, then the new `WorldProjectile::collHalf` (CollisionMult × 0.5, populated by ProjectileRuntimeReader), then 0.5; the sprite-derived projHalfSize is no longer a hit-test source.
+
+The SHOWEFFECT Throw decode follows PR 60: Pos1 is the landing position, TargetObjectId is the thrower (its live position is looked up for the flight origin), and Pos2 is ignored. Duration handling moved to `AoeCapturePolicy::ShowEffectDurationMs` (a thrown bomb without a usable duration defaults to 1.5 s instead of 2 s). The GJJ/FHOH throwable hook remains the primary bomb source; the Sfx path still de-duplicates against it.
+
+Risk statement: the repository's earlier reverse-engineering notes (DodgeHit.h, UDodgeTypes.h) state that the game's IsHit folds the player half into its threshold. If that reading is right, the point model lets the solver stand up to 0.21 tiles inside the real hit square. The toggle exists for exactly that case. Verify live: a hit taken while the overlay shows clearance > 0 means the padded model should be restored.
+
+Validation: all six native host suites pass (temporal 24, admission 30, AoE 38 cases; new cases cover the point model in temporal and spatial tests, the padded model behind the flag, zones keeping their pad, Throw landing/duration policy). Four existing admission checks and one AoE check that verified solver output against a padded-default context were updated to build their verification context with the solver's own model. Windows Debug DLL: 0 warnings, 0 errors. Raw-access lint clean. Not built for Release or installed.
+
+## PR 60 stages 2 and 3: timed escape and one movement allowance per update
+
+Full design and rationale: `udodge-timed-escape-design.md`.
+
+**Ghost-lane latency (completing stage 1).** The live-pool reconcile retired at most four tracked shots per pass and refused an empty read outright, so a volley that despawned together left ghost lanes fencing the player in for the better part of a second. Retirement is now evidence-based: a shot is dropped only after it is absent from two consecutive VERIFIED pool reads (`ProjectileRetirePolicy.h`), so one incomplete read cannot remove a live shot while an entire despawned volley clears on the second pass. `WorldTAB::CollectLiveProjectilePtrs` now reports failure unless the projectile class resolves and a pool field is readable, which is what makes a verified empty read meaningful. The fork removed the guards without replacing them; this keeps the protection and still fixes the latency.
+
+**Timed escape (stage 2).** The fork's bounded temporal planner is vendored at `features/movement/spacetime/` and runs on the existing UDodge worker thread against the same plain-data snapshot the grid pathfinder uses. It searches control space over position and time and optimises latest departure, which is the one thing UDodge's one-budget candidate set and cell Dijkstra structurally cannot express: wait, then turn, then move. Its answer reaches the solver as `Solver::TimedAdvice` — a step target and nothing else — consumed in a new stage between the grid pre-position step and the conservative reflex, and only when the stand is not durable. The step is clamped to one move budget and must pass the identical floors the route step passes: walls, swept occupancy, swept enemy bodies, swept active blasts, and this tick's own temporal march. Any rejection falls through to the untouched reflex. A deliberate wait is honoured only while the stand passes its dwell-window admission test. The planner can therefore widen the route set but never the admitted set, and it is consulted only where UDodge was already conceding ground. Sensors now publish the three facts it needs: verified constant motion per lane (`UDodgeLaneMotion.h`, strict enough that curved and packet-recovered lanes never qualify), per-shot damage, and a scenery flag on enemy blockers.
+
+**One movement allowance per update (stage 3).** The game's update moves the player from input before the dodge tick runs, and UDodge then issued its own step in the same update, so a player holding a direction could travel up to twice their speed for that frame — not the step the solver validated. `DodgeRuntime::BeginMovementFrame` now measures the displacement since our last command and charges it against the update's allowance, and UDodge clamps its step to the remainder. Charging is partial so the dodge can still override a held key; a displacement beyond two maximum frames is treated as a discontinuity and charged as nothing; and when position or speed is unreadable the previous per-frame clamp applies unchanged. Implemented observationally rather than through the fork's new MoveTo hook, and the fork's input-replacement filter is not adopted: UDodge owns movement, so preserving manual input is not its problem to solve.
+
+Validation: seven native host suites pass (235 checks), including a new timed-escape suite covering verified-linear-motion detection, enemy keep-out scaling, planner input construction, advice conversion for every planner status, and each floor of the advice gate rejecting independently. Windows Debug and Release both build with zero warnings and zero errors; raw-access lint clean. Live behaviour is unverified: neither the timed stage nor the movement allowance has been exercised against a real server.

@@ -13,9 +13,11 @@ namespace {
 // which fold the player half-extent (kUPlayerHalf) into every bullet hit region
 // and active-zone radius. That is the divergence fix (plan 64): without it a
 // point the solver calls "safe" could still sit ~0.21 tiles inside the server's
-// hit square and the player gets clipped. Assert the constant is live so this
-// dependency is explicit at the solver boundary.
-static_assert(kUPlayerHalf > 0.f, "safety test must include the player half-extent");
+// hit square and the player gets clipped. That pad is now governed by
+// Settings::pointPlayer (see UDodgeTypes.h): under the point-player model the
+// per-shot threshold T is the whole hit box and no player half is added to
+// projectile tests. Enemy bodies and zones keep kUPlayerHalf regardless.
+static_assert(kUPlayerHalf > 0.f, "enemy-body and zone tests must include the player footprint");
 
 // ── Reachable candidate set (tiny, ≤ ~1.9 tiles) ────────────────────────────
 // The stand point plus polar rings at 0.34/0.67/1.0 of the move budget over
@@ -433,7 +435,8 @@ bool IsDurablePocketTemporal(const MapInput& in, const Core::Temporal::Ctx& ctx,
 } // namespace
 
 void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
-           const Path::PlanResult& route, CoreState& state, SolveResult& out)
+           const Path::PlanResult& route, CoreState& state, SolveResult& out,
+           const TimedAdvice& timed)
 {
     out = SolveResult{};
     if (!in.map) { out.kind = SolveKind::Hold; return; }
@@ -457,7 +460,8 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     // whole-path test cannot, and it drives the pre-positioning below.
     static thread_local Core::Temporal::Ctx ctx;
     Core::Temporal::Build(*in.map, in.settings.hitScale, in.settings.positionUncertainty,
-                          in.player, kUTemporalCullTiles, ctx);
+                          in.player, kUTemporalCullTiles, ctx,
+                          Core::ProjectilePlayerHalf(in.settings));
     out.tempLanes = static_cast<uint16_t>(ctx.count);
     // How far into the horizon this context is EVIDENCE for every lane. Computed
     // once per solve (one int compare per lane), consumed only by the durability
@@ -721,6 +725,63 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         }
     }
 
+    // ── Timed escape: consume the temporal planner's advice ─────────────────
+    // Reached only when the stand is not durable AND the grid route did not
+    // return — exactly the cases that used to fall straight through to the
+    // reflex or the fallback. The advice contributes a DIRECTION AND DISTANCE
+    // and nothing else: the step is clamped to one move budget and must pass the
+    // identical floors the route step passes (walls, swept occupancy, enemy
+    // bodies, active blasts, and this tick's own temporal march). Any rejection
+    // falls through to the untouched reflex below, so the planner can widen the
+    // route set but never the admitted set.
+    if (timed.valid && !standDurable) {
+        if (timed.moves) {
+            const Vec2  to = Sub(timed.stepTarget, in.player);
+            const float d  = Len(to);
+            if (d > 1e-4f) {
+                const Vec2 dir    = Mul(to, 1.f / d);
+                const Vec2 target = Add(in.player, Mul(dir, std::min(d, b)));
+                if (CanOccupyAt(in, target) &&
+                    OccupancyPathClear(in, in.player, target) &&
+                    !Core::EnemyPathBlocked(in, in.player, target) &&   // swept bodies (finding J)
+                    Core::ZonePathClear(in, in.player, target) &&       // swept live blasts
+                    Core::Temporal::PathClear(ctx, in.player, in.speed, target)) {
+                    out.kind = SolveKind::Safe;
+                    out.target = target;
+                    out.clearance = Core::PointSafety(in, target);
+                    out.pendingCost = Core::PendingZoneCost(in, target);
+                    out.targetDurability = Durability(
+                        Core::Temporal::TimeToDanger(ctx, in.player, in.speed, target), tEvidence);
+                    out.shouldMove = true;
+                    out.prePosition = true;
+                    out.timedEscape = true;
+                    state.lastMoveDir = dir;
+                    state.dampStreak = 0;
+                    return;
+                }
+            }
+        } else if (timed.waiting) {
+            // A deliberate wait is the planner's whole point — departing later
+            // threads gaps an immediate step cannot. Honour it ONLY while the
+            // stand passes the dwell-window admission test every candidate must
+            // pass. If the stand fails that test, moving now is mandatory and
+            // the reflex owns the decision.
+            const float standTtd = Core::Temporal::TimeToDanger(ctx, in.player, in.speed,
+                                                               in.player, kUDwellMs);
+            if (Core::Temporal::DwellClear(in.player, in.speed, in.player, standTtd)) {
+                out.kind = SolveKind::Hold;
+                out.target = in.player;
+                out.clearance = cands[0].clr;
+                out.pendingCost = cands[0].soft;
+                out.targetDurability = Durability(standTtd, tEvidence);
+                out.shouldMove = false;
+                out.timedEscape = true;
+                state.dampStreak = 0;
+                return;
+            }
+        }
+    }
+
     // ── Conservative reflex: choose AMONG the spatially-SAFE reachable cells ──
     // The instantaneous lane-based floor, unchanged. Runs when the stand is not
     // durable and no temporal pocket is reachable this tick (or a wall blocks the
@@ -813,12 +874,11 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     const float standTime = Core::Temporal::TimeToDanger(ctx, in.player, in.speed,
                                                        in.player, kUDwellMs);
     for (int i = 0; i < n; ++i) {
-        // Endpoint rule ON PURPOSE here (finding J): this is the surround-escape
-        // path, reached only when nothing is safe. An enemy body is an intent-level
-        // no-go, not a physical wall, so the swept rule must not be allowed to
-        // shrink the set of ways out when the player is already boxed in.
-        if (!cands[i].occOk) continue;
-        if (!OccupancyPathClear(in, in.player, cands[i].pos) ||
+        // Escaping a body may require several budgets. Admit outward progress
+        // only; do not cross another body or relax physical map collision.
+        if (!CanOccupyAt(in, cands[i].pos) ||
+            !Core::EnemyEscapePathClear(in, in.player, cands[i].pos) ||
+            !OccupancyPathClear(in, in.player, cands[i].pos) ||
             !Core::ZoneEscapePathClear(in, in.player, cands[i].pos)) continue;
         const float safeTime = Core::Temporal::TimeToDanger(ctx, in.player, in.speed,
                                                           cands[i].pos, kUDwellMs);
@@ -879,12 +939,13 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
 
 bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
                         const Path::PlanResult& route, CoreState& state,
-                        SolveResult& committed, bool mapRebuilt)
+                        SolveResult& committed, bool mapRebuilt,
+                        const TimedAdvice& timed)
 {
     if (!in.map) return false;
     if (in.movementLocked || !std::isfinite(in.speed) || in.speed <= 0.f) {
         if (!committed.shouldMove) return false;
-        Solve(in, moveBudgetTiles, goal, route, state, committed);
+        Solve(in, moveBudgetTiles, goal, route, state, committed, timed);
         return true;
     }
     // Keep the hot stationary path cheap between map rebuilds. On a new map,
@@ -895,7 +956,7 @@ bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& g
             if (!mapRebuilt) return true;
         } else {
             const bool enemyClear = committed.kind == SolveKind::Fallback
-                ? !Core::EnemyBlocked(in, committed.target)
+                ? Core::EnemyEscapePathClear(in, in.player, committed.target)
                 : !Core::EnemyPathBlocked(in, in.player, committed.target);
             if (!enemyClear || !OccupancyPathClear(in, in.player, committed.target) ||
                 !Core::ZonePathClear(in, in.player, committed.target)) return false;
@@ -903,7 +964,8 @@ bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& g
         // Never approve a moving target solely from the shorter painted lane.
         static thread_local Core::Temporal::Ctx ctx;
         Core::Temporal::Build(*in.map, in.settings.hitScale, in.settings.positionUncertainty,
-                              in.player, kUTemporalCullTiles, ctx);
+                              in.player, kUTemporalCullTiles, ctx,
+                              Core::ProjectilePlayerHalf(in.settings));
         const Vec2 target = committed.shouldMove ? committed.target : in.player;
         const float dwell = committed.shouldMove ? kUDwellMs : Core::Temporal::kHorizonMs;
         return Core::Temporal::PathClear(ctx, in.player, in.speed, target, dwell);
@@ -911,7 +973,7 @@ bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& g
     if (decisionClear()) return false;
     // A rebuilt map contains the freshest evidence. It does not imply a solve
     // occurred: the worker may still be processing an older snapshot.
-    Solve(in, moveBudgetTiles, goal, route, state, committed);
+    Solve(in, moveBudgetTiles, goal, route, state, committed, timed);
     return true;
 }
 

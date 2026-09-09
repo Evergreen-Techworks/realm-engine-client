@@ -22,6 +22,7 @@ static void ReadCollisionHalf(WorldProjectile& dst, void* projectilePtr, uint8_t
     float collMult = *reinterpret_cast<float*>(props + RuntimeOffsets::PP_CollMult);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would not abort the apply (plan 06)
     if (!std::isfinite(collMult) || collMult <= 0.f || collMult > 20.f)
         collMult = 1.0f;
+    dst.collHalf = collMult * 0.5f;
 
     const float magnitude = *reinterpret_cast<float*>(props + RuntimeOffsets::PP_Magnitude);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would not abort the apply (plan 06)
     dst.magnitude = magnitude;

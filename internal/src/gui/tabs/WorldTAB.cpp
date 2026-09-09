@@ -2233,6 +2233,21 @@ namespace WorldTAB {
         out.clear();
         void* worldMgr = GameState::GetWorldMgr();
         if (!Mem::AddrOk(worldMgr)) return false;
+        // A VERIFIED empty result ("every tracked shot despawned") is materially
+        // different from a failed read, and callers retire lanes on the strength of
+        // that distinction. Require the projectile class to resolve and at least one
+        // authoritative pool field to be readable before reporting success; a walk we
+        // could not even start must return false so reconciliation is skipped.
+        // This is necessary, not sufficient — the walk itself skips unreadable
+        // entries silently — which is why the retire policy also demands consecutive
+        // corroborating reads (ProjectileRetirePolicy.h).
+        void* pool = nullptr;
+        const bool poolReadable =
+            (Mem::TryRead(worldMgr, RuntimeOffsets::WM_MapDictA, pool) && Mem::AddrOk(pool)) ||
+            (Mem::TryRead(worldMgr, RuntimeOffsets::WM_MapDictB, pool) && Mem::AddrOk(pool)) ||
+            (Mem::TryRead(worldMgr, RuntimeOffsets::WM_KjmonList, pool) && Mem::AddrOk(pool));
+        if (!poolReadable || !GetHbeakProjectileClass()) return false;
+
         // Walk the live pools with an EMPTY seed so `out` ends up as exactly the set
         // of live projectile instance pointers. The discarded WorldProjectile list is
         // the price of reusing the existing, battle-tested pool walk.

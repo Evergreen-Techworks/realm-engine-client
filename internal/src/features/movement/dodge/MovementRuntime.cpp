@@ -1,11 +1,13 @@
 #include "pch-il2cpp.h"
 #include "MovementRuntime.h"
 #include "MovementSpeed.h"
+#include "MovementFrameBudget.h"
 
 #include "Il2CppResolver.h"
 #include "Il2CppHook.h"
 #include "DbgFileLog.h"
 #include "features/control/FeatureState.h"
+#include "game/objects/GameObjects.h"
 
 #include <algorithm>
 #include <cmath>
@@ -26,6 +28,27 @@ bool s_moveResolved = false;
 bool s_cmsResolved = false;
 bool s_dtResolved = false;
 float s_lastDeltaTime = 0.016f;
+
+// Per-update movement accounting. Game-update thread only, hence thread_local:
+// the worker never actuates.
+thread_local DodgeRuntime::MovementFrameBudget s_frameBudget;
+thread_local bool  s_haveCommandedPos = false;
+thread_local float s_commandedX = 0.f, s_commandedY = 0.f;
+
+double MovementNowMs()
+{
+    static const LARGE_INTEGER freq = [] { LARGE_INTEGER f{}; QueryPerformanceFrequency(&f); return f; }();
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    if (freq.QuadPart <= 0) return 0.;
+    return static_cast<double>(now.QuadPart) * 1000.0 / static_cast<double>(freq.QuadPart);
+}
+
+bool TryPlayerPos(void* player, float& x, float& y)
+{
+    if (!player) return false;
+    return Game::Entity(player).TryPos(x, y);
+}
 
 void ResolveMoveTo()
 {
@@ -144,6 +167,48 @@ bool CallMoveTo(void* player, float x, float y)
     return ok;
 }
 
+FrameMove BeginMovementFrame(void* player, float frameMs, float tilesPerMs)
+{
+    s_frameBudget.Begin(MovementNowMs(), frameMs);
+    FrameMove out{};
+
+    float x = 0.f, y = 0.f;
+    const bool havePos = TryPlayerPos(player, x, y);
+    const bool speedOk = std::isfinite(tilesPerMs) && tilesPerMs > 0.f;
+    if (!havePos || !speedOk) {
+        // Cannot measure, so cannot budget. Forget the stale anchor rather than
+        // charging against it next update.
+        s_haveCommandedPos = false;
+        return out;   // budgeted = false → caller keeps its own clamp
+    }
+
+    if (s_haveCommandedPos) {
+        const float moved = std::hypot(x - s_commandedX, y - s_commandedY);
+        // A displacement larger than a couple of frames of travel is not travel
+        // the player is "owed": it is a teleport, a portal, a map change, or the
+        // gap left by ticks where the dodge did not run. Charging it would blank
+        // the allowance on the first frame back for no safety benefit, so treat a
+        // discontinuity as a fresh anchor and charge nothing.
+        const float plausible = tilesPerMs * MovementFrameBudget::kMaxFrameMs * 2.f;
+        if (std::isfinite(moved) && moved > 1e-4f && moved <= plausible)
+            s_frameBudget.Charge(moved / tilesPerMs);
+    }
+    s_commandedX = x; s_commandedY = y; s_haveCommandedPos = true;
+
+    out.budgeted = true;
+    out.tiles = s_frameBudget.Available(MovementNowMs()) * tilesPerMs;
+    if (!std::isfinite(out.tiles) || out.tiles < 0.f) out.tiles = 0.f;
+    return out;
+}
+
+void EndMovementFrame(void* player)
+{
+    float x = 0.f, y = 0.f;
+    if (TryPlayerPos(player, x, y)) { s_commandedX = x; s_commandedY = y; s_haveCommandedPos = true; }
+    else s_haveCommandedPos = false;
+    s_frameBudget.End();
+}
+
 float GetTilesPerSec(void* player)
 {
     ResolveCalcMoveSpeed();
@@ -157,6 +222,8 @@ float GetTilesPerSec(void* player)
 
 void Reset()
 {
+    s_frameBudget = MovementFrameBudget{};
+    s_haveCommandedPos = false;
     s_moveResolved = false;
     s_cmsResolved = false;
     s_dtResolved = false;

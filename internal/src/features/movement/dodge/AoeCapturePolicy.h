@@ -5,6 +5,24 @@
 
 // Capture rules shared by the runtime hooks and host-side regression tests.
 namespace AoeCapturePolicy {
+// SHOWEFFECT Throw: TargetObjectId identifies the thrower and Pos1 is the
+// LANDING position. Pos2 is effect-specific auxiliary data (often absent or
+// (0,0)) and is not the destination. Adopted from the Spacetime dodge (PR 60);
+// the previous decode (pos1 = source, pos2 = landing, drop when pos2 absent)
+// dropped bombs whose packet carried no pos2.
+inline bool ThrowLanding(float p1x, float p1y, float& x, float& y)
+{
+    x = p1x; y = p1y;
+    return std::isfinite(x) && std::isfinite(y);
+}
+// SHOWEFFECT duration field: <= 120 is seconds, otherwise already ms. Absent or
+// out-of-range: a thrown bomb defaults to a 1.5 s flight, other effects to 2 s.
+inline float ShowEffectDurationMs(float duration, bool thrown)
+{
+    if (std::isfinite(duration) && duration > 0.f && duration <= 120000.f)
+        return duration <= 120.f ? duration * 1000.f : duration;
+    return thrown ? 1500.f : 2000.f;
+}
 inline float DurationMs(float ms, float fallback = 3000.f)
 {
     // Short flights are real. Replacing a 50 ms bomb with a 3 s countdown hides

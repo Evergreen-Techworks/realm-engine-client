@@ -944,7 +944,7 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
         out.navFound   = true;
         out.navArrived = reached && goalInWindow;
         out.navGoalCell = NavCellWorld(center, target % kNS, target / kNS);
-        out.navStepTarget = in.navGoal;     // nothing to walk — hand back the raw goal
+        out.navStepTarget = out.navArrived ? in.navGoal : in.player; // boxed in: hold for a route
         out.navWptCount = 1; out.navWpts[0] = in.player;
         return;
     }
@@ -1036,7 +1036,7 @@ static void ComputeDodge(const PlannerSnapshot& in, PlanResult& out)
     // relative to the grid center (window extent + margin) — see plan 72.
     Core::Temporal::Build(in.map, in.settings.hitScale, in.settings.positionUncertainty, in.grid.center,
                           kUPathMaxRadCells * kUPathCellTiles + kUTemporalCullTiles,
-                          s_tctx);
+                          s_tctx, Core::ProjectilePlayerHalf(in.settings));
 
     // IN-RANGE DISK: locked boss gates GOAL cells to the weapon-range disk so the
     // route keeps the boss hittable. Safety OVERRIDES range: if no in-range durable
