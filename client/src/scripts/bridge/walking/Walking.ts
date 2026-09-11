@@ -142,11 +142,14 @@ export class BridgeWalking {
         pkt.data.objectId = row.objectId;
         pkt.modified = true;
         c.sendToServer(pkt);
-        return true;
       } catch (err) {
         Logger.warn('Walking', `teleportToPlayer: send failed — ${(err as Error).message}`);
         return false;
       }
+      // sendToServer bypasses the packet hooks — tell StateManager directly so
+      // it can match the server's GOTO / NOTIFICATION answer to this TELEPORT.
+      deps.stateManager.noteTeleportSent(c, row.objectId);
+      return true;
     };
 
     Walking.teleportToBeacon = (objectId: number): boolean => {
@@ -167,11 +170,14 @@ export class BridgeWalking {
         pkt.data.objectId = objectId;
         pkt.modified = true;
         c.sendToServer(pkt);
-        return true;
       } catch (err) {
         Logger.warn('Walking', `teleportToBeacon: send failed — ${(err as Error).message}`);
         return false;
       }
+      // sendToServer bypasses the packet hooks — tell StateManager directly so
+      // it can match the server's GOTO / NOTIFICATION answer to this TELEPORT.
+      deps.stateManager.noteTeleportSent(c, objectId);
+      return true;
     };
   }
 }

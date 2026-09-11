@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Walking } from '@realmengine/sdk';
 import { StateManager } from '../StateManager.js';
 import { PacketFactory } from '../../packets/PacketFactory.js';
 import type { Packet } from '../../packets/Packet.js';
@@ -7,6 +8,9 @@ import PACKET_DEFINITIONS from '../../packets/packetDefinitions.generated.js';
 import STAT_TYPES from '../../packets/statTypes.generated.js';
 import { Proxy } from '../../proxy/Proxy.js';
 import { ClientConnection } from '../../proxy/ClientConnection.js';
+import { BridgeWalking } from '../../scripts/bridge/walking/Walking.js';
+import type { BridgeDeps } from '../../scripts/bridge/BridgeDeps.js';
+import type { MovementController } from '../../scripts/bridge/movement/MovementController.js';
 
 const { warn } = vi.hoisted(() => ({ warn: vi.fn() }));
 vi.mock('../../util/Logger.js', () => ({
@@ -139,5 +143,48 @@ describe('teleport refusal (game-client TELEPORT)', () => {
     vi.setSystemTime(1_000_000 + REPLY_WINDOW_MS + 1);          // reply window lapsed
     proxy.fireServerPacket(conn, fromHex(REFUSAL_HEX));
     expect(conn.teleportBlockedUntil).toBe(0);
+  });
+});
+
+// The farmer does not click teleport in the game: it calls the SDK, and the
+// bridge injects the TELEPORT with ClientConnection.sendToServer. That path
+// writes straight to the server socket and never passes through the packet
+// hooks, so StateManager cannot see this TELEPORT on the wire.
+describe('teleport refusal (script-sent TELEPORT, the farmer path)', () => {
+  const TARGET = { objectId: 275515, name: 'Target' };
+
+  function scriptSession() {
+    const s = session();
+    BridgeWalking.install({
+      clientRef: { current: s.conn },
+      proxy: s.proxy,
+      stateManager: s.state,
+      worldState: { getAllPlayersRawStatsForDashboard: () => [TARGET] },
+    } as unknown as BridgeDeps, {} as MovementController);
+    return s;
+  }
+
+  it.each([
+    ['teleportToBeacon', () => Walking.teleportToBeacon(TARGET.objectId)],
+    ['teleportToPlayer', () => Walking.teleportToPlayer(TARGET.name)],
+  ])('%s: the server-stated wait blocks re-sending until it lapses', (_name, teleport) => {
+    const { proxy, conn, sentToServer } = scriptSession();
+    vi.setSystemTime(CAPTURE_TELEPORT_AT);
+    expect(teleport()).toBe(true);
+    expect(sentToServer).toHaveLength(1);
+
+    const answeredAt = CAPTURE_TELEPORT_AT + REFUSAL_REPLY_DELAY_MS;
+    vi.setSystemTime(answeredAt);
+    proxy.fireServerPacket(conn, fromHex(REFUSAL_HEX));
+
+    expect(Walking.teleportCooldownRemainingMs()).toBe(SERVER_STATED_WAIT_MS + MARGIN_MS);
+    expect(Walking.canTeleport()).toBe(false);
+    expect(teleport()).toBe(false);
+    expect(sentToServer).toHaveLength(1);                       // refused locally, never sent
+
+    vi.setSystemTime(answeredAt + SERVER_STATED_WAIT_MS + MARGIN_MS);
+    expect(Walking.teleportCooldownRemainingMs()).toBe(0);
+    expect(teleport()).toBe(true);
+    expect(sentToServer).toHaveLength(2);
   });
 });

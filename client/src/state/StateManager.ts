@@ -198,11 +198,24 @@ export class StateManager {
   // Land just past the boundary rather than exactly on it.
   private static readonly TELEPORT_WAIT_MARGIN_MS = 250;
 
-  private onTeleport(client: ClientConnection, packet: Packet): void {
-    if (!packet.isDefined) return;
+  /**
+   * Open the reply window for a TELEPORT on its way to the server.
+   *
+   * A TELEPORT the game client sends reaches this through the packet hook. A
+   * TELEPORT a script sends does NOT: the bridge injects it with
+   * ClientConnection.sendToServer, which writes straight to the socket and
+   * never fires hooks. The bridge must call this itself, or the server's
+   * refusal arrives with no teleport pending and is ignored.
+   */
+  noteTeleportSent(client: ClientConnection, targetObjectId: number): void {
     client.lastTeleportSentAt = Date.now();
     client.pendingTeleportSentAt = client.lastTeleportSentAt;
-    client.pendingTeleportTargetObjectId = Number(packet.data.objectId ?? 0) || null;
+    client.pendingTeleportTargetObjectId = Number(targetObjectId) || null;
+  }
+
+  private onTeleport(client: ClientConnection, packet: Packet): void {
+    if (!packet.isDefined) return;
+    this.noteTeleportSent(client, Number(packet.data.objectId ?? 0));
   }
 
   private onNotification(client: ClientConnection, packet: Packet): void {
