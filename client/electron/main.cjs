@@ -18,6 +18,32 @@ if (process.platform === 'win32') {
   app.setAppUserModelId(APP_USER_MODEL_ID);
 }
 
+// ── Single instance ──────────────────────────────────────────────────────────
+// The portable EXE shows nothing while NSIS unpacks, so an impatient second
+// double-click used to start an entire second app. That is worse than a spare
+// window: PortableHooker.install() runs *before* anything binds a port, so
+// instance #2 got its own 250ms injector loop firing at the same game process,
+// then raced instance #1 for :4440/:2050 — and whichever lost kept running
+// headless, because both bind failures are swallowed.
+//
+// Take the lock here: after portable-paths.cjs has repointed userData at
+// RE_ASSETS (so the lock is scoped to this EXE's own data folder), and before
+// anything can spawn the proxy. Instance #2 exits having started nothing.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  // Say so rather than vanishing — in dev, a stale Electron still holding the
+  // lock would otherwise look like the launch script silently doing nothing.
+  console.log('[Electron] Another Realm Engine instance owns this data directory — focusing it and exiting.');
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
+  });
+}
+
 // Wine/Proton cannot initialize Chromium's Windows sandbox reliably. Keep the
 // sandbox enabled on native Windows and disable it only in compatibility layers.
 const runningUnderWine = Boolean(
@@ -252,12 +278,14 @@ function createWindow() {
     } catch {}
   });
 
-  // Load the loading screen (inline data URL — no file deps), then act
+  // Load the loading screen (inline data URL — no file deps) and resolve once
+  // it is actually on screen. The caller drives what happens next: the update
+  // gate reports into this window via setLoadingStatus, and dashboard polling
+  // only starts once startProxy() has actually spawned something — polling
+  // before that would trip waitForDashboardAndLoad's `proxyProcess === null`
+  // check and report a crash that never happened.
   const loadingUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(buildLoadingHtml());
-  mainWindow.loadURL(loadingUrl).catch(() => {}).then(() => {
-    // Start polling for dashboard
-    waitForDashboardAndLoad();
-  });
+  return mainWindow.loadURL(loadingUrl).catch(() => {});
 }
 
 // ── Dashboard polling ────────────────────────────────────────────────────────
@@ -617,21 +645,40 @@ ipcMain.handle(IPC.STEAM_CONNECT, () => new Promise((resolve) => {
 // ── App lifecycle ────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
-  // Force-update gate: block the main window from opening until we've either
-  // confirmed we're on the latest version, installed an update, or the check
-  // timed out / errored (we lean lenient — server-side min-version check is
-  // the actual lock; this is just the UX layer).
+  if (!hasSingleInstanceLock) return; // another instance owns this RE_ASSETS
+
+  // Window FIRST. NSIS has already spent several seconds unpacking with nothing
+  // on screen; the update gate below is a network round trip on top of that
+  // (5s timeout), and it used to run before any window existed — so a slow or
+  // dead network meant the user stared at an empty desktop and double-clicked
+  // again. Put the loading screen up, then report the gate into it.
+  await createWindow();
+
+  // Force-update gate: still blocks the dashboard until we've either confirmed
+  // we're on the latest version, installed an update, or the check timed out /
+  // errored (we lean lenient — the server-side min-version check is the actual
+  // lock; this is just the UX layer). Only its position relative to the window
+  // moved.
   let updaterApi = null;
   try {
+    setLoadingStatus('Checking for updates...');
     updaterApi = require('./services/updater.cjs');
     const { updating } = await updaterApi.enforceUpdateOnLaunch({ app, BrowserWindow, dialog });
-    if (updating) return; // quitAndInstall in progress — do not open main window
+    if (updating) {
+      // quitAndInstall in progress — do not start the proxy or load the
+      // dashboard. updater.cjs owns its own progress splash from here, so hide
+      // ours rather than closing it: closing the last window fires
+      // window-all-closed, which calls app.quit() and would kill the update.
+      setLoadingStatus('Updating Realm Engine...');
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+      return;
+    }
   } catch (err) {
     console.error('[updater] launch gate failed (allowing startup):', err && (err.message || err));
   }
 
   startProxy();
-  createWindow();
+  waitForDashboardAndLoad();
 
   // In-session soft-prompt for updates published while the app is running.
   // The next launch will hard-gate, so we don't kick users mid-session.
@@ -648,7 +695,9 @@ app.whenReady().then(async () => {
   }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow().then(() => waitForDashboardAndLoad());
+    }
   });
 });
 

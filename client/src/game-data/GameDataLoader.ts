@@ -244,6 +244,35 @@ export class GameDataLoader {
   private tilePushTypes = new Set<number>();
   private objectRawXmlMap = new Map<number, string>();
   private tileRawXmlMap = new Map<number, string>();
+  /** One-shot handoff of the parsed objects.xml tree — see takeParsedObjects(). */
+  private pendingParsedObjects: unknown[] | null = null;
+  private parsedObjectsExpiry: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Hand the freshly parsed objects.xml tree to one other consumer, once.
+   *
+   * objects.xml is 32MB and a full DOM parse of it costs ~3s (measured), and
+   * the damage sniffer's ability-scaling table used to pay that cost a *second*
+   * time on the startup path for the same file. This lets it reuse this parse
+   * instead. Returns null if nothing is pending, in which case the caller must
+   * fall back to parsing the file itself.
+   *
+   * The tree is dropped once taken, so the large object graph is not retained
+   * for the life of the process.
+   */
+  takeParsedObjects(): unknown[] | null {
+    const objects = this.pendingParsedObjects;
+    this.releaseParsedObjects();
+    return objects;
+  }
+
+  private releaseParsedObjects(): void {
+    this.pendingParsedObjects = null;
+    if (this.parsedObjectsExpiry) {
+      clearTimeout(this.parsedObjectsExpiry);
+      this.parsedObjectsExpiry = null;
+    }
+  }
 
   load(xmlPath: string): void {
     const xml = readFileSync(xmlPath, 'utf8');
@@ -254,12 +283,28 @@ export class GameDataLoader {
     const parser = new XMLParser({
       ignoreAttributes: false,
       attributeNamePrefix: '@_',
+      // Union of what this loader needs (Object/Projectile/ConditionEffect) and
+      // what AbilityScalingManager needs (the Activate families), so one parse
+      // serves both. Forcing the extra names to arrays is inert here — nothing
+      // below reads the Activate nodes — and every consumer of Projectile /
+      // ConditionEffect already normalises with Array.isArray anyway.
       isArray: (name) =>
-        name === 'Object' || name === 'Projectile' || name === 'ConditionEffect',
+        name === 'Object' || name === 'Projectile' || name === 'ConditionEffect'
+        || name === 'Activate' || name === 'OnConditionEndActivate'
+        || name === 'OnPlayerShootActivate',
     });
 
     const parsed = parser.parse(xml);
     const objects = parsed.Objects?.Object ?? [];
+
+    // Offer this parse to takeParsedObjects(). Nobody is obliged to collect it
+    // — an in-session reload driven by the dashboard game updater has no
+    // waiting consumer — so let it expire rather than pinning ~32MB of parsed
+    // XML for the rest of the session.
+    this.releaseParsedObjects();
+    this.pendingParsedObjects = objects;
+    this.parsedObjectsExpiry = setTimeout(() => this.releaseParsedObjects(), 120_000);
+    this.parsedObjectsExpiry.unref();
 
     for (const obj of objects) {
       const typeStr = obj['@_type'] as string;

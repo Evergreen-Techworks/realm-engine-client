@@ -165,7 +165,15 @@ export function register(ctx: PluginContext) {
   ctx.category = 'utility';
 
   const abilityScaling = new AbilityScalingManager();
-  abilityScaling.loadEquipXml(`${getRealmengineDataDir()}/objects.xml`);
+  // objects.xml is 32MB and a full parse costs ~3s (measured). GameDataLoader
+  // has already parsed it on the startup path a moment ago, so reuse that tree
+  // rather than parsing the same file a second time — this used to be ~2.7s of
+  // the client's startup, spent entirely on duplicate work. The file fallback
+  // covers a disabled/absent GameDataLoader and a plugin hot-reload, where the
+  // one-shot handoff has already been consumed.
+  const sharedObjects = ctx.gameData?.takeParsedObjects() ?? null;
+  if (sharedObjects) abilityScaling.loadFromParsedObjects(sharedObjects);
+  else abilityScaling.loadEquipXml(`${getRealmengineDataDir()}/objects.xml`);
 
   /** Tomato map RNG seed surrogate for PLAYERSHOOT rolls */
   let playerShootRng = 0xdeadbeef;

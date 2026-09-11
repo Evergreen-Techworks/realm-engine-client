@@ -57,5 +57,9 @@
     "installerIcon": "assets/app-icon.ico",
     "uninstallerIcon": "assets/app-icon.ico",
     "installerHeaderIcon": "assets/app-icon.ico"
+  },
+  "portable": {
+    "splashImage": "build-tools/portable-splash.bmp",
+    "unpackDirName": "RealmEngine"
   }
 }

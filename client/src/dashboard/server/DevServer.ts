@@ -990,6 +990,19 @@ export class DevServer {
   }
 
   start(port = 3000): void {
+    // Without this handler a bind failure becomes an unhandled 'error' event,
+    // which index.ts's top-level uncaughtException hook logs and then swallows
+    // — leaving the proxy alive with no dashboard, no listener, and a running
+    // injector loop. Fail loudly instead: Electron's proxyProcess 'exit'
+    // handler turns a non-zero exit into a real message on the loading screen.
+    this.httpServer.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        Logger.error('DevServer', `Port ${port} is already in use — another Realm Engine is running. Close it and try again.`);
+      } else {
+        Logger.error('DevServer', `Dashboard server error: ${err.message}`, err);
+      }
+      process.exit(1);
+    });
     this.httpServer.listen(port, () => {
       Logger.log('DevServer', `Dashboard available at http://localhost:${port}`);
       void this.applyExaltTuneOnProxyStartMaybe().finally(() => {
