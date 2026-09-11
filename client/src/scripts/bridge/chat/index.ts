@@ -85,6 +85,7 @@ function textPacketToChatEvent(client: ClientConnection, d: Record<string, unkno
   // Present on the event for downstream consumers; SDK's `ChatEvent` type doesn't declare it.
   return {
     sender,
+    sourceObjectId: Number.isInteger(d.objectId) && Number(d.objectId) > 0 ? Number(d.objectId) : undefined,
     message,
     channel,
     isLocal,

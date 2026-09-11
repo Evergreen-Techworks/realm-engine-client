@@ -4,6 +4,11 @@ import { Enemy } from '../types/entities/Enemy';
 export type CombatAimTarget = number | { objectId: number };
 
 export class Combat {
+    /** Pause the Auto Ability plugin for up to 1000 ms; renew during guarded phases. */
+    static pauseAutomaticAbility(durationMs = 500): void {
+        throw new Error('Must be run inside RealmEngine client');
+    }
+
     /** Enable or disable the native automatic weapon trigger. */
     static setAutoFire(enabled: boolean): boolean {
         throw new Error('Must be run inside RealmEngine client');

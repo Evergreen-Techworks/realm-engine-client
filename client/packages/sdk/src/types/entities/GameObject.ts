@@ -6,6 +6,8 @@ import { Position } from '../world/Position';
  * is a GameObject with a type and instance ID.
  */
 export interface GameObject {
+    /** True for static movement blockers marked OccupySquare in game data. */
+    blocksMovement?: boolean;
     /** Game definition class, e.g. Beacon or Character. */
     objectClass?: string;
     /** Purple, white, or default untinted Boss minimap marker from loaded game definitions. */

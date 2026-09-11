@@ -1,5 +1,7 @@
 export interface ChatEvent {
     sender: string;
+    /** Server TEXT source object; omitted for outgoing or source-less messages. */
+    sourceObjectId?: number;
     message: string;
     channel: ChatChannel;
     isLocal: boolean;
