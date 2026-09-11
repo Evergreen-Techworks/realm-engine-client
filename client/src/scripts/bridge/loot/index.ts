@@ -14,30 +14,40 @@ const BAG_TYPES = new Set<number>([
   1708, 1709, 1710, 1722, 1723, 1724, 1725, 1726, 1727, 1728, 8239,
 ]);
 
+// Bag identity resolved from the game's own data/objects.xml, and the tier names
+// match internal/src/features/loot/BagLooter.cpp (kBagTypes) 1:1. The previous
+// table was misaligned across the Boost range — 1725 is "Loot Bag 4 Boost" (a
+// BLUE bag) but was labelled 'white', which is why the farmer announced
+// "Collecting white bag" on a blue bag. 1726/1710/1283 were wrong too.
+//
+// Six in-game bag colours squeeze into five LootRarity buckets, so cyan maps to
+// 'green' (as it always did here). RARITY_RANK therefore orders cyan below blue
+// and purple, which does not match the in-game rarity order — preserved as-is
+// rather than silently changing farmer bag priority.
 const BAG_RARITY: Readonly<Record<number, LootRarity>> = {
-  1280: 'common',  // Brown Bag (public)
-  1281: 'common',  // Brown Bag (alt)
-  1283: 'green',   // Cyan Bag (public)
-  1286: 'purple',  // Purple Bag (public)
-  1287: 'purple',  // Purple Bag (soulbound)
-  1288: 'blue',    // Blue Bag (public)
-  1289: 'blue',    // Blue Bag (soulbound)
-  1291: 'white',   // White Bag (public)
-  1292: 'white',   // White Bag (soulbound)
-  1294: 'purple',  // Orange/ST Bag (public) — no 'orange' in LootRarity
-  1295: 'purple',  // Orange/ST Bag (soulbound)
-  1296: 'purple',  // Orange Bag (alt)
-  1708: 'common',
-  1709: 'common',
-  1710: 'blue',
-  1722: 'purple',
-  1723: 'purple',
-  1724: 'white',
-  1725: 'white',
-  1726: 'purple',
-  1727: 'purple',
-  1728: 'purple',
-  8239: 'common',
+  1280: 'common',  // Loot Bag 0        — brown
+  1281: 'common',  // (alt brown; not in objects.xml, kept)
+  1283: 'purple',  // Soulbound Loot Bag
+  1286: 'common',  // Loot Bag 1        — pink
+  1287: 'purple',  // Loot Bag 2        — purple
+  1288: 'green',   // Loot Bag 3        — cyan
+  1289: 'blue',    // Loot Bag 4        — blue
+  1291: 'white',   // Loot Bag 5        — white
+  1292: 'white',   // Loot Bag 6
+  1294: 'white',   // Loot Bag 7
+  1295: 'white',   // Loot Bag 8
+  1296: 'white',   // Loot Bag 6 Boost
+  1708: 'white',   // Loot Bag 9
+  1709: 'common',  // Loot Bag 0 Boost  — brown
+  1710: 'common',  // Loot Bag 1 Boost  — pink
+  1722: 'purple',  // Loot Bag 2 Boost  — purple
+  1723: 'green',   // Loot Bag 3 Boost  — cyan
+  1724: 'white',   // Loot Bag 7 Boost
+  1725: 'blue',    // Loot Bag 4 Boost  — blue  (was 'white')
+  1726: 'white',   // Loot Bag 5 Boost  — white (was 'purple')
+  1727: 'white',   // Loot Bag 8 Boost
+  1728: 'white',   // Loot Bag 9 Boost
+  8239: 'common',  // Guill Potion Bag
 };
 
 // ─── Item classification sets (mirrors auto-loot) ────────────────────────────

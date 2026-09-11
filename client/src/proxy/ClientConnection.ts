@@ -45,6 +45,13 @@ export class ClientConnection {
   lastTeleportGotoAt = 0;
   pendingTeleportSentAt = 0;
   pendingTeleportTargetObjectId: number | null = null;
+  /**
+   * Epoch ms until the SERVER will accept another TELEPORT. Set when a sent
+   * TELEPORT is answered by a NOTIFICATION (refusal) instead of a GOTO
+   * (success), or when it is answered by nothing at all. Read by the script
+   * bridge so callers stop sending packets the server has already rejected.
+   */
+  teleportBlockedUntil = 0;
   originalTargetIp = ''; // Set by Proxy from DLL temp file
   clientId = '';         // Unique ID assigned by Proxy on connect
 

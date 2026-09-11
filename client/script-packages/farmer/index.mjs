@@ -436,6 +436,14 @@ export default class Farmer {
       this.beaconSkipReason = `teleport retry in ${Math.ceil((BEACON_RETRY_MS - (now - this.lastBeaconAt)) / 1000)}s`;
       return false;
     }
+    // The server's own cooldown also makes canTeleport() false. Report it
+    // honestly (and keep re-evaluating): once it clears, the normal beacon
+    // choice runs again, so we only teleport if it is still worth doing.
+    const tpCooldownMs = RealmEngine.walking.teleportCooldownRemainingMs?.() ?? 0;
+    if (tpCooldownMs > 0) {
+      this.beaconSkipReason = `server teleport cooldown, ${Math.ceil(tpCooldownMs / 1000)}s left`;
+      return false;
+    }
     if (!RealmEngine.walking.canTeleport()) {
       this.beaconSkipReason = "map reports teleport disabled";
       // Say so once per map. Without this the whole feature is a silent no-op when

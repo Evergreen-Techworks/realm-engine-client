@@ -64,6 +64,7 @@ export class StateManager {
     proxy.hookPacket('MOVE', (c, p) => this.onMove(c, p));
     proxy.hookPacket('TELEPORT', (c, p) => this.onTeleport(c, p));
     proxy.hookPacket('GOTO', (c, p) => this.onGoto(c, p));
+    proxy.hookPacket('NOTIFICATION', (c, p) => this.onNotification(c, p));
     proxy.hookPacket('PLAYERSHOOT', (c, p) => this.onPlayerShoot(c, p));
     proxy.hookPacket('PONG', (c, p) => this.onPong(c, p));
     proxy.hookPacket('QUESTOBJECTID', (c, p) => this.onQuestObjectId(c, p));
@@ -177,11 +178,72 @@ export class StateManager {
 
   }
 
+  /**
+   * A sent TELEPORT is answered by exactly one of:
+   *   GOTO         — the server moved us. Success.
+   *   NOTIFICATION — the server refused (cooldown, bad target, ...).
+   *   nothing      — treated as a refusal once the window lapses.
+   * That is the protocol's own success/failure signal, so nothing here has to
+   * read message text or depend on the server's wording or language.
+   */
+  private static readonly TELEPORT_REPLY_WINDOW_MS = 1500;
+  // Fallback hold when the refusal carries no readable duration. Only used if
+  // the payload cannot be decoded — the server normally states the wait.
+  private static readonly TELEPORT_REFUSED_BACKOFF_MS = 10000;
+  // Sanity band for a server-stated wait, so a mis-decode cannot park teleports
+  // for hours (or for no time at all).
+  private static readonly TELEPORT_WAIT_MIN_MS = 1000;
+  private static readonly TELEPORT_WAIT_MAX_MS = 600000;
+  // Land just past the boundary rather than exactly on it.
+  private static readonly TELEPORT_WAIT_MARGIN_MS = 250;
+
   private onTeleport(client: ClientConnection, packet: Packet): void {
     if (!packet.isDefined) return;
     client.lastTeleportSentAt = Date.now();
     client.pendingTeleportSentAt = client.lastTeleportSentAt;
     client.pendingTeleportTargetObjectId = Number(packet.data.objectId ?? 0) || null;
+  }
+
+  private onNotification(client: ClientConnection, packet: Packet): void {
+    if (client.pendingTeleportSentAt <= 0) return;   // not answering a teleport
+    const now = Date.now();
+    if ((now - client.pendingTeleportSentAt) > StateManager.TELEPORT_REPLY_WINDOW_MS) return;
+
+    client.pendingTeleportSentAt = 0;
+    client.pendingTeleportTargetObjectId = null;
+
+    // WHY the refusal is detected by protocol but the DURATION comes from text:
+    // the server telling us "no" is unambiguous (NOTIFICATION answered the
+    // TELEPORT instead of GOTO), so the decision never depends on wording. The
+    // number of seconds, however, exists only inside the message. Parse it when
+    // we can and fall back to a conservative hold when we cannot — a wrong
+    // duration costs a little time, never a wrong decision.
+    //
+    // NOTIFICATION is a tagged union and our generated definition stops after
+    // the typeValue tag, so the message sits in the packet layer's unread
+    // trailing bytes: int16 length prefix, then UTF-8. Observed (typeValue 9):
+    //   "Wait 48 seconds to teleport after server change"
+    // Deliberately loose — any "<n> second(s)" — because the wording varies by
+    // refusal reason ("...after server change" vs other cooldowns).
+    const data = (packet.data ?? {}) as { typeValue?: number; _unreadTrailingHex?: string };
+    let waitMs = StateManager.TELEPORT_REFUSED_BACKOFF_MS;
+    let message = '';
+    const trailing = data._unreadTrailingHex;
+    if (typeof trailing === 'string' && trailing.length > 4) {
+      try {
+        message = Buffer.from(trailing, 'hex').subarray(2).toString('utf8');
+        const m = /(\d+(?:\.\d+)?)\s*second/i.exec(message);
+        if (m) {
+          const stated = Math.round(Number(m[1]) * 1000) + StateManager.TELEPORT_WAIT_MARGIN_MS;
+          if (stated >= StateManager.TELEPORT_WAIT_MIN_MS && stated <= StateManager.TELEPORT_WAIT_MAX_MS) {
+            waitMs = stated;
+          }
+        }
+      } catch { /* undecodable payload — keep the fallback */ }
+    }
+    client.teleportBlockedUntil = now + waitMs;
+    Logger.warn('State', `[TELEPORT-REFUSED] typeValue=${data.typeValue ?? -1} `
+      + `wait=${(waitMs / 1000).toFixed(1)}s msg="${message}"`);
   }
 
   private onGoto(client: ClientConnection, packet: Packet): void {
@@ -198,8 +260,11 @@ export class StateManager {
       client.pendingTeleportSentAt = 0;
       client.pendingTeleportTargetObjectId = null;
     } else if (client.pendingTeleportSentAt > 0 && (now - client.pendingTeleportSentAt) > 5000) {
+      // Answered by nothing within the window — treat as refused and back off,
+      // rather than letting a caller retry straight into the same rejection.
       client.pendingTeleportSentAt = 0;
       client.pendingTeleportTargetObjectId = null;
+      client.teleportBlockedUntil = now + StateManager.TELEPORT_REFUSED_BACKOFF_MS;
     }
   }
 

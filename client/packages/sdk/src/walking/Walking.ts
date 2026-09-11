@@ -82,6 +82,16 @@ export class Walking {
         throw new Error('Must be run inside RealmEngine client');
     }
 
+    /**
+     * Milliseconds until the SERVER will accept another teleport, or 0 if it
+     * will accept one now. The server refuses with a chat error ("Wait N
+     * seconds before teleporting") and the bridge parses that countdown, so a
+     * script can wait it out instead of firing packets that get rejected.
+     */
+    static teleportCooldownRemainingMs(): number {
+        throw new Error('Must be run inside RealmEngine client');
+    }
+
     static teleportToPlayer(name: string): boolean {
         throw new Error('Must be run inside RealmEngine client');
     }
