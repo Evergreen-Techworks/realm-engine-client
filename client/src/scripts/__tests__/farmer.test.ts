@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi, afterEach } from 'vitest';
+const runnerSource = readFileSync(new URL('../../../script-packages/farmer/oryx-runner.mjs', import.meta.url), 'utf8')
+  .replace('export default class OryxRunner', 'return class OryxRunner');
+const OryxRunner = new Function(runnerSource)();
 const source = readFileSync(new URL('../../../script-packages/farmer/index.mjs', import.meta.url), 'utf8')
   .replace("import { RealmEngine } from '@realmengine/sdk';", '')
+  .replace("import OryxRunner from './oryx-runner.mjs';", '')
   .replace('export default class Farmer', 'return class Farmer');
 function fixture() {
   let enemies: any[] = [];
@@ -19,7 +23,7 @@ function fixture() {
     walking: { nexus: vi.fn(), canTeleport: () => true, teleportToBeacon: vi.fn(() => true) },
     ui: { status: vi.fn() }, log: { info: vi.fn() },
   };
-  const Farmer = new Function('RealmEngine', source)(sdk);
+  const Farmer = new Function('RealmEngine', 'OryxRunner', source)(sdk, OryxRunner);
   const farmer = new Farmer(); farmer.mapName = 'Realm';
   return { farmer, sdk, quest, setEnemies: (value: any[]) => { enemies = value; } };
 }
@@ -142,27 +146,21 @@ describe('farmer beacon selection and level 20 relocation', () => {
 });
 
 
-describe('Realm Farmer castle exit', () => {
-  it.each(["Oryx's Castle", 'Oryx’s Castle', 'Oryx Castle'])('returns from %s before combat or loot and throttles retries', (map) => {
-    vi.useFakeTimers(); vi.setSystemTime(0);
-    const f = fixture(); f.setEnemies([f.quest]); f.farmer.lockId = 10;
+describe('Realm Farmer Oryx integration', () => {
+  it.each(["Oryx's Castle", 'Oryx’s Castle', 'Oryx Castle'])('runs %s instead of nexusing', (map) => {
+    const f = fixture();
     f.sdk.world.getName = () => map;
     f.sdk.world.isRealm = () => false;
+    f.farmer.lockId = 10;
     f.farmer.onLoop();
-    expect(f.sdk.walking.nexus).toHaveBeenCalledTimes(1);
-    expect(f.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(false);
+    expect(f.farmer.oryx.stage).toBe('castle');
+    expect(f.sdk.walking.nexus).not.toHaveBeenCalled();
     expect(f.sdk.combat.stopAiming).toHaveBeenCalled();
-    expect(f.sdk.dodge.clearWaypoint).toHaveBeenCalled();
     expect(f.sdk.loot.getNearbyBags).not.toHaveBeenCalled();
-    expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalled();
-    vi.setSystemTime(100); f.farmer.onLoop();
-    expect(f.sdk.walking.nexus).toHaveBeenCalledTimes(1);
-    vi.setSystemTime(3000); f.farmer.onLoop();
-    expect(f.sdk.walking.nexus).toHaveBeenCalledTimes(2);
     f.sdk.world.getName = () => 'Nexus'; f.sdk.world.isNexus = () => true;
-    f.setEnemies([]); f.sdk.world.objects.getOpenPortals = () => [];
+    f.sdk.world.objects.getOpenPortals = () => [];
     f.farmer.onLoop();
-    expect(f.sdk.walking.nexus).toHaveBeenCalledTimes(2);
+    expect(f.farmer.oryx.stage).toBeNull();
     expect(f.sdk.dodge.navigateToPosition).toHaveBeenCalledWith({ x: 0, y: -96 });
   });
   it('continues ordinary dungeon behavior outside the castle', () => {
@@ -288,4 +286,79 @@ it('switches a distant dead event even after its object drops and while teleport
   expect(f.farmer.eventGoal.objectId).toBe(41);
   expect(f.farmer.finishedEvents.has(40)).toBe(true);
   expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(next.position);
+});
+
+it('pins an arrived event through its death/loot window, even if displaced from the boss', () => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const f = fixture(); f.sdk.self.getLevel = () => 20;
+  const boss = { ...f.quest, objectId: 40, isEventBoss: true };
+  const next = { ...boss, objectId: 41, position: { x: 200, y: 0 } };
+  let objects = [boss, next];
+  f.sdk.world.objects.getAll = () => objects;
+  f.sdk.world.objects.getById = (id: number) => objects.find(o => o.objectId === id);
+  f.sdk.world.objects.getBeacons = () => [{ objectId: 70, name: 'Teleport Beacon', position: { x: 195, y: 0 } }];
+  f.setEnemies([boss]); f.farmer.onLoop();
+  expect(f.farmer.eventArrived).toBe(true);
+  boss.hp = 0; f.setEnemies([]); vi.setSystemTime(11000); f.farmer.onLoop();
+  expect(f.farmer.eventGoal.objectId).toBe(40);
+  expect(f.farmer.tryBeaconTeleport(12000, next)).toBe(false);
+  f.sdk.self.distanceTo = (p: any) => Math.hypot(p.x - 30, p.y);
+  vi.setSystemTime(15000); f.farmer.onLoop();
+  expect(f.farmer.eventGoal.objectId).toBe(40);
+  expect(f.sdk.walking.teleportToBeacon).not.toHaveBeenCalled();
+  f.sdk.self.distanceTo = (p: any) => Math.hypot(p.x, p.y);
+  // A bag appearing during the wait keeps priority past the ten-second window.
+  const bag = { objectId: 80, rarity: 'white', position: { x: 5, y: 0 }, items: [{ slotIndex: 0, objectType: 2592 }] };
+  f.sdk.loot.getNearbyBags.mockReturnValue([bag]); f.sdk.loot.getBags = () => [bag];
+  vi.setSystemTime(22000); f.farmer.onLoop();
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(bag.position);
+  expect(f.sdk.walking.teleportToBeacon).not.toHaveBeenCalled();
+  f.sdk.loot.getNearbyBags.mockReturnValue([]); f.sdk.loot.getBags = () => [];
+  vi.setSystemTime(23000); f.farmer.onLoop();
+  expect(f.farmer.eventGoal.objectId).toBe(41);
+  expect(f.sdk.walking.teleportToBeacon).toHaveBeenCalledWith(70);
+});
+
+it('continues a nearby replacement phase and stays while local adds remain alive', () => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const f = fixture(); f.sdk.self.getLevel = () => 20;
+  const boss = { ...f.quest, objectId: 40, isEventBoss: true };
+  const next = { ...boss, objectId: 41, position: { x: 200, y: 0 } };
+  let objects = [boss, next];
+  f.sdk.world.objects.getAll = () => objects;
+  f.sdk.world.objects.getById = (id: number) => objects.find(o => o.objectId === id);
+  f.setEnemies([boss]); f.farmer.onLoop();
+  const phase = { ...boss, objectId: 42, name: 'Next phase', position: { x: 7, y: 0 } };
+  objects = [phase, next]; f.setEnemies([phase]); vi.setSystemTime(12000); f.farmer.onLoop();
+  expect(f.farmer.eventGoal.objectId).toBe(42);
+  expect(f.farmer.eventArrived).toBe(true);
+  phase.hp = 0;
+  const add = { ...f.quest, objectId: 50, position: { x: 6, y: 0 } };
+  f.setEnemies([phase, add]); vi.setSystemTime(13000); f.farmer.onLoop();
+  vi.setSystemTime(45000); f.farmer.onLoop();
+  expect(f.farmer.eventGoal.objectId).toBe(42);
+  expect(f.sdk.dodge.lockEnemy).toHaveBeenLastCalledWith(50);
+  expect(f.sdk.walking.teleportToBeacon).not.toHaveBeenCalled();
+  f.farmer.resetMap('Other'); expect(f.farmer.eventArrived).toBe(false);
+});
+
+it('releases a killed leveling encounter without needing movement or a new quest marker', () => {
+  const f = fixture(); f.setEnemies([f.quest]); f.farmer.onLoop();
+  f.sdk.world.tiles = { getAll: () => [] };
+  f.sdk.world.objects.isDead = (id: number) => id === f.quest.objectId;
+  f.setEnemies([]); f.farmer.onLoop();
+  expect(f.farmer.bossEncounter).toBeNull(); expect(f.farmer.questGoal).toBeNull();
+  expect(f.farmer.lockId).toBe(0);
+});
+it('expires a missing encounter with no replacement quest and reacquires a vulnerable boss', () => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const f = fixture(); f.setEnemies([f.quest]); f.farmer.handleBossEncounter(f.quest,10000);
+  f.setEnemies([]); f.farmer.handleBossEncounter(null,10000);
+  expect(f.sdk.ui.status).toHaveBeenLastCalledWith('Boss: waiting for encounter visibility');
+  expect(f.farmer.handleBossEncounter(null,41000)).toBe(false);
+  expect(f.farmer.bossEncounter).toBeNull();
+  f.quest.isTargetable=false; f.setEnemies([f.quest]);
+  f.farmer.handleBossEncounter(f.quest,42000); expect(f.farmer.lockId).toBe(0);
+  f.quest.isTargetable=true; f.farmer.handleBossEncounter(f.quest,43000);
+  expect(f.farmer.lockId).toBe(10); expect(f.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(true);
 });
