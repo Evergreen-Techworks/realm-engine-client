@@ -1,6 +1,7 @@
 import type { Proxy } from '../proxy/Proxy.js';
 import type { ClientConnection } from '../proxy/ClientConnection.js';
 import type { Packet } from '../packets/Packet.js';
+import { PacketReader } from '../packets/PacketReader.js';
 import { PlayerData } from './PlayerData.js';
 import { Logger } from '../util/Logger.js';
 import { dumpLocalPlayerStats } from '../util/StatDump.js';
@@ -220,18 +221,20 @@ export class StateManager {
     // duration costs a little time, never a wrong decision.
     //
     // NOTIFICATION is a tagged union and our generated definition stops after
-    // the typeValue tag, so the message sits in the packet layer's unread
-    // trailing bytes: int16 length prefix, then UTF-8. Observed (typeValue 9):
+    // the typeValue/textByte tag bytes, so the message is not a parsed field: it
+    // is left in packet.unreadData as a protocol string (int16 length prefix,
+    // then UTF-8). Observed (typeValue 9):
     //   "Wait 48 seconds to teleport after server change"
+    // (`_unreadTrailingHex` is only the dashboard inspector's hex copy of those
+    // bytes — it does not exist on the packet the hooks receive.)
     // Deliberately loose — any "<n> second(s)" — because the wording varies by
     // refusal reason ("...after server change" vs other cooldowns).
-    const data = (packet.data ?? {}) as { typeValue?: number; _unreadTrailingHex?: string };
+    const typeValue = Number(packet.data?.typeValue ?? -1);
     let waitMs = StateManager.TELEPORT_REFUSED_BACKOFF_MS;
     let message = '';
-    const trailing = data._unreadTrailingHex;
-    if (typeof trailing === 'string' && trailing.length > 4) {
+    if (packet.isDefined && packet.unreadData.length > 2) {
       try {
-        message = Buffer.from(trailing, 'hex').subarray(2).toString('utf8');
+        message = new PacketReader(packet.unreadData).readString();
         const m = /(\d+(?:\.\d+)?)\s*second/i.exec(message);
         if (m) {
           const stated = Math.round(Number(m[1]) * 1000) + StateManager.TELEPORT_WAIT_MARGIN_MS;
@@ -242,7 +245,7 @@ export class StateManager {
       } catch { /* undecodable payload — keep the fallback */ }
     }
     client.teleportBlockedUntil = now + waitMs;
-    Logger.warn('State', `[TELEPORT-REFUSED] typeValue=${data.typeValue ?? -1} `
+    Logger.warn('State', `[TELEPORT-REFUSED] typeValue=${typeValue} `
       + `wait=${(waitMs / 1000).toFixed(1)}s msg="${message}"`);
   }
 
