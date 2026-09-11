@@ -933,6 +933,21 @@ bool TryReadMapObjectConditions(void* mapObjectPtr, uint32_t* outWord0, uint32_t
     }
     // No candidate validated on this entity (its array may just be null) — report
     // "no conditions" without locking so a later entity with a live array decides.
+    //
+    // BUDGET (measured): locking only on r == 1 means a live, non-null conditions
+    // array is required to settle the offset. Most entities carry no conditions
+    // most of the time, so in practice this never locked at all — the trace showed
+    // zero "self-located" lines across a whole session — and every entity paid all
+    // six probes on every pass, forever. The probing is legacy self-heal; `base` is
+    // now the collector's exact-build offset. Spend a bounded number of attempts
+    // looking for a shifted layout, then settle on the baked value and stop.
+    static int s_probeBudget = 256;
+    if (s_probeBudget > 0 && --s_probeBudget == 0) {
+        s_lockedOff = base;
+        DBG_FILE_LOG("[RuntimeOffsets] MoConditions probe budget spent — settling on "
+                     "baked offset 0x" << std::hex << base << std::dec
+                     << " (no shifted layout found; single read from here on)");
+    }
     *outWord0 = *outWord1 = 0;
     return true;
 }

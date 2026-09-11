@@ -263,6 +263,10 @@ struct WorldAoe
 
 namespace WorldTAB {
     void Render();
+    // Opt out of per-entity display detail (type name / XML object name /
+    // condition words) while the World tab is not on screen. Those fields feed
+    // the tab's table; movement only uses x/y/objectId/objType/isLocal.
+    void SetDetailWanted(bool on);
     void ForceRefresh();    // trigger a DoRefresh() from external callers (e.g. TestTAB)
 
     // Last-known local player data (updated on each successful DoRefresh).

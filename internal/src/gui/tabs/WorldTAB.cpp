@@ -526,8 +526,38 @@ static void ReadTileProps(void* tp, WorldTile& t)
 
 // Core refresh
 // ─────────────────────────────────────────────────────────────────────────────
+// ── Frame-cost gate (measured) ───────────────────────────────────────────────
+// DoRefresh walks up to 4096 dict slots. Auto-dodge opens the 100 ms refresh at
+// TestTAB.cpp:570, and measurement showed dPresent's testtab bucket going from
+// ~8 ms/frame to 29-76 ms/frame (single-frame peaks of 316 ms) purely from this
+// walk — 90-120 FPS down to 24. Movement only consumes x/y/objectId/objType/
+// isLocal; the type-name string, the XML object name and the condition words
+// exist for the World tab's TABLE. When that table is not on screen, skipping
+// them costs nothing visible. Default true so any caller that has not opted in
+// keeps the old behaviour.
+static std::atomic<bool> s_detailWanted{ true };
+
+// il2cpp_class_get_name is a per-CLASS property, but DoRefresh was calling it
+// once per ENTITY through an SEH wrapper. Cache by klass pointer: the returned
+// pointer is owned by the runtime and stable for the process lifetime, so this
+// collapses thousands of guarded calls per refresh into one per distinct class.
+// Render-thread only (DoRefresh has no other caller), so no lock is needed.
+static const char* CachedClassName(void* klass)
+{
+    static std::unordered_map<void*, const char*> s_names;
+    const auto it = s_names.find(klass);
+    if (it != s_names.end()) return it->second;
+    const char* cn = nullptr;
+    Resolver::Protection::safe_call([&]() {
+        cn = il2cpp_class_get_name(reinterpret_cast<Il2CppClass*>(klass));
+    });
+    s_names.emplace(klass, cn);
+    return cn;
+}
+
 static void DoRefresh()
 {
+    const bool detail = s_detailWanted.load(std::memory_order_relaxed);
     g_entities.clear();
     g_tiles.clear();
     g_projectiles.clear();
@@ -580,15 +610,16 @@ static void DoRefresh()
         (void)Game::Entity(value).TryPos(ent.x, ent.y);
         (void)Game::Character(value).TryHp(ent.hp, ent.maxHp);
 
-        RuntimeOffsets::TryReadMapObjectConditions(value, &ent.condLo, &ent.condHi);
+        // Display-only (World tab mask column). The read probes several candidate
+        // offsets per entity, so it is the single most expensive item in this loop.
+        if (detail)
+            RuntimeOffsets::TryReadMapObjectConditions(value, &ent.condLo, &ent.condHi);
 
         void* klass = nullptr;
         if (Mem::TryRead(value, 0u, klass) && Mem::AddrOk(klass)) {
             ent.klass = klass;
-            Resolver::Protection::safe_call([&]() {
-                const char* cn = il2cpp_class_get_name(reinterpret_cast<Il2CppClass*>(klass));
-                if (cn) strncpy_s(ent.typeName, cn, sizeof(ent.typeName) - 1);
-            });
+            const char* cn = CachedClassName(klass);
+            if (cn) strncpy_s(ent.typeName, cn, sizeof(ent.typeName) - 1);
         }
 
         // HFDNHJFNEKA (objectType) @ 0x30 — no ACTK shift (same as X/Y)
@@ -613,7 +644,7 @@ static void DoRefresh()
             if (Mem::TryRead(value, RuntimeOffsets::ObjProps, op) && Mem::AddrOk(op)) {
                 // Name
                 void* idStr = nullptr;
-                if (Mem::TryRead(op, RuntimeOffsets::OP_IdStr, idStr) && Mem::AddrOk(idStr))
+                if (detail && Mem::TryRead(op, RuntimeOffsets::OP_IdStr, idStr) && Mem::AddrOk(idStr))
                     Il2CppC::ReadString(idStr, ent.objName, sizeof(ent.objName));
                 // ObjectProperties condition fields are not real XML conditions on players
                 // (FKALGHJIADI); memory may still expose flags — leave objConds blank until mapped elsewhere.
@@ -2105,6 +2136,7 @@ static bool SehCallAndReadMapString(void* wm, uintptr_t /*base*/, char* buf, int
 
 // ── Public API ───────────────────────────────────────────────────────────────
 namespace WorldTAB {
+    void      SetDetailWanted(bool on) { s_detailWanted.store(on, std::memory_order_relaxed); }
     void      ForceRefresh()
     {
         // Coalesce refreshes requested within the same ~50 ms window. Multiple

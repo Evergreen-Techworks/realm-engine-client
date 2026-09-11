@@ -547,6 +547,10 @@ static bool TeleportOffsetsTrusted()
 // ─────────────────────────────────────────────────────────────────────────────
 void TestTAB::Tick(bool menuVisible)
 {
+    // The World tab's per-entity display fields (XML object name, condition
+    // words) are only readable when the menu is open. Measured: this walk cost
+    // 29-76 ms/frame with auto-dodge on. Movement does not use those fields.
+    WorldTAB::SetDetailWanted(menuVisible);
     // ImGui DeltaTime is sometimes 0 or huge on injected Present paths — use QPC when needed.
     static LARGE_INTEGER s_qpcPrev = {}, s_qpcFreq = {};
     if (!s_qpcFreq.QuadPart)

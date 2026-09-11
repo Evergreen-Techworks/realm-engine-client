@@ -298,6 +298,11 @@ std::atomic<int>      s_autoLockMode{ 0 };
 std::atomic<int32_t>  s_autoLockTargetId{ 0 };
 std::atomic<uint64_t> s_autoLockReleaseUntilMs{ 0 };
 constexpr uint64_t    kAutoLockReleaseHoldMs = 600;
+// How long a resolved lock survives the target vanishing from EnemyTracker.
+// The game unloads distant entities, so walking away from a locked enemy looks
+// identical to it dying. Holding the last-known position briefly keeps dodge in
+// combat behaviour instead of dropping to plain navigation mid-fight.
+constexpr uint64_t    kLockGraceMs           = 4000;
 
 // Orbit direction for lock-follow. +1 = CCW, -1 = CW. Auto-flips when
 // the chosen direction has produced no angular progress for several
@@ -677,6 +682,36 @@ static void ResolveEnemyLock(float px, float py)
             }
         }
         // not found (cooldown, no enemies, or off): fall through to release.
+    }
+
+    // ── Grace window ────────────────────────────────────────────────────────
+    // A locked enemy leaving the game's loaded range drops out of EnemyTracker,
+    // which used to release the lock on the very first miss. That stops
+    // publishing the stand-off goal, so dodge falls out of combat behaviour and
+    // into plain navigation — the failure the farmer hits whenever it strays.
+    // Hold the lock on the last-known position for a bounded window so we steer
+    // back to the fight; seeing the enemy again refreshes it.
+    //
+    // Only extends a lock that is still WANTED: an explicit unlock (manual id
+    // cleared, or auto-lock switched off) releases immediately as before. The
+    // accepted trade-off is that an enemy which died out of view holds a ghost
+    // stand-off until the window expires — indistinguishable from here.
+    {
+        static uint64_t s_lockLastSeenMs = 0;
+        const uint64_t  graceNow  = GetTickCount64();
+        const bool      lockWanted = s_lockEnemyId.load(std::memory_order_relaxed) != 0
+                                  || s_autoLockMode.load(std::memory_order_relaxed) != 0;
+        if (found) {
+            s_lockLastSeenMs = graceNow;
+        } else if (lockWanted && s_lockLastSeenMs != 0
+                   && s_lockLastResolved.load(std::memory_order_acquire)
+                   && (graceNow - s_lockLastSeenMs) < kLockGraceMs) {
+            ex    = s_lockLastEnemyX.load(std::memory_order_relaxed);
+            ey    = s_lockLastEnemyY.load(std::memory_order_relaxed);
+            found = true;
+        } else if (!found) {
+            s_lockLastSeenMs = 0;
+        }
     }
 
     if (!found) {
