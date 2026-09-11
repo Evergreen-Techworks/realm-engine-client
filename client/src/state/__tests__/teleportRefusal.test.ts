@@ -146,6 +146,47 @@ describe('teleport refusal (game-client TELEPORT)', () => {
   });
 });
 
+// ─── Other NOTIFICATIONs share the reply window ──────────────────────────────
+// NOTIFICATION carries every kind of pop-up. In the same capture, an OBJECT
+// notification (typeValue 6, a "+9" pop-up over another player, row 702)
+// arrived 567 ms after the TELEPORT, well inside the 1.5 s reply window. Only
+// TELEPORT_ERROR (typeValue 9) is the server answering the teleport.
+const OBJECT_POPUP_HEX =
+  '0000003a43061a00297b226b223a22732e706c75735f73796d626f6c222c2274223a7b22616d6f756e74223a2239222c7d7d000438e8006084e0';
+
+describe('only TELEPORT_ERROR answers a teleport', () => {
+  it('parses the captured pop-up as an OBJECT notification, not TELEPORT_ERROR', () => {
+    expect(fromHex(OBJECT_POPUP_HEX).data).toMatchObject({ typeValue: 6 });
+  });
+
+  it('a pop-up landing first does not swallow the real refusal', () => {
+    const { proxy, conn } = session();
+    vi.setSystemTime(CAPTURE_TELEPORT_AT);
+    proxy.fireClientPacket(conn, gameClientTeleport(275515));
+    vi.setSystemTime(CAPTURE_TELEPORT_AT + 30);
+    proxy.fireServerPacket(conn, fromHex(OBJECT_POPUP_HEX));
+
+    const answeredAt = CAPTURE_TELEPORT_AT + REFUSAL_REPLY_DELAY_MS;
+    vi.setSystemTime(answeredAt);
+    proxy.fireServerPacket(conn, fromHex(REFUSAL_HEX));
+    expect(conn.teleportBlockedUntil - answeredAt).toBe(SERVER_STATED_WAIT_MS + MARGIN_MS);
+  });
+
+  it('a pop-up before the GOTO does not turn a successful teleport into a refusal', () => {
+    const { proxy, conn } = session();
+    conn.playerData.ownerObjectId = 4242;
+    vi.setSystemTime(CAPTURE_TELEPORT_AT);
+    proxy.fireClientPacket(conn, gameClientTeleport(275515));
+    vi.setSystemTime(CAPTURE_TELEPORT_AT + 30);
+    proxy.fireServerPacket(conn, fromHex(OBJECT_POPUP_HEX));
+    vi.setSystemTime(CAPTURE_TELEPORT_AT + 80);
+    proxy.fireServerPacket(conn, wire('GOTO', { objectId: 4242, position: { x: 10, y: 20 }, unknown: 0 }));
+
+    expect(conn.teleportBlockedUntil).toBe(0);
+    expect(conn.lastTeleportGotoAt).toBe(CAPTURE_TELEPORT_AT + 80);
+  });
+});
+
 // The farmer does not click teleport in the game: it calls the SDK, and the
 // bridge injects the TELEPORT with ClientConnection.sendToServer. That path
 // writes straight to the server socket and never passes through the packet

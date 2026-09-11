@@ -181,13 +181,20 @@ export class StateManager {
 
   /**
    * A sent TELEPORT is answered by exactly one of:
-   *   GOTO         — the server moved us. Success.
-   *   NOTIFICATION — the server refused (cooldown, bad target, ...).
-   *   nothing      — treated as a refusal once the window lapses.
+   *   GOTO                          — the server moved us. Success.
+   *   NOTIFICATION TELEPORT_ERROR   — the server refused (cooldown, ...).
+   *   nothing                       — treated as a refusal once the window lapses.
    * That is the protocol's own success/failure signal, so nothing here has to
    * read message text or depend on the server's wording or language.
    */
   private static readonly TELEPORT_REPLY_WINDOW_MS = 1500;
+  // NOTIFICATION's typeValue tag for a teleport refusal: NotificationEffect
+  // .TELEPORT_ERROR in realmlib's table of the client's enum, and the tag on the
+  // captured "Wait 48 seconds to teleport after server change". Every other
+  // tag is some other pop-up — OBJECT (6) "+N" pop-ups over nearby players
+  // arrive every second or two while farming, easily inside the reply window —
+  // and must not be taken for the server's answer.
+  private static readonly NOTIFICATION_TELEPORT_ERROR = 9;
   // Fallback hold when the refusal carries no readable duration. Only used if
   // the payload cannot be decoded — the server normally states the wait.
   private static readonly TELEPORT_REFUSED_BACKOFF_MS = 10000;
@@ -222,12 +229,14 @@ export class StateManager {
     if (client.pendingTeleportSentAt <= 0) return;   // not answering a teleport
     const now = Date.now();
     if ((now - client.pendingTeleportSentAt) > StateManager.TELEPORT_REPLY_WINDOW_MS) return;
+    const typeValue = Number(packet.data?.typeValue ?? -1);
+    if (typeValue !== StateManager.NOTIFICATION_TELEPORT_ERROR) return;   // an unrelated pop-up
 
     client.pendingTeleportSentAt = 0;
     client.pendingTeleportTargetObjectId = null;
 
     // WHY the refusal is detected by protocol but the DURATION comes from text:
-    // the server telling us "no" is unambiguous (NOTIFICATION answered the
+    // the server telling us "no" is unambiguous (a TELEPORT_ERROR answered the
     // TELEPORT instead of GOTO), so the decision never depends on wording. The
     // number of seconds, however, exists only inside the message. Parse it when
     // we can and fall back to a conservative hold when we cannot — a wrong
@@ -242,7 +251,6 @@ export class StateManager {
     // bytes — it does not exist on the packet the hooks receive.)
     // Deliberately loose — any "<n> second(s)" — because the wording varies by
     // refusal reason ("...after server change" vs other cooldowns).
-    const typeValue = Number(packet.data?.typeValue ?? -1);
     let waitMs = StateManager.TELEPORT_REFUSED_BACKOFF_MS;
     let message = '';
     if (packet.isDefined && packet.unreadData.length > 2) {
