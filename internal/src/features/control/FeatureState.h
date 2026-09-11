@@ -54,6 +54,23 @@ bool    GetSkinOverrideEnabled();
 int     GetSkinOverrideId();
 void    SetSkinOverride(bool enabled, int skinId);
 
+bool    GetTitleOverrideEnabled();
+int     GetTitleOverrideId();
+int     GetTitleOverrideSlot();
+void    SetTitleOverrideEnabled(bool enabled);
+void    SetTitleOverrideId(int titleId);
+void    SetTitleOverrideSlot(int slot);
+
+bool    GetEntranceOverrideEnabled();
+int     GetEntranceOverrideId();
+void    SetEntranceOverrideEnabled(bool enabled);
+void    SetEntranceOverrideId(int entranceId);
+
+bool    GetPetSkinOverrideEnabled();
+int     GetPetSkinOverrideId();
+void    SetPetSkinOverrideEnabled(bool enabled);
+void    SetPetSkinOverrideId(int petSkinId);
+
 int32_t GetClientDefense();
 void    SetClientDefense(int32_t defense);
 int32_t GetClientSpeed();               // total SPD stat, -1 = unset

@@ -2,6 +2,12 @@ import { readFileSync } from 'fs';
 import { XMLParser } from 'fast-xml-parser';
 import type { Item } from '@realmengine/sdk';
 import { Logger } from '../util/Logger.js';
+import {
+  buildCosmeticCatalog,
+  type CosmeticCatalogEntry,
+  type CosmeticMetadata,
+  type CosmeticTexture,
+} from './CosmeticCatalog.js';
 
 export interface ProjectileDef {
   id: number;
@@ -50,6 +56,8 @@ export interface ObjectDef {
   isEventBoss?: boolean;
   textureFile: string;
   textureIndex: number;
+  /** Typed metadata for selectable account/player cosmetics. */
+  cosmetic?: CosmeticMetadata;
   projectiles: Map<number, ProjectileDef>;
   maxHp: number;
   defense: number;
@@ -160,6 +168,83 @@ function readFirstTextureIndex(
   return Number.isFinite(index) ? index : -1;
 }
 
+function readTexture(textureNode: unknown): CosmeticTexture | undefined {
+  const file = readFirstTextureFile(textureNode);
+  const index = readFirstTextureIndex(textureNode);
+  return file && index >= 0 ? { file, index } : undefined;
+}
+
+function readOptionalNumber(value: unknown): number | undefined {
+  if (value == null || value === '') return undefined;
+  const parsed = typeof value === 'string' && /^0x/i.test(value.trim())
+    ? parseInt(value.trim().slice(2), 16)
+    : Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : undefined;
+}
+
+function hasXmlTag(obj: Record<string, unknown>, tag: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, tag);
+}
+
+function parseCosmeticMetadata(obj: Record<string, unknown>): CosmeticMetadata | undefined {
+  const objectClass = String(obj.Class ?? '').trim().toLowerCase();
+  const id = String(obj['@_id'] ?? '').trim().toLowerCase();
+  const group = String(obj.Group ?? '').trim().toLowerCase();
+  const texture = readTexture(obj.Texture);
+  const animatedTexture = readTexture(obj.AnimatedTexture);
+
+  if (objectClass === 'skin' || hasXmlTag(obj, 'PlayerClassType')) {
+    const playerClassType = readOptionalNumber(obj.PlayerClassType);
+    if (playerClassType === undefined) return undefined;
+    return { kind: 'skin', playerClassType, texture, animatedTexture };
+  }
+  if (objectClass === 'dye' || hasXmlTag(obj, 'Tex1') || hasXmlTag(obj, 'Tex2')) {
+    return {
+      kind: 'dye',
+      tex1: readOptionalNumber(obj.Tex1),
+      tex2: readOptionalNumber(obj.Tex2),
+      texture,
+      animatedTexture,
+    };
+  }
+  // Pet appearance comes from the PetSkin objects, not the Pet base objects: every
+  // `<Class>Pet</Class>` entry shares one placeholder sprite (lofiObj2 index 0x32),
+  // while each `<Class>PetSkin</Class>` entry carries the real AnimatedTexture. Egg
+  // items also carry a `<PetSkin>` tag naming what they hatch, so match on Class only.
+  if (objectClass === 'petskin') {
+    return { kind: 'pet', texture, animatedTexture };
+  }
+  if (
+    objectClass === 'gravestone'
+    || hasXmlTag(obj, 'Gravestone')
+    || group.includes('gravestone')
+    || (id.includes('gravestone') && !id.includes('unlocker') && !hasXmlTag(obj, 'Item'))
+  ) {
+    // A themed set is one cosmetic spread over eleven `ItemTier` variants, one
+    // per character-level bracket. Both are kept so the catalog can collapse the
+    // set into a single choice while the override still honours the tier the
+    // server picked, rather than silently misreporting the level reached.
+    const themeName = String(obj.ThemeName ?? '').trim();
+    const itemTier = readOptionalNumber(obj.ItemTier);
+    return {
+      kind: 'gravestone',
+      texture,
+      animatedTexture,
+      ...(themeName ? { themeName } : {}),
+      ...(itemTier === undefined ? {} : { itemTier }),
+    };
+  }
+  if (objectClass === 'title' || hasXmlTag(obj, 'Title')) {
+    const titleType = String(obj.TitleType ?? 'Full').trim().toLowerCase();
+    const titleSlot = titleType === 'prefix' ? 0 : titleType === 'suffix' ? 1 : 2;
+    return { kind: 'title', titleSlot, texture, animatedTexture };
+  }
+  if (objectClass === 'entrance' || hasXmlTag(obj, 'Entrance')) {
+    return { kind: 'entrance', texture, animatedTexture };
+  }
+  return undefined;
+}
+
 /** RotMG `SlotType` → SDK `Item.slotType` (same buckets as plugins/auto-loot). */
 const WEAPON_SLOT_TYPES = new Set<number>([1, 2, 3, 8, 17, 24]);
 const ABILITY_SLOT_TYPES = new Set<number>([4, 5, 11, 12, 13, 15, 16, 18, 19, 20, 21, 22, 23, 25, 27, 28, 29, 30]);
@@ -238,6 +323,7 @@ export interface GameWikiTileRow {
  */
 export class GameDataLoader {
   private objects = new Map<number, ObjectDef>();
+  private reloadListeners = new Set<() => void>();
   private tileSpeedMap = new Map<number, number>();
   private tileNameMap = new Map<number, string>();
   private tileTypeByNameMap = new Map<string, number>();
@@ -283,6 +369,7 @@ export class GameDataLoader {
         group: String(obj.Group ?? '').trim(),
         textureFile: readFirstTextureFile(obj.Texture),
         textureIndex: readFirstTextureIndex(obj.Texture),
+        cosmetic: parseCosmeticMetadata(obj as Record<string, unknown>),
         projectiles: new Map(),
         maxHp: Number(obj.MaxHitPoints ?? 0),
         defense: Number(obj.Defense ?? 0),
@@ -393,6 +480,15 @@ export class GameDataLoader {
         if (Number.isFinite(t)) this.objectRawXmlMap.set(t, om[0]);
       }
     }
+    for (const listener of this.reloadListeners) {
+      try { listener(); } catch {}
+    }
+  }
+
+  /** Subscribe to successful objects.xml reloads. Returns an unsubscribe function. */
+  onReload(listener: () => void): () => void {
+    this.reloadListeners.add(listener);
+    return () => this.reloadListeners.delete(listener);
   }
 
   getObject(type: number): ObjectDef | undefined {
@@ -459,6 +555,11 @@ export class GameDataLoader {
 
   getAllObjects(): ObjectDef[] {
     return [...this.objects.values()];
+  }
+
+  /** Stable, dashboard-ready cosmetic choices parsed from objects.xml. */
+  getCosmeticCatalog(): CosmeticCatalogEntry[] {
+    return buildCosmeticCatalog(this.objects.values());
   }
 
   /** Category for dashboard object tree (Portals, Beacons, then Visual Only, Pets, Projectiles, Containers, Enemies, Other). */

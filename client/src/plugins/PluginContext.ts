@@ -21,6 +21,17 @@ export type PluginCategory =
   | 'utility'
   | 'admin';
 
+export interface SettingOption {
+  label: string;
+  value: string;
+  /** Optional image displayed beside the option in the dashboard. */
+  iconUrl?: string;
+  /** Optional `#rrggbb` colour chip shown beside the option when it has no sprite. */
+  swatchColor?: string;
+  /** Plugin-owned serializable data associated with this choice. */
+  metadata?: Record<string, unknown>;
+}
+
 export interface SettingDef {
   key: string;
   label: string;
@@ -29,7 +40,7 @@ export interface SettingDef {
   min?: number;
   max?: number;
   step?: number;
-  options?: { label: string; value: string }[];
+  options?: SettingOption[];
   /** If set, this setting is rendered only when another setting has the requested value. */
   visibleWhen?: { key: string; value?: any; values?: any[] };
   /** If set on a text setting, its current value is used as a single-key hotkey that fires the named button key. */
@@ -85,6 +96,9 @@ export class PluginContext {
   /** Callback set by PluginManager to broadcast structured data to dashboard clients. */
   public onBroadcastData: ((pluginId: string, type: string, data: any) => void) | null = null;
 
+  /** Callback set by PluginManager when dashboard setting definitions change. */
+  public onSettingOptionsChanged: ((pluginId: string, key: string) => void) | null = null;
+
   /** Game data (objects.xml parsed). Available after proxy startup. */
   public readonly gameData: GameDataLoader | null;
   /** Live entity tracker. Available after proxy startup. */
@@ -130,6 +144,12 @@ export class PluginContext {
    */
   getProjectileTracker(client: ClientConnection): ProjectileTracker | null {
     return this.sessionStateResolver?.(client).projectileTracker ?? this.projectileTracker;
+  }
+
+  /** Register a callback for successful objects.xml reloads. */
+  onGameDataReload(callback: () => void): void {
+    if (!this.gameData) return;
+    this._cleanupFns.push(this.gameData.onReload(callback));
   }
 
   get enabled(): boolean {
@@ -232,6 +252,21 @@ export class PluginContext {
 
     const cb = this._settingCallbacks.get(key);
     if (cb) cb(value);
+    return true;
+  }
+
+  /**
+   * Replace a setting's choices without changing its current/default value.
+   * This keeps persisted configuration compatible while refreshing dashboard state.
+   */
+  updateSettingOptions(key: string, options: SettingOption[]): boolean {
+    const setting = this._settings.get(key);
+    if (!setting || setting.type !== 'select') return false;
+    setting.options = options.map((option) => ({
+      ...option,
+      ...(option.metadata ? { metadata: { ...option.metadata } } : {}),
+    }));
+    this.onSettingOptionsChanged?.(this.pluginId, key);
     return true;
   }
 

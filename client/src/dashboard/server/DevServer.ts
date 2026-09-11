@@ -590,6 +590,8 @@ export class DevServer {
       }
     });
 
+    this.pluginManager.onPluginStateChanged(() => this.broadcastPluginState());
+
     this.config.lastPluginConfigId = DEFAULT_PLUGIN_CONFIG_ID;
   }
 

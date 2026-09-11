@@ -10,6 +10,24 @@ that are **not part of the shipped source**:
 The whole folder is `.gitignore`d — anything under `refs/` stays on the
 local workstation of whoever needs it and is never distributed.
 
+## Current material
+
+- `Dump/` — directory junction to the Il2CppInspector-style dump of the live
+  Exalt build (`Dump 6.13.0.1.0`). This is the authority for class layouts,
+  field offsets, BeeByte name mappings, packet shapes and handler bodies, and
+  is what `RuntimeOffsets` / `BeebyteName.h` are derived from. Recreate it after
+  cloning or after a game patch (the junction target is machine-local):
+
+  ```
+  cd internal\refs
+  mklink /J Dump "<path to>\Dump <version>"
+  ```
+
+  Start from `readable.cs`, fall back to `dump.cs` for full offsets. The larger
+  JSON files (`field_accesses.json`, `handlers.json`, `member_observations.json`,
+  `unity_asset_code_graph.json`) are tens of MB — always search them with `rg`
+  rather than reading them whole.
+
 ## Adding new reference material
 
 1. Drop the file(s) under `internal/refs/`.

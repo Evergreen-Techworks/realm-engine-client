@@ -1,5 +1,6 @@
 #include "pch-il2cpp.h"
 #include "SkinChanger.h"
+#include "CosmeticOverrides.h"
 #include "GameState.h"
 #include "RuntimeOffsets.h"
 #include "Il2CppResolver.h"
@@ -11,8 +12,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // SkinChanger — writes KJNHLADHEMH on the local player object to override skin.
 //
-// Uses il2cpp_field_set_value via RuntimeOffsets::FI_HP — KJNHLADHEMH (current HP
-// slot; also used by legacy “skin” UI). Same path as WorldTAB field edits.
+// Uses il2cpp_field_set_value via RuntimeOffsets::FI_HP. The FI_HP name is a
+// misnomer inherited from the offset table: il2cpp_field_set_value addresses the
+// dump layout, while RuntimeOffsets::HP is that same field plus the ACTK +0x50
+// runtime shift. The two therefore land on different memory, which is why this
+// writes the skin without disturbing the HP that AutoNexus reads.
 //
 // Writes are triggered only when:
 //   • The local player pointer changes (new map / realm entry)
@@ -78,6 +82,10 @@ void Apply()
     s_lastAppliedPtr    = ptr;
     s_lastAppliedSkinId = skin;
     s_applied           = true;
+
+    // The HUD portrait is a cached sprite that otherwise only reloads on world
+    // entry, so it would keep showing the previous skin until the next map.
+    CosmeticOverrides::RequestCharacterIconRefresh();
 }
 
 void Tick()

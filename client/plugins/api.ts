@@ -19,11 +19,18 @@
  */
 
 // ── Types (erased at build) ──────────────────────────────────────────
-export type { PluginContext } from '../src/plugins/PluginContext.js';
+export type { PluginContext, SettingOption } from '../src/plugins/PluginContext.js';
 export type { ClientConnection } from '../src/proxy/ClientConnection.js';
 export type { Packet } from '../src/packets/Packet.js';
 export type { GameWorldState, TrackedEntity } from '../src/state/GameWorldState.js';
 export type { GameDataLoader, PlayerClassStatMaxes } from '../src/game-data/GameDataLoader.js';
+export type {
+  CosmeticCatalogEntry,
+  CosmeticCatalogValues,
+  CosmeticKind,
+  CosmeticMetadata,
+  CosmeticTexture,
+} from '../src/game-data/CosmeticCatalog.js';
 export type { DllThreat, DllGround } from '../src/bridge/DllThreatBus.js';
 export type { DllAim } from '../src/bridge/DllAimBus.js';
 

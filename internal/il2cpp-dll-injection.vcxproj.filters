@@ -92,6 +92,7 @@
     <ClCompile Include="src\features\movement\collider\PlayerCollider.cpp" />
     <ClCompile Include="src\features\control\FeatureState.cpp" />
     <ClCompile Include="src\features\control\FeatureCommandRegistry.cpp" />
+    <ClCompile Include="src\features\visuals\CosmeticOverrides.cpp" />
     <ClCompile Include="src\features\visuals\FloatingTextService.cpp" />
     <ClCompile Include="src\features\runtime\FeatureRuntime.cpp" />
     <ClCompile Include="vendor\minhook\hook.c" />
@@ -239,6 +240,7 @@
     <ClInclude Include="src\features\movement\collider\PlayerCollider.h" />
     <ClInclude Include="src\features\control\FeatureState.h" />
     <ClInclude Include="src\features\control\FeatureCommandRegistry.h" />
+    <ClInclude Include="src\features\visuals\CosmeticOverrides.h" />
     <ClInclude Include="src\features\visuals\FloatingTextService.h" />
     <ClInclude Include="src\features\runtime\FeatureRuntime.h" />
     <ClInclude Include="src\game\symbols\BeebyteName.h" />

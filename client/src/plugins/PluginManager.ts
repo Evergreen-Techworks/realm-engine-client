@@ -150,6 +150,7 @@ export class PluginManager {
   };
   private dashboardLogListeners = new Set<(pluginName: string, message: string) => void>();
   private broadcastDataListeners = new Set<(pluginId: string, type: string, data: any) => void>();
+  private pluginStateChangedListeners = new Set<() => void>();
 
   constructor(
     private proxy: Proxy,
@@ -309,6 +310,12 @@ export class PluginManager {
   onBroadcastData(listener: (pluginId: string, type: string, data: any) => void): () => void {
     this.broadcastDataListeners.add(listener);
     return () => this.broadcastDataListeners.delete(listener);
+  }
+
+  /** Subscribe to runtime changes in dashboard-visible plugin definitions. */
+  onPluginStateChanged(listener: () => void): () => void {
+    this.pluginStateChangedListeners.add(listener);
+    return () => this.pluginStateChangedListeners.delete(listener);
   }
 
   /** Update a plugin setting. */
@@ -510,6 +517,11 @@ export class PluginManager {
         context.onBroadcastData = (pluginId, type, data) => {
           for (const listener of this.broadcastDataListeners) {
             try { listener(pluginId, type, data); } catch {}
+          }
+        };
+        context.onSettingOptionsChanged = () => {
+          for (const listener of this.pluginStateChangedListeners) {
+            try { listener(); } catch {}
           }
         };
       }

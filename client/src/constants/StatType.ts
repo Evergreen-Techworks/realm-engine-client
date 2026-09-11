@@ -65,6 +65,8 @@ export const StatType = {
   HasBackpack: 75,
   Skin: 76,
   PetInstanceId: 77,
+  /** Visual pet object type associated with the local player's active pet. */
+  PetType: 79,
   /** Per-slot base64url enchantment blobs, comma-separated. */
   Enchantments: 80,
   Effects2: 95,
@@ -80,6 +82,8 @@ export const StatType = {
   WireExaltWisdom: 110,
   WireExaltMaxHP: 111,
   WireExaltMaxMP: 112,
+  /** Account id attached to a spawned gravestone entity. */
+  GraveAccountId: 115,
   ExaltedAttack: 123,
   /** Player power level (stat 124). Exalted DEF on wire is `WireExaltDefense` 106. */
   PowerLevel: 124,

@@ -6166,7 +6166,28 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     var selectedOpt = options.find(function (o) { return o.value === currentValue; }) || options[0];
     var labelSpan = document.createElement('span');
     labelSpan.className = 'custom-select-label';
-    labelSpan.textContent = selectedOpt ? selectedOpt.label : '';
+
+    function setOptionContent(container, opt) {
+      container.innerHTML = '';
+      if (opt && opt.iconUrl) {
+        var icon = document.createElement('img');
+        icon.className = 'custom-select-icon';
+        icon.src = opt.iconUrl;
+        icon.alt = '';
+        icon.loading = 'lazy';
+        icon.addEventListener('error', function () { icon.classList.add('hidden'); });
+        container.appendChild(icon);
+      } else if (opt && opt.swatchColor) {
+        var swatch = document.createElement('span');
+        swatch.className = 'custom-select-swatch';
+        swatch.style.background = opt.swatchColor;
+        container.appendChild(swatch);
+      }
+      var text = document.createElement('span');
+      text.textContent = opt ? opt.label : '';
+      container.appendChild(text);
+    }
+    setOptionContent(labelSpan, selectedOpt);
 
     var arrowSpan = document.createElement('span');
     arrowSpan.className = 'custom-select-arrow';
@@ -6183,11 +6204,11 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       options.forEach(function (opt) {
         var item = document.createElement('div');
         item.className = 'custom-select-option' + (opt.value === currentValue ? ' selected' : '');
-        item.textContent = opt.label;
+        setOptionContent(item, opt);
         item.addEventListener('click', function (e) {
           e.stopPropagation();
           currentValue = opt.value;
-          labelSpan.textContent = opt.label;
+          setOptionContent(labelSpan, opt);
           wrapper.classList.remove('is-open');
           buildOptions();
           if (onChange) onChange(opt.value);
@@ -6214,7 +6235,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       setValue: function (val) {
         currentValue = val;
         var found = options.find(function (o) { return o.value === val; });
-        if (found) labelSpan.textContent = found.label;
+        if (found) setOptionContent(labelSpan, found);
         buildOptions();
       }
     };

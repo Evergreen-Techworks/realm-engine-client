@@ -14,6 +14,7 @@
 #include "FeatureState.h"
 #include "FeatureCommandRegistry.h"
 #include "DbgFileLog.h"
+#include "CosmeticOverrides.h"
 #include "FloatingTextService.h"
 #include "GameState.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
@@ -301,6 +302,7 @@ void FeatureRuntime::CollectPluginToggleHotkeyEvents(std::vector<std::string>& o
 void FeatureRuntime::ApplyOverrides()
 {
     ApplyPlayerNoclipFeatureState();
+    CosmeticOverrides::Tick();
     if (GameState::GetLocalPtr() == nullptr) return;
     if (GameState::GetWorldMgr() == nullptr) return;
     ApplyAutoAimFeatureState(); ApplyProjectileNoclipFeatureState(); ApplyAutoDodgeFeatureState(); ApplyAutoAbilityFeatureState();

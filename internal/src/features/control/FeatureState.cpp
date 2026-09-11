@@ -28,6 +28,9 @@ static std::atomic<int> s_featPlayerNoclipActive{0}, s_featPlayerNoclipEnabled{0
 static std::atomic<int> s_featSocketHotkeyActive{0}, s_featSocketHotkeyVk{'L'}, s_featWalkTargetActive{0};
 static std::atomic<int> s_featCameraZoomActive{0}, s_featCameraAngleActive{0}, s_featCameraAngleValue{0}, s_featCameraCenteringActive{0}, s_featCameraCentered{1};
 static std::atomic<int> s_featSkinOverrideEnabled{0}, s_featSkinOverrideId{0};
+static std::atomic<int> s_featTitleOverrideEnabled{0}, s_featTitleOverrideId{0}, s_featTitleOverrideSlot{0};
+static std::atomic<int> s_featEntranceOverrideEnabled{0}, s_featEntranceOverrideId{0};
+static std::atomic<int> s_featPetSkinOverrideEnabled{0}, s_featPetSkinOverrideId{0};
 static std::atomic<float> s_featDodgeHorizonMs{800.f}, s_featDodgeHitboxPadding{0.f}, s_featAutoAbilityMpPct{0.f};
 static std::atomic<float> s_featWalkTargetX{0.f}, s_featWalkTargetY{0.f}, s_featCameraZoomValue{8.f};
 static std::atomic<int32_t> s_featClientDefense{static_cast<int32_t>(0x80000000u)}, s_featClientClassType{0};
@@ -81,6 +84,23 @@ void    SetCameraCentering(bool active, bool centered) { s_featCameraCenteringAc
 bool    GetSkinOverrideEnabled()                    { return s_featSkinOverrideEnabled.load(std::memory_order_relaxed) != 0; }
 int     GetSkinOverrideId()                         { return s_featSkinOverrideId.load(std::memory_order_relaxed); }
 void    SetSkinOverride(bool enabled, int skinId)   { s_featSkinOverrideEnabled.store(enabled ? 1 : 0, std::memory_order_relaxed); s_featSkinOverrideId.store(skinId, std::memory_order_relaxed); SkinChanger::SetOverride(enabled, skinId); }
+
+bool    GetTitleOverrideEnabled()                   { return s_featTitleOverrideEnabled.load(std::memory_order_relaxed) != 0; }
+int     GetTitleOverrideId()                        { return s_featTitleOverrideId.load(std::memory_order_relaxed); }
+int     GetTitleOverrideSlot()                      { return s_featTitleOverrideSlot.load(std::memory_order_relaxed); }
+void    SetTitleOverrideEnabled(bool enabled)       { s_featTitleOverrideEnabled.store(enabled ? 1 : 0, std::memory_order_relaxed); }
+void    SetTitleOverrideId(int titleId)             { s_featTitleOverrideId.store(titleId, std::memory_order_relaxed); }
+void    SetTitleOverrideSlot(int slot)              { s_featTitleOverrideSlot.store(ClampInt(slot, 0, 2), std::memory_order_relaxed); }
+
+bool    GetEntranceOverrideEnabled()                { return s_featEntranceOverrideEnabled.load(std::memory_order_relaxed) != 0; }
+int     GetEntranceOverrideId()                     { return s_featEntranceOverrideId.load(std::memory_order_relaxed); }
+void    SetEntranceOverrideEnabled(bool enabled)    { s_featEntranceOverrideEnabled.store(enabled ? 1 : 0, std::memory_order_relaxed); }
+void    SetEntranceOverrideId(int entranceId)       { s_featEntranceOverrideId.store(entranceId, std::memory_order_relaxed); }
+
+bool    GetPetSkinOverrideEnabled()                 { return s_featPetSkinOverrideEnabled.load(std::memory_order_relaxed) != 0; }
+int     GetPetSkinOverrideId()                      { return s_featPetSkinOverrideId.load(std::memory_order_relaxed); }
+void    SetPetSkinOverrideEnabled(bool enabled)     { s_featPetSkinOverrideEnabled.store(enabled ? 1 : 0, std::memory_order_relaxed); }
+void    SetPetSkinOverrideId(int petSkinId)         { s_featPetSkinOverrideId.store(petSkinId, std::memory_order_relaxed); }
 
 int32_t GetClientDefense()                          { return s_featClientDefense.load(std::memory_order_relaxed); }
 void    SetClientDefense(int32_t defense)           { s_featClientDefense.store(defense, std::memory_order_relaxed); }
