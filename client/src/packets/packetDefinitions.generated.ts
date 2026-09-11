@@ -329,7 +329,7 @@ const packetDefinitions: DefsFile = {
         },
         {
           "name": "bulletId",
-          "type": "int16"
+          "type": "uint16"
         },
         {
           "name": "ownerId",
@@ -452,7 +452,7 @@ const packetDefinitions: DefsFile = {
       "fields": [
         {
           "name": "bulletId",
-          "type": "int16"
+          "type": "uint16"
         },
         {
           "name": "ownerId",
@@ -531,7 +531,7 @@ const packetDefinitions: DefsFile = {
         },
         {
           "name": "bulletId",
-          "type": "int16"
+          "type": "uint16"
         },
         {
           "name": "objectId",
@@ -1032,7 +1032,7 @@ const packetDefinitions: DefsFile = {
         },
         {
           "name": "bulletId",
-          "type": "int16"
+          "type": "uint16"
         },
         {
           "name": "objectId",
@@ -1166,7 +1166,7 @@ const packetDefinitions: DefsFile = {
       "fields": [
         {
           "name": "bulletId",
-          "type": "int16"
+          "type": "uint16"
         },
         {
           "name": "objectId",
@@ -1695,7 +1695,24 @@ const packetDefinitions: DefsFile = {
     "133": {
       "name": "CREEPHIT",
       "direction": "client",
-      "fields": []
+      "fields": [
+        {
+          "name": "time",
+          "type": "int32"
+        },
+        {
+          "name": "bulletId",
+          "type": "uint16"
+        },
+        {
+          "name": "objectId",
+          "type": "int32"
+        },
+        {
+          "name": "targetId",
+          "type": "int32"
+        }
+      ]
     },
     "134": {
       "name": "PLAYERCALLOUT",

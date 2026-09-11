@@ -11,6 +11,7 @@ const statTypes: StatTypesFile = {
     62,
     71,
     72,
+    78,
     80,
     82,
     115,
