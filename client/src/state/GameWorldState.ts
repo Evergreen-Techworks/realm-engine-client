@@ -99,6 +99,12 @@ export interface NearestEnemyFilter {
 export class GameWorldState {
   private entities = new Map<number, TrackedEntity>();
   private deadObjects = new Set<number>();
+  private snapshotAt: number | null = null;
+
+  /** UPDATE owns membership; delta ticks need not repeat unchanged entities. */
+  isSnapshotFresh(maxAgeMs: number): boolean {
+    return this.snapshotAt !== null && Date.now() - this.snapshotAt <= maxAgeMs;
+  }
 
   /** Only confirmed death; stream-out drops do not prove a kill. */
   isObjectDead(objectId: number): boolean { return this.deadObjects.has(objectId); }
@@ -221,6 +227,10 @@ export class GameWorldState {
         }
       }
     }
+    // Some boss phases reuse their object ID and restore HP via NEWTICK.
+    // Only an explicit positive HP update can supersede a prior death marker.
+    if (status.data?.some((s: any) => s.id === StatType.HP && typeof s.value === 'number' && s.value > 0))
+      this.deadObjects.delete(entity.objectId);
     if (Number(entity.stats?.[String(StatType.HP)]) <= 0
       && (previousHp > 0 || Number(entity.stats?.[String(StatType.MaxHP)]) > 0))
       this.rememberDeath(entity.objectId);
@@ -243,6 +253,7 @@ export class GameWorldState {
   private onUpdate(_client: ClientConnection, packet: Packet): void {
     this.ensureMapIdentity(_client);
     if (!packet.isDefined) return;
+    this.snapshotAt = Date.now();
 
     // Track tile types from the UPDATE packet's tile array
     if (packet.data.tiles) {
@@ -280,7 +291,8 @@ export class GameWorldState {
 
   private onNewTick(_client: ClientConnection, packet: Packet): void {
     this.ensureMapIdentity(_client);
-    if (!packet.isDefined || !packet.data.statuses) return;
+    if (!packet.isDefined || !Array.isArray(packet.data.statuses)) return;
+    this.snapshotAt = Date.now();
 
     for (const status of packet.data.statuses) {
       const entity = this.entities.get(status.objectId);
@@ -292,6 +304,7 @@ export class GameWorldState {
   clear(): void {
     this.entities.clear();
     this.deadObjects.clear();
+    this.snapshotAt = null;
     this.tileMap.clear();
   }
 

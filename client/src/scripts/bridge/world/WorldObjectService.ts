@@ -25,6 +25,7 @@ export class WorldObjectService {
     const hp = Number(entity.stats?.[String(StatType.HP)]);
     const maxHp = Number(entity.stats?.[String(StatType.MaxHP)] ?? def?.maxHp);
     return {
+      blocksMovement: def?.occupySquare === true,
       isEventBoss: def?.isEventBoss,
       minimapIcon: def?.minimapIcon,
       minimapColor: def?.minimapColor,
