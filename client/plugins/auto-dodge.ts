@@ -492,8 +492,6 @@ export function register(ctx: PluginContext) {
   // packet so AutoNexus reacts before HP drops past threshold. On by
   // default — ghost-hit deaths outweigh the theoretical detectability of
   // the synthetic packets we emit; users can disable per-server if needed.
-  registerModeSetting('xdodge', 'xdodgeGhostHit', onOff('Ghost-hit protection (sync hits the game missed)'),
-    (v: string) => sendDllFeature('xdodgeGhostHit', v === 'on' ? 1 : 0));
   registerModeSetting('xdodge', 'xdodgeLateralPref', onOff('[Goal] Anti-flee + sidestep bias (no backwards sprinting)'),
     (v: string) => sendDllFeature('xdodgeLateralPref', v === 'on' ? 1 : 0));
   registerModeSetting('xdodge', 'xdodgeGoalSticky', onOff('[Goal] Path stickiness (no flipping between equal paths)'),
@@ -549,7 +547,7 @@ export function register(ctx: PluginContext) {
     sendDllFeature('xdodgeFutureHorizon',  ctx.getSetting<number>('xdodgeFutureHorizon'));
     sendDllFeature('xdodgeFutureStride',   ctx.getSetting<number>('xdodgeFutureStride'));
     sendDllFeature('dodgeHitScale',        ctx.getSetting<number>('dodgeHitScale'));
-    for (const k of ['xdodgeAstar', 'xdodgeWeighting', 'xdodgeSmartGoal', 'xdodgePerpBias', 'xdodgeSpeedMatch', 'xdodgeLockFollow', 'xdodgeWalkCache', 'xdodgeWallAvoid', 'xdodgeArbiter', 'xdodgeBfsBias', 'xdodgeCcd', 'xdodgeCatalog', 'xdodgeLosGoal', 'xdodgeWasdYield', 'xdodgeLateralPref', 'xdodgeGoalSticky', 'xdodgeAvoidEnemies', 'xdodgeGhostHit', 'xdodgeDrawPath'] as const)
+    for (const k of ['xdodgeAstar', 'xdodgeWeighting', 'xdodgeSmartGoal', 'xdodgePerpBias', 'xdodgeSpeedMatch', 'xdodgeLockFollow', 'xdodgeWalkCache', 'xdodgeWallAvoid', 'xdodgeArbiter', 'xdodgeBfsBias', 'xdodgeCcd', 'xdodgeCatalog', 'xdodgeLosGoal', 'xdodgeWasdYield', 'xdodgeLateralPref', 'xdodgeGoalSticky', 'xdodgeAvoidEnemies', 'xdodgeDrawPath'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     sendDllFeature('xdodgeCcdPad', ctx.getSetting<number>('xdodgeCcdPad'));
     const al = ctx.getSetting<string>('enemyAutoLock');

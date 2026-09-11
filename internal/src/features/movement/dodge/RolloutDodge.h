@@ -20,7 +20,7 @@
 // issued through DangerPlanner::NativeMoveTo (speed-clamped, server-acked) —
 // the same single move chokepoint XDodge uses.
 //
-// Shares the goal/lock/follow plumbing, GhostHit safety net, and toggle
+// Shares the goal/lock/follow plumbing and toggle
 // discipline with XDodge; only one of the two is enabled at a time.
 namespace RolloutDodge {
 

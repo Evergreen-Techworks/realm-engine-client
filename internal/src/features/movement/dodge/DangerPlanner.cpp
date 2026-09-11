@@ -10,7 +10,6 @@
 #include "features/movement/udodge/UDodge.h"
 #include "DbgFileLog.h"
 #include "SteerInput.h"
-#include "GhostHit.h"
 #include "ProjectileTracking.h"
 #include "LocalPlayer.h"
 #include "GameState.h"
@@ -760,7 +759,7 @@ static void RunDodgeTickBody()
 {
     // Two dodge engines run from this hook (mutually exclusive): XDodge
     // (spacetime BFS/A*) and RolloutDodge (forward input-simulation). They
-    // share the preamble, goal plumbing, and GhostHit safety net below.
+    // share the preamble and goal plumbing below.
     const bool xdodgeOn  = XDodge::IsEnabled();
     const bool rolloutOn = RolloutDodge::IsEnabled();
     const bool zaclinOn = ZDodge::IsEnabled();
@@ -816,9 +815,6 @@ static void RunDodgeTickBody()
         else if (zaclinOn)  ZDodge::Tick(p, px, py, dt);
         else if (rolloutOn) RolloutDodge::Tick(p, px, py, dt);
         else                XDodge::Tick(p, px, py, dt);
-        // GhostHit runs independently — a SAFETY net for bullets the game's
-        // own per-tick collision skipped. Cheap when off (one atomic load).
-        GhostHit::Tick(p, px, py);
         return;
     }
 }

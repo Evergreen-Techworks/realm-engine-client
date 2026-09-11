@@ -2979,39 +2979,7 @@ export class DevServer {
       const result = this.pluginManager.togglePluginByHotkey(pluginId);
       return result.ok;
     }
-    if (pluginId === 'ghostHit') {
-      this.handleGhostHitEvent(action);
-      return false;   // no plugin-state change to broadcast
-    }
     return false;
-  }
-
-  /**
-   * GhostHit fired from the DLL: action = "<ownerObjId>:<bulletId>". We
-   * craft and inject a PLAYERHIT packet on the player's behalf — which
-   * (a) keeps the server's hit accounting consistent when the game's
-   * own per-tick collision skipped a fast bullet (the "ghost hit"
-   * pattern) and (b) is observed by the in-process Auto Nexus plugin's
-   * PLAYERHIT handling, giving Auto Nexus the pre-damage signal it
-   * would otherwise miss. No-op if no client / no proxy / malformed
-   * action — never throw, the DLL fires this on a hot path.
-   */
-  private handleGhostHitEvent(action: string): void {
-    try {
-      if (!this.currentClient || !this.proxy) return;
-      const colon = action.indexOf(':');
-      if (colon <= 0) return;
-      const ownerId  = Number(action.slice(0, colon));
-      const bulletId = Number(action.slice(colon + 1));
-      if (!Number.isFinite(ownerId) || !Number.isFinite(bulletId)) return;
-      const packet = this.proxy.packetFactory.createByName('PLAYERHIT');
-      if (!packet) return;
-      packet.data = { bulletId, objectId: ownerId };
-      packet.modified = true;
-      this.currentClient.sendToServer(packet);
-    } catch (err) {
-      Logger.warn('DevServer', `ghostHit dispatch failed: ${(err as Error).message}`);
-    }
   }
 
   setScriptHost(host: ScriptHost): void {

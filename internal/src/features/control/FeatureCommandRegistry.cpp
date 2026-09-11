@@ -20,7 +20,6 @@
 #include "features/combat/autoaim/shoot/ProjNoclip.h"
 #include "PlayerCollider.h"
 #include "FpsSetter.h"
-#include "GhostHit.h"
 #include "AutoNexus.h"
 #include "gui/tabs/TestTAB.h"
 #include "DangerPlanner.h"
@@ -179,7 +178,6 @@ namespace {
             FH_INT_BOOL("xdodgeDrawProjPred", XDodge::SetDrawProjPredEnabled),
             FH_FLOAT("xdodgeDebugPredLongMs", XDodge::SetDebugPredLongMs),
             FH_INT_BOOL("xdodgeAvoidEnemies", XDodge::SetAvoidEnemiesEnabled),
-            FH_INT_BOOL("xdodgeGhostHit", GhostHit::SetEnabled),
             FH_INT_BOOL("xdodgeLosGoal", XDodge::SetLosGoalEnabled),
             FH_INT_BOOL("xdodgeWasdYield", XDodge::SetWasdYieldEnabled),
             FH_INT_BOOL("xdodgeLateralPref", XDodge::SetLateralPrefEnabled),

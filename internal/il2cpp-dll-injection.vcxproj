@@ -74,7 +74,6 @@
     <ClCompile Include="src\features\combat\autoaim\ui\FeatMagnetAim.cpp" />
     <ClCompile Include="src\features\loot\BagLooter.cpp" />
     <ClCompile Include="src\features\combat\autonexus\AutoNexus.cpp" />
-    <ClCompile Include="src\features\combat\ghostHit\GhostHit.cpp" />
     <ClCompile Include="src\gui\tabs\VisualsTAB.cpp" />
     <ClCompile Include="src\platform\hooks\DirectX.cpp" />
     <ClCompile Include="src\platform\hooks\InitHooks.cpp" />
@@ -292,7 +291,6 @@
     <ClInclude Include="src\features\combat\autoaim\ui\FeatMagnetAim.h" />
     <ClInclude Include="src\features\loot\BagLooter.h" />
     <ClInclude Include="src\features\combat\autonexus\AutoNexus.h" />
-    <ClInclude Include="src\features\combat\ghostHit\GhostHit.h" />
     <ClInclude Include="src\features\combat\autoaim\shoot\ProjNoclip.h" />
     <ClInclude Include="src\features\movement\noclip\Noclip.h" />
     <ClInclude Include="src\features\movement\noclip\NoclipHook.h" />

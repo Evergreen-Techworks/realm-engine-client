@@ -87,7 +87,7 @@ export const DLL_FEATURE_KEYS = [
   'xdodgeAutoLock', 'xdodgeAvoidEnemies', 'xdodgeBfsBias', 'xdodgeCatalog',
   'xdodgeCcd', 'xdodgeCcdPad', 'xdodgeDangerPenalty', 'xdodgeDebugPredLongMs',
   'xdodgeDrawPath', 'xdodgeDrawProjPred', 'xdodgeFutureHorizon', 'xdodgeFutureSample',
-  'xdodgeFutureStride', 'xdodgeGhostHit', 'xdodgeGoalSticky', 'xdodgeHitScale',
+  'xdodgeFutureStride', 'xdodgeGoalSticky', 'xdodgeHitScale',
   'xdodgeLateralPref', 'xdodgeLockFollow', 'xdodgeLosGoal', 'xdodgePerpBias',
   'xdodgePlanStepMs', 'xdodgeRebuildN', 'xdodgeSmartGoal', 'xdodgeSpeedMatch',
   'xdodgeStayPenalty', 'xdodgeWalkCache', 'xdodgeWallAvoid', 'xdodgeWasdYield',

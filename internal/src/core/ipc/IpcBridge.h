@@ -19,7 +19,6 @@ DWORD WINAPI IpcBridgeThread(LPVOID lpParam);
 void IpcBridge_RequestShutdown();
 
 // Queue a signed ghost-hit event for the pipe thread.
-void IpcBridge_EmitPredictedHit(int ownerObjId, int bulletId);
 
 // ── AutoNexus threat list ────────────────────────────────────────────────
 struct IpcThreat {

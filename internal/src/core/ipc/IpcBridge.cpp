@@ -91,14 +91,6 @@ struct PendingEvent { char pluginId[32]; char action[128]; };
 static std::mutex s_pendingEventsMutex;
 static std::vector<PendingEvent> s_pendingEvents;
 static constexpr size_t kPendingEventsCap = 64;
-void IpcBridge_EmitPredictedHit(int ownerObjId, int bulletId)
-{
-    PendingEvent ev{};
-    std::snprintf(ev.pluginId, sizeof(ev.pluginId), "%s", "ghostHit");
-    std::snprintf(ev.action, sizeof(ev.action), "%d:%d", ownerObjId, bulletId);
-    std::lock_guard<std::mutex> lk(s_pendingEventsMutex);
-    if (s_pendingEvents.size() < kPendingEventsCap) s_pendingEvents.push_back(ev);
-}
 
 static std::mutex s_threatsMutex;
 static IpcThreat  s_threats[kIpcMaxThreats];
