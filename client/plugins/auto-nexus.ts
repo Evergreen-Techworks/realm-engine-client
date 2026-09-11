@@ -15,6 +15,7 @@ const SAFE_ZONE_MAPS = new Set([
 interface NexusState {
   hp: number | null;
   maxHp: number;
+  healthAt: number | null;
   safe: boolean;
   escaped: boolean;
   retry: ReturnType<typeof setInterval> | null;
@@ -68,7 +69,7 @@ export function register(ctx: PluginContext) {
   function stateFor(client: ClientConnection): NexusState {
     let state = states.get(client);
     if (!state) {
-      state = { hp: null, maxHp: 0, safe: SAFE_ZONE_MAPS.has(
+      state = { hp: null, maxHp: 0, healthAt: null, safe: SAFE_ZONE_MAPS.has(
         String(client.playerData?.mapName ?? '').trim().toLowerCase()), escaped: false, retry: null };
       states.set(client, state);
     }
@@ -79,7 +80,7 @@ export function register(ctx: PluginContext) {
   }
   function reset(client: ClientConnection, safe: boolean): void {
     const state = stateFor(client); stopRetry(state);
-    state.hp = null; state.maxHp = 0; state.safe = safe; state.escaped = false;
+    state.hp = null; state.maxHp = 0; state.healthAt = null; state.safe = safe; state.escaped = false;
   }
   ctx.on('clientDisconnected', client => { stopRetry(stateFor(client)); states.delete(client); });
   ctx.hookPacket('MAPINFO', (client, packet) => {
@@ -94,12 +95,20 @@ export function register(ctx: PluginContext) {
     state.escaped = true;
     const detail = `Confirmed HP ${state.hp ?? 'unknown'}/${state.maxHp}; threshold ${thresholdPct}%`;
     ctx.log(`AUTO NEXUS — ${detail} — ${reason}`);
-    if (showNotification) ctx.sendNotification(client, 'AutoNexus', `${detail}\n${reason}`);
     const send = () => {
-      const packet = ctx.createPacket('ESCAPE'); packet.modified = true;
-      client.sendToServer(packet);
+      try {
+        const packet = ctx.createPacket('ESCAPE'); packet.modified = true;
+        client.sendToServer(packet);
+      } catch (error) {
+        ctx.log(`ESCAPE send failed; bounded retries remain available: ${String(error)}`);
+      }
     };
     send();
+    // Notification failures must never prevent the first ESCAPE or its retries.
+    if (showNotification) {
+      try { ctx.sendNotification(client, 'AutoNexus', `${detail}\n${reason}`); }
+      catch (error) { ctx.log(`Auto Nexus notification failed: ${String(error)}`); }
+    }
     let remaining = retryCount;
     if (remaining <= 0) return;
     state.retry = setInterval(() => {
@@ -125,6 +134,7 @@ export function register(ctx: PluginContext) {
     const hpStat = own?.data?.find((stat: any) => stat.id === StatType.HP);
     if (hpStat && typeof hpStat.value === 'number' && Number.isFinite(hpStat.value)) {
       state.hp = Math.max(0, hpStat.value);
+      state.healthAt = Date.now();
     } else if (state.hp === null && Number.isFinite(client.playerData.health) && client.playerData.health > 0) {
       // Hot reload can begin between full HP updates. Seed once from the last
       // server HP; delta ticks without HP must not undo confirmed DAMAGE.
@@ -151,7 +161,18 @@ export function register(ctx: PluginContext) {
       if (typeof damage !== 'number' || !Number.isFinite(damage) || damage <= 0 || state.hp === null) return;
       state.hp = Math.max(0, state.hp - damage);
     }
+    state.healthAt = Date.now();
     check(client, state, 'server-confirmed damage');
+  });
+  ctx.hookPacket('DEATH', (client, packet) => {
+    if (!packet.isDefined) return;
+    const state = stateFor(client);
+    const age = state.healthAt === null ? 'unknown' : `${Date.now() - state.healthAt}ms`;
+    const killer = String(packet.data.killedBy ?? 'unknown').replace(/[\r\n]/g, ' ').slice(0,120);
+    ctx.log(`DEATH diagnostic — killer=${killer}; confirmed HP=${state.hp ?? 'unknown'}/${state.maxHp}`
+      + `; health evidence age=${age}; threshold=${thresholdPct}%; enabled=${ctx.enabled}`
+      + `; safe=${state.safe}; escapeRequested=${state.escaped}; mode=confirmed-health`);
+    stopRetry(state); // death is final; repeated ESCAPE cannot recover the character
   });
   // Never suppress server packets or hold outgoing hit reports. A DEATH packet
   // is still delivered normally; no prediction can turn it into a saved life.

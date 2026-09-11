@@ -44,3 +44,4 @@ export { getDllThreats, getDllGround, getDllThreatsAgeMs, getDllThreatsTruncated
 export { getDllAim, getDllAimAgeMs } from '../src/bridge/DllAimBus.js';
 
 export { tryInventoryAction } from '../src/util/InventoryActions.js';
+export { automaticAbilityPaused } from '../src/bridge/AutomaticAbilityPause.js';
