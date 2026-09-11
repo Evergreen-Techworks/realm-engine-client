@@ -62,7 +62,7 @@ src/
 │
 ├── features/            Feature families — one folder per family
 │   ├── account/         Char select + credential/HWID capture surface
-│   ├── combat/          autoability, autoaim (core/shoot/modes/ui — see its README), autonexus, enemytracker, ghostHit
+│   ├── combat/          autoability, autoaim (core/shoot/modes/ui — see its README), autonexus, enemytracker
 │   ├── control/         Input-side control logic
 │   ├── loot/            Autoloot rules and inventory automation
 │   ├── misc/            One-offs that don't warrant their own family

@@ -486,12 +486,6 @@ export function register(ctx: PluginContext) {
     (v: string) => sendDllFeature('xdodgeWasdYield', v === 'on' ? 1 : 0));
   registerModeSetting('xdodge', 'xdodgeAvoidEnemies', onOff('Never stand on enemies / bosses (avoid contact damage)'),
     (v: string) => sendDllFeature('xdodgeAvoidEnemies', v === 'on' ? 1 : 0));
-  // Ghost-hit protection: an independent swept-collision check in the DLL
-  // catches bullets the game's per-tick collision skipped (the cause of
-  // "ghost-hit deaths" with speedhack on) and synthesises a PLAYERHIT
-  // packet so AutoNexus reacts before HP drops past threshold. On by
-  // default — ghost-hit deaths outweigh the theoretical detectability of
-  // the synthetic packets we emit; users can disable per-server if needed.
   registerModeSetting('xdodge', 'xdodgeLateralPref', onOff('[Goal] Anti-flee + sidestep bias (no backwards sprinting)'),
     (v: string) => sendDllFeature('xdodgeLateralPref', v === 'on' ? 1 : 0));
   registerModeSetting('xdodge', 'xdodgeGoalSticky', onOff('[Goal] Path stickiness (no flipping between equal paths)'),
