@@ -95,3 +95,29 @@ it('stops escape retries on disable, disconnect and cleanup', () => {
   for (const clean of f.cleanup) clean();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it('sends ESCAPE before notification and retries even when notification fails', () => {
+  const f = fixture();
+  f.ctx.sendNotification.mockImplementation(() => {
+    expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+    throw new Error('notification unavailable');
+  });
+  expect(() => f.hp(100)).not.toThrow();
+  vi.advanceTimersByTime(400);
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
+});
+it('retries a failed initial ESCAPE without waiting for another health packet', () => {
+  const f = fixture();
+  f.client.sendToServer.mockImplementationOnce(() => { throw new Error('send failure'); });
+  expect(() => f.hp(100)).not.toThrow();
+  vi.advanceTimersByTime(400);
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
+});
+it('records burst-death evidence without claiming confirmed-health mode prevents one-shots', () => {
+  const f = fixture(); f.settings.get('ForceAutoNexusHealth')!(5); f.hp(600);
+  vi.advanceTimersByTime(150);
+  expect(f.emit('DEATH', { killedBy: 'Mushroom Brawler' }).send).toBe(true);
+  expect(f.ctx.log).toHaveBeenCalledWith(expect.stringContaining('killer=Mushroom Brawler; confirmed HP=600/1000'));
+  expect(f.ctx.log).toHaveBeenCalledWith(expect.stringContaining('health evidence age=150ms; threshold=5%'));
+  expect(f.client.sendToServer).not.toHaveBeenCalled();
+});

@@ -9,7 +9,7 @@ function makeService(): WorldObjectService {
     { objectId: 20, objectType: 0x0704, pos: { x: 5, y: 5 }, lastUpdate: 1 },
   ];
   const defs = new Map<number, Record<string, unknown>>([
-    [0x072f, { id: 'Guild Hall Portal', displayId: '', dungeonName: 'Guild Hall' }],
+    [0x072f, { id: 'Guild Hall Portal', displayId: '', dungeonName: 'Guild Hall', occupySquare: true }],
     [0x0704, { id: 'Realm Portal', displayId: '', dungeonName: '' }],
   ]);
   const deps = {
@@ -30,6 +30,11 @@ function makeService(): WorldObjectService {
 }
 
 describe('WorldObjectService portals', () => {
+  it('exposes movement blockers independently of ordinary entity occupancy', () => {
+    const [blocking, walkable] = makeService().all();
+    expect(blocking.blocksMovement).toBe(true);
+    expect(walkable.blocksMovement).toBe(false);
+  });
   it('projects portals as complete SDK game objects with destinations', () => {
     const [guild, realm] = makeService().portals();
     expect(guild).toMatchObject({

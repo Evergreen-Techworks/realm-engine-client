@@ -10,6 +10,10 @@ export interface Enemy extends GameObject {
     defense: number;
     stats: Stats;
     phase: number;
+    /** Raw server animation state when available. */
+    animation?: number;
+    /** Known damage-counter guard animation (currently Oryx 3). */
+    isGuarding?: boolean;
     isEnraged: boolean;
     isBoss: boolean;
     isTargetingMe: boolean;

@@ -4,6 +4,7 @@ import type { ClientConnection } from '../../../proxy/ClientConnection.js';
 import type { BridgeDeps } from '../BridgeDeps.js';
 import { warnUnimplemented } from '../stubWarn.js';
 import { sendDllFeature } from '../../../bridge/DllFeatureBus.js';
+import { pauseAutomaticAbility } from '../../../bridge/AutomaticAbilityPause.js';
 
 const HISTORY_MS = 60 * 60 * 1000; // keep up to 1 hour of events
 
@@ -37,6 +38,10 @@ function readLocation(value: unknown): { x: number; y: number } | null {
 
 export class BridgeCombat {
   static install(deps: BridgeDeps): void {
+    Combat.pauseAutomaticAbility = (durationMs = 500): void => {
+      const client = deps.clientRef.current;
+      if (client?.connected) pauseAutomaticAbility(client, durationMs);
+    };
     const shotTimes: number[] = [];
     const hitTimes: number[] = [];
     let aimTarget: AimTarget | null = null;

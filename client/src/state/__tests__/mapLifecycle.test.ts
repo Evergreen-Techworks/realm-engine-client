@@ -66,3 +66,14 @@ it('retains confirmed deaths across stream-out, but never treats an ordinary dro
   emit('MAPINFO', c, {});
   expect(world.isObjectDead(40)).toBe(false);
 });
+
+it('lets an explicit restored HP update supersede a boss-phase death without reusing stale cached HP', () => {
+  const world = new GameWorldState(); const emit = hooksFor(world);
+  const c: any = { playerData: new PlayerData(), state: {} };
+  emit('UPDATE', c, { newObjs: [{ objectType: 1, status: { objectId: 40, data: [{ id: 1, value: 100 }] } }] });
+  emit('DAMAGE', c, { targetId: 40, kill: true });
+  emit('NEWTICK', c, { statuses: [{ objectId: 40, position: { x: 1, y: 2 }, data: [] }] });
+  expect(world.isObjectDead(40)).toBe(true);
+  emit('NEWTICK', c, { statuses: [{ objectId: 40, data: [{ id: 1, value: 200 }] }] });
+  expect(world.isObjectDead(40)).toBe(false);
+});

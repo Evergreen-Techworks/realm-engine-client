@@ -1,5 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, expect, it, vi } from 'vitest';
+const runnerSource = readFileSync(new URL('../../../script-packages/farmer/oryx-runner.mjs', import.meta.url), 'utf8')
+  .replace('export default class OryxRunner', 'return class OryxRunner');
+const OryxRunner = new Function(runnerSource)();
 const source = (name: string) => readFileSync(new URL(`../../../script-packages/${name}/index.mjs`, import.meta.url), 'utf8')
   .replace(/^import .*;\n/gm, '').replace('export default class', 'return class');
 function fixture() {
@@ -21,7 +24,7 @@ function fixture() {
       tiles: { getNearby: () => [100.5,104.5,110.5].map((x) => ({ name: 'Dead Church Grass', position: { x, y: 0.5 } })) } },
     ui: { status: vi.fn() }, log: { info: vi.fn() },
   };
-  const Farmer = new Function('RealmEngine', source('farmer'))(sdk);
+  const Farmer = new Function('RealmEngine', 'OryxRunner', source('farmer'))(sdk, OryxRunner);
   const DeadChurch = new Function('RealmEngine', 'Farmer', source('dead-church-farmer'))(sdk, Farmer);
   return { script: new DeadChurch(), sdk, pos, beacon, mob, bags: (b: any[]) => { bags = b; } };
 }

@@ -4,6 +4,7 @@ import type { BridgeDeps } from '../BridgeDeps.js';
 import { warnUnimplemented } from '../stubWarn.js';
 import { StatType } from '../../../constants/StatType.js';
 import { ConditionEffect } from '../../../constants/ConditionEffect.js';
+import { TOMATO_ANIMATION_STAT_WIRE, tomatoLineIsGuarded } from '../../../damage-sniffer/tomatoBossGuards.js';
 
 const ENEMY_MAX_STALE_MS = 3000;
 
@@ -18,10 +19,14 @@ export class BridgeEnemies {
       const e = deps.worldState.getEntity(objectId);
       if (!deps.clientRef.current?.connected || !e
           || deps.gameData.getObjectCategory(e.objectType) !== 'Enemy'
-          || !Number.isFinite(e.lastUpdate) || Date.now() - e.lastUpdate > ENEMY_MAX_STALE_MS
+          || deps.worldState.isObjectDead?.(objectId)
+          || !(deps.worldState.isSnapshotFresh?.(ENEMY_MAX_STALE_MS)
+            ?? (Number.isFinite(e.lastUpdate) && Date.now() - e.lastUpdate <= ENEMY_MAX_STALE_MS))
           || !Number.isFinite(e.pos.x) || !Number.isFinite(e.pos.y)) return null;
       const def = deps.gameData.getObject(e.objectType);
       const s = e.stats ?? {};
+      const rawAnimation = s[String(TOMATO_ANIMATION_STAT_WIRE)];
+      const animation = rawAnimation != null && Number.isFinite(Number(rawAnimation)) ? Number(rawAnimation) : undefined;
       const hp = Number(s[String(StatType.HP)] ?? 0);
       const maxHp = Number(s[String(StatType.MaxHP)] ?? def?.maxHp ?? Math.max(1, hp));
       const defense = Number(s[String(StatType.Defense)] ?? def?.defense ?? 0);
@@ -46,6 +51,9 @@ export class BridgeEnemies {
         defense: Number.isFinite(defense) ? defense : 0,
         stats: { maxHP: maxHp, maxMP: 0, attack: 0, defense, speed: 0, dexterity: 0, vitality: 0, wisdom: 0 },
         phase: 0,
+        animation,
+        isGuarding: tomatoLineIsGuarded({ targetObjectType: e.objectType, animationStat: animation,
+          hasGuardedPhaseEntity: false, dammahCountered: false }),
         isEnraged: false,
         isBoss: deps.gameData.isBoss(e.objectType, 2000),
         isTargetingMe: false,
