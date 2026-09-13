@@ -109,3 +109,12 @@ it('logs accurate gate reasons without repeating diagnostic scans every tick', (
   f.settings.get('targetMinMaxHp')!.set(0);
   vi.setSystemTime(14000); f.tick(); expect(f.ctx.log).toHaveBeenLastCalledWith(expect.stringContaining('stale'));
 });
+it('waits for the client game time instead of sending a USEITEM that cannot serialize', () => {
+  // Until the first MOVE of a map calibrates it, client.time is epoch ms — the
+  // 2026-09-12 log shows "Failed to serialize USEITEM ... Received 1_789_259_156_430".
+  const f = fixture(); f.client.time = 1_789_259_156_430;
+  f.tick(); expect(f.client.sendToServer).not.toHaveBeenCalled();
+  f.client.time = 5000; f.tick();   // calibrated on the next tick: no cooldown was armed by the skip
+  expect(f.client.sendToServer).toHaveBeenCalledWith(expect.objectContaining({ name: 'USEITEM',
+    data: expect.objectContaining({ time: 5000 }) }));
+});
