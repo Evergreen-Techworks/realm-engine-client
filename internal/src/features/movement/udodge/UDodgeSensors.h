@@ -8,6 +8,12 @@ namespace UDodge { namespace Sensors {
 void RecordPacketShot(const char* encoded);
 void ClearPacketShots();
 
+// Server AOE packets forwarded by the proxy ("originType,x,y,radius,damage").
+// Queued here (IPC thread) and consumed on the game thread, where a blast centred
+// on a living enemy of its own originType with no telegraph teaches the dodge to
+// keep out of that enemy type's radius (UDodgeEnemyHazards.h).
+void RecordAoePacket(const char* encoded);
+
 // Host environment probes (match the Env fn-pointer signatures).
 bool IsHazardAt(float worldX, float worldY);
 bool CanOccupy(float worldX, float worldY, bool safeWalk);

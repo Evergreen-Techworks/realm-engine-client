@@ -129,6 +129,60 @@ int main()
     Check(!EnemyHazards::Append(map,123,100,{},in.player), "ordinary mob is not given an invented blast");
     Check(EnemyHazards::Append(map,0xb502,1875,{2.f,1.f},in.player)
           && map.zones[0].pos.x==2.f, "Brawler variant tracks its current position");
+    // ── Learned enemy keep-outs (generalised Brawler patch) ─────────────────
+    // Enemies that blast on their own position with no telegraph, or that sit a
+    // stationary damage field on themselves, are learned from the game's data
+    // instead of by name.
+    {
+        EnemyHazards::ClearLearned();
+        constexpr int kBlaster = 0x1234, kThrower = 0x2345, kOther = 0x3456, kTower = 0x8719;
+        const EnemyHazards::EnemyRef enemies[] = {
+            { kBlaster, { 10.f, 10.f } }, { kThrower, { 20.f, 10.f } }, { kOther, { 30.f, 10.f } } };
+        DangerMap learned{};
+        MapInput li{}; li.map = &learned; li.speed = 0.005f;
+        Check(!EnemyHazards::Append(learned, kBlaster, 500, { 0.f, 0.f }, { 5.f, 0.f }),
+              "an unobserved enemy type has no keep-out");
+        Check(EnemyHazards::ObserveBlast({ 10.2f, 9.9f }, 3.f, kBlaster, enemies, 3, nullptr, 0),
+              "unwarned AOE centred on its own originType is learned");
+        Check(EnemyHazards::Append(learned, kBlaster, 500, { 0.f, 0.f }, { 5.f, 0.f }) &&
+              std::fabs(learned.zones[0].radius - (3.f + EnemyHazards::kLearnedMarginTiles)) < 1e-5f &&
+              learned.zones[0].active,
+              "every living instance of a learned blaster gets an active keep-out");
+        li.player = { 6.f, 0.f };
+        Check(!Core::ZonePathClear(li, { 6.f, 0.f }, { 3.2f, 0.f }),
+              "the dodge will not walk into a learned blaster's radius");
+        const EnemyHazards::TelegraphRef throwWarned[] = { { { 20.5f, 10.f }, 900.f } };
+        Check(!EnemyHazards::ObserveBlast({ 20.f, 10.2f }, 2.5f, kThrower, enemies, 3, throwWarned, 1),
+              "a telegraphed bomb landing on its thrower is not learned");
+        Check(!EnemyHazards::ObserveBlast({ 50.f, 50.f }, 2.5f, kThrower, enemies, 3, nullptr, 0),
+              "an AOE away from every enemy of its type (aimed at the player) is not learned");
+        Check(!EnemyHazards::ObserveBlast({ 30.f, 10.f }, 2.5f, kThrower, enemies, 3, nullptr, 0),
+              "an AOE centred on a DIFFERENT enemy type is not attributed to it");
+        Check(EnemyHazards::LearnedRadius(kThrower) == 0.f && EnemyHazards::LearnedRadius(kOther) == 0.f,
+              "rejected observations leave no keep-out");
+        Check(!EnemyHazards::ObserveBlast({ 10.f, 10.f }, 2.f, kBlaster, enemies, 3, nullptr, 0) &&
+              EnemyHazards::LearnedRadius(kBlaster) == 3.f, "a smaller blast never shrinks the learned radius");
+        Check(EnemyHazards::ObserveBlast({ 10.f, 10.f }, 25.f, kBlaster, enemies, 3, nullptr, 0) &&
+              EnemyHazards::LearnedRadius(kBlaster) == EnemyHazards::kLearnedMaxRadiusTiles,
+              "a huge blast is capped so a misread cannot wall off the map");
+
+        LaneThreat stationary{};
+        stationary.hitHalf = 0.5f; stationary.pointCount = 5; stationary.instantCount = 5;
+        for (int i = 0; i < 5; ++i) { stationary.points[i] = { 40.f, 40.f }; stationary.pointTimesMs[i] = i * 30.f; }
+        LaneThreat moving = stationary;
+        for (int i = 0; i < 5; ++i) moving.points[i] = { 40.f + i * 0.2f, 40.f };
+        Check(!EnemyHazards::ObserveStationaryShot(moving, kTower, { 40.f, 40.f }),
+              "a moving projectile is not a stationary field");
+        Check(!EnemyHazards::ObserveStationaryShot(stationary, kTower, { 45.f, 40.f }),
+              "a stationary projectile away from its owner is not attributed to it");
+        Check(EnemyHazards::ObserveStationaryShot(stationary, kTower, { 40.2f, 40.1f }) &&
+              std::fabs(EnemyHazards::KeepoutRadius(kTower) -
+                        (0.5f * 1.41421356f + EnemyHazards::kLearnedMarginTiles)) < 1e-4f,
+              "a speed-0 shot sitting on its owner (Bone Tower shape) teaches a keep-out");
+        Check(EnemyHazards::KeepoutRadius(0xb2a9) == EnemyHazards::kHardcodedBrawlerRadius,
+              "the hard-coded Brawler keep-out is unchanged");
+        EnemyHazards::ClearLearned();
+    }
     // SHOWEFFECT Throw: Pos1 is the landing position (TargetObjectId is the
     // thrower). Durations <= 120 are seconds; absent durations use the effect's
     // own fallback rather than a generic 2 s countdown for a thrown bomb.
@@ -141,5 +195,5 @@ int main()
         Check(AoeCapturePolicy::ShowEffectDurationMs(0.f, true) == 1500.f, "thrown bomb without duration uses the throw fallback");
         Check(AoeCapturePolicy::ShowEffectDurationMs(0.f, false) == 2000.f, "other effects without duration keep the 2 s fallback");
     }
-    std::puts("UDodge/AoE regression tests passed (38 cases)");
+    std::puts("UDodge/AoE regression tests passed (52 cases)");
 }
