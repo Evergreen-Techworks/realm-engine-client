@@ -94,6 +94,7 @@ void WorkerLoop()
         // and is bounded by an expansion count and a wall-clock budget. A search
         // that finds nothing certified publishes an INVALID advice, which the
         // solver treats exactly as "no advice" — today's behaviour.
+        const auto timed0 = std::chrono::steady_clock::now();
         static SpacetimeDodge::State timedState;   // retained plan across cycles
         SpacetimeDodge::Input timedIn{};
         const double nowMs = std::chrono::duration<double, std::milli>(
@@ -104,9 +105,11 @@ void WorkerLoop()
         const Solver::TimedAdvice timed =
             Timed::ToAdvice(timedOut, in.player, local.moveBudget);
 
+        const auto solve0 = std::chrono::steady_clock::now();
         CoreState solveState = local.commitment.state;
         Solver::SolveResult solve{};
         Solver::Solve(in, local.moveBudget, goal, plan, solveState, solve, timed);
+        const auto solve1 = std::chrono::steady_clock::now();
         {
             std::lock_guard<std::mutex> lk(g_planMutex);
             g_latest.plan = plan;
@@ -118,6 +121,8 @@ void WorkerLoop()
             g_latest.snapshotPlayer = local.player;
             g_latest.walkGoal = local.navGoal;
             g_latest.walkActive = local.goalWalkTo;
+            g_latest.timedMs = std::chrono::duration<float, std::milli>(solve0 - timed0).count();
+            g_latest.solveMs = std::chrono::duration<float, std::milli>(solve1 - solve0).count();
             g_havePlan = true;
         }
     }

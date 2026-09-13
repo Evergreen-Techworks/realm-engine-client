@@ -9,6 +9,7 @@
 #include "PJDodge.h"
 #include "features/movement/udodge/UDodge.h"
 #include "DbgFileLog.h"
+#include "DiagTiming.h"
 #include "SteerInput.h"
 #include "ProjectileTracking.h"
 #include "LocalPlayer.h"
@@ -836,10 +837,60 @@ static void DodgeTickGuarded()
     }
 }
 
+// Field diagnostics for the game-update thread (default OFF; see DiagTiming.h).
+// A long gap between two Update calls is a main-thread stall: movement, MOVE and
+// ping traffic all wait on it, so it is logged as its own event line to be lined
+// up with server disconnects in realm-engine-proxy.log (UTC there; local here).
+static void DiagAfterUpdate(double t0, double t1, double t2)
+{
+    DiagTiming::GameStats& gs = DiagTiming::Game();
+    gs.origUpdate.Add(t1 - t0);
+    gs.dodgeBody.Add(t2 - t1);
+    if (gs.lastEntryMs > 0.0) {
+        const double gap = t0 - gs.lastEntryMs;
+        gs.updateGap.Add(gap);
+        if (gap > 100.0) ++gs.gapsOver100;
+        if (gap > 250.0) {
+            ++gs.gapsOver250;
+            DiagTiming::Logf("[Diag/Stall] game update gap=%.0f ms (this update: game=%.1f ms dodge=%.1f ms)",
+                             gap, t1 - t0, t2 - t1);
+        }
+    }
+    gs.lastEntryMs = t0;
+    if (!DiagTiming::Due(gs.lastEmitMs)) return;
+    DiagTiming::Logf("[Diag/Game] updates=%u gameUpdate avg/max=%.2f/%.2f ms dodgeBody avg/max=%.2f/%.2f ms"
+        " gap avg/max=%.1f/%.1f ms gaps>100=%u gaps>250=%u",
+        gs.origUpdate.n, gs.origUpdate.Avg(), gs.origUpdate.max, gs.dodgeBody.Avg(), gs.dodgeBody.max,
+        gs.updateGap.Avg(), gs.updateGap.max, gs.gapsOver100, gs.gapsOver250);
+    DiagTiming::Logf("[Diag/UDodge] total avg/max=%.2f/%.2f sync=%.2f/%.2f (rebuild=%u reanchor=%u)"
+        " rasterOcc=%.2f/%.2f rasterNav n=%u %.2f/%.2f publish n=%u %.2f/%.2f dropped=%u"
+        " liveSolve n=%u %.2f/%.2f revalidate=%.2f/%.2f resolves=%u debug=%.2f/%.2f",
+        gs.total.Avg(), gs.total.max, gs.sync.Avg(), gs.sync.max, gs.rebuilds, gs.reanchors,
+        gs.rasterOcc.Avg(), gs.rasterOcc.max, gs.rasterNav.n, gs.rasterNav.Avg(), gs.rasterNav.max,
+        gs.publish.n, gs.publish.Avg(), gs.publish.max, gs.publishDropped,
+        gs.liveSolve.n, gs.liveSolve.Avg(), gs.liveSolve.max,
+        gs.revalidate.Avg(), gs.revalidate.max, gs.revalidateResolves, gs.debug.Avg(), gs.debug.max);
+    DiagTiming::Logf("[Diag/UDodge] decisions hold=%u safe=%u fallback=%u surrounded=%u moves=%u refused=%u"
+        " | nav replans=%u stalls=%u blocked=%u waitFrames=%u | worker accepted=%u discarded=%u"
+        " routeFound=%u partial=%u maxMs dodge=%.1f nav=%.1f timed=%.1f solve=%.1f"
+        " | map maxLanes=%d maxZones=%d maxEnemies=%d limitedFrames=%u",
+        gs.holds, gs.safes, gs.fallbacks, gs.surrounded, gs.moves, gs.moveRefused,
+        gs.navReplans, gs.navStalls, gs.navBlocked, gs.navWaitFrames,
+        gs.workerAccepted, gs.workerDiscarded, gs.routeFound, gs.routePartial,
+        gs.workerDodgeMsMax, gs.workerNavMsMax, gs.workerTimedMsMax, gs.workerSolveMsMax,
+        gs.maxLanes, gs.maxZones, gs.maxEnemies, gs.mapLimited);
+    gs.ResetWindow();
+}
+
 void __fastcall Detour_AppEngineUpdate(void* __this, void* method)
 {
+    DiagTiming::PollFlag();
+    const bool diagOn = DiagTiming::On();
+    const double t0 = diagOn ? DiagTiming::NowMs() : 0.0;
     if (s_origUpdate) s_origUpdate(__this, method);
+    const double t1 = diagOn ? DiagTiming::NowMs() : 0.0;
     DodgeTickGuarded();
+    if (diagOn) DiagAfterUpdate(t0, t1, DiagTiming::NowMs());
 }
 
 } // namespace

@@ -30,6 +30,7 @@
 #include "HwidCapture.h"
 #include "keybinds.h"
 #include "gui/tabs/WorldTAB.h"
+#include "DiagTiming.h"
 
 namespace {
 
@@ -155,6 +156,13 @@ HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags
 	if (!Il2CppHook::EnsureThreadAttached())
 		return oPresent(__this, SyncInterval, Flags);
 
+	// Field diagnostics (default OFF; see DiagTiming.h). Frame-cap waiting is
+	// measured separately so it is never mistaken for work.
+	DiagTiming::PollFlag();
+	const bool diagOn = DiagTiming::On();
+	const double diagT0 = diagOn ? DiagTiming::NowMs() : 0.0;
+	double diagCapMs = 0.0;
+
 	// DEBUG BISECT #2: SpeedHack::Tick lazily installs IL2CPP hooks via
 	// Detours every frame on the render thread. Detours' transaction
 	// commit suspends all other threads — if any holds the IL2CPP lock
@@ -169,6 +177,7 @@ HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags
 
 	// Present-level FPS cap (busy-wait, matches XRebuild dPresent approach).
 	{
+		const double diagCap0 = diagOn ? DiagTiming::NowMs() : 0.0;
 		static auto s_lastPresent = std::chrono::steady_clock::now();
 		const int targetFps = FpsSetter::GetTargetFps();
 		if (targetFps > 0) {
@@ -184,6 +193,7 @@ HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags
 			}
 			s_lastPresent = std::chrono::steady_clock::now();
 		}
+		if (diagOn) diagCapMs = DiagTiming::NowMs() - diagCap0;
 	}
 
 	RuntimeOffsets::EnsureAll();
@@ -241,7 +251,10 @@ HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags
 			settings.bShowMenu = !settings.bShowMenu;
 
 		// Run per-frame logic.
-		TestTAB::Tick(settings.bShowMenu);
+		{
+			DiagTiming::Scope diagTestTab(DiagTiming::Render().testTabTick);
+			TestTAB::Tick(settings.bShowMenu);
+		}
 		VisualsTAB::Tick(settings.bShowMenu);
 		CombatTAB::Tick(settings.bShowMenu);
 		PlayerTAB::Tick(settings.bShowMenu);
@@ -297,6 +310,21 @@ HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags
 		DirectX::pContext->OMSetRenderTargets(1, &pRenderTargetView, nullptr);
 		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 		ReleaseSemaphore(DirectX::hRenderSemaphore, 1, nullptr);
+	}
+	if (diagOn) {
+		DiagTiming::RenderStats& rs = DiagTiming::Render();
+		rs.presentBody.Add(DiagTiming::NowMs() - diagT0 - diagCapMs);
+		rs.capWait.Add(diagCapMs);
+		if (DiagTiming::Due(rs.lastEmitMs)) {
+			DiagTiming::Logf("[Diag/Render] presents=%u body avg/max=%.2f/%.2f ms capWait avg=%.2f ms"
+				" testTabTick avg/max=%.2f/%.2f worldRefresh n=%u avg/max=%.2f/%.2f ms"
+				" tileList=%d scanned=%d kept=%d entities=%d",
+				rs.presentBody.n, rs.presentBody.Avg(), rs.presentBody.max, rs.capWait.Avg(),
+				rs.testTabTick.Avg(), rs.testTabTick.max,
+				rs.worldRefresh.n, rs.worldRefresh.Avg(), rs.worldRefresh.max,
+				rs.tileListSize, rs.tileScanned, rs.tilesKept, rs.entities);
+			rs.presentBody.Reset(); rs.capWait.Reset(); rs.testTabTick.Reset(); rs.worldRefresh.Reset();
+		}
 	}
 	return oPresent(__this, SyncInterval, Flags);
 }
