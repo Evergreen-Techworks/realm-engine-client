@@ -12,10 +12,55 @@
 namespace UDodge { namespace Core {
 namespace {
 
+// ── EXACT PRUNING for the all-lanes clearance loops (2026-09-12) ────────────
+// PointSafety / SegmentSafety take a min over EVERY lane × every painted segment.
+// The solver calls them for ~131 candidates per solve and the solve runs on the
+// game thread, so with a few hundred shots on screen this loop was the solve:
+// measured offline on the production solver, Solver::Solve cost 3.6 ms at 50
+// lanes and 13 ms at 512 (callgrind: MinChebOnSegment + LaneDistCheb + SegSegCheb
+// ≈ 65% of all instructions).
+//
+// A segment can only lower the running minimum if its bounding box is closer
+// than that minimum, and the Chebyshev distance to a segment's axis-aligned box is
+// a true LOWER BOUND on the Chebyshev distance to the segment (the segment lies
+// inside its box). So a segment whose box gap already exceeds the running minimum
+// is skipped. This never changes a result: kPruneSlackTiles is orders of magnitude
+// larger than the float rounding in MinChebOnSegment, so a skipped segment's exact
+// distance is strictly greater than the minimum it could not beat. The host suite
+// (udodge_prune_tests) checks bit-identical results against the unpruned code.
+constexpr float kPruneSlackTiles = 0.01f;
+
+// Chebyshev distance from the origin to the axis-aligned box spanned by two points
+// given RELATIVE to the query point. Lower bound on MinChebOnSegment(x0,y0,x1,y1).
+inline float ChebBoxGap(float x0, float y0, float x1, float y1)
+{
+    const float gx = std::max({ 0.f, std::min(x0, x1), -std::max(x0, x1) });
+    const float gy = std::max({ 0.f, std::min(y0, y1), -std::max(y0, y1) });
+    return std::max(gx, gy);
+}
+
+// Chebyshev gap between the axis-aligned boxes of segments a→b and p→q. Lower
+// bound on SegSegCheb(a, b, p, q) (a proper crossing forces boxes to overlap, so
+// the zero-distance case is never pruned).
+inline float ChebBoxGapSeg(Vec2 a, Vec2 b, Vec2 p, Vec2 q)
+{
+    const float abMinX = std::min(a.x, b.x), abMaxX = std::max(a.x, b.x);
+    const float abMinY = std::min(a.y, b.y), abMaxY = std::max(a.y, b.y);
+    const float pqMinX = std::min(p.x, q.x), pqMaxX = std::max(p.x, q.x);
+    const float pqMinY = std::min(p.y, q.y), pqMaxY = std::max(p.y, q.y);
+    const float gx = std::max({ 0.f, pqMinX - abMaxX, abMinX - pqMaxX });
+    const float gy = std::max({ 0.f, pqMinY - abMaxY, abMinY - pqMaxY });
+    return std::max(gx, gy);
+}
+
 // Min over the lane polyline of Chebyshev distance from p. A lane is dangerous
 // NOW over its whole length — the spatial hit geometry every safety test below
 // measures against.
-float LaneDistCheb(const LaneThreat& L, Vec2 p)
+//
+// `cutoff`: the caller only cares about distances <= cutoff. The result is EXACT
+// whenever the true minimum is <= cutoff; otherwise it is some value > cutoff
+// (possibly kHugeClearance). The default keeps the plain exact behaviour.
+float LaneDistCheb(const LaneThreat& L, Vec2 p, float cutoff = kHugeClearance)
 {
     const int n = L.instantCount;   // PAINT span (laneTiles), not the full traced polyline
     if (n <= 0) return kHugeClearance;
@@ -24,8 +69,10 @@ float LaneDistCheb(const LaneThreat& L, Vec2 p)
     for (int j = 0; j + 1 < n; ++j) {
         const Vec2 a = L.points[j];
         const Vec2 b = L.points[j + 1];
-        best = std::min(best, MinChebOnSegment(a.x - p.x, a.y - p.y,
-                                               b.x - p.x, b.y - p.y));
+        const float x0 = a.x - p.x, y0 = a.y - p.y;
+        const float x1 = b.x - p.x, y1 = b.y - p.y;
+        if (ChebBoxGap(x0, y0, x1, y1) > std::min(best, cutoff) + kPruneSlackTiles) continue;
+        best = std::min(best, MinChebOnSegment(x0, y0, x1, y1));
     }
     return best;
 }
@@ -241,7 +288,10 @@ float PointSafety(const MapInput& in, Vec2 pos)
         const LaneThreat& L = in.map->lanes[i];
         if (L.instantCount <= 0) continue;
         const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + laneHalf;
-        best = std::min(best, LaneDistCheb(L, pos) - half);
+        // Exact pruning: a lane can only lower `best` if its distance is below
+        // best + half; the slack keeps the float subtraction below on the same
+        // side of `best` as the unpruned loop (see kPruneSlackTiles).
+        best = std::min(best, LaneDistCheb(L, pos, best + half + kPruneSlackTiles) - half);
     }
     for (int i = 0; i < in.map->zoneCount; ++i) {
         const ZoneThreat& z = in.map->zones[i];
@@ -282,9 +332,16 @@ float SegmentSafety(const MapInput& in, Vec2 a, Vec2 b)
             dCheb = MinChebOnSegment(L.points[0].x - a.x, L.points[0].y - a.y,
                                      L.points[0].x - b.x, L.points[0].y - b.y);
         } else {
+            // Exact pruning (see kPruneSlackTiles): skip a lane segment whose box is
+            // already farther than both this lane's running minimum and the distance
+            // that could still lower `best`.
+            const float cutoff = best + half + kPruneSlackTiles;
             dCheb = kHugeClearance;
-            for (int j = 0; j + 1 < n; ++j)
+            for (int j = 0; j + 1 < n; ++j) {
+                if (ChebBoxGapSeg(a, b, L.points[j], L.points[j + 1]) >
+                    std::min(dCheb, cutoff) + kPruneSlackTiles) continue;
                 dCheb = std::min(dCheb, SegSegCheb(a, b, L.points[j], L.points[j + 1]));
+            }
         }
         best = std::min(best, dCheb - half);
     }
