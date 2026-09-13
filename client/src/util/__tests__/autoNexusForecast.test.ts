@@ -53,7 +53,7 @@ it('uses the current server HP packet and preserves its delivery', () => {
   expect(packet.send).toBe(true);
 });
 it('counts confirmed damage once and does not reset it from delta ticks without HP', () => {
-  const f = fixture(); f.hp(800);
+  const f = fixture(); f.settings.get('BurstGuard')!(false); f.hp(800);
   f.emit('DAMAGE', { targetId: 1, damageAmount: 300 });
   f.emit('NEWTICK', { statuses: [] });
   f.emit('DAMAGE', { targetId: 1, damageAmount: 200 });
@@ -62,7 +62,7 @@ it('counts confirmed damage once and does not reset it from delta ticks without 
   expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
 });
 it('authoritative HP heals replace the confirmed ledger without guessed recovery', () => {
-  const f = fixture(); f.hp(800);
+  const f = fixture(); f.settings.get('BurstGuard')!(false); f.hp(800);
   f.emit('DAMAGE', { targetId: 1, damageAmount: 400 });
   f.hp(800);
   f.emit('DAMAGE', { targetId: 1, damageAmount: 400 });
@@ -120,4 +120,57 @@ it('records burst-death evidence without claiming confirmed-health mode prevents
   expect(f.ctx.log).toHaveBeenCalledWith(expect.stringContaining('killer=Mushroom Brawler; confirmed HP=600/1000'));
   expect(f.ctx.log).toHaveBeenCalledWith(expect.stringContaining('health evidence age=150ms; threshold=5%'));
   expect(f.client.sendToServer).not.toHaveBeenCalled();
+});
+
+// ── Burst guard ──────────────────────────────────────────────────────────────
+// The 2026-09-12 deaths all had their last confirmed HP just above the threshold
+// (75/775 @9%, 43/435 @9%, 21/147 @10%) and died before the next health update.
+it('escapes above the threshold when a recently confirmed burst could take the remaining HP', () => {
+  const f = fixture(); f.client.playerData.effectiveMaxHealth = 147;
+  f.settings.get('ForceAutoNexusHealth')!(10);   // 14.7 HP
+  f.hp(147);
+  vi.advanceTimersByTime(200); f.hp(100);        // 47 HP lost within one reaction window
+  expect(f.client.sendToServer).not.toHaveBeenCalled(); // 100 > 47 * 1.25
+  vi.advanceTimersByTime(3000); f.hp(55);        // slow decline: no new burst, the 47 is remembered
+  expect(f.client.sendToServer).toHaveBeenCalledWith(expect.objectContaining({ name: 'ESCAPE' }));
+  expect(f.ctx.log).toHaveBeenCalledWith(expect.stringContaining('burst guard: 47 HP lost within 400ms'));
+});
+it('without the burst guard the same sequence waits for the plain threshold', () => {
+  const f = fixture(); f.client.playerData.effectiveMaxHealth = 147;
+  f.settings.get('ForceAutoNexusHealth')!(10); f.settings.get('BurstGuard')!(false);
+  f.hp(147); vi.advanceTimersByTime(200); f.hp(100); vi.advanceTimersByTime(3000); f.hp(55);
+  expect(f.client.sendToServer).not.toHaveBeenCalled();
+});
+it('caps the raised escape point at half of max HP and forgets bursts after 6 s', () => {
+  const f = fixture(); f.settings.get('ForceAutoNexusHealth')!(10); // 100 HP of 1000
+  f.hp(1000); vi.advanceTimersByTime(100); f.hp(520);                 // burst 480 -> 600, capped to 500
+  expect(f.client.sendToServer).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(7000); f.hp(450);                            // burst expired; threshold rules
+  expect(f.client.sendToServer).not.toHaveBeenCalled();
+  f.hp(100); expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+});
+it('measures the net loss inside the window, so damage and heals do not add up', () => {
+  const f = fixture(); f.settings.get('ForceAutoNexusHealth')!(10);
+  for (const hp of [900, 700, 900, 700]) { f.hp(hp); vi.advanceTimersByTime(100); } // largest net loss 200 -> 250
+  vi.advanceTimersByTime(1000);                                        // window empty; only the memory remains
+  f.hp(300); expect(f.client.sendToServer).not.toHaveBeenCalled();    // summed losses (400 -> 500) would escape here
+  f.hp(240); expect(f.client.sendToServer).toHaveBeenCalledTimes(1);  // 240 <= 250
+});
+it('does not mistake a max-HP change for a burst', () => {
+  const f = fixture(); f.settings.get('ForceAutoNexusHealth')!(10);
+  f.hp(1000); vi.advanceTimersByTime(100);
+  f.client.playerData.effectiveMaxHealth = 400; f.hp(400);             // gear swap, not damage
+  vi.advanceTimersByTime(1000); f.hp(140);                            // a 600 "burst" would escape at <=200
+  expect(f.client.sendToServer).not.toHaveBeenCalled();
+});
+it('leaves a deliberate 0% threshold alone', () => {
+  const f = fixture(); f.settings.get('ForceAutoNexusHealth')!(0);
+  f.hp(1000); vi.advanceTimersByTime(100); f.hp(100);
+  expect(f.client.sendToServer).not.toHaveBeenCalled();
+});
+it('reports the burst guard escape point in the death diagnostic', () => {
+  const f = fixture(); f.settings.get('ForceAutoNexusHealth')!(5);
+  f.hp(1000); vi.advanceTimersByTime(100); f.hp(700);                  // burst 300 -> 375; 700 is above it
+  f.emit('DEATH', { killedBy: 'Bone Tower 1' });
+  expect(f.ctx.log).toHaveBeenCalledWith(expect.stringContaining('burstGuard=on (escape point 375 HP, largest recent burst 300)'));
 });
