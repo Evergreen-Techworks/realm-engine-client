@@ -34,7 +34,7 @@ import {
   type DashboardAccountOverviewCacheRecord,
 } from './AccountService.js';
 import { GameLauncher } from './GameLauncher.js';
-import { PluginConfigService } from './PluginConfigService.js';
+import { BUNDLED_PLUGIN_DEFAULTS_FILE, PluginConfigService } from './PluginConfigService.js';
 
 // ── Debug logging ─────────────────────────────────────────────────────────────
 // Gated behind the 'accounts' debug channel (see util/DebugManager.ts). OFF by
@@ -467,6 +467,8 @@ export class DevServer {
       () => { this.saveConfig(); this.broadcastConfig(); },
       () => this.broadcastPluginState(),
       () => this.syncPluginHotkeysToDll(),
+      // Beside the bundled data/config.json (see configPath below).
+      join(publicDir, '..', '..', '..', 'data', BUNDLED_PLUGIN_DEFAULTS_FILE),
     );
     this.wikiSprites = new WikiSpriteService(
       publicDir,
