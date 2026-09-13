@@ -22,6 +22,7 @@ import { DebugManager } from '../../util/DebugManager.js';
 import { RuntimeScheduler } from '../../util/RuntimeScheduler.js';
 import { injectDll } from '../../native/injector.js';
 import { getRealmengineDataDir, getRealmengineDocumentsDir } from '../../util/rotmgAssetExtractor.js';
+import { getClientConfigWritePath, readMergedClientConfigRaw, writeClientConfig } from '../../util/clientConfigStore.js';
 import { extractGameXmls } from '../../util/rotmgAssetExtractor.js';
 import { extractLocalGameAssets } from '../../util/rotmgLocalExtractor.js';
 import { ensureRotmgMetadataXml } from '../../util/ensureRotmgMetadataXml.js';
@@ -467,7 +468,7 @@ export class DevServer {
       () => { this.saveConfig(); this.broadcastConfig(); },
       () => this.broadcastPluginState(),
       () => this.syncPluginHotkeysToDll(),
-      // Beside the bundled data/config.json (see configPath below).
+      // Beside the bundled data/config.json.
       join(publicDir, '..', '..', '..', 'data', BUNDLED_PLUGIN_DEFAULTS_FILE),
     );
     this.wikiSprites = new WikiSpriteService(
@@ -532,18 +533,21 @@ export class DevServer {
       }
     });
 
-    // Load config for persisted settings (e.g. custom RotMG path)
-    this.configPath = join(publicDir, '..', '..', '..', 'data', 'config.json');
+    // Load persisted settings (e.g. custom RotMG path) the way startup does
+    // (index.ts): bundled data/config.json with the user overlay on top, and
+    // save to the overlay. Packaged builds point the overlay outside the
+    // resources tree (REALM_ENGINE_USER_CONFIG_PATH; RE_ASSETS for the
+    // portable) because that tree is replaced by the next build or launch.
+    const resourcesRoot = join(publicDir, '..', '..', '..');
+    this.configPath = getClientConfigWritePath(resourcesRoot);
     try {
-      if (existsSync(this.configPath)) {
-        const raw = JSON.parse(readFileSync(this.configPath, 'utf8'));
-        this.config = {
-          rotmgPath: raw.rotmgPath,
-          rotmgExtractorGameDataPath: raw.rotmgExtractorGameDataPath,
-          lastPluginConfigId: raw.lastPluginConfigId,
-          singleClientOnly: true,
-        };
-      }
+      const raw = readMergedClientConfigRaw(resourcesRoot);
+      this.config = {
+        rotmgPath: raw.rotmgPath as string | undefined,
+        rotmgExtractorGameDataPath: raw.rotmgExtractorGameDataPath as string | undefined,
+        lastPluginConfigId: raw.lastPluginConfigId as string | undefined,
+        singleClientOnly: true,
+      };
     } catch (err) {
       Logger.warn('DevServer', `Failed to load config.json: ${(err as Error).message}`);
     }
@@ -908,7 +912,7 @@ export class DevServer {
    */
   private saveConfig(): void {
     try {
-      writeFileSync(this.configPath, JSON.stringify(this.config, null, 2), 'utf8');
+      this.configPath = writeClientConfig(join(this.publicDir, '..', '..', '..'), this.config);
     } catch (err) {
       Logger.warn('DevServer', `Failed to save config: ${(err as Error).message}`);
     }
