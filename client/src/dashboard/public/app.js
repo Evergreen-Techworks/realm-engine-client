@@ -16413,12 +16413,28 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
   }
 
   function handleConfigReset(msg) {
-    var toast = document.createElement('div');
-    toast.className = 'gem-toast';
-    toast.textContent = 'Your settings file was unreadable and was reset. A copy was kept'
-      + (msg && msg.backup ? ' at ' + msg.backup : '') + '.';
-    document.body.appendChild(toast);
-    setTimeout(function () { if (toast.parentNode) toast.remove(); }, 8000);
+    // Persistent, dismissible (the server replays this to every client until
+    // dismissed, since the first save runs before the dashboard connects).
+    var existing = document.getElementById('config-reset-banner');
+    if (existing) existing.remove();
+    var banner = document.createElement('div');
+    banner.id = 'config-reset-banner';
+    banner.className = 'config-reset-banner';
+    var text = document.createElement('span');
+    var where = (msg && msg.backup) ? ' A copy of the old file was kept at ' + msg.backup + '.' : '';
+    text.textContent = (msg && msg.writeFailed)
+      ? 'Your settings file was unreadable and settings are not saving.' + where
+      : 'Your settings file was unreadable and was reset.' + where;
+    banner.appendChild(text);
+    var btn = document.createElement('button');
+    btn.className = 'config-reset-banner-action';
+    btn.textContent = 'Dismiss';
+    btn.addEventListener('click', function () {
+      banner.remove();
+      try { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'dismissConfigReset' })); } catch (_e) {}
+    });
+    banner.appendChild(btn);
+    document.body.appendChild(banner);
   }
 
   // ── Home layout edit mode (drag-to-reorder, add/remove cards) ──

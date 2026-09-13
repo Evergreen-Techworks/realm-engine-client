@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -87,6 +87,28 @@ describe('client config persistence', () => {
     expect(JSON.parse(readFileSync(overlay, 'utf8'))).toEqual({ rotmgPath: 'C:\\New' });
     // The backup name should not itself be read as config on the next launch.
     expect((written.corruptBackup as string).startsWith(overlay + '.corrupt-')).toBe(true);
+  });
+
+  it('carries the backup path on the error when the fresh write fails after setting aside', () => {
+    const overlay = join(root, 'user', 'config.json');
+    process.env.REALM_ENGINE_USER_CONFIG_PATH = overlay;
+    mkdirSync(join(root, 'user'));
+    writeFileSync(overlay, '{ not json');
+    const resources = resourcesTree(root, 'build');
+    // Force the fresh write to fail: a directory sits where the temp file goes.
+    mkdirSync(`${overlay}.${process.pid}.tmp`);
+
+    let caught: unknown;
+    try {
+      writeClientConfig(resources, { rotmgPath: 'C:\\New' });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    const backup = (caught as { corruptBackup?: string }).corruptBackup;
+    expect(backup).toBeDefined();
+    expect(readFileSync(backup as string, 'utf8')).toBe('{ not json'); // the user's bytes are safe
+    expect(existsSync(overlay)).toBe(false); // it was moved aside, not left corrupt in place
   });
 
   it('leaves no temp file beside the config after a successful write', () => {

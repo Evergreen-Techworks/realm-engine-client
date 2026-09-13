@@ -104,6 +104,9 @@ export function writeClientConfig(resourcesRoot: string, values: Record<string, 
     } catch {
       /* leave the temp file for the next write to overwrite */
     }
+    // If we had already set a corrupt file aside, carry that path on the error
+    // so the caller can still tell the user where their bytes are.
+    if (corruptBackup) (err as { corruptBackup?: string }).corruptBackup = corruptBackup;
     throw err;
   }
   return { path: target, corruptBackup };
