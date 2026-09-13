@@ -308,14 +308,7 @@ namespace {
             FH("cameraCenteringActive",   FeatureState::SetCameraCentering(f.Bool(), FeatureState::GetCameraCentered())),
             FH("cameraCentered",          FeatureState::SetCameraCentering(FeatureState::GetCameraCenteringActive(), f.Bool())),
             FH("skinOverrideEnabled",     FeatureState::SetSkinOverride(f.Bool(), FeatureState::GetSkinOverrideId())),
-            FH("skinOverrideId",          FeatureState::SetSkinOverride(FeatureState::GetSkinOverrideEnabled(), f.Int())),
-            FH_BOOL("titleOverrideEnabled", FeatureState::SetTitleOverrideEnabled),
-            FH_INT("titleOverrideId",       FeatureState::SetTitleOverrideId),
-            FH_INT("titleOverrideSlot",     FeatureState::SetTitleOverrideSlot),
-            FH_BOOL("entranceOverrideEnabled", FeatureState::SetEntranceOverrideEnabled),
-            FH_INT("entranceOverrideId",       FeatureState::SetEntranceOverrideId),
-            FH_BOOL("petSkinOverrideEnabled",  FeatureState::SetPetSkinOverrideEnabled),
-            FH_INT("petSkinOverrideId",        FeatureState::SetPetSkinOverrideId)
+            FH("skinOverrideId",          FeatureState::SetSkinOverride(FeatureState::GetSkinOverrideEnabled(), f.Int()))
         };
         return ApplyFeatureTable(f, h, sizeof(h) / sizeof(h[0]));
     }
