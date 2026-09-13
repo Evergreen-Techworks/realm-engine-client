@@ -3641,6 +3641,9 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
         case window.WS_MSG.PLUGIN_TOGGLE_ERROR:
           handlePluginToggleError(msg);
           break;
+        case window.WS_MSG.CONFIG_RESET:
+          handleConfigReset(msg);
+          break;
         case window.WS_MSG.SCRIPT_LOG:
           if (msg.line != null) {
             appendScriptLogLine(String(msg.line), msg.level || 'info', msg.id || '');
@@ -16407,6 +16410,15 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     toast.textContent = msg.reason || 'Cannot enable plugin';
     document.body.appendChild(toast);
     setTimeout(function () { if (toast.parentNode) toast.remove(); }, 4500);
+  }
+
+  function handleConfigReset(msg) {
+    var toast = document.createElement('div');
+    toast.className = 'gem-toast';
+    toast.textContent = 'Your settings file was unreadable and was reset. A copy was kept'
+      + (msg && msg.backup ? ' at ' + msg.backup : '') + '.';
+    document.body.appendChild(toast);
+    setTimeout(function () { if (toast.parentNode) toast.remove(); }, 8000);
   }
 
   // ── Home layout edit mode (drag-to-reorder, add/remove cards) ──

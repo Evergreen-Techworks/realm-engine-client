@@ -38,7 +38,8 @@ describe('client config persistence', () => {
 
     const written = writeClientConfig(first, { rotmgPath: 'D:\\Games\\RotMG Exalt', lastPluginConfigId: 'farming' });
 
-    expect(written).toBe(overlay);
+    expect(written.path).toBe(overlay);
+    expect(written.corruptBackup).toBeUndefined();
     expect(readFileSync(join(first, 'data', 'config.json'), 'utf8')).toBe('{}\n');
     const next = resourcesTree(root, 'build-b');
     const loaded = readMergedClientConfigRaw(next);
@@ -58,15 +59,34 @@ describe('client config persistence', () => {
     expect(JSON.parse(readFileSync(overlay, 'utf8'))).toEqual({ skipWinhttpInstall: true, lastPluginConfigId: 'default' });
   });
 
-  it('refuses to overwrite an unparseable existing config, keeping its bytes', () => {
+  it('tolerates a UTF-8 BOM on the existing overlay (as PowerShell writes)', () => {
+    const overlay = join(root, 'user', 'config.json');
+    process.env.REALM_ENGINE_USER_CONFIG_PATH = overlay;
+    mkdirSync(join(root, 'user'));
+    writeFileSync(overlay, '\uFEFF' + JSON.stringify({ skipWinhttpInstall: true }));
+    const resources = resourcesTree(root, 'build');
+
+    const written = writeClientConfig(resources, { rotmgPath: 'C:\\New' });
+
+    expect(written.corruptBackup).toBeUndefined();
+    expect(JSON.parse(readFileSync(overlay, 'utf8'))).toEqual({ skipWinhttpInstall: true, rotmgPath: 'C:\\New' });
+    expect(readMergedClientConfigRaw(resources).skipWinhttpInstall).toBe(true);
+  });
+
+  it('sets an unparseable existing config aside and writes fresh, keeping its bytes', () => {
     const overlay = join(root, 'user', 'config.json');
     process.env.REALM_ENGINE_USER_CONFIG_PATH = overlay;
     mkdirSync(join(root, 'user'));
     writeFileSync(overlay, '{ this is not json');
     const resources = resourcesTree(root, 'build');
 
-    expect(() => writeClientConfig(resources, { rotmgPath: 'C:\\New' })).toThrow(/unparseable/);
-    expect(readFileSync(overlay, 'utf8')).toBe('{ this is not json');
+    const written = writeClientConfig(resources, { rotmgPath: 'C:\\New' });
+
+    expect(written.corruptBackup).toBeDefined();
+    expect(readFileSync(written.corruptBackup as string, 'utf8')).toBe('{ this is not json');
+    expect(JSON.parse(readFileSync(overlay, 'utf8'))).toEqual({ rotmgPath: 'C:\\New' });
+    // The backup name should not itself be read as config on the next launch.
+    expect((written.corruptBackup as string).startsWith(overlay + '.corrupt-')).toBe(true);
   });
 
   it('leaves no temp file beside the config after a successful write', () => {
@@ -86,7 +106,7 @@ describe('client config persistence', () => {
 
     const written = writeClientConfig(resources, { rotmgPath: 'C:\\Dev\\Game' });
 
-    expect(written).toBe(join(resources, 'data', 'config.json'));
+    expect(written.path).toBe(join(resources, 'data', 'config.json'));
     expect(readMergedClientConfigRaw(resources).rotmgPath).toBe('C:\\Dev\\Game');
   });
 });

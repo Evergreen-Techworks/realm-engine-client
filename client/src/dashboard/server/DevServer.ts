@@ -912,7 +912,17 @@ export class DevServer {
    */
   private saveConfig(): void {
     try {
-      this.configPath = writeClientConfig(join(this.publicDir, '..', '..', '..'), this.config);
+      const result = writeClientConfig(join(this.publicDir, '..', '..', '..'), this.config);
+      this.configPath = result.path;
+      if (result.corruptBackup) {
+        // broadcastConfig alone would show the change as saved and hide that the
+        // old file was unreadable, so tell the dashboard the file was reset.
+        Logger.warn('DevServer', `Config file was unreadable; kept a copy at ${result.corruptBackup} and wrote a fresh one.`);
+        const msg = JSON.stringify({ type: WS_MSG.CONFIG_RESET, backup: result.corruptBackup });
+        for (const client of this.wss.clients) {
+          if (client.readyState === WebSocket.OPEN) client.send(msg);
+        }
+      }
     } catch (err) {
       Logger.warn('DevServer', `Failed to save config: ${(err as Error).message}`);
     }
