@@ -28,6 +28,10 @@ namespace RuntimeOffsets {
     // FindClassLoose is never called every frame indefinitely.
     void EnsureAll();
 
+    // True once every entry resolved and every generated binding matches the live
+    // process. BootGate's feature gate waits on it (Task 13); developer builds do not.
+    bool ReadyForActivation();
+
     // True once the 5 s give-up timeout has fired.
     bool HasGivenUp();
     // True once resolution has SETTLED — every entry either resolved its class

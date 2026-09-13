@@ -1,9 +1,11 @@
 #include "pch-il2cpp.h"
 #include "RuntimeOffsets.h"
+#include "BuildBindings.h"
 #include "Il2CppResolver.h"
 #include "DbgFileLog.h"
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <iomanip>
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -268,6 +270,19 @@ static FieldInfo* FindFieldOnHierarchy(Il2CppClass* klass, const char* name)
     return nullptr;
 }
 
+// Generated targets are current metadata names. Enumerate directly so a target
+// that also happens to be an old alias cannot be translated a second time by the
+// il2cpp_class_get_field_from_name redirection init_il2cpp installs.
+static FieldInfo* FindExactFieldOnHierarchy(Il2CppClass* klass, const char* name)
+{
+    for (Il2CppClass* k = klass; k; k = il2cpp_class_get_parent(k)) {
+        void* iter = nullptr;
+        while (FieldInfo* field = il2cpp_class_get_fields(k, &iter))
+            if (strcmp(il2cpp_field_get_name(field), name) == 0) return field;
+    }
+    return nullptr;
+}
+
 // ── FFLIAABAAFP (WorldPos) x/y — resolved by SHAPE, not by name ────────────
 // Its x/y are auto-property backing fields, so their metadata names embed an
 // obfuscated inner name ("<CHOGDNLDCMD>k__BackingField") that BeeByte re-rolls
@@ -372,220 +387,221 @@ struct Entry {
     uint32_t    actkShift;
     uint32_t*   outPtr;
     bool        done;
+    const char* key;   // BuildBindings::FieldBinding::entry; always the outPtr variable's name
 };
 
 static Entry s_entries[] = {
 
     // ── KJMONHENJEN (no shift) ────────────────────────────────────────────
-    { "KJMONHENJEN", { "CLFEOFKBNEJ" },                              1, 0,     &PosX,           false },
-    { "KJMONHENJEN", { "PKEECFNFEIO" },                              1, 0,     &PosY,           false },
-    { "KJMONHENJEN", { "HFDNHJFNEKA" },                              1, 0,     &ObjType,        false },
-    { "KJMONHENJEN", { "OBAKMCCDBJA" },                              1, 0,     &ObjProps,       false },
-    { "KJMONHENJEN", { "MPGOFIHIDML" },                              1, 0,     &KJ_ViewHandler, false },
-    { "KJMONHENJEN", { "LGDCEJKHGFJ" },                              1, 0,     &KJ_SkinWidthObj,false },
-    { "KJMONHENJEN", { "HHPOJBFICAH" },                              1, 0,     &ObjId,          false },
-    { "KJMONHENJEN", { "IOKKOCEAJNA" },                              1, 0,     &KJ_BaseRadius,  false },
-    { "KJMONHENJEN", { "KEDBLBJIKCB" },                              1, 0,     &KJ_Scale,       false },
-    { "KJMONHENJEN", { "DGNPJNFGFPE" },                              1, 0,     &KJ_Float3Pos,   false },
-    { "KJMONHENJEN", { "EOKJOGFPLOA" },                              1, 0,     &KJ_TileRef,     false },
-    { "KJMONHENJEN", { "FDNHINDAEHK" },                              1, 0,     &KJ_DictObjectId,false },
+    { "KJMONHENJEN", { "CLFEOFKBNEJ" },                              1, 0,     &PosX,           false, "PosX" },
+    { "KJMONHENJEN", { "PKEECFNFEIO" },                              1, 0,     &PosY,           false, "PosY" },
+    { "KJMONHENJEN", { "HFDNHJFNEKA" },                              1, 0,     &ObjType,        false, "ObjType" },
+    { "KJMONHENJEN", { "OBAKMCCDBJA" },                              1, 0,     &ObjProps,       false, "ObjProps" },
+    { "KJMONHENJEN", { "MPGOFIHIDML" },                              1, 0,     &KJ_ViewHandler, false, "KJ_ViewHandler" },
+    { "KJMONHENJEN", { "LGDCEJKHGFJ" },                              1, 0,     &KJ_SkinWidthObj,false, "KJ_SkinWidthObj" },
+    { "KJMONHENJEN", { "HHPOJBFICAH" },                              1, 0,     &ObjId,          false, "ObjId" },
+    { "KJMONHENJEN", { "IOKKOCEAJNA" },                              1, 0,     &KJ_BaseRadius,  false, "KJ_BaseRadius" },
+    { "KJMONHENJEN", { "KEDBLBJIKCB" },                              1, 0,     &KJ_Scale,       false, "KJ_Scale" },
+    { "KJMONHENJEN", { "DGNPJNFGFPE" },                              1, 0,     &KJ_Float3Pos,   false, "KJ_Float3Pos" },
+    { "KJMONHENJEN", { "EOKJOGFPLOA" },                              1, 0,     &KJ_TileRef,     false, "KJ_TileRef" },
+    { "KJMONHENJEN", { "FDNHINDAEHK" },                              1, 0,     &KJ_DictObjectId,false, "KJ_DictObjectId" },
 
     // ── LKHPPBEGNOM (+0x50 ACTK for own fields) ───────────────────────────
-    { "LKHPPBEGNOM", { "KJNHLADHEMH", "KJNHLADEMH" },               2, kActk, &HP,            false },
-    { "LKHPPBEGNOM", { "NCBIICBDGAG" },                              1, kActk, &MaxHP,         false },
-    { "LKHPPBEGNOM", { "HODJPKFINKF" },                              1, kActk, &Defense,       false },
-    { "LKHPPBEGNOM", { "DPGEBOCBKEF" },                              1, 0,     &PlayerIGN,     false },
-    { "LKHPPBEGNOM", { "COHCKAPOLCA" },                           1, kActk, &MoConditions,  false },
-    { "LKHPPBEGNOM", { "ECGPFJKCCAN" },                           1, kActk, &MoVelocity,    false },
-    { "LKHPPBEGNOM", { "KKENJFFDMPO" },                           1, 0,     &MoObjectProps, false },
-    { "LKHPPBEGNOM", { "GGBCADDBAPN" },                           1, 0,     &PlayerCollisionProps, false },
+    { "LKHPPBEGNOM", { "KJNHLADHEMH", "KJNHLADEMH" },               2, kActk, &HP,            false, "HP" },
+    { "LKHPPBEGNOM", { "NCBIICBDGAG" },                              1, kActk, &MaxHP,         false, "MaxHP" },
+    { "LKHPPBEGNOM", { "HODJPKFINKF" },                              1, kActk, &Defense,       false, "Defense" },
+    { "LKHPPBEGNOM", { "DPGEBOCBKEF" },                              1, 0,     &PlayerIGN,     false, "PlayerIGN" },
+    { "LKHPPBEGNOM", { "COHCKAPOLCA" },                           1, kActk, &MoConditions,  false, "MoConditions" },
+    { "LKHPPBEGNOM", { "ECGPFJKCCAN" },                           1, kActk, &MoVelocity,    false, "MoVelocity" },
+    { "LKHPPBEGNOM", { "KKENJFFDMPO" },                           1, 0,     &MoObjectProps, false, "MoObjectProps" },
+    { "LKHPPBEGNOM", { "GGBCADDBAPN" },                           1, 0,     &PlayerCollisionProps, false, "PlayerCollisionProps" },
 
     // ── FKALGHJIADI (+0x50 ACTK for own fields) ───────────────────────────
-    { "FKALGHJIADI", { "HCMECDPHEMC" },                              1, kActk, &Tex1,          false },
-    { "FKALGHJIADI", { "HKPOMIBEGPK" },                              1, kActk, &Tex2,          false },
-    { "FKALGHJIADI", { "FMHMGKEPIDN" },                              1, kActk, &CurMP,              false },
-    { "FKALGHJIADI", { "NEDCKPIIIPN" },                              1, kActk, &MaxMP,              false },
+    { "FKALGHJIADI", { "HCMECDPHEMC" },                              1, kActk, &Tex1,          false, "Tex1" },
+    { "FKALGHJIADI", { "HKPOMIBEGPK" },                              1, kActk, &Tex2,          false, "Tex2" },
+    { "FKALGHJIADI", { "FMHMGKEPIDN" },                              1, kActk, &CurMP,              false, "CurMP" },
+    { "FKALGHJIADI", { "NEDCKPIIIPN" },                              1, kActk, &MaxMP,              false, "MaxMP" },
     // DAGEMHFLJLK = groundDamageImmune (dump 0x458 / runtime 0x4A8)
     // This doesn't seem to work. I do not believe this is labeled correctly.
-    { "FKALGHJIADI", { "DAGEMHFLJLK" },                              1, kActk, &GroundDmgImmune,    false },
+    { "FKALGHJIADI", { "DAGEMHFLJLK" },                              1, kActk, &GroundDmgImmune,    false, "GroundDmgImmune" },
     // BINDBHJLPMG = invincible bool (dump 0x459 / runtime 0x4A9) — per FKALGHJIADI_mapped.txt
-    { "FKALGHJIADI", { "BINDBHJLPMG" },                              1, kActk, &LocalInvincible,    false },
+    { "FKALGHJIADI", { "BINDBHJLPMG" },                              1, kActk, &LocalInvincible,    false, "LocalInvincible" },
     // PPBLNMIMIFP = abilityReady bool (dump 0x515 / runtime 0x565) — the correct ability gate
-    { "FKALGHJIADI", { "PPBLNMIMIFP" },                              1, kActk, &AbilityReady,       false },
+    { "FKALGHJIADI", { "PPBLNMIMIFP" },                              1, kActk, &AbilityReady,       false, "AbilityReady" },
     // CGCMALPMMJL = bool moving (dump 0x448 / runtime 0x498)
-    { "FKALGHJIADI", { "CGCMALPMMJL" },                              1, kActk, &Player_Moving,      false },
+    { "FKALGHJIADI", { "CGCMALPMMJL" },                              1, kActk, &Player_Moving,      false, "Player_Moving" },
     // BHJFNEAHAOE = float moveDirX (dump 0x478 / runtime 0x4C8)
-    { "FKALGHJIADI", { "BHJFNEAHAOE" },                              1, kActk, &Player_MoveDirX,    false },
+    { "FKALGHJIADI", { "BHJFNEAHAOE" },                              1, kActk, &Player_MoveDirX,    false, "Player_MoveDirX" },
     // GDNEBFDDDKM = float moveDirY (dump 0x47C / runtime 0x4CC)
-    { "FKALGHJIADI", { "GDNEBFDDDKM" },                              1, kActk, &Player_MoveDirY,    false },
+    { "FKALGHJIADI", { "GDNEBFDDDKM" },                              1, kActk, &Player_MoveDirY,    false, "Player_MoveDirY" },
 
     // ── FKALGHJIADI player diagnostic stats (no ACTK shift) ──────────────
     // These resolve the same fields as above but WITHOUT the kActk shift,
     // producing the dump offset used by PlayerTAB for stat display. Some
     // share BeeByte names with movement entries (e.g. HCMECDPHEMC = Tex1/ATK,
     // BHJFNEAHAOE = MoveDirX/SPD, GDNEBFDDDKM = MoveDirY/DEX).
-    { "FKALGHJIADI", { "NFJGJKLPLBA" },                              1, 0,     &PlayerGuildName,    false },
-    { "FKALGHJIADI", { "KABPJBJPGCM" },                              1, 0,     &PlayerClassNum,     false },
-    { "FKALGHJIADI", { "GBANOMPLGBH" },                              1, 0,     &PlayerGuildRank,    false },
-    { "FKALGHJIADI", { "HCMECDPHEMC" },                              1, 0,     &PlayerAtk,          false },
-    { "FKALGHJIADI", { "GDNEBFDDDKM" },                              1, 0,     &PlayerDex,          false },
-    { "FKALGHJIADI", { "CGFPEPCKKOK" },                              1, 0,     &PlayerVit,          false },
-    { "FKALGHJIADI", { "HDCDGHKGLDI" },                              1, 0,     &PlayerWis,          false },
-    { "FKALGHJIADI", { "MPJGAPJBBBF" },                              1, 0,     &PlayerCondInt,      false },
-    { "FKALGHJIADI", { "AJJJBDBNBLM" },                              1, 0,     &PlayerEquipMgr,     false },
+    { "FKALGHJIADI", { "NFJGJKLPLBA" },                              1, 0,     &PlayerGuildName,    false, "PlayerGuildName" },
+    { "FKALGHJIADI", { "KABPJBJPGCM" },                              1, 0,     &PlayerClassNum,     false, "PlayerClassNum" },
+    { "FKALGHJIADI", { "GBANOMPLGBH" },                              1, 0,     &PlayerGuildRank,    false, "PlayerGuildRank" },
+    { "FKALGHJIADI", { "HCMECDPHEMC" },                              1, 0,     &PlayerAtk,          false, "PlayerAtk" },
+    { "FKALGHJIADI", { "GDNEBFDDDKM" },                              1, 0,     &PlayerDex,          false, "PlayerDex" },
+    { "FKALGHJIADI", { "CGFPEPCKKOK" },                              1, 0,     &PlayerVit,          false, "PlayerVit" },
+    { "FKALGHJIADI", { "HDCDGHKGLDI" },                              1, 0,     &PlayerWis,          false, "PlayerWis" },
+    { "FKALGHJIADI", { "MPJGAPJBBBF" },                              1, 0,     &PlayerCondInt,      false, "PlayerCondInt" },
+    { "FKALGHJIADI", { "AJJJBDBNBLM" },                              1, 0,     &PlayerEquipMgr,     false, "PlayerEquipMgr" },
 
     // ── CameraManager (no shift — component fields) ────────────────────────
-    { "CameraManager", { "mainCameraContainer" },                        1, 0,     &CM_Transform,  false },
-    { "CameraManager", { "KNAIAEFDCLM" },                                1, 0,     &CM_UnityCam,   false },
+    { "CameraManager", { "mainCameraContainer" },                        1, 0,     &CM_Transform,  false, "CM_Transform" },
+    { "CameraManager", { "KNAIAEFDCLM" },                                1, 0,     &CM_UnityCam,   false, "CM_UnityCam" },
 
     // ── EquipmentManager / ItemSlot (namespaced UI classes, no shift) ─────
-    { "EquipmentManager", { "equipmentSlots" },                      1, 0,     &EM_EquipSlots, false },
-    { "ItemSlot",         { "HLJFBHLMANJ" },                         1, 0,     &Item_ObjProps, false },
-    { "ItemSlot",         { "INAAIAHOEFE" },                         1, 0,     &Item_ObjType,  false },
+    { "EquipmentManager", { "equipmentSlots" },                      1, 0,     &EM_EquipSlots, false, "EM_EquipSlots" },
+    { "ItemSlot",         { "HLJFBHLMANJ" },                         1, 0,     &Item_ObjProps, false, "Item_ObjProps" },
+    { "ItemSlot",         { "INAAIAHOEFE" },                         1, 0,     &Item_ObjType,  false, "Item_ObjType" },
 
     // ── HJMBOMEHGDJ WorldManager (no shift) ──────────────────────────────
-    { "HJMBOMEHGDJ", { "OCLNLBHDEFK" },                              1, 0,     &WM_Local,      false },
-    { "HJMBOMEHGDJ", { "DFALIKKKGLI" },                              1, 0,     &WM_AllDict,    false },
-    { "HJMBOMEHGDJ", { "KHIHFNACEKJ" },                              1, 0,     &WM_MapDictA,   false },
-    { "HJMBOMEHGDJ", { "CIOIHEOEAEB" },                              1, 0,     &WM_MapDictB,   false },
-    { "HJMBOMEHGDJ", { "ONABHKFOJNE" },                              1, 0,     &WM_KjmonList,  false },
-    { "HJMBOMEHGDJ", { "NOJEHIAOAJM" },                              1, 0,     &WM_TileArr,    false },
-    { "HJMBOMEHGDJ", { "IMAOBDCMPHC" },                              1, 0,     &WM_TileList,   false },
-    { "HJMBOMEHGDJ", { "FIAJOKGHGGK" },                              1, 0,     &WM_TickId,     false },
-    { "HJMBOMEHGDJ", { "HOMNPDGNOMO" },                              1, 0,     &WM_TickId2,    false },
+    { "HJMBOMEHGDJ", { "OCLNLBHDEFK" },                              1, 0,     &WM_Local,      false, "WM_Local" },
+    { "HJMBOMEHGDJ", { "DFALIKKKGLI" },                              1, 0,     &WM_AllDict,    false, "WM_AllDict" },
+    { "HJMBOMEHGDJ", { "KHIHFNACEKJ" },                              1, 0,     &WM_MapDictA,   false, "WM_MapDictA" },
+    { "HJMBOMEHGDJ", { "CIOIHEOEAEB" },                              1, 0,     &WM_MapDictB,   false, "WM_MapDictB" },
+    { "HJMBOMEHGDJ", { "ONABHKFOJNE" },                              1, 0,     &WM_KjmonList,  false, "WM_KjmonList" },
+    { "HJMBOMEHGDJ", { "NOJEHIAOAJM" },                              1, 0,     &WM_TileArr,    false, "WM_TileArr" },
+    { "HJMBOMEHGDJ", { "IMAOBDCMPHC" },                              1, 0,     &WM_TileList,   false, "WM_TileList" },
+    { "HJMBOMEHGDJ", { "FIAJOKGHGGK" },                              1, 0,     &WM_TickId,     false, "WM_TickId" },
+    { "HJMBOMEHGDJ", { "HOMNPDGNOMO" },                              1, 0,     &WM_TickId2,    false, "WM_TickId2" },
 
     // ── BGAIOPJMHLO tile instance (no shift) ─────────────────────────────
-    { "BGAIOPJMHLO", { "CLFEOFKBNEJ" },                              1, 0,     &TileX,         false },
-    { "BGAIOPJMHLO", { "PKEECFNFEIO" },                              1, 0,     &TileY,         false },
-    { "BGAIOPJMHLO", { "JOFEAFJPJEM" },                              1, 0,     &TileType,      false },
-    { "BGAIOPJMHLO", { "KEOKJCIJIAD" },                              1, 0,     &TileProps,     false },
-    { "BGAIOPJMHLO", { "EBCLNFDKKEH" },                              1, 0,     &Sq_Layer,      false },
-    { "BGAIOPJMHLO", { "EAPMKCKMNDI" },                              1, 0,     &Sq_DamageCached,false },
-    { "BGAIOPJMHLO", { "JGMBPFJEGAH" },                              1, 0,     &Sq_Cover,      false },
+    { "BGAIOPJMHLO", { "CLFEOFKBNEJ" },                              1, 0,     &TileX,         false, "TileX" },
+    { "BGAIOPJMHLO", { "PKEECFNFEIO" },                              1, 0,     &TileY,         false, "TileY" },
+    { "BGAIOPJMHLO", { "JOFEAFJPJEM" },                              1, 0,     &TileType,      false, "TileType" },
+    { "BGAIOPJMHLO", { "KEOKJCIJIAD" },                              1, 0,     &TileProps,     false, "TileProps" },
+    { "BGAIOPJMHLO", { "EBCLNFDKKEH" },                              1, 0,     &Sq_Layer,      false, "Sq_Layer" },
+    { "BGAIOPJMHLO", { "EAPMKCKMNDI" },                              1, 0,     &Sq_DamageCached,false, "Sq_DamageCached" },
+    { "BGAIOPJMHLO", { "JGMBPFJEGAH" },                              1, 0,     &Sq_Cover,      false, "Sq_Cover" },
 
     // ── CMFPKCJHKKB XmlTileProperties (no shift) ─────────────────────────
-    { "CMFPKCJHKKB", { "MFEJMAABLIL" },                              1, 0,     &TP_Speed,      false },
-    { "CMFPKCJHKKB", { "BMGKCKHOIOH" },                              1, 0,     &TP_Sink,       false },
-    { "CMFPKCJHKKB", { "LFKLKFIEMAH" },                              1, 0,     &TP_NoWalk,     false },
-    { "CMFPKCJHKKB", { "MCMDAGNIGEB" },                              1, 0,     &TP_MinDmg,     false },
-    { "CMFPKCJHKKB", { "KHMCMAHEBNG" },                              1, 0,     &TP_MaxDmg,     false },
-    { "CMFPKCJHKKB", { "FNCCEGBHNKG" },                              1, 0,     &TP_Push,       false },
-    { "CMFPKCJHKKB", { "LCHPDCNHJCA" },                              1, 0,     &TP_Alpha,      false },
-    { "CMFPKCJHKKB", { "JKIDGAADOLC" },                              1, 0,     &TP_Sinking,    false },
+    { "CMFPKCJHKKB", { "MFEJMAABLIL" },                              1, 0,     &TP_Speed,      false, "TP_Speed" },
+    { "CMFPKCJHKKB", { "BMGKCKHOIOH" },                              1, 0,     &TP_Sink,       false, "TP_Sink" },
+    { "CMFPKCJHKKB", { "LFKLKFIEMAH" },                              1, 0,     &TP_NoWalk,     false, "TP_NoWalk" },
+    { "CMFPKCJHKKB", { "MCMDAGNIGEB" },                              1, 0,     &TP_MinDmg,     false, "TP_MinDmg" },
+    { "CMFPKCJHKKB", { "KHMCMAHEBNG" },                              1, 0,     &TP_MaxDmg,     false, "TP_MaxDmg" },
+    { "CMFPKCJHKKB", { "FNCCEGBHNKG" },                              1, 0,     &TP_Push,       false, "TP_Push" },
+    { "CMFPKCJHKKB", { "LCHPDCNHJCA" },                              1, 0,     &TP_Alpha,      false, "TP_Alpha" },
+    { "CMFPKCJHKKB", { "JKIDGAADOLC" },                              1, 0,     &TP_Sinking,    false, "TP_Sinking" },
 
     // ── ObjectProperties (real names, no shift) ───────────────────────────
-    { "ObjectProperties", { "id" },                                  1, 0,     &OP_IdStr,          false },
-    { "ObjectProperties", { "NoCoverElement" },                      1, 0,     &OP_NoCover,        false },
+    { "ObjectProperties", { "id" },                                  1, 0,     &OP_IdStr,          false, "OP_IdStr" },
+    { "ObjectProperties", { "NoCoverElement" },                      1, 0,     &OP_NoCover,        false, "OP_NoCover" },
     // InvincibleElement — XML <Invincible/> string; non-null = permanently invincible.
-    { "ObjectProperties", { "InvincibleElement" },                   1, 0,     &OP_InvincibleElem, false },
+    { "ObjectProperties", { "InvincibleElement" },                   1, 0,     &OP_InvincibleElem, false, "OP_InvincibleElem" },
     { "ObjectProperties", { "NoWallTextureRepeatElement",
-                             "NoWallTextureRepeat" },                2, 0,     &OP_NoWallRpt,      false },
-    { "ObjectProperties", { "occupySquare" },                        1, 0,     &OP_OccupySq,       false },
-    { "ObjectProperties", { "fullOccupy" },                          1, 0,     &OP_FullOcc,        false },
-    { "ObjectProperties", { "enemyOccupySquare" },                   1, 0,     &OP_EnemyOcc,       false },
-    { "ObjectProperties", { "isEnemy" },                             1, 0,     &OP_IsEnemy,        false },
-    { "ObjectProperties", { "isStatic" },                            1, 0,     &OP_IsStatic,       false },
-    { "ObjectProperties", { "blockProjectiles" },                    1, 0,     &OP_BlockProj,      false },
+                             "NoWallTextureRepeat" },                2, 0,     &OP_NoWallRpt,      false, "OP_NoWallRpt" },
+    { "ObjectProperties", { "occupySquare" },                        1, 0,     &OP_OccupySq,       false, "OP_OccupySq" },
+    { "ObjectProperties", { "fullOccupy" },                          1, 0,     &OP_FullOcc,        false, "OP_FullOcc" },
+    { "ObjectProperties", { "enemyOccupySquare" },                   1, 0,     &OP_EnemyOcc,       false, "OP_EnemyOcc" },
+    { "ObjectProperties", { "isEnemy" },                             1, 0,     &OP_IsEnemy,        false, "OP_IsEnemy" },
+    { "ObjectProperties", { "isStatic" },                            1, 0,     &OP_IsStatic,       false, "OP_IsStatic" },
+    { "ObjectProperties", { "blockProjectiles" },                    1, 0,     &OP_BlockProj,      false, "OP_BlockProj" },
     // noHealthBar — true when entity type has no visible HP bar; must not be targeted.
-    { "ObjectProperties", { "noHealthBar" },                         1, 0,     &OP_NoHealthBar,    false },
+    { "ObjectProperties", { "noHealthBar" },                         1, 0,     &OP_NoHealthBar,    false, "OP_NoHealthBar" },
     { "ObjectProperties", { "protectFromGroundDamage",
-                             "ProtectFromGroundDamage" },            2, 0,     &OP_ProtGnd,        false },
+                             "ProtectFromGroundDamage" },            2, 0,     &OP_ProtGnd,        false, "OP_ProtGnd" },
     { "ObjectProperties", { "protectFromSink",
-                             "ProtectFromSink" },                    2, 0,     &OP_ProtSink,       false },
-    { "ObjectProperties", { "flying" },                              1, 0,     &OP_Flying,         false },
-    { "ObjectProperties", { "connectType" },                         1, 0,     &OP_ConnectT,       false },
-    { "ObjectProperties", { "Projectiles", "projectiles" },          2, 0,     &OP_Projectiles,    false },
-    { "ObjectProperties", { "collisionRadiusMultiplier" },           1, 0,     &OP_CollRadiusMult, false },
+                             "ProtectFromSink" },                    2, 0,     &OP_ProtSink,       false, "OP_ProtSink" },
+    { "ObjectProperties", { "flying" },                              1, 0,     &OP_Flying,         false, "OP_Flying" },
+    { "ObjectProperties", { "connectType" },                         1, 0,     &OP_ConnectT,       false, "OP_ConnectT" },
+    { "ObjectProperties", { "Projectiles", "projectiles" },          2, 0,     &OP_Projectiles,    false, "OP_Projectiles" },
+    { "ObjectProperties", { "collisionRadiusMultiplier" },           1, 0,     &OP_CollRadiusMult, false, "OP_CollRadiusMult" },
 
     // ── ProjectileProperties (real names, no shift) ───────────────────────
-    { "ProjectileProperties", { "Lifetime",   "lifetime" },          2, 0,     &PP_Lifetime,        false },
-    { "ProjectileProperties", { "ProjectileSpeed", "Speed" },        2, 0,     &PP_Speed,           false },
-    { "ProjectileProperties", { "IsWavy",     "Wavy" },              2, 0,     &PP_IsWavy,          false },
-    { "ProjectileProperties", { "IsBoomerang","Boomerang" },         2, 0,     &PP_IsBoomerang,     false },
-    { "ProjectileProperties", { "IsParametric","Parametric" },       2, 0,     &PP_IsParametric,    false },
-    { "ProjectileProperties", { "HasCustomHitbox","CustomHitbox" },  2, 0,     &PP_HasCustomHitbox, false },
-    { "ProjectileProperties", { "LaserDistance","laserDistance" },   2, 0,     &PP_LaserDist,       false },
+    { "ProjectileProperties", { "Lifetime",   "lifetime" },          2, 0,     &PP_Lifetime,        false, "PP_Lifetime" },
+    { "ProjectileProperties", { "ProjectileSpeed", "Speed" },        2, 0,     &PP_Speed,           false, "PP_Speed" },
+    { "ProjectileProperties", { "IsWavy",     "Wavy" },              2, 0,     &PP_IsWavy,          false, "PP_IsWavy" },
+    { "ProjectileProperties", { "IsBoomerang","Boomerang" },         2, 0,     &PP_IsBoomerang,     false, "PP_IsBoomerang" },
+    { "ProjectileProperties", { "IsParametric","Parametric" },       2, 0,     &PP_IsParametric,    false, "PP_IsParametric" },
+    { "ProjectileProperties", { "HasCustomHitbox","CustomHitbox" },  2, 0,     &PP_HasCustomHitbox, false, "PP_HasCustomHitbox" },
+    { "ProjectileProperties", { "LaserDistance","laserDistance" },   2, 0,     &PP_LaserDist,       false, "PP_LaserDist" },
     { "ProjectileProperties", { "SpeedClampValue", "speedClampValue",
-                                 "SpeedClamp", "speedClamp" },        4, 0,     &PP_SpeedClamp,      false },
+                                 "SpeedClamp", "speedClamp" },        4, 0,     &PP_SpeedClamp,      false, "PP_SpeedClamp" },
     { "ProjectileProperties", { "AccelerationDelayValue", "accelerationDelayValue",
-                                 "AccelDelay", "accelDelay" },        4, 0,     &PP_AccelDelay,      false },
+                                 "AccelDelay", "accelDelay" },        4, 0,     &PP_AccelDelay,      false, "PP_AccelDelay" },
     { "ProjectileProperties", { "AccelerationValue", "accelerationValue",
-                                 "Acceleration", "acceleration" },    4, 0,     &PP_Acceleration,    false },
-    { "ProjectileProperties", { "IsAccelerating", "isAccelerating" }, 2, 0, &PP_IsAccel,  false },
+                                 "Acceleration", "acceleration" },    4, 0,     &PP_Acceleration,    false, "PP_Acceleration" },
+    { "ProjectileProperties", { "IsAccelerating", "isAccelerating" }, 2, 0, &PP_IsAccel,  false, "PP_IsAccel" },
     // UseAcceleration is the per-shot enable, NOT an alias for IsAccelerating.
     // Keep separate so cached game-authored projectile paths receive correct props.
-    { "ProjectileProperties", { "UseAcceleration", "useAcceleration" }, 2, 0, &PP_UseAccel, false },
-    { "ProjectileProperties", { "AccelerationInv", "accelerationInv" },   2, 0,     &PP_AccelerationInv, false },
-    { "ProjectileProperties", { "VelocityChangeRate", "velocityChangeRate" }, 2, 0, &PP_VelocityChangeRate, false },
-    { "ProjectileProperties", { "VelocityChangeRateInv", "velocityChangeRateInv" }, 2, 0, &PP_VelocityChangeRateInv, false },
-    { "ProjectileProperties", { "ProjectileMagnitude", "Magnitude",  "magnitude" },  3, 0, &PP_Magnitude,       false },
-    { "ProjectileProperties", { "ProjectileFrequency", "Frequency",  "frequency" },  3, 0, &PP_Frequency,       false },
-    { "ProjectileProperties", { "ProjectileAmplitude", "Amplitude",  "amplitude" },  3, 0, &PP_Amplitude,       false },
-    { "ProjectileProperties", { "IsAmplitudeApplied", "HasCustomAmplitude","CustomAmplitude","customAmplitude" }, 4, 0, &PP_HasCustomAmplitude, false },
+    { "ProjectileProperties", { "UseAcceleration", "useAcceleration" }, 2, 0, &PP_UseAccel, false, "PP_UseAccel" },
+    { "ProjectileProperties", { "AccelerationInv", "accelerationInv" },   2, 0,     &PP_AccelerationInv, false, "PP_AccelerationInv" },
+    { "ProjectileProperties", { "VelocityChangeRate", "velocityChangeRate" }, 2, 0, &PP_VelocityChangeRate, false, "PP_VelocityChangeRate" },
+    { "ProjectileProperties", { "VelocityChangeRateInv", "velocityChangeRateInv" }, 2, 0, &PP_VelocityChangeRateInv, false, "PP_VelocityChangeRateInv" },
+    { "ProjectileProperties", { "ProjectileMagnitude", "Magnitude",  "magnitude" },  3, 0, &PP_Magnitude,       false, "PP_Magnitude" },
+    { "ProjectileProperties", { "ProjectileFrequency", "Frequency",  "frequency" },  3, 0, &PP_Frequency,       false, "PP_Frequency" },
+    { "ProjectileProperties", { "ProjectileAmplitude", "Amplitude",  "amplitude" },  3, 0, &PP_Amplitude,       false, "PP_Amplitude" },
+    { "ProjectileProperties", { "IsAmplitudeApplied", "HasCustomAmplitude","CustomAmplitude","customAmplitude" }, 4, 0, &PP_HasCustomAmplitude, false, "PP_HasCustomAmplitude" },
     { "ProjectileProperties", { "CollisionMult","collisionMult",
-                                 "ConditionEffectAmount" },          3, 0,     &PP_CollMult,        false },
-    { "ProjectileProperties", { "ProjectileTurnRate", "TurnRate","turnRate"},     3, 0, &PP_TurnRate,        false },
-    { "ProjectileProperties", { "ProjectileTurnRateDelay","TurnRateDelay" },     2, 0, &PP_TurnRateDelay,   false },
-    { "ProjectileProperties", { "ProjectileTurnStopTime", "TurnStopTime" },      2, 0, &PP_TurnStopTime,    false },
-    { "ProjectileProperties", { "ProjectileCircleTurnAngle","CircleTurnAngle" }, 2, 0, &PP_CircleTurnAngle, false },
-    { "ProjectileProperties", { "ProjectileCircleTurnDelay","CircleTurnDelay" }, 2, 0, &PP_CircleTurnDelay, false },
-    { "ProjectileProperties", { "ProjectileTurnAcceleration", "TurnAcceleration","turnAcceleration" },       3, 0, &PP_TurnAcceleration,false },
-    { "ProjectileProperties", { "ProjectileTurnAccelerationDelay", "TurnAccelerationDelay","turnAccelerationDelay"}, 3, 0, &PP_TurnAccelDelay,  false },
-    { "ProjectileProperties", { "TurnClamp","turnClamp","ProjectileTurnClamp" }, 3, 0, &PP_TurnClamp,       false },
-    { "ProjectileProperties", { "TurnAccelerationInv","turnAccelerationInv" },   2, 0, &PP_TurnAccelInv,    false },
-    { "ProjectileProperties", { "IsTurning",  "isTurning","Turning"},            3, 0, &PP_IsTurning,       false },
-    { "ProjectileProperties", { "IsTurningDelayed","isTurningDelayed" },         2, 0, &PP_IsTurningDelayed,false },
+                                 "ConditionEffectAmount" },          3, 0,     &PP_CollMult,        false, "PP_CollMult" },
+    { "ProjectileProperties", { "ProjectileTurnRate", "TurnRate","turnRate"},     3, 0, &PP_TurnRate,        false, "PP_TurnRate" },
+    { "ProjectileProperties", { "ProjectileTurnRateDelay","TurnRateDelay" },     2, 0, &PP_TurnRateDelay,   false, "PP_TurnRateDelay" },
+    { "ProjectileProperties", { "ProjectileTurnStopTime", "TurnStopTime" },      2, 0, &PP_TurnStopTime,    false, "PP_TurnStopTime" },
+    { "ProjectileProperties", { "ProjectileCircleTurnAngle","CircleTurnAngle" }, 2, 0, &PP_CircleTurnAngle, false, "PP_CircleTurnAngle" },
+    { "ProjectileProperties", { "ProjectileCircleTurnDelay","CircleTurnDelay" }, 2, 0, &PP_CircleTurnDelay, false, "PP_CircleTurnDelay" },
+    { "ProjectileProperties", { "ProjectileTurnAcceleration", "TurnAcceleration","turnAcceleration" },       3, 0, &PP_TurnAcceleration,false, "PP_TurnAcceleration" },
+    { "ProjectileProperties", { "ProjectileTurnAccelerationDelay", "TurnAccelerationDelay","turnAccelerationDelay"}, 3, 0, &PP_TurnAccelDelay,  false, "PP_TurnAccelDelay" },
+    { "ProjectileProperties", { "TurnClamp","turnClamp","ProjectileTurnClamp" }, 3, 0, &PP_TurnClamp,       false, "PP_TurnClamp" },
+    { "ProjectileProperties", { "TurnAccelerationInv","turnAccelerationInv" },   2, 0, &PP_TurnAccelInv,    false, "PP_TurnAccelInv" },
+    { "ProjectileProperties", { "IsTurning",  "isTurning","Turning"},            3, 0, &PP_IsTurning,       false, "PP_IsTurning" },
+    { "ProjectileProperties", { "IsTurningDelayed","isTurningDelayed" },         2, 0, &PP_IsTurningDelayed,false, "PP_IsTurningDelayed" },
 
     // ── HBEAKBIHANL projectile instance (no shift) ───────────────────────────
-    { "HBEAKBIHANL", { "HHFDCMIIIHF", "projRadius" },                            2, 0, &Hbeak_ProjRadius,      false },
-    { "HBEAKBIHANL", { "FOMOIBCKIFP" },                                           1, 0, &Hbeak_ProjPropsPtr,    false },
-    { "HBEAKBIHANL", { "FFFFKPDHEFP" },                                           1, 0, &Hbeak_Angle,           false },
-    { "HBEAKBIHANL", { "DBNNDLKNECM" },                                           1, 0, &Hbeak_InstanceDamage,  false },
-    { "HBEAKBIHANL", { "GLEGBLDBOJF" },                                           1, 0, &Hbeak_SpawnAgeMs,      false },
-    { "HBEAKBIHANL", { "KDAJOMOFMJB" },                                           1, 0, &Hbeak_SpeedMul,        false },
+    { "HBEAKBIHANL", { "HHFDCMIIIHF", "projRadius" },                            2, 0, &Hbeak_ProjRadius,      false, "Hbeak_ProjRadius" },
+    { "HBEAKBIHANL", { "FOMOIBCKIFP" },                                           1, 0, &Hbeak_ProjPropsPtr,    false, "Hbeak_ProjPropsPtr" },
+    { "HBEAKBIHANL", { "FFFFKPDHEFP" },                                           1, 0, &Hbeak_Angle,           false, "Hbeak_Angle" },
+    { "HBEAKBIHANL", { "DBNNDLKNECM" },                                           1, 0, &Hbeak_InstanceDamage,  false, "Hbeak_InstanceDamage" },
+    { "HBEAKBIHANL", { "GLEGBLDBOJF" },                                           1, 0, &Hbeak_SpawnAgeMs,      false, "Hbeak_SpawnAgeMs" },
+    { "HBEAKBIHANL", { "KDAJOMOFMJB" },                                           1, 0, &Hbeak_SpeedMul,        false, "Hbeak_SpeedMul" },
 
     // ── HBEAKBIHANL noclip guard (no shift) ──────────────────────────────────
     // Fallback 0 = unresolved: ProjNoclip refuses to install its hook until this
     // resolves non-zero from live metadata (no reliable static fallback exists).
-    { "HBEAKBIHANL", { "NPMECLDKGEF" },                                           1, 0, &Hbeak_NoclipGuard,     false },
+    { "HBEAKBIHANL", { "NPMECLDKGEF" },                                           1, 0, &Hbeak_NoclipGuard,     false, "Hbeak_NoclipGuard" },
 
     // ── ProjectileProperties continued ────────────────────────────────────────
-    { "ProjectileProperties", { "CustomHitbox", "customHitbox" },                 2, 0, &PP_CustomHitbox,       false },
-    { "ProjectileProperties", { "IsArmorPiercing", "armorPiercing" },             2, 0, &PP_IsArmorPiercing,    false },
+    { "ProjectileProperties", { "CustomHitbox", "customHitbox" },                 2, 0, &PP_CustomHitbox,       false, "PP_CustomHitbox" },
+    { "ProjectileProperties", { "IsArmorPiercing", "armorPiercing" },             2, 0, &PP_IsArmorPiercing,    false, "PP_IsArmorPiercing" },
 
     // ── ProjectileCustomHitbox (real names, no shift) ──────────────────────────
-    { "ProjectileCustomHitbox", { "offsetX" },                                    1, 0, &CH_OffsetX,            false },
-    { "ProjectileCustomHitbox", { "offsetY" },                                    1, 0, &CH_OffsetY,            false },
+    { "ProjectileCustomHitbox", { "offsetX" },                                    1, 0, &CH_OffsetX,            false, "CH_OffsetX" },
+    { "ProjectileCustomHitbox", { "offsetY" },                                    1, 0, &CH_OffsetY,            false, "CH_OffsetY" },
 
     // ── ViewHandler (real names, no shift) ─────────────────────────────────────
-    { "ViewHandler", { "spriteShader" },                                          1, 0, &VH_SpriteShader,       false },
-    { "ViewHandler", { "destroyEntity" },                                        1, 0, &VH_DestroyEntity,      false },
+    { "ViewHandler", { "spriteShader" },                                          1, 0, &VH_SpriteShader,       false, "VH_SpriteShader" },
+    { "ViewHandler", { "destroyEntity" },                                        1, 0, &VH_DestroyEntity,      false, "VH_DestroyEntity" },
 
     // ── LKHPPBEGNOM facing angle (+0x50 ACTK) ────────────────────────────────
     // ECHAFMAAKMD (dump 0x1DC + kActk = 0x22C runtime). Written by SendShotPacketDetour.
-    { "LKHPPBEGNOM", { "ECHAFMAAKMD" },                                           1, kActk, &Player_FacingAngle, false },
+    { "LKHPPBEGNOM", { "ECHAFMAAKMD" },                                           1, kActk, &Player_FacingAngle, false, "Player_FacingAngle" },
 
     // ── GJJCEFJMNMK throwable entity (no extra shift — runtime offsets in dump) ──
     // "GuiCanvasSwitcher" and "IAJJLFBDJGE" are BeeByte field names for origin/dest Vector2.
     // ACTK shift from LKHPPBEGNOM parent is already reflected in the dump layout.
-    { "GJJCEFJMNMK", { "ICODPOCLEEL", "GuiCanvasSwitcher" },                      2, 0, &Gjj_OriginX,   false },
-    { "GJJCEFJMNMK", { "IAJJLFBDJGE" },                                           1, 0, &Gjj_DestX,     false },
-    { "GJJCEFJMNMK", { "EAICINLCCJK" },                                           1, 0, &Gjj_DurationMs,false },
+    { "GJJCEFJMNMK", { "ICODPOCLEEL", "GuiCanvasSwitcher" },                      2, 0, &Gjj_OriginX,   false, "Gjj_OriginX" },
+    { "GJJCEFJMNMK", { "IAJJLFBDJGE" },                                           1, 0, &Gjj_DestX,     false, "Gjj_DestX" },
+    { "GJJCEFJMNMK", { "EAICINLCCJK" },                                           1, 0, &Gjj_DurationMs,false, "Gjj_DurationMs" },
 
     // ── FHOHCELBPDO visual throwable (LKFFPGONEOB base, no ACTK shift) ─────────
-    { "FHOHCELBPDO", { "IEJNJENOCFP" },                                           1, 0, &Fhoh_DurationMs,false },
-    { "FHOHCELBPDO", { "PBHMINMBFOM" },                                           1, 0, &Fhoh_DestX,    false },
+    { "FHOHCELBPDO", { "IEJNJENOCFP" },                                           1, 0, &Fhoh_DurationMs,false, "Fhoh_DurationMs" },
+    { "FHOHCELBPDO", { "PBHMINMBFOM" },                                           1, 0, &Fhoh_DestX,    false, "Fhoh_DestX" },
 
     // ── COEFCBBIBMC ShowEffect packet (OODFCLBKDJJ base, no ACTK shift) ─────────
-    { "COEFCBBIBMC", { "MIDADCIKEBD" },                                           1, 0, &Sfx_EffectType, false },
-    { "COEFCBBIBMC", { "HNOKKCFIJHJ" },                                           1, 0, &Sfx_TargetObjId,false },
-    { "COEFCBBIBMC", { "KMAIENKMNFA" },                                           1, 0, &Sfx_Pos1Ptr,   false },
-    { "COEFCBBIBMC", { "AEPOCACMOHI" },                                           1, 0, &Sfx_Pos2Ptr,   false },
-    { "COEFCBBIBMC", { "KPKIICOBBIM" },                                           1, 0, &Sfx_Duration,  false },
+    { "COEFCBBIBMC", { "MIDADCIKEBD" },                                           1, 0, &Sfx_EffectType, false, "Sfx_EffectType" },
+    { "COEFCBBIBMC", { "HNOKKCFIJHJ" },                                           1, 0, &Sfx_TargetObjId,false, "Sfx_TargetObjId" },
+    { "COEFCBBIBMC", { "KMAIENKMNFA" },                                           1, 0, &Sfx_Pos1Ptr,   false, "Sfx_Pos1Ptr" },
+    { "COEFCBBIBMC", { "AEPOCACMOHI" },                                           1, 0, &Sfx_Pos2Ptr,   false, "Sfx_Pos2Ptr" },
+    { "COEFCBBIBMC", { "KPKIICOBBIM" },                                           1, 0, &Sfx_Duration,  false, "Sfx_Duration" },
 
     // ── CustomExplosionEntrance (real XML field names, no shift) ─────────────────
-    { "CustomExplosionEntrance", { "distance" },                                  1, 0, &Cee_Distance,  false },
-    { "CustomExplosionEntrance", { "speed" },                                     1, 0, &Cee_Speed,     false },
+    { "CustomExplosionEntrance", { "distance" },                                  1, 0, &Cee_Distance,  false, "Cee_Distance" },
+    { "CustomExplosionEntrance", { "speed" },                                     1, 0, &Cee_Speed,     false, "Cee_Speed" },
 };
 
 static constexpr int kEntryCount = static_cast<int>(sizeof(s_entries) / sizeof(s_entries[0]));
@@ -714,6 +730,91 @@ void SanityCheckProjDamage(int32_t sampledDamage)
     if (sampledDamage < 0 || sampledDamage > 1000000) MarkSuspect(&Hbeak_InstanceDamage);
 }
 
+// True once every table entry resolved and every generated binding -- field
+// offset and method RVA -- matches the live process. The pipeline's activation
+// gate waits on this; a developer build never calls it.
+bool ReadyForActivation()
+{
+    for (int i = 0; i < kEntryCount; ++i)
+        if ((s_entryState[i] != OffsetState::ResolvedMatch && s_entryState[i] != OffsetState::ResolvedShifted) ||
+            !BuildBindings::Field(s_entries[i].className, s_entries[i].tryNames[0], s_entries[i].key)) return false;
+    for (int i = 0; i < kFIEntryCount; ++i)
+        if (!*s_fieldInfoEntries[i].out) return false;
+    for (const auto& row : BuildBindings::fields) {
+        if (!row.owner[0]) continue;
+        Il2CppClass* klass = Resolver::FindClassLoose(row.owner);
+        FieldInfo* field = klass ? FindExactFieldOnHierarchy(klass, row.target) : nullptr;
+        if (!field || static_cast<uint32_t>(il2cpp_field_get_offset(field)) != row.offset) return false;
+    }
+    for (const auto& row : BuildBindings::methods) {
+        if (!row.owner[0]) continue;
+        Il2CppClass* klass = Resolver::FindClassLoose(row.owner);
+        const MethodInfo* method = klass ? il2cpp_class_get_method_from_name(klass, row.source, row.args) : nullptr;
+        if (!method || reinterpret_cast<uintptr_t>(method->methodPointer) !=
+            reinterpret_cast<uintptr_t>(GetModuleHandleW(L"GameAssembly.dll")) + row.rva) return false;
+    }
+    return true;
+}
+
+// Only the offset verifier sets REALM_OFFSET_REPORT. Normal clients do no IO here.
+static void WriteVerificationReport()
+{
+    static wchar_t path[MAX_PATH] = {};
+    static bool initialized = false;
+    static char nonce[65] = {};
+    static ULONGLONG lastWrite = 0;
+    if (!initialized) {
+        initialized = true;
+        DWORD n = GetEnvironmentVariableW(L"REALM_OFFSET_REPORT", path, MAX_PATH);
+        if (n == 0 || n >= MAX_PATH) path[0] = 0;
+        DWORD count = GetEnvironmentVariableA("REALM_OFFSET_REPORT_NONCE", nonce, sizeof(nonce));
+        if (count == 0 || count >= sizeof(nonce)) nonce[0] = 0;
+        for (const char* c = nonce; *c; ++c)
+            if (!((*c >= '0' && *c <= '9') || (*c >= 'a' && *c <= 'f'))) { nonce[0] = 0; break; }
+    }
+    if (!path[0] || GetTickCount64() - lastWrite < 1000) return;
+    lastWrite = GetTickCount64();
+    wchar_t tmp[MAX_PATH];
+    if (swprintf_s(tmp, L"%ls.tmp", path) < 0) return;
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, tmp, L"wb") != 0 || !f) return;
+    static const char* states[] = { "Pending", "Match", "Shifted", "FieldRenamed", "ClassGaveUp", "Suspect" };
+    fprintf(f, "{\"pid\":%lu,\"nonce\":\"%s\",\"gameassembly_sha256\":\"%s\",\"metadata_sha256\":\"%s\",\"entries\":[",
+        GetCurrentProcessId(), nonce, BuildBindings::gameAssemblySha256, BuildBindings::metadataSha256);
+    for (int i = 0; i < kEntryCount; ++i) {
+        fprintf(f, "%s{\"key\":\"field.%s\",\"class\":\"%s\",\"field\":\"%s\",\"state\":\"%s\"}",
+            i ? "," : "", s_entries[i].key, s_entries[i].className,
+            s_entries[i].tryCount ? s_entries[i].tryNames[0] : "?",
+            states[static_cast<int>(s_entryState[i])]);
+    }
+    for (int i = 0; i < kFIEntryCount; ++i) {
+        fprintf(f, ",{\"class\":\"%s\",\"field\":\"%s (FieldInfo)\",\"state\":\"%s\"}",
+            s_fieldInfoEntries[i].className, s_fieldInfoEntries[i].fieldName,
+            *s_fieldInfoEntries[i].out ? "Match" : "FieldRenamed");
+    }
+    for (const auto& row : BuildBindings::fields) {
+        if (!row.owner[0]) continue;
+        Il2CppClass* klass = Resolver::FindClassLoose(row.owner);
+        FieldInfo* field = klass ? FindExactFieldOnHierarchy(klass, row.target) : nullptr;
+        const bool valid = field && static_cast<uint32_t>(il2cpp_field_get_offset(field)) == row.offset;
+        fprintf(f, ",{\"class\":\"%s\",\"field\":\"%s (binding)\",\"state\":\"%s\"}",
+            row.owner, row.source, valid ? "Match" : "Suspect");
+    }
+    for (const auto& row : BuildBindings::methods) {
+        if (!row.owner[0]) continue;
+        Il2CppClass* klass = Resolver::FindClassLoose(row.owner);
+        const MethodInfo* method = klass ? il2cpp_class_get_method_from_name(klass, row.source, row.args) : nullptr;
+        const uintptr_t expected = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"GameAssembly.dll")) + row.rva;
+        const bool valid = method && reinterpret_cast<uintptr_t>(method->methodPointer) == expected;
+        fprintf(f, ",{\"class\":\"%s\",\"field\":\"%s (method)\",\"state\":\"%s\"}",
+            row.owner, row.source, valid ? "Match" : "Suspect");
+    }
+    fprintf(f, "]}");
+    const bool failed = ferror(f) != 0;
+    const int closed = fclose(f);
+    if (!failed && closed == 0) MoveFileExW(tmp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+}
+
 void EnsureAll()
 {
     // FFLIAABAAFP x/y is resolved by shape, not through the entry table, so it
@@ -722,6 +823,7 @@ void EnsureAll()
     Sfx_WposY = Sfx_WposX + 4;
 
     if (s_allDone) {
+        WriteVerificationReport();
         Gjj_OriginY = Gjj_OriginX + 4;
         Gjj_DestY   = Gjj_DestX   + 4;
         Fhoh_DestY  = Fhoh_DestX  + 4;
@@ -790,14 +892,27 @@ void EnsureAll()
         // Class found: attempt field resolution, then mark done regardless.
         FieldInfo* found = nullptr;
         const char* foundName = nullptr;
-        for (int t = 0; t < e.tryCount && !found; ++t) {
+        // A generated binding names this build's field for this exact entry. Without
+        // one -- a developer build -- the table's own names resolve it as before.
+        const auto* binding = BuildBindings::Field(e.className, e.tryNames[0], e.key);
+        if (binding) {
+            foundName = binding->target;
+            found = FindExactFieldOnHierarchy(klass, binding->target);
+        } else for (int t = 0; t < e.tryCount && !found; ++t) {
             found = FindFieldOnHierarchy(klass, e.tryNames[t]);
             if (found) foundName = e.tryNames[t];
         }
 
         const uint32_t fallback = *e.outPtr;
         if (found) {
-            const uint32_t resolved = static_cast<uint32_t>(il2cpp_field_get_offset(found)) + e.actkShift;
+            const uint32_t rawOffset = static_cast<uint32_t>(il2cpp_field_get_offset(found));
+            const uint32_t resolved = rawOffset + (binding ? binding->adjustment : e.actkShift);
+            if (binding && rawOffset != binding->offset) {
+                // The live layout disagrees with the build-time binding: trust neither.
+                s_entryState[i] = OffsetState::Suspect;
+                e.done = true;
+                continue;
+            }
             DBG_FILE_LOG("[RuntimeOffsets] " << e.className << "::" << foundName
                 << " resolved -> 0x" << std::hex << resolved
                 << " (fallback was 0x" << fallback << std::dec
@@ -841,6 +956,7 @@ void EnsureAll()
     }
 
     if (!anyPending) s_allDone = true;
+    WriteVerificationReport();
 
     // ── Vector2 .y derivation pass ────────────────────────────────────────
     // Unity Vector2 lays out {float x, float y} contiguously.
