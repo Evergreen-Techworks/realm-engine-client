@@ -16,6 +16,9 @@ internal/src/game/generated/
 # RotMG game data — fetch with `npm run download-game-xml` (see SETUP.md).
 client/data/objects.xml
 client/data/tiles.xml
+# A build's bundled first-run plugin setup. Injected by the portable build
+# pipeline at build time; never committed.
+client/data/plugin-defaults.json
 internal/data/objects.xml
 
 # ── Local tooling ──

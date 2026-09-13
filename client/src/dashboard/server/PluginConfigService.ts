@@ -1,10 +1,42 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { createHash } from 'crypto';
 import { join } from 'path';
 import type { PluginManager } from '../../plugins/PluginManager.js';
 import { Logger } from '../../util/Logger.js';
 
 const DEFAULT_PLUGIN_CONFIG_ID = 'default';
 const DEFAULT_PLUGIN_CONFIG_NAME = 'default';
+
+/**
+ * File name of a build's bundled plugin setup, beside the bundled
+ * `data/config.json`. No source tree ships one: the portable build pipeline
+ * injects a frozen, sanitized seed at build time. It is read only on first
+ * run, when the profile has no default config yet.
+ */
+export const BUNDLED_PLUGIN_DEFAULTS_FILE = 'plugin-defaults.json';
+
+type PluginDefaultsSeed = { plugins: Array<Record<string, unknown> & { id: string }> } & Record<string, unknown>;
+
+/** Shape check for a bundled seed: a JSON object whose `plugins` array holds objects with a string `id`. */
+export function parsePluginDefaultsSeed(raw: string): { ok: true; seed: PluginDefaultsSeed } | { ok: false; reason: string } {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch (err) {
+    return { ok: false, reason: `not valid JSON (${(err as Error).message})` };
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, reason: 'not a JSON object' };
+  }
+  const plugins = (value as { plugins?: unknown }).plugins;
+  if (!Array.isArray(plugins)) return { ok: false, reason: 'plugins[] is missing' };
+  for (const [index, entry] of plugins.entries()) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || typeof (entry as { id?: unknown }).id !== 'string' || !(entry as { id: string }).id) {
+      return { ok: false, reason: `plugins[${index}] is not an object with a string id` };
+    }
+  }
+  return { ok: true, seed: value as PluginDefaultsSeed };
+}
 
 /**
  * Manages plugin configuration persistence: save/load/autosave of plugin
@@ -26,6 +58,8 @@ export class PluginConfigService {
     private readonly onConfigChanged: () => void,
     private readonly onPluginStateChanged: () => void,
     private readonly onSyncHotkeys: () => void,
+    /** Absolute path of the build's bundled seed; null when the build has none. */
+    private readonly bundledPluginDefaultsPath: string | null = null,
   ) {}
 
   private ensureDir(path: string): void {
@@ -145,6 +179,7 @@ export class PluginConfigService {
       const filePath = join(this.configsDir, safeId + '.json');
       if (!existsSync(filePath)) {
         this.ensureDir(this.configsDir);
+        if (this.trySeedDefaultPluginConfig(filePath)) return;
         const snapshot = this.buildPluginConfigSnapshot(DEFAULT_PLUGIN_CONFIG_NAME);
         writeFileSync(filePath, JSON.stringify(snapshot, null, 2), 'utf8');
         this.setActivePluginConfigId(snapshot.id);
@@ -165,5 +200,49 @@ export class PluginConfigService {
     } catch (err) {
       Logger.warn('PluginConfigService', `Auto-load config error: ${(err as Error).message}`);
     }
+  }
+
+  /**
+   * First run only (the caller has established that default.json is absent):
+   * apply the build's bundled plugin setup and write the resulting state as
+   * default.json. Returns false - use factory defaults - when no seed is
+   * bundled or the seed is unusable; an unusable seed is warned, never fatal.
+   */
+  private trySeedDefaultPluginConfig(filePath: string): boolean {
+    const seedPath = this.bundledPluginDefaultsPath;
+    if (!seedPath || !existsSync(seedPath)) return false;
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(seedPath);
+    } catch (err) {
+      Logger.warn('PluginConfigService', `Bundled plugin defaults ${seedPath} unreadable (${(err as Error).message}); using factory defaults.`);
+      return false;
+    }
+    const parsed = parsePluginDefaultsSeed(bytes.toString('utf8'));
+    if (!parsed.ok) {
+      Logger.warn('PluginConfigService', `Bundled plugin defaults ${seedPath} ignored: ${parsed.reason}; using factory defaults.`);
+      return false;
+    }
+    const loaded = new Set(this.pluginManager.getPlugins().map((p) => p.id));
+    const plugins = parsed.seed.plugins.filter((entry) => {
+      if (loaded.has(entry.id)) return true;
+      Logger.warn('PluginConfigService', `Bundled plugin defaults: plugin "${entry.id}" is not loaded in this build; skipped.`);
+      return false;
+    });
+    const result = this.applyPluginConfigSnapshot({ ...parsed.seed, plugins });
+    if (!result.ok) {
+      Logger.warn('PluginConfigService', `Bundled plugin defaults ${seedPath} not applied: ${result.message}; using factory defaults.`);
+      return false;
+    }
+    // Persist the state the seed produced, in the same format autosave writes.
+    // 'wx': a config that appeared meanwhile is never overwritten.
+    const snapshot = this.buildPluginConfigSnapshot(DEFAULT_PLUGIN_CONFIG_NAME);
+    writeFileSync(filePath, JSON.stringify(snapshot, null, 2), { encoding: 'utf8', flag: 'wx' });
+    this.setActivePluginConfigId(snapshot.id);
+    this.onConfigChanged();
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const skipped = parsed.seed.plugins.length - plugins.length;
+    Logger.log('PluginConfigService', `Seeded default plugin config from bundled plugin defaults ${seedPath} (sha256 ${sha256}): ${plugins.length} plugin(s) applied, ${skipped} skipped.`);
+    return true;
   }
 }
