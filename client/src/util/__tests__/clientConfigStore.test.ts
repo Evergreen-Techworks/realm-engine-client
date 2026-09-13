@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -56,6 +56,28 @@ describe('client config persistence', () => {
     writeClientConfig(resources, { rotmgPath: undefined, lastPluginConfigId: 'default' });
 
     expect(JSON.parse(readFileSync(overlay, 'utf8'))).toEqual({ skipWinhttpInstall: true, lastPluginConfigId: 'default' });
+  });
+
+  it('refuses to overwrite an unparseable existing config, keeping its bytes', () => {
+    const overlay = join(root, 'user', 'config.json');
+    process.env.REALM_ENGINE_USER_CONFIG_PATH = overlay;
+    mkdirSync(join(root, 'user'));
+    writeFileSync(overlay, '{ this is not json');
+    const resources = resourcesTree(root, 'build');
+
+    expect(() => writeClientConfig(resources, { rotmgPath: 'C:\\New' })).toThrow(/unparseable/);
+    expect(readFileSync(overlay, 'utf8')).toBe('{ this is not json');
+  });
+
+  it('leaves no temp file beside the config after a successful write', () => {
+    const overlay = join(root, 'user', 'config.json');
+    process.env.REALM_ENGINE_USER_CONFIG_PATH = overlay;
+    resourcesTree(root, 'build');
+
+    writeClientConfig(resourcesTree(root, 'build'), { rotmgPath: 'C:\\Game' });
+
+    expect(readdirSync(join(root, 'user')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+    expect(JSON.parse(readFileSync(overlay, 'utf8')).rotmgPath).toBe('C:\\Game');
   });
 
   it('writes the bundled data/config.json when no overlay is configured (dev)', () => {
