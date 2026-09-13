@@ -766,7 +766,8 @@ static void WriteVerificationReport()
     if (!initialized) {
         initialized = true;
         DWORD n = GetEnvironmentVariableW(L"REALM_OFFSET_REPORT", path, MAX_PATH);
-        if (n == 0 || n >= MAX_PATH) path[0] = 0;
+        // Leave room for the ".tmp" suffix below: swprintf_s terminates the process on overflow.
+        if (n == 0 || n + 4 >= MAX_PATH) path[0] = 0;
         DWORD count = GetEnvironmentVariableA("REALM_OFFSET_REPORT_NONCE", nonce, sizeof(nonce));
         if (count == 0 || count >= sizeof(nonce)) nonce[0] = 0;
         for (const char* c = nonce; *c; ++c)
@@ -908,7 +909,15 @@ void EnsureAll()
             const uint32_t rawOffset = static_cast<uint32_t>(il2cpp_field_get_offset(found));
             const uint32_t resolved = rawOffset + (binding ? binding->adjustment : e.actkShift);
             if (binding && rawOffset != binding->offset) {
-                // The live layout disagrees with the build-time binding: trust neither.
+                // The live layout disagrees with the build-time binding. The entry keeps its
+                // fallback offset, which reads still use, and is marked Suspect, so writes
+                // checked by IsFieldWriteTrusted are refused. Logged ungated: this fires at
+                // most once per entry, and it is why ReadyForActivation never turns true.
+                char line[256];
+                snprintf(line, sizeof(line),
+                    "[RuntimeOffsets] %s (%s::%s) disagrees with its binding: bound offset 0x%X, live offset 0x%X; keeping fallback 0x%X",
+                    e.key ? e.key : "?", e.className, binding->target, binding->offset, rawOffset, fallback);
+                DbgFileLogWrite(line);
                 s_entryState[i] = OffsetState::Suspect;
                 e.done = true;
                 continue;
