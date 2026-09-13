@@ -27,6 +27,10 @@ struct Result {
     Solver::TimedAdvice timed{};
     Vec2 walkGoal{};
     bool walkActive = false;
+    // Worker wall-clock for the temporal planner and the worker solve (ms) —
+    // plain data for the field diagnostics (DiagTiming); never steers anything.
+    float timedMs = 0.f;
+    float solveMs = 0.f;
 };
 
 void Start();  // idempotent; spawns the worker thread (double-start guarded)

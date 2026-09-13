@@ -13,6 +13,7 @@
 #include "core/il2cpp/Il2CppContainers.h"
 #include "GameState.h"
 #include "DbgFileLog.h"
+#include "DiagTiming.h"
 #include "LocalPlayer.h"
 #include "helpers.h"
 #include "BeebyteName.h"
@@ -28,6 +29,8 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <string>
+#include <cstdlib>
 #include <unordered_map>
 #include <unordered_set>
 #include <windows.h>
@@ -98,11 +101,24 @@ static std::vector<WorldProjectile>  g_projectiles;
 
 // Movement tile maps — rebuilt once per DoRefresh(), O(1) lookup per frame.
 // Key: (uint16_t(tx) << 16) | uint16_t(ty).
-static std::unordered_map<uint32_t, bool>  s_blockedMap;    // present = movement blocked (NoWalk / OccupySquare / FullOccupy)
-static std::unordered_map<uint32_t, bool>  s_fullOccupyMap; // present = tile has FullOccupy entity (for sub-tile neighbour check)
-static std::unordered_map<uint32_t, bool>  s_damagingMap;  // present = tile deals damage (minDmg/maxDmg > 0)
-static std::unordered_map<uint32_t, bool>  s_sinkMap;      // present = sink/sinking ground (water) — nav treats as impassable, the dodge does not
-static std::unordered_map<uint32_t, bool>  s_knownTileMap; // present = streamed map square; absence is void/out-of-bounds
+//
+// ONE flags map, not five parallel sets (2026-09-12). Every streamed square used
+// to be inserted into a separate known-set plus up to four more sets, each
+// reserved to the full tile count, and CopyBoxBlocked then probed up to four
+// maps per tile. Rebuilt every 100 ms on the render thread while auto-dodge is on.
+// Measured offline at 65,536 tiles (MSVC-style FNV hash): rebuild 11 ms -> 7 ms,
+// one FillNavGrid rasterize on the game thread 4.8 ms -> 1.4 ms, one FillOccGrid
+// 0.5 ms -> 0.14 ms. The bits carry exactly the
+// information the sets did (presence == bit set), so every reader below answers
+// identically.
+enum : uint8_t {
+    kTileKnown    = 0x01,   // streamed map square; absence is void/out-of-bounds
+    kTileBlocked  = 0x02,   // movement blocked (NoWalk / OccupySquare / FullOccupy / EnemyOccupySquare)
+    kTileFullOcc  = 0x04,   // tile has a FullOccupy entity (for sub-tile neighbour check)
+    kTileDamaging = 0x08,   // tile deals damage (cached ground damage, or a spike object)
+    kTileSink     = 0x10,   // sink/sinking ground (water) — nav treats as impassable, the dodge does not
+};
+static std::unordered_map<uint32_t, uint8_t> s_tileFlags;
 static std::unordered_map<uint32_t, int>   s_tileMaxDmgMap; // value = tile maxDmg (damaging tiles only)
 static std::unordered_map<uint32_t, float> s_tileSpeedMap; // value = XML speed multiplier (non-zero tiles only)
 static std::mutex s_tileMapMutex;
@@ -113,27 +129,25 @@ static inline uint32_t BlockedKey(int tx, int ty)
             static_cast<uint32_t>(static_cast<uint16_t>(ty));
 }
 
+// Caller holds s_tileMapMutex.
+static inline uint8_t TileFlagsLocked(uint32_t key)
+{
+    const auto it = s_tileFlags.find(key);
+    return it != s_tileFlags.end() ? it->second : 0;
+}
+
 static void RebuildBlockedMap()
 {
-    std::unordered_map<uint32_t, bool> blockedMap;
-    std::unordered_map<uint32_t, bool> fullOccupyMap;
-    std::unordered_map<uint32_t, bool> damagingMap;
-    std::unordered_map<uint32_t, bool> sinkMap;
-    std::unordered_map<uint32_t, bool> knownTileMap;
+    std::unordered_map<uint32_t, uint8_t> tileFlags;
     std::unordered_map<uint32_t, int>  tileMaxDmgMap;
     std::unordered_map<uint32_t, float> tileSpeedMap;
 
-    blockedMap.reserve(g_tiles.size() + g_entities.size());
-    fullOccupyMap.reserve(g_entities.size());
-    damagingMap.reserve(g_tiles.size());
-    sinkMap.reserve(g_tiles.size());
-    knownTileMap.reserve(g_tiles.size());
-    tileMaxDmgMap.reserve(g_tiles.size());
-    tileSpeedMap.reserve(g_tiles.size());
+    tileFlags.reserve(g_tiles.size() + g_entities.size());
 
     for (const WorldTile& t : g_tiles) {
         uint32_t k = BlockedKey(t.tileX, t.tileY);
-        knownTileMap[k] = true;
+        uint8_t& flags = tileFlags[k];
+        flags |= kTileKnown;
         // Only truly impassable tiles go in the blocked map — damage tiles are
         // physically walkable (the game triggers damage from player centre, not hitbox).
         // 0x1aa1 is 'EH Secret Floor', the proxy safewalk replacement tile.
@@ -149,12 +163,12 @@ static void RebuildBlockedMap()
         }
 
         if (isNoWalk)
-            blockedMap[k] = true;
+            flags |= kTileBlocked;
         // Damaging tiles tracked separately: damage triggers when the player centre
         // (floor of world XY) lands on the tile, not when the hitbox overlaps it.
         // Use the native engine's cached damage (sq+0x10) and ensure there is no cover (sq+0x48).
         if (t.damageCached > 0 && !t.hasCover) {
-            damagingMap[k] = true;
+            flags |= kTileDamaging;
             tileMaxDmgMap[k] = (t.maxDmg > 0) ? t.maxDmg : t.damageCached;
         }
         // Sink / sinking ground = water and lava-style tiles. The player cannot
@@ -168,7 +182,7 @@ static void RebuildBlockedMap()
         // separate walk flag) distinguishes a crossable shallow from a deep one, so
         // the user-reported behaviour (cannot cross) governs both.
         if (t.conds & (TCOND_SINK | TCOND_SINKING))
-            sinkMap[k] = true;
+            flags |= kTileSink;
         // Store speed modifier for any tile that has one (0 = no modifier)
         if (t.speed != 0.f)
             tileSpeedMap[k] = t.speed;
@@ -193,28 +207,28 @@ static void RebuildBlockedMap()
         if (std::strstr(e.objName, "Spike") || std::strstr(e.objName, "spike")) {
             const int tx = static_cast<int>(floorf(e.x));
             const int ty = static_cast<int>(floorf(e.y));
-            damagingMap[BlockedKey(tx, ty)] = true;
+            tileFlags[BlockedKey(tx, ty)] |= kTileDamaging;
         }
         if (e.objConds & (OCOND_OCCUPY_SQ | OCOND_FULL_OCC | OCOND_ENEMY_OCC)) {
             int tx = static_cast<int>(floorf(e.x));
             int ty = static_cast<int>(floorf(e.y));
-            blockedMap[BlockedKey(tx, ty)] = true;
+            tileFlags[BlockedKey(tx, ty)] |= kTileBlocked;
         }
         if (e.objConds & OCOND_FULL_OCC) {
             int tx = static_cast<int>(floorf(e.x));
             int ty = static_cast<int>(floorf(e.y));
-            fullOccupyMap[BlockedKey(tx, ty)] = true;
+            tileFlags[BlockedKey(tx, ty)] |= kTileFullOcc;
         }
     }
 
-    std::lock_guard<std::mutex> lock(s_tileMapMutex);
-    s_blockedMap.swap(blockedMap);
-    s_fullOccupyMap.swap(fullOccupyMap);
-    s_damagingMap.swap(damagingMap);
-    s_sinkMap.swap(sinkMap);
-    s_knownTileMap.swap(knownTileMap);
-    s_tileMaxDmgMap.swap(tileMaxDmgMap);
-    s_tileSpeedMap.swap(tileSpeedMap);
+    {
+        std::lock_guard<std::mutex> lock(s_tileMapMutex);
+        s_tileFlags.swap(tileFlags);
+        s_tileMaxDmgMap.swap(tileMaxDmgMap);
+        s_tileSpeedMap.swap(tileSpeedMap);
+    }
+    // The previous maps are destroyed here, after the lock is released, so the
+    // game thread's CopyBoxBlocked never waits on a large deallocation.
 }
 
 static std::string  g_status       = "Press Refresh while in-game.";
@@ -555,6 +569,32 @@ static const char* CachedClassName(void* klass)
     return cn;
 }
 
+// XML object id per ObjectProperties pointer (render thread only). Object
+// properties are static per object type for the life of the process, so the
+// cache is bounded by the number of distinct types ever seen.
+static void CopyCachedObjectName(void* props, char* out, size_t outCap)
+{
+    static std::unordered_map<void*, std::string> s_names;
+    auto it = s_names.find(props);
+    if (it == s_names.end()) {
+        // Bounded even if some object type turns out to carry per-instance
+        // properties: a cleared cache only costs one string read per type again.
+        if (s_names.size() >= 8192) s_names.clear();
+        char buf[64] = {};
+        void* idStr = nullptr;
+        if (Mem::TryRead(props, RuntimeOffsets::OP_IdStr, idStr) && Mem::AddrOk(idStr))
+            Il2CppC::ReadString(idStr, buf, sizeof(buf));
+        it = s_names.emplace(props, std::string(buf)).first;
+    }
+    strncpy_s(out, outCap, it->second.c_str(), _TRUNCATE);
+}
+
+// Movement only reads tiles near the player: the largest window is the walk-to A*
+// grid (kUNavRadCells = 72 tiles) plus the player box. When the World table is not
+// on screen, tiles farther than this are not copied or inserted into the movement
+// maps, which is most of a long realm session's tile list.
+static constexpr int32_t kMovementTileWindow = 128;
+
 static void DoRefresh()
 {
     const bool detail = s_detailWanted.load(std::memory_order_relaxed);
@@ -642,10 +682,19 @@ static void DoRefresh()
         {
             void* op = nullptr;
             if (Mem::TryRead(value, RuntimeOffsets::ObjProps, op) && Mem::AddrOk(op)) {
-                // Name
-                void* idStr = nullptr;
-                if (detail && Mem::TryRead(op, RuntimeOffsets::OP_IdStr, idStr) && Mem::AddrOk(idStr))
-                    Il2CppC::ReadString(idStr, ent.objName, sizeof(ent.objName));
+                // Name. The XML id is a property of the ObjectProperties (one per
+                // object TYPE), so resolve it once per props pointer instead of once
+                // per entity per refresh. It is not display-only: RebuildBlockedMap
+                // folds "Spike" objects into safe-walk's damaging set, and gating the
+                // read on `detail` silently turned that off whenever the menu was
+                // closed.
+                if (detail) {
+                    void* idStr = nullptr;
+                    if (Mem::TryRead(op, RuntimeOffsets::OP_IdStr, idStr) && Mem::AddrOk(idStr))
+                        Il2CppC::ReadString(idStr, ent.objName, sizeof(ent.objName));
+                } else {
+                    CopyCachedObjectName(op, ent.objName, sizeof(ent.objName));
+                }
                 // ObjectProperties condition fields are not real XML conditions on players
                 // (FKALGHJIADI); memory may still expose flags — leave objConds blank until mapped elsewhere.
                 if (!IsPlayerClass(ent)) {
@@ -716,9 +765,20 @@ static void DoRefresh()
 
     // Primary: List<BGAIOPJMHLO> @ wm+0x60 — all tiles received this session
     if (Mem::AddrOk(listItems) && listSize > 0) {
-        int32_t cap = listSize < (int32_t)MAX_TILES ? listSize : (int32_t)MAX_TILES;
+        // NEWEST squares first. The list only grows while a map is loaded (squares
+        // are appended as the server first streams them), so in a long realm session
+        // it passes MAX_TILES. Reading only the first MAX_TILES entries then dropped
+        // exactly the squares around the player's CURRENT position, and CopyBoxBlocked
+        // reports an unscanned square as void (bit3), which the dodge grid and the
+        // walk-to A* both treat as a hard wall. Keep the most recently streamed ones.
+        const int32_t cap = listSize < (int32_t)MAX_TILES ? listSize : (int32_t)MAX_TILES;
+        const int32_t first = listSize - cap;
         const uint8_t* base = reinterpret_cast<const uint8_t*>(listItems) + Il2CppC::kArrData;
-        for (int32_t i = 0; i < cap; ++i) {
+        // Movement window (see kMovementTileWindow); the World table wants every tile.
+        const bool windowed = !detail && (g_localX != 0.f || g_localY != 0.f);
+        const int32_t winCx = static_cast<int32_t>(std::floor(g_localX));
+        const int32_t winCy = static_cast<int32_t>(std::floor(g_localY));
+        for (int32_t i = first; i < listSize; ++i) {
             void* tp = nullptr;
             if (!Mem::TryRead(base + (size_t)i * sizeof(void*), 0u, tp) || !Mem::AddrOk(tp)) continue;
             WorldTile t;
@@ -728,6 +788,8 @@ static void DoRefresh()
             Mem::TryRead(tp, RuntimeOffsets::TileY,    t.tileY);
             Mem::TryRead(tp, RuntimeOffsets::TileType, t.tileType);
             if (t.tileType == TILE_VOID) continue;   // skip void/unset slots
+            if (windowed && (std::abs(t.tileX - winCx) > kMovementTileWindow ||
+                             std::abs(t.tileY - winCy) > kMovementTileWindow)) continue;
             ReadTileProps(tp, t);
             
             // Read Discord method cached values from the Square object directly
@@ -737,7 +799,8 @@ static void DoRefresh()
                 t.hasCover = true;
             }
             // Tile XML name via same chain as entities: KJMONHENJEN.OBAKMCCDBJA[0x18] → ObjectProperties.id[0x38]
-            {
+            // Display-only (World tab tile table), so only while that table can be shown.
+            if (detail) {
                 void* op = nullptr;
                 void* idStr = nullptr;
                 if (Mem::TryRead(tp, RuntimeOffsets::ObjProps, op) && Mem::AddrOk(op) &&
@@ -746,7 +809,11 @@ static void DoRefresh()
             }
             g_tiles.push_back(t);
         }
+        DiagTiming::Render().tileListSize = listSize;
+        DiagTiming::Render().tileScanned  = cap;
     }
+    DiagTiming::Render().tilesKept = static_cast<int32_t>(g_tiles.size());
+    DiagTiming::Render().entities  = static_cast<int32_t>(g_entities.size());
 
 
     RebuildBlockedMap();
@@ -2150,6 +2217,7 @@ namespace WorldTAB {
         const ULONGLONG nowMs = GetTickCount64();
         if (nowMs - s_lastRefreshMs < 50ULL) return;
         s_lastRefreshMs = nowMs;
+        DiagTiming::Scope diag(DiagTiming::Render().worldRefresh);
         DoRefresh();
     }
     void*     GetLocalPtr()
@@ -2291,20 +2359,20 @@ namespace WorldTAB {
     bool IsTileBlocked(int tx, int ty)
     {
         std::lock_guard<std::mutex> lock(s_tileMapMutex);
-        return s_blockedMap.count(BlockedKey(tx, ty)) != 0;
+        return (TileFlagsLocked(BlockedKey(tx, ty)) & kTileBlocked) != 0;
     }
 
     bool IsTileFullOccupied(int tx, int ty)
     {
         std::lock_guard<std::mutex> lock(s_tileMapMutex);
-        return s_fullOccupyMap.count(BlockedKey(tx, ty)) != 0;
+        return (TileFlagsLocked(BlockedKey(tx, ty)) & kTileFullOcc) != 0;
     }
 
     // Bulk player-box occupancy reader — see the header comment. ONE tile-mutex
     // acquisition rasterizes the whole grid: for each cell we floor the player-box
     // footprint (center +/- playerHalfEdge) on each axis and mark the cell blocked
-    // if any tile in that small box is in s_blockedMap (or s_damagingMap when
-    // foldHazard, or s_sinkMap always — see the bit legend below). This is
+    // if any tile in that small box is blocked (or damaging when foldHazard, or
+    // sink always — see the bit legend below; one s_tileFlags probe per tile). This is
     // IsPositionBlocked's box logic hoisted out of the per-cell path. Noclip is
     // deliberately not consulted (conservative — never unsafe).
     void CopyBoxBlocked(float originX, float originY, int side, float cellTiles,
@@ -2338,10 +2406,11 @@ namespace WorldTAB {
                         const uint32_t k = BlockedKey(tx, ty);
                         // Missing streamed squares are map void/boundary, not open
                         // floor. Autonomous pathing must never route into them.
-                        if (s_knownTileMap.count(k) == 0) { f |= 0x8; continue; }
-                        if (s_blockedMap.count(k) != 0) { f |= 0x1; continue; }
-                        if (foldHazard && s_damagingMap.count(k) != 0) { f |= 0x2; }
-                        if (s_sinkMap.count(k) != 0)                   { f |= 0x4; }
+                        const uint8_t tf = TileFlagsLocked(k);
+                        if ((tf & kTileKnown) == 0) { f |= 0x8; continue; }
+                        if (tf & kTileBlocked) { f |= 0x1; continue; }
+                        if (foldHazard && (tf & kTileDamaging)) { f |= 0x2; }
+                        if (tf & kTileSink)                     { f |= 0x4; }
                     }
                     if (f & 0x1) break;   // a wall dominates; no need to keep scanning
                 }
@@ -2353,7 +2422,7 @@ namespace WorldTAB {
     bool IsDamagingTile(int tx, int ty)
     {
         std::lock_guard<std::mutex> lock(s_tileMapMutex);
-        return s_damagingMap.count(BlockedKey(tx, ty)) != 0;
+        return (TileFlagsLocked(BlockedKey(tx, ty)) & kTileDamaging) != 0;
     }
 
     // ── LIVE per-square hazard check ─────────────────────────────────────────
@@ -2361,7 +2430,7 @@ namespace WorldTAB {
     // hazardous iff its ground-damage field is > 0 AND it is NOT covered (a
     // bridge / platform / ProtectFromGroundDamage object on top negates the
     // damage). Reads LIVE state, so it catches mid-fight tile transforms
-    // (PNest solid→venom) and cover changes the cached s_damagingMap misses.
+    // (PNest solid→venom) and cover changes the cached damaging flag misses.
     // Self-disables to the cached map after repeated read failures.
     using SquareLookupFn = void* (__fastcall*)(void* map, int tx, int ty, void* methodInfo);
     static SquareLookupFn s_squareLookup = nullptr;

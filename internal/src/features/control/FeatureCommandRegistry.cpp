@@ -283,7 +283,8 @@ namespace {
             FH_FLOAT("udodgeServerAnchorX", UDodge::SetServerAnchorX),
             FH_FLOAT("udodgeServerAnchorY", UDodge::SetServerAnchorY),
             FH_INT_BOOL("udodgeServerAnchorValid", UDodge::SetServerAnchorValid),
-            FH_TEXT("udodgePacketShot", UDodge::Sensors::RecordPacketShot)
+            FH_TEXT("udodgePacketShot", UDodge::Sensors::RecordPacketShot),
+            FH_TEXT("udodgeAoePacket", UDodge::Sensors::RecordAoePacket)
         };
         return ApplyFeatureTable(f, h, sizeof(h) / sizeof(h[0]));
     }

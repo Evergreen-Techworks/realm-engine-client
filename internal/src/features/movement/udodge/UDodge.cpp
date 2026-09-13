@@ -11,6 +11,7 @@
 
 #include "MovementRuntime.h"
 #include "DbgFileLog.h"
+#include "DiagTiming.h"
 #include "ProjectileTracking.h"
 #include "SteerInput.h"
 #include "DangerPlanner.h"
@@ -24,6 +25,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <mutex>
 #include <windows.h>
 
@@ -149,49 +151,75 @@ float Clamp(float value, float lo, float hi)
 int ClampInt(int value, int lo, int hi) { return std::clamp(value, lo, hi); }
 
 // ── Per-phase perf instrumentation (diagnostics only) ────────────────────────
-// Accumulates wall-clock into a named bucket; LogPhasesEvery120() logs all
-// buckets every 120 ticks (matches the existing throttle so log volume is
-// unchanged). Game-thread only: static accumulators, no synchronization.
-// Compiled in all configs but effectively free when the phase is small. NOTE:
-// these numbers are only meaningful in a RELEASE build — Debug overhead inflates
-// every phase and makes the breakdown non-representative of ship cost.
-struct PhaseAccum { double sum = 0.0, max = 0.0; };
-PhaseAccum g_tSync, g_tRaster, g_tPublish, g_tSolve, g_tDebug, g_tTotal;
+// Phase timers and decision counters feed DiagTiming::Game(); the detour in
+// DangerPlanner.cpp emits them every 2 s with the whole-frame numbers. OFF unless
+// RE_ASSETS/diag-timing.flag exists (see DiagTiming.h). The old 120-tick report
+// went through DBG_FILE_LOG, which a Release build drops, so it never reached a
+// user's log. NOTE: only meaningful in a RELEASE build.
+using PhaseTimer = DiagTiming::Scope;
 
-class PhaseTimer {           // RAII: start in ctor, stop+accumulate in dtor
-    LARGE_INTEGER t0;
-    PhaseAccum&   bucket;
-    bool          armed;     // false when diag timing is off — records nothing
-public:
-    explicit PhaseTimer(PhaseAccum& b)
-        : bucket(b), armed(g_diagTiming.load(std::memory_order_relaxed))
-    {
-        if (armed) QueryPerformanceCounter(&t0);   // skip the probe when off
-    }
-    ~PhaseTimer() {
-        if (!armed) return;
-        LARGE_INTEGER t1, f; QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&f);
-        const double ms = double(t1.QuadPart - t0.QuadPart) * 1000.0 / double(f.QuadPart);
-        bucket.sum += ms; if (ms > bucket.max) bucket.max = ms;
-    }
-};
-
-// Every 120th call, emit ONE line with avg+max for each bucket, then reset.
-void LogPhasesEvery120()
+// A hit is the one moment a dodge decision can be checked against the outcome.
+// Called BEFORE this frame's map sync, so g_map/g_solve still describe the frame
+// the player was hit in (a projectile that hits is removed from the game's pool,
+// so this frame's rebuild would no longer contain it).
+void DiagLogHit(int32_t prevHp, int32_t hp, int32_t maxHp, Vec2 player, const Settings& settings,
+                bool walkActive)
 {
-    if (!g_diagTiming.load(std::memory_order_relaxed)) return;   // gated: no timing → no log
-    static int s_n = 0;
-    if (++s_n < 120) return;
-    const double inv = 1.0 / double(s_n);
-    DBG_FILE_LOG("[UDodge] phase avg/max ms"
-        << " sync=" << (g_tSync.sum * inv) << "/" << g_tSync.max
-        << " raster=" << (g_tRaster.sum * inv) << "/" << g_tRaster.max
-        << " publish=" << (g_tPublish.sum * inv) << "/" << g_tPublish.max
-        << " solve=" << (g_tSolve.sum * inv) << "/" << g_tSolve.max
-        << " debug=" << (g_tDebug.sum * inv) << "/" << g_tDebug.max
-        << " total=" << (g_tTotal.sum * inv) << "/" << g_tTotal.max);
-    g_tSync = g_tRaster = g_tPublish = g_tSolve = g_tDebug = g_tTotal = PhaseAccum{};
-    s_n = 0;
+    static ULONGLONG s_windowMs = 0;
+    static int s_inWindow = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - s_windowMs >= 1000ULL) { s_windowMs = now; s_inWindow = 0; }
+    if (++s_inWindow > 20) return;
+
+    MapInput mi{};
+    mi.player = player;
+    mi.settings = settings;
+    mi.map = &g_map;
+    const float standClr = Core::PointSafety(mi, player);
+
+    // Two nearest lane heads (Chebyshev, the game's projectile contact metric).
+    int   nearIdx[2] = { -1, -1 };
+    float nearD[2]   = { kHugeClearance, kHugeClearance };
+    for (int i = 0; i < g_map.laneCount; ++i) {
+        const LaneThreat& L = g_map.lanes[i];
+        if (L.pointCount <= 0) continue;
+        const float d = Cheb(L.points[0].x - player.x, L.points[0].y - player.y);
+        if (d < nearD[0]) { nearD[1] = nearD[0]; nearIdx[1] = nearIdx[0]; nearD[0] = d; nearIdx[0] = i; }
+        else if (d < nearD[1]) { nearD[1] = d; nearIdx[1] = i; }
+    }
+    char lanes[512] = {};
+    size_t used = 0;
+    for (int k = 0; k < 2; ++k) {
+        if (nearIdx[k] < 0) break;
+        const LaneThreat& L = g_map.lanes[nearIdx[k]];
+        float tilesPerSec = 0.f;
+        if (L.pointCount >= 2 && L.pointTimesMs[1] > L.pointTimesMs[0])
+            tilesPerSec = Len(Sub(L.points[1], L.points[0])) * 1000.f / (L.pointTimesMs[1] - L.pointTimesMs[0]);
+        int32_t ownerType = 0;
+        for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot())
+            if (e.id == static_cast<int32_t>(L.ownerObjId) || e.id == L.attackerObjId) { ownerType = e.objType; break; }
+        const int n = snprintf(lanes + used, sizeof(lanes) - used,
+            " lane%d{cheb=%.2f half=%.2f(x%.2f) spd=%.1ft/s pts=%d paint=%d beam=%d prov=%d owner=%u type=0x%X}",
+            k, nearD[k], L.hitHalf, settings.hitScale, tilesPerSec, L.pointCount, L.instantCount,
+            L.beam ? 1 : 0, L.provisional ? 1 : 0, L.ownerObjId, static_cast<unsigned>(ownerType));
+        if (n <= 0) break;
+        used = std::min(sizeof(lanes) - 1, used + static_cast<size_t>(n));
+    }
+    float zoneGap = kHugeClearance;
+    for (int i = 0; i < g_map.zoneCount; ++i)
+        if (g_map.zones[i].active)
+            zoneGap = std::min(zoneGap, Len(Sub(g_map.zones[i].pos, player)) - g_map.zones[i].radius);
+    float enemyDist = kHugeClearance;
+    for (int i = 0; i < g_map.enemyCount; ++i)
+        enemyDist = std::min(enemyDist, Len(Sub(g_map.enemies[i].pos, player)));
+
+    DiagTiming::Logf("[Diag/Hit] hp %d->%d (-%d of %d) at (%.2f,%.2f) lastDecision=%d move=%d"
+        " targetDist=%.2f standClr=%.2f lanes=%d zones=%d nearestActiveZoneGap=%.2f nearestEnemy=%.2f"
+        " walk=%d wedged=%d lock=%d%s",
+        prevHp, hp, prevHp - hp, maxHp, player.x, player.y, static_cast<int>(g_solve.kind),
+        g_solve.shouldMove ? 1 : 0, Len(Sub(g_solve.target, player)), standClr,
+        g_map.laneCount, g_map.zoneCount, zoneGap, enemyDist, walkActive ? 1 : 0,
+        g_wedged.load(std::memory_order_relaxed) ? 1 : 0, g_map.hasLock ? 1 : 0, lanes);
 }
 
 Settings ReadSettings()
@@ -474,8 +502,9 @@ void Tick(void* player, float px, float py, float dt)
 
     // ── Perf probe: measure the full UDodge::Tick cost on the game thread. RAII
     // so it captures every return path (records total even on early return); the
-    // per-phase breakdown is emitted by LogPhasesEvery120() at the end of Tick.
-    PhaseTimer total(g_tTotal);
+    // per-phase breakdown is emitted every 2 s by DangerPlanner's update detour.
+    PhaseTimer total(DiagTiming::Game().total);
+    const bool diagOn = DiagTiming::On();
 
     const Settings settings = ReadSettings();
     const SteerInput::SteerState steer = SteerInput::Get();
@@ -488,6 +517,19 @@ void Tick(void* player, float px, float py, float dt)
     int32_t hp = 0, maxHp = 0;
     float spd = 0.f, tilesPerSec = 0.f;
     TestTAB::ReadDodgePlayerStats(hp, maxHp, spd, tilesPerSec);
+    {
+        static int32_t s_diagPrevHp = -1, s_diagPrevMaxHp = -1;
+        if (diagOn && maxHp > 0) {
+            if (s_diagPrevHp > 0 && s_diagPrevMaxHp == maxHp && hp < s_diagPrevHp) {
+                float wx = 0.f, wy = 0.f; bool wa = false;
+                DangerPlanner::GetWalkGoal(wx, wy, wa);
+                DiagLogHit(s_diagPrevHp, hp, maxHp, { px, py }, settings, wa);
+            }
+            s_diagPrevHp = hp; s_diagPrevMaxHp = maxHp;
+        } else {
+            s_diagPrevHp = -1;
+        }
+    }
 
     // ── NewTick sync ─────────────────────────────────────────────────────
     // The map LAYOUT is rebuilt from authoritative game state every server
@@ -498,13 +540,13 @@ void Tick(void* player, float px, float py, float dt)
     // If the tick counter is unreadable (stale offsets), rebuild every
     // frame — the fail-safe direction is fresher, never staler.
     // tick / tickOk / rebuilt are consumed later in Tick, so they are declared
-    // outside the timed scope; the g_tSync scope wraps only the actual map-sync
+    // outside the timed scope; the sync scope wraps only the actual map-sync
     // work (ReadWorldTick / ReanchorMap / BuildMap).
     uint32_t tick = 0;
     bool tickOk = false;
     bool rebuilt = false;
     {
-        PhaseTimer _p(g_tSync);
+        PhaseTimer _p(DiagTiming::Game().sync);
         tickOk = Sensors::ReadWorldTick(tick);
         bool synced = false;
         if (tickOk && g_map.tickValid && g_map.tickId == tick)
@@ -515,6 +557,14 @@ void Tick(void* player, float px, float py, float dt)
             g_map.tickId = tick;
             g_map.tickValid = tickOk;
         }
+    }
+    if (diagOn) {
+        DiagTiming::GameStats& gs = DiagTiming::Game();
+        ++(rebuilt ? gs.rebuilds : gs.reanchors);
+        gs.maxLanes   = std::max(gs.maxLanes, g_map.laneCount);
+        gs.maxZones   = std::max(gs.maxZones, g_map.zoneCount);
+        gs.maxEnemies = std::max(gs.maxEnemies, g_map.enemyCount);
+        if (g_map.limited) ++gs.mapLimited;
     }
     if (g_map.projectileSourceUnavailable) {
         g_commitment.Reset();
@@ -653,6 +703,10 @@ void Tick(void* player, float px, float py, float dt)
         if (goalMoved) g_navProgress.Reset();
         const bool blocked = g_navCache.valid && !Navigation::PaddedPathClear(in, in.player, navStep);
         const bool stalled = in.speed > 0.f && g_navProgress.Stalled(in.player, nowNav, g_navAwaiting);
+        if (diagOn) {
+            if (blocked) ++DiagTiming::Game().navBlocked;
+            if (stalled) ++DiagTiming::Game().navStalls;
+        }
         if (blocked || stalled) {
             navReplan = true;
             g_navAwaiting = navWaiting = true;
@@ -804,7 +858,7 @@ void Tick(void* player, float px, float py, float dt)
         const bool lockedCenter = goal.fromLock && goal.maxRange > 0.f && playerInGrid;
         const Vec2 gridCenter   = lockedCenter ? goal.lockPos : in.player;
         {
-            PhaseTimer _p(g_tRaster);
+            PhaseTimer _p(DiagTiming::Game().rasterOcc);
             FillOccGrid(s_snap.grid, gridCenter, true);
         }
         s_snap.commitment       = g_commitment;
@@ -842,14 +896,16 @@ void Tick(void* player, float px, float py, float dt)
         s_snap.navActive        = walkActive && navReplan;
         s_snap.navGoal          = { walkX, walkY };
         if (s_snap.navActive) {
-            PhaseTimer _p(g_tRaster);
+            PhaseTimer _p(DiagTiming::Game().rasterNav);
             FillNavGrid(s_snap.navGrid, in.player, settings.safeWalk);
+            if (diagOn) ++DiagTiming::Game().navReplans;
         }
         uint32_t pub = 0;
         {
-            PhaseTimer _p(g_tPublish);
+            PhaseTimer _p(DiagTiming::Game().publish);
             pub = Worker::PublishSnapshot(s_snap);
         }
+        if (diagOn && pub == 0) ++DiagTiming::Game().publishDropped;
         if (pub) g_lastPubSeq = pub;
         if (tickOk) s_lastPubTick = tick;
     }
@@ -872,6 +928,15 @@ void Tick(void* player, float px, float py, float dt)
         const bool originFresh = LenSq(Sub(fresh.snapshotPlayer, in.player))
             <= maxOriginDrift * maxOriginDrift;
         const bool acceptFresh = seqFresh && walkMatches && originFresh;
+        if (diagOn) {
+            DiagTiming::GameStats& gs = DiagTiming::Game();
+            ++(acceptFresh ? gs.workerAccepted : gs.workerDiscarded);
+            if (fresh.plan.found) ++(fresh.plan.partial ? gs.routePartial : gs.routeFound);
+            gs.workerDodgeMsMax = std::max(gs.workerDodgeMsMax, fresh.plan.computeDodgeMs);
+            gs.workerNavMsMax   = std::max(gs.workerNavMsMax, fresh.plan.computeNavMs);
+            gs.workerTimedMsMax = std::max(gs.workerTimedMsMax, fresh.timedMs);
+            gs.workerSolveMsMax = std::max(gs.workerSolveMsMax, fresh.solveMs);
+        }
         if (acceptFresh) {
             g_route = fresh.plan;
             g_timed = fresh.timed;
@@ -980,8 +1045,9 @@ void Tick(void* player, float px, float py, float dt)
     // target behind the player. The expensive grid search stays asynchronous;
     // this is only the small live safety solver, at server-tick cadence.
     if (navWaiting) routeForSolve = Path::PlanResult{};
+    if (diagOn && navWaiting) ++DiagTiming::Game().navWaitFrames;
     if (navHandoff.solve) {
-        PhaseTimer _p(g_tSolve);
+        PhaseTimer _p(DiagTiming::Game().liveSolve);
         Solver::Solve(in, b, goal, routeForSolve, proposedState, g_solve, timedForSolve);
     }
 
@@ -1006,11 +1072,22 @@ void Tick(void* player, float px, float py, float dt)
     // driving. A rebuild must not suppress the immediate solve while the worker
     // is still processing its snapshot.
     {
-        PhaseTimer _p(g_tSolve);
+        PhaseTimer _p(DiagTiming::Game().revalidate);
         CoreState safetyState = g_commitment.state;
         if (Solver::RevalidateAndSolve(in, b, goal, routeForSolve, safetyState, g_solve, rebuilt,
-                                       timedForSolve))
+                                       timedForSolve)) {
             proposedState = safetyState;
+            if (diagOn) ++DiagTiming::Game().revalidateResolves;
+        }
+    }
+    if (diagOn) {
+        DiagTiming::GameStats& gs = DiagTiming::Game();
+        switch (g_solve.kind) {
+            case Solver::SolveKind::Hold:       ++gs.holds;      break;
+            case Solver::SolveKind::Safe:       ++gs.safes;      break;
+            case Solver::SolveKind::Fallback:   ++gs.fallbacks;  break;
+            case Solver::SolveKind::Surrounded: ++gs.surrounded; break;
+        }
     }
 
     // ── Drive toward the (possibly re-solved) target ─────────────────────────
@@ -1041,6 +1118,7 @@ void Tick(void* player, float px, float py, float dt)
         const bool ok = reach > 1e-4f
             ? DodgeRuntime::CallMoveTo(player, moveTarget.x, moveTarget.y) : true;
         if (!ok) moveFailed = true;
+        if (diagOn) ++(ok ? DiagTiming::Game().moves : DiagTiming::Game().moveRefused);
         g_commitment.Record(proposedState, Sub(moveTarget, in.player), ok);
         static int s_mvN = 0;
         if ((s_mvN++ % 120) == 0)
@@ -1103,7 +1181,7 @@ void Tick(void* player, float px, float py, float dt)
     }
 
     if (settings.debugOverlay) {
-        PhaseTimer _p(g_tDebug);
+        PhaseTimer _p(DiagTiming::Game().debug);
         static DebugSnapshot d;   // large (holds the danger map) — keep off the stack
         d.active = true;
         // SolveKind → the closest legacy Decision label for the overlay header.
@@ -1223,11 +1301,8 @@ void Tick(void* player, float px, float py, float dt)
     g_udMoveVy.store(udMvy, std::memory_order_relaxed);
     g_udSafetyTick.fetch_add(1, std::memory_order_relaxed);
 
-    // Emit the per-phase breakdown once every 120 ticks (throttle matches the
-    // other diagnostics). The `total` bucket is recorded by the RAII guard at
-    // scope exit, so this frame's total folds into the next window — acceptable
-    // for a diagnostic average.
-    LogPhasesEvery120();
+    // The per-phase breakdown is emitted every 2 s by the update detour
+    // (DangerPlanner.cpp DiagAfterUpdate) together with the whole-frame numbers.
 }
 
 void RenderSettings()
@@ -1310,8 +1385,8 @@ void  SetDebugOverlay(bool en) { g_debugOverlay.store(en, std::memory_order_rela
 bool  GetDebugOverlay() { return g_debugOverlay.load(std::memory_order_relaxed); }
 void  SetDebugWeights(bool en) { g_debugWeights.store(en, std::memory_order_relaxed); }
 bool  GetDebugWeights() { return g_debugWeights.load(std::memory_order_relaxed); }
-void  SetDiagTiming(bool en) { g_diagTiming.store(en, std::memory_order_relaxed); }
-bool  GetDiagTiming() { return g_diagTiming.load(std::memory_order_relaxed); }
+void  SetDiagTiming(bool en) { g_diagTiming.store(en, std::memory_order_relaxed); DiagTiming::SetForced(en); }
+bool  GetDiagTiming() { return DiagTiming::On(); }
 void  SetLockFollow(bool en) { g_lockFollow.store(en, std::memory_order_relaxed); }
 bool  GetLockFollow() { return g_lockFollow.load(std::memory_order_relaxed); }
 void  SetFollowLantern(bool en) { g_followLantern.store(en, std::memory_order_relaxed); }

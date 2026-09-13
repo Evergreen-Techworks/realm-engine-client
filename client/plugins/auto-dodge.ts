@@ -428,6 +428,28 @@ export function register(ctx: PluginContext) {
     if (packet.isDefined) resetMoveEnvelope();
   });
 
+  // Server AOE packets carry the blast centre, radius and the originating object
+  // type. Some enemies blast on their own position with no throw or landing
+  // warning, which no dodge can react to after the fact. Forward every damaging
+  // AOE; the DLL learns which enemy types do that (blast centred on a living
+  // enemy of the packet's originType, no telegraph nearby) and keeps the dodge
+  // out of that radius around them from then on (UDodgeEnemyHazards.h).
+  ctx.hookPacket('AOE', (_client, packet) => {
+    if (!ctx.enabled || !packet.isDefined) return;
+    const data = packet.data as {
+      position?: { x?: number; y?: number };
+      radius?: number; damage?: number; originType?: number;
+    };
+    const x = Number(data.position?.x);
+    const y = Number(data.position?.y);
+    const radius = Number(data.radius);
+    const damage = Number(data.damage);
+    const originType = Number(data.originType);
+    if (![x, y, radius, damage, originType].every(Number.isFinite)) return;
+    if (damage <= 0 || originType <= 0 || radius <= 0) return;
+    sendDllFeature('udodgeAoePacket', `${Math.trunc(originType)},${x},${y},${radius},${Math.trunc(damage)}`);
+  });
+
   registerModeSetting('xdodge', 'xdodgeAstar', onOff('[Goal] Smart goal pathing'),
     (v: string) => sendDllFeature('xdodgeAstar', v === 'on' ? 1 : 0));
   registerModeSetting('xdodge', 'xdodgeWeighting', onOff('[Goal] Weighted danger field'),

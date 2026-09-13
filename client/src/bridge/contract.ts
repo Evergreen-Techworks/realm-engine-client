@@ -79,7 +79,7 @@ export const DLL_FEATURE_KEYS = [
   'rolloutRebuildN', 'rolloutSampleStepMs', 'rolloutWasdYield', 'scriptCombatTargetId', 'scriptEnemyLockId',
   'showPluginFloatingText', 'skinOverrideEnabled', 'skinOverrideId', 'socketHotkey', 'socketHotkeyActive',
   'speedHackMult', 'targetFrameRate', 'titleOverrideEnabled', 'titleOverrideId', 'titleOverrideSlot',
-  'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath',
+  'udodgeAoePacket', 'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath',
   'udodgeFieldEscape', 'udodgeFollowLantern', 'udodgeHitScale', 'udodgeLaneTiles',
   'udodgeLockFollow', 'udodgeMoveEnvelope', 'udodgeMoveEnvelopeArmed', 'udodgeOrbitRange',
   'udodgePacketShot',

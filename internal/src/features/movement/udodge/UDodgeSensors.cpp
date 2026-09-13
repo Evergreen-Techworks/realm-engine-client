@@ -10,6 +10,7 @@
 #include "ProjectileTracking.h"
 #include "RuntimeOffsets.h"
 #include "DbgFileLog.h"
+#include "DiagTiming.h"
 #include "DangerPlanner.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
 #include "features/movement/sensors/TileSensor.h"
@@ -666,6 +667,62 @@ float ZoneArmWindowMs(float radius, float speedTilesPerMs)
     return std::max(walkOutMs + kAoeArmReactionMs, kAoeArmWindowMinMs);
 }
 
+// ── Learned enemy keep-outs (UDodgeEnemyHazards.h) ───────────────────────────
+// AOE packets arrive on the IPC thread; the enemy snapshot and the AoE ring are
+// game-thread state, so events are queued and classified in RebuildZones.
+struct AoePacketEvent { int originType = 0; Vec2 centre{}; float radius = 0.f; };
+constexpr int kMaxAoePacketEvents = 64;
+std::mutex     s_aoePacketMutex;
+AoePacketEvent s_aoePacketEvents[kMaxAoePacketEvents]{};
+int            s_aoePacketCount = 0;
+
+void LogLearned(const char* why, int objectType)
+{
+    if (!DiagTiming::On()) return;
+    DiagTiming::Logf("[UDodge] learned enemy keep-out (%s) type=0x%X radius=%.2f",
+                     why, static_cast<unsigned>(objectType),
+                     EnemyHazards::KeepoutRadius(objectType));
+}
+
+// Classify queued AOE packets against the live enemies and the telegraphs the
+// AoE tracker captured (throw visuals, landing circles) in the last 4 s.
+void LearnFromAoePackets(const std::vector<WorldAoe>& aoes, uint64_t nowMs)
+{
+    AoePacketEvent events[kMaxAoePacketEvents];
+    int n = 0;
+    {
+        std::lock_guard<std::mutex> lk(s_aoePacketMutex);
+        n = s_aoePacketCount;
+        for (int i = 0; i < n; ++i) events[i] = s_aoePacketEvents[i];
+        s_aoePacketCount = 0;
+    }
+    if (n == 0) return;
+
+    static std::vector<EnemyHazards::EnemyRef> enemies;
+    static std::vector<EnemyHazards::TelegraphRef> telegraphs;
+    enemies.clear();
+    telegraphs.clear();
+    for (const auto& e : EnemyTracker::GetSnapshot()) {
+        if (!IsFinitePoint(e.x, e.y) || (e.hp <= 0 && !e.isInvulnerable)) continue;
+        enemies.push_back({ e.objType, { e.x, e.y } });
+    }
+    for (const WorldAoe& a : aoes) {
+        const bool telegraph = a.source == kAoeSrcGjj || a.source == kAoeSrcFhoh ||
+            (a.source == kAoeSrcSfx && (a.sfxEffectType == kSfxType_Throw ||
+                                        a.sfxEffectType == kSfxType_CircleTelegraph));
+        if (!a.valid || !telegraph || !IsFinitePoint(a.destX, a.destY)) continue;
+        const float ageMs = static_cast<float>(nowMs > a.spawnTick ? nowMs - a.spawnTick : 0u);
+        if (ageMs > 4000.f) continue;
+        telegraphs.push_back({ { a.destX, a.destY }, ageMs });
+    }
+    for (int i = 0; i < n; ++i) {
+        if (EnemyHazards::ObserveBlast(events[i].centre, events[i].radius, events[i].originType,
+                                       enemies.data(), static_cast<int>(enemies.size()),
+                                       telegraphs.data(), static_cast<int>(telegraphs.size())))
+            LogLearned("self blast", events[i].originType);
+    }
+}
+
 // Zone pass — present-tense classification only: every not-yet-expired zone
 // within the distance cull becomes a ZoneThreat, active iff it has landed.
 // Shared by BuildMap (full rebuild) and ReanchorMap (mid-tick refresh).
@@ -675,13 +732,16 @@ void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& 
     // Some enemies repeatedly blast themselves without a throwable warning.
     // Rebuild their known keepout envelopes from live positions every frame;
     // death/despawn therefore removes them without an arbitrary timer.
+    // Invulnerable setpiece attackers (towers) may report no HP but are live.
     EnemyTracker::Tick();
-    for (const auto& enemy : EnemyTracker::GetSnapshot())
-        EnemyHazards::Append(out, enemy.objType, enemy.hp,
-            {enemy.x, enemy.y}, {playerX, playerY});
     AoeTracking::EnsureInstalled();
     s_aoes.clear();
     AoeTracking::CopyActiveForDraw(s_aoes);
+    LearnFromAoePackets(s_aoes, nowMs);
+    for (const auto& enemy : EnemyTracker::GetSnapshot())
+        EnemyHazards::Append(out, enemy.objType,
+            (enemy.hp > 0 || enemy.isInvulnerable) ? 1 : 0,
+            {enemy.x, enemy.y}, {playerX, playerY});
 
     // AoeTracking retains up to 128 entries while DangerMap is deliberately
     // equally sized. Its ring-buffer order is not spatial; the old first-32 cap made
@@ -891,6 +951,19 @@ void RecordPacketShot(const char* encoded)
     }
 }
 
+void RecordAoePacket(const char* encoded)
+{
+    if (!encoded) return;
+    int originType = 0;
+    float x = 0.f, y = 0.f, radius = 0.f, damage = 0.f;
+    if (sscanf_s(encoded, "%d,%f,%f,%f,%f", &originType, &x, &y, &radius, &damage) != 5) return;
+    if (originType <= 0 || !(damage > 0.f) || !IsFinitePoint(x, y) ||
+        !IsFinite(radius) || radius <= 0.f || radius > 30.f) return;
+    std::lock_guard<std::mutex> lk(s_aoePacketMutex);
+    if (s_aoePacketCount >= kMaxAoePacketEvents) return;   // drained every frame; a flood only drops extras
+    s_aoePacketEvents[s_aoePacketCount++] = AoePacketEvent{ originType, { x, y }, radius };
+}
+
 void ClearPacketShots()
 {
     std::lock_guard<std::mutex> lk(s_packetMutex);
@@ -991,6 +1064,18 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
         // here: the live position is the anchor.
         TraceLane(lane, p, elapsedMs, laneCap);
         if (lane.pointCount >= 1) ++out.laneCount;
+
+        // A shot that never moves and sits on its owner is a stationary damage
+        // field around that enemy: learn a keep-out for the enemy's type so the
+        // player is not standing on it when the next one spawns.
+        if (EnemyHazards::IsStationaryLane(lane)) {
+            for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot()) {
+                if (e.id != p.attackerObjId && e.id != static_cast<int32_t>(p.ownerObjId)) continue;
+                if (EnemyHazards::ObserveStationaryShot(lane, e.objType, { e.x, e.y }))
+                    LogLearned("stationary shot", e.objType);
+                break;
+            }
+        }
     }
 
     // Packet-time recovery is appended only for identities the authoritative
