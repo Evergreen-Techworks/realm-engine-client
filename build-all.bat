@@ -14,7 +14,7 @@ REM       The rest is AI slop feel free to ignore.
 REM
 REM  Produces a packaged client (installer + portable, or just portable) with
 REM  both freshly-built native DLLs baked in:
-REM     * version.dll  (the IL2CPP hack DLL, from internal/)
+REM     * realm-engine.dll  (the IL2CPP hack DLL, from internal/)
 REM     * winhttp.dll  (from branch client/winhttp-proxy/)  
 REM  and freshly-generated IL2CPP headers for the current game build.
 REM
@@ -40,8 +40,15 @@ if not exist "%ROOT%tools\Il2CppInspector.exe" (
   goto :fail
 )
 if not exist "%ROOT%tools\global-metadata.decrypted.dat" (
-  echo   [ERROR] tools\global-metadata.decrypted.dat missing.
-  goto :fail
+  echo   tools\global-metadata.decrypted.dat missing - downloading...
+  curl -fSL -o "%ROOT%tools\global-metadata.decrypted.dat" "https://builds.him.is/latest/game_files/global-metadata.decrypted.dat"
+  if errorlevel 1 (
+    if exist "%ROOT%tools\global-metadata.decrypted.dat" del /q "%ROOT%tools\global-metadata.decrypted.dat"
+    echo   [ERROR] metadata download failed.
+    goto :fail
+  )
+  if not exist "%ROOT%tools\global-metadata.decrypted.dat" ( echo   [ERROR] metadata download produced no file. & goto :fail )
+  echo   Downloaded -^> tools\global-metadata.decrypted.dat
 )
 where npm >nul 2>nul || ( echo   [ERROR] npm not on PATH. Install Node.js. & goto :fail )
 
@@ -62,8 +69,8 @@ if /I "%RE_SKIP_HEADERS%"=="1" (
   powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%tools\gen-il2cpp-headers.ps1" || goto :fail
 )
 
-REM --- [2/6] version.dll ------------------------------------------------------
-echo [2/6] Building version.dll ^(Release^|x64^)...
+REM --- [2/6] realm-engine.dll -------------------------------------------------
+echo [2/6] Building realm-engine.dll ^(Release^|x64^)...
 REM  Release builds #error without BuildSecrets.h. build-prod.mjs writes it in
 REM  step 6, but this earlier standalone build needs it too. Same fixed PUBLIC
 REM  constants build-prod.mjs uses - keep the two in sync.
@@ -77,8 +84,8 @@ if not exist "%SECRETS%" (
 )
 msbuild "%ROOT%internal\il2cpp-dll-injection.sln" /p:Configuration=Release /p:Platform=x64 /m /v:minimal /nologo || goto :fail
 REM  The vcxproj's OutDir is already client\assets\, so no copy step is needed.
-if not exist "%ROOT%client\assets\version.dll" ( echo   [ERROR] version.dll not produced. & goto :fail )
-echo   Built -^> client\assets\version.dll
+if not exist "%ROOT%client\assets\realm-engine.dll" ( echo   [ERROR] realm-engine.dll not produced. & goto :fail )
+echo   Built -^> client\assets\realm-engine.dll
 
 REM --- [3/6] winhttp.dll + injector.exe ---------------------------------------
 REM  The proxy sources are optional: when client\winhttp-proxy\ is not present

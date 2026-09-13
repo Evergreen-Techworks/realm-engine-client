@@ -22,7 +22,7 @@ client/data/plugin-defaults.json
 internal/data/objects.xml
 
 # ── Local tooling ──
-/tools/
+/tools/global-metadata.decrypted.dat
 /.idea/
 
 # Native artifacts built by the build, not committed. build-all.bat builds them
