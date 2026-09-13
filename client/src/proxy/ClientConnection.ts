@@ -1,4 +1,5 @@
 import net from 'net';
+import { monitorEventLoopDelay, type IntervalHistogram } from 'perf_hooks';
 import { RC4Cipher } from '../crypto/RC4Cipher.js';
 import { PacketBuffer } from '../packets/PacketBuffer.js';
 import { type Packet } from '../packets/Packet.js';
@@ -67,6 +68,24 @@ export class ClientConnection {
   private _helloIsRetrying = false;
   private static readonly HELLO_RETRY_MS  = 3000;
   private static readonly HELLO_MAX_RETRIES = 3;
+
+  // ─── Kick evidence ────────────────────────────────────────────
+  // The server kicks with FAILURE errorId=0 and an empty message, which says
+  // nothing about why. These cheap per-packet notes are written to the log only
+  // when a FAILURE arrives, so the next kick shows whether the game client went
+  // quiet (a stalled main thread delays MOVE/UPDATEACK/PONG), whether the proxy's
+  // own event loop stalled, and what the proxy altered on its way to the server.
+  private static readonly C2S_GAP_NOTE_MS = 1000;
+  private static readonly GAP_LOOKBACK_MS = 60_000;
+  private static readonly ALTERED_LOOKBACK_MS = 30_000;
+  private static readonly ALTERED_KEEP = 256;
+  private static loopDelay: IntervalHistogram | null = null;
+  private lastClientPacketAt = 0;
+  private lastClientPacketName = '';
+  private lastMoveAt = 0;
+  private lastServerPacketAt = 0;
+  private clientGaps: { at: number; gapMs: number; after: string }[] = [];
+  private alteredToServer: { at: number; name: string; how: 'modified' | 'dropped' | 'injected' }[] = [];
 
   constructor(
     private proxy: Proxy,
@@ -143,6 +162,7 @@ export class ClientConnection {
 
     this.serverSocket.connect(this.state.conTargetPort, this.state.conTargetAddress, () => {
       this.serverConnectedAt = Date.now();
+      ClientConnection.eventLoopDelay()?.reset();
       Logger.log('Client', `Connected to ${this.state.conTargetAddress}:${this.state.conTargetPort}`);
       this.serverConnecting = false;
 
@@ -269,6 +289,7 @@ export class ClientConnection {
   // ─── Internal I/O ─────────────────────────────────────────────
 
   private send(packet: Packet, toClient: boolean): void {
+    if (!toClient) this.noteAlteredToServer(packet.name, 'injected', Date.now());
     try {
       const data = this.proxy.packetFactory.serialize(packet);
       const cipher = toClient ? this.clientSendCipher : this.serverSendCipher;
@@ -396,15 +417,35 @@ export class ClientConnection {
         const packet = this.proxy.packetFactory.createFromBytes(rawPacket);
 
         // Log any server FAILURE packet so rejection reasons are visible.
-        if (!isClient && packet.name === 'FAILURE' && packet.isDefined) {
-          Logger.warn('Client', `[DIAG-FAILURE] errorId=${packet.data.errorId} errorMessage="${packet.data.errorMessage}"`);
+        //
+        // The isDefined gate used to sit on this branch, which meant a FAILURE we
+        // could not parse logged NOTHING — and an unparseable FAILURE is exactly
+        // the interesting case, because it is what a stale packet definition
+        // produces. Observed symptom: repeated kicks logging errorMessage="" with
+        // errorId=0, i.e. the server was telling us why and we discarded it. Dump
+        // the raw body when parsing fails so the reason is recoverable.
+        if (!isClient && packet.name === 'FAILURE') {
+          if (packet.isDefined) {
+            // Bytes past the defined fields would hold any reason a newer FAILURE layout added.
+            const trailing = packet.unreadData.length > 0
+              ? ` trailing=${packet.unreadData.subarray(0, 64).toString('hex')}` : '';
+            Logger.warn('Client', `[DIAG-FAILURE] errorId=${packet.data.errorId} errorMessage="${packet.data.errorMessage}"${trailing}`);
+          } else {
+            const body = rawPacket.subarray(5);
+            const hex = body.subarray(0, 64).toString('hex');
+            const ascii = body.subarray(0, 64).toString('latin1').replace(/[^\x20-\x7e]/g, '.');
+            Logger.warn('Client', `[DIAG-FAILURE] UNPARSEABLE len=${body.length} hex=${hex} ascii="${ascii}"`);
+          }
+          Logger.warn('Client', `[KICK-EVIDENCE] ${this.kickEvidence(Date.now())}`);
         }
 
         // Fire hooks
         if (isClient) {
           this.proxy.fireClientPacket(this, packet);
+          this.noteClientPacket(packet);
         } else {
           this.proxy.fireServerPacket(this, packet);
+          this.lastServerPacketAt = Date.now();
         }
 
         // Forward if not blocked
@@ -433,6 +474,74 @@ export class ClientConnection {
 
   // Note: packet assembly still compacts by materializing remaining bytes so
   // buffers do not retain large backing stores across long sessions.
+
+  // ─── Kick evidence ────────────────────────────────────────────
+
+  /** Process-wide event-loop delay sampler, started on first use. Null where perf_hooks lacks it. */
+  private static eventLoopDelay(): IntervalHistogram | null {
+    if (!ClientConnection.loopDelay) {
+      try {
+        const histogram = monitorEventLoopDelay({ resolution: 20 });
+        histogram.enable();
+        ClientConnection.loopDelay = histogram;
+      } catch {
+        return null;
+      }
+    }
+    return ClientConnection.loopDelay;
+  }
+
+  private noteClientPacket(packet: Packet): void {
+    const now = Date.now();
+    if (this.lastClientPacketAt > 0) {
+      const gapMs = now - this.lastClientPacketAt;
+      if (gapMs >= ClientConnection.C2S_GAP_NOTE_MS) {
+        this.clientGaps.push({ at: now, gapMs, after: this.lastClientPacketName });
+        if (this.clientGaps.length > 8) this.clientGaps.shift();
+      }
+    }
+    this.lastClientPacketAt = now;
+    this.lastClientPacketName = packet.name;
+    if (packet.name === 'MOVE') this.lastMoveAt = now;
+    if (!packet.send) this.noteAlteredToServer(packet.name, 'dropped', now);
+    else if (packet.modified) this.noteAlteredToServer(packet.name, 'modified', now);
+  }
+
+  private noteAlteredToServer(name: string, how: 'modified' | 'dropped' | 'injected', at: number): void {
+    this.alteredToServer.push({ at, name, how });
+    if (this.alteredToServer.length > ClientConnection.ALTERED_KEEP) this.alteredToServer.shift();
+  }
+
+  /** One log line describing the connection's last moments. Built only when the server sends FAILURE. */
+  kickEvidence(now: number): string {
+    ClientConnection.eventLoopDelay();   // make sure sampling runs for the next connection too
+    const ago = (at: number) => (at > 0 ? `${now - at}ms ago` : 'never');
+    const gaps = this.clientGaps
+      .filter((g) => now - g.at <= ClientConnection.GAP_LOOKBACK_MS)
+      .map((g) => `${g.gapMs}ms after ${g.after} (${((now - g.at) / 1000).toFixed(1)}s ago)`);
+    const altered = new Map<string, { count: number; last: number }>();
+    for (const e of this.alteredToServer) {
+      if (now - e.at > ClientConnection.ALTERED_LOOKBACK_MS) continue;
+      const key = `${e.name} ${e.how}`;
+      const entry = altered.get(key);
+      if (entry) { entry.count++; entry.last = Math.max(entry.last, e.at); }
+      else altered.set(key, { count: 1, last: e.at });
+    }
+    const alteredText = [...altered].map(([key, v]) => `${key} x${v.count} (last ${now - v.last}ms ago)`);
+    const h = ClientConnection.loopDelay;
+    const loop = h && h.count > 0
+      ? `max ${(h.max / 1e6).toFixed(0)}ms, p99 ${(h.percentile(99) / 1e6).toFixed(0)}ms`
+      : 'no samples';
+    return [
+      `server connected ${ago(this.serverConnectedAt)}`,
+      `last C->S ${ago(this.lastClientPacketAt)} (${this.lastClientPacketName || '-'})`,
+      `last MOVE ${ago(this.lastMoveAt)}`,
+      `last S->C before this ${ago(this.lastServerPacketAt)}`,
+      `C->S gaps >=${ClientConnection.C2S_GAP_NOTE_MS}ms in last ${ClientConnection.GAP_LOOKBACK_MS / 1000}s: ${gaps.length ? gaps.join('; ') : 'none'}`,
+      `proxy event-loop delay since server connect: ${loop}`,
+      `proxy-altered C->S in last ${ClientConnection.ALTERED_LOOKBACK_MS / 1000}s: ${alteredText.length ? alteredText.join('; ') : 'none'}`,
+    ].join(' | ');
+  }
 
   private onError(source: string, err: Error): void {
     if (this.closed) return;
