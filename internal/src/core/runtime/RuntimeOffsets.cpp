@@ -5,6 +5,7 @@
 #include "DbgFileLog.h"
 #include <cstdio>
 #include <cstring>
+#include <vector>
 #include <cwchar>
 #include <iomanip>
 
@@ -730,6 +731,25 @@ void SanityCheckProjDamage(int32_t sampledDamage)
     if (sampledDamage < 0 || sampledDamage > 1000000) MarkSuspect(&Hbeak_InstanceDamage);
 }
 
+// A method row names its owner by short name, and short names are not unique: in
+// build 86ad651b "Time" is both UnityEngine.Time and InputManagerProvider.Time, and
+// "Component" is both UnityEngine.Component and System.ComponentModel.Component.
+// FindClassLoose returns whichever class il2cpp_class_for_each reports first, so the
+// row is proved when any class of that name declares the method at the bound
+// address. The address is unique; the scan cannot accept a different method.
+static bool BoundMethodLive(const BuildBindings::MethodBinding& row)
+{
+    struct Ctx { const BuildBindings::MethodBinding* row; uintptr_t expected; bool found; };
+    Ctx ctx{ &row, reinterpret_cast<uintptr_t>(GetModuleHandleW(L"GameAssembly.dll")) + row.rva, false };
+    il2cpp_class_for_each([](Il2CppClass* klass, void* ud) {
+        auto* c = static_cast<Ctx*>(ud);
+        if (c->found || strcmp(il2cpp_class_get_name(klass), c->row->targetOwner) != 0) return;
+        const MethodInfo* method = il2cpp_class_get_method_from_name(klass, c->row->source, c->row->args);
+        c->found = method && reinterpret_cast<uintptr_t>(method->methodPointer) == c->expected;
+    }, &ctx);
+    return ctx.found;
+}
+
 // True once every table entry resolved and every generated binding -- field
 // offset and method RVA -- matches the live process. The pipeline's activation
 // gate waits on this; a developer build never calls it.
@@ -740,20 +760,56 @@ bool ReadyForActivation()
             !BuildBindings::Field(s_entries[i].className, s_entries[i].tryNames[0], s_entries[i].key)) return false;
     for (int i = 0; i < kFIEntryCount; ++i)
         if (!*s_fieldInfoEntries[i].out) return false;
+    // One enumeration for the whole check. Resolver::FindClassLoose walks every
+    // loaded class, so a per-row lookup would walk them once per bound row -- 177
+    // times per call on 86ad651b -- on the frame path, while the answer is still false.
+    std::vector<std::pair<const char*, Il2CppClass*>> byName;
+    il2cpp_class_for_each([](Il2CppClass* klass, void* ud) {
+        static_cast<std::vector<std::pair<const char*, Il2CppClass*>>*>(ud)
+            ->emplace_back(il2cpp_class_get_name(klass), klass);
+    }, &byName);
     for (const auto& row : BuildBindings::fields) {
         if (!row.owner[0]) continue;
-        Il2CppClass* klass = Resolver::FindClassLoose(row.owner);
-        FieldInfo* field = klass ? FindExactFieldOnHierarchy(klass, row.target) : nullptr;
-        if (!field || static_cast<uint32_t>(il2cpp_field_get_offset(field)) != row.offset) return false;
+        bool matched = false;
+        for (const auto& entry : byName) {
+            if (strcmp(entry.first, row.targetOwner) != 0) continue;
+            FieldInfo* field = FindExactFieldOnHierarchy(entry.second, row.target);
+            if (field && static_cast<uint32_t>(il2cpp_field_get_offset(field)) == row.offset) { matched = true; break; }
+        }
+        if (!matched) return false;
     }
+    const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"GameAssembly.dll"));
     for (const auto& row : BuildBindings::methods) {
         if (!row.owner[0]) continue;
-        Il2CppClass* klass = Resolver::FindClassLoose(row.owner);
-        const MethodInfo* method = klass ? il2cpp_class_get_method_from_name(klass, row.source, row.args) : nullptr;
-        if (!method || reinterpret_cast<uintptr_t>(method->methodPointer) !=
-            reinterpret_cast<uintptr_t>(GetModuleHandleW(L"GameAssembly.dll")) + row.rva) return false;
+        bool matched = false;
+        for (const auto& entry : byName) {
+            if (strcmp(entry.first, row.targetOwner) != 0) continue;
+            const MethodInfo* method = il2cpp_class_get_method_from_name(entry.second, row.source, row.args);
+            if (method && reinterpret_cast<uintptr_t>(method->methodPointer) == base + row.rva) { matched = true; break; }
+        }
+        if (!matched) return false;
     }
     return true;
+}
+
+// Latched, throttled readiness for the frame path. A build with no generated
+// bindings has nothing to verify, so it is ready immediately and every developer
+// build behaves exactly as it did before this header existed.
+bool BindingsReady()
+{
+    static bool s_ready = false;
+    static ULONGLONG s_lastCheck = 0;
+    if (s_ready) return true;
+    if (!BuildBindings::fields[0].owner[0] && !BuildBindings::methods[0].owner[0]) {
+        s_ready = true;
+        return true;
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (s_lastCheck != 0 && now - s_lastCheck < 1000ULL) return false;
+    s_lastCheck = now;
+    s_ready = ReadyForActivation();
+    if (s_ready) DbgFileLogWrite("[RuntimeOffsets] Generated bindings verified against the live process.");
+    return s_ready;
 }
 
 // Only the offset verifier sets REALM_OFFSET_REPORT. Normal clients do no IO here.
@@ -803,10 +859,7 @@ static void WriteVerificationReport()
     }
     for (const auto& row : BuildBindings::methods) {
         if (!row.owner[0]) continue;
-        Il2CppClass* klass = Resolver::FindClassLoose(row.owner);
-        const MethodInfo* method = klass ? il2cpp_class_get_method_from_name(klass, row.source, row.args) : nullptr;
-        const uintptr_t expected = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"GameAssembly.dll")) + row.rva;
-        const bool valid = method && reinterpret_cast<uintptr_t>(method->methodPointer) == expected;
+        const bool valid = BoundMethodLive(row);
         fprintf(f, ",{\"class\":\"%s\",\"field\":\"%s (method)\",\"state\":\"%s\"}",
             row.owner, row.source, valid ? "Match" : "Suspect");
     }
@@ -959,7 +1012,12 @@ void EnsureAll()
 
         if (!klass) { anyPending = true; continue; }
 
-        FieldInfo* f = FindFieldOnHierarchy(klass, fe.fieldName);
+        // Follow the generated rename: the offset pass binds by target name, and a
+        // FieldInfo left null by a renamed field would veto activation for a build
+        // whose bindings are correct. The name is translated here, once, and looked up
+        // exactly: FindFieldOnHierarchy goes through the redirected
+        // il2cpp_class_get_field_from_name, which would translate it a second time.
+        FieldInfo* f = FindExactFieldOnHierarchy(klass, BuildBindings::FieldName(il2cpp_class_get_name(klass), fe.fieldName));
         if (f) *fe.out = f;
         fe.done = true;
     }

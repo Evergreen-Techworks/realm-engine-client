@@ -29,8 +29,14 @@ namespace RuntimeOffsets {
     void EnsureAll();
 
     // True once every entry resolved and every generated binding matches the live
-    // process. BootGate's feature gate waits on it (Task 13); developer builds do not.
+    // process. Walks every loaded class, so call BindingsReady() on a frame path.
     bool ReadyForActivation();
+
+    // BootGate's per-frame view of the same answer: latched once true, and re-checked
+    // at most once a second while false, so an unverified build costs one class
+    // enumeration per second instead of one per frame. Always true on a build with no
+    // generated bindings, which is every developer build.
+    bool BindingsReady();
 
     // True once the 5 s give-up timeout has fired.
     bool HasGivenUp();
