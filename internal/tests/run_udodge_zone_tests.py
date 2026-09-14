@@ -49,3 +49,16 @@ with tempfile.TemporaryDirectory(prefix="enemy-tracker-tests-") as directory:
 
 # End-to-end pathing scenarios against the production planner (tests/scenario).
 subprocess.run(["python3", str(internal / "tests/scenario/run_scenarios.py"), "--check"], check=True)
+
+# Native input focus gate, and SteerInput compiled on a fake Windows layer.
+with tempfile.TemporaryDirectory(prefix="input-focus-tests-") as directory:
+    binary = Path(directory) / "input_focus_tests"
+    subprocess.run([
+        os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-pthread",
+        "-I", str(internal / "tests/input_focus_shim"), "-I", str(internal / "tests"),
+        "-I", str(internal / "src"), "-I", str(internal / "src/features/movement/dodge"),
+        str(internal / "tests/input_focus_tests.cpp"),
+        str(internal / "src/features/movement/dodge/SteerInput.cpp"),
+        "-o", str(binary),
+    ], check=True)
+    subprocess.run([str(binary)], check=True)

@@ -1,4 +1,5 @@
 #include "pch-il2cpp.h"
+#include "core/runtime/InputFocus.h"
 #include "XDodge.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
 #include "DangerPlanner.h"
@@ -346,7 +347,7 @@ static std::atomic<bool> g_wasdYieldEnabled{ true };
 static bool ManualMoveHeld()
 {
     if (!g_wasdYieldEnabled.load(std::memory_order_relaxed)) return false;
-    auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
+    auto down = [](int vk) { return InputFocus::KeyDown(vk); };   // keys held in another app do not yield
     return down('W') || down('A') || down('S') || down('D')
         || down(VK_LEFT) || down(VK_RIGHT) || down(VK_UP) || down(VK_DOWN);
 }

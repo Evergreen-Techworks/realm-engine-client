@@ -11,6 +11,7 @@
 
 #include "pch-il2cpp.h"
 #include "FeatureRuntime.h"
+#include "core/runtime/InputFocus.h"
 #include "FeatureState.h"
 #include "FeatureCommandRegistry.h"
 #include "DbgFileLog.h"
@@ -93,16 +94,9 @@ namespace {
         if (wizMode != s_lastWizMode) { s_lastWizMode = wizMode; CombatTAB::SetWizardAbilityTargetMode(wizMode); }
     }
 
-    bool IsCurrentProcessForeground()
-    {
-        HWND hwnd = GetForegroundWindow();
-        if (!hwnd) return false;
-        DWORD pid = 0;
-        GetWindowThreadProcessId(hwnd, &pid);
-        return pid == GetCurrentProcessId();
-    }
-
-    static bool IsHotkeyDown(int active, int vk) { return active != 0 && vk != 0 && IsCurrentProcessForeground() && ((GetAsyncKeyState(vk) & 0x8000) != 0); }
+    // The game window, not merely this process, must own the foreground
+    // (core/runtime/InputFocus.h), so a hotkey pressed in another app never fires.
+    static bool IsHotkeyDown(int active, int vk) { return active != 0 && vk != 0 && InputFocus::KeyDown(vk); }
 
     void ApplyPlayerNoclipFeatureState()
     {
@@ -186,7 +180,7 @@ namespace {
     };
     std::vector<PluginToggleHotkeyBinding> s_pluginToggleHotkeys;
 
-    bool IsVkDown(int vk)    { return ((GetAsyncKeyState(vk) | GetKeyState(vk)) & 0x8000) != 0; }
+    bool IsVkDown(int vk)    { return InputFocus::GameHasFocus() && ((GetAsyncKeyState(vk) | GetKeyState(vk)) & 0x8000) != 0; }
     bool IsShiftDown()       { return IsVkDown(VK_SHIFT)   || IsVkDown(VK_LSHIFT)   || IsVkDown(VK_RSHIFT); }
     bool IsCtrlDown()        { return IsVkDown(VK_CONTROL) || IsVkDown(VK_LCONTROL) || IsVkDown(VK_RCONTROL); }
     bool IsAltDown()         { return IsVkDown(VK_MENU)    || IsVkDown(VK_LMENU)    || IsVkDown(VK_RMENU); }
@@ -285,7 +279,7 @@ void FeatureRuntime::ApplyPluginToggleHotkeys(const char* spec)
                 PluginToggleHotkeyBinding binding{};
                 if (ParsePluginToggleHotkey(hotkey.c_str(), binding)) {
                     strncpy_s(binding.pluginId, sizeof(binding.pluginId), pluginId.c_str(), _TRUNCATE);
-                    binding.lastDown = IsPluginToggleHotkeyDown(binding, IsCurrentProcessForeground());
+                    binding.lastDown = IsPluginToggleHotkeyDown(binding, InputFocus::GameHasFocus());
                     s_pluginToggleHotkeys.push_back(binding);
                 }
             }
@@ -298,7 +292,7 @@ void FeatureRuntime::ApplyPluginToggleHotkeys(const char* spec)
 void FeatureRuntime::CollectPluginToggleHotkeyEvents(std::vector<std::string>& outPluginIds)
 {
     if (s_pluginToggleHotkeys.empty()) return;
-    const bool foreground = IsCurrentProcessForeground();
+    const bool foreground = InputFocus::GameHasFocus();
     for (auto& binding : s_pluginToggleHotkeys) {
         const bool down = IsPluginToggleHotkeyDown(binding, foreground);
         if (down && !binding.lastDown) outPluginIds.emplace_back(binding.pluginId);

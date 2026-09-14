@@ -1,4 +1,5 @@
 #include "pch-il2cpp.h"
+#include "core/runtime/InputFocus.h"
 #include "RolloutDodge.h"
 #include "ThreatIndex.h"
 #include "GridThreatIndex.h"
@@ -111,7 +112,7 @@ void OnHazardSpawn(const WorldProjectile& /*p*/, void* /*u*/)
 bool ManualMoveHeld()
 {
     if (!g_wasdYield.load(std::memory_order_relaxed)) return false;
-    auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
+    auto down = [](int vk) { return InputFocus::KeyDown(vk); };   // keys held in another app do not yield
     return down('W') || down('A') || down('S') || down('D')
         || down(VK_LEFT) || down(VK_RIGHT) || down(VK_UP) || down(VK_DOWN);
 }
