@@ -3641,6 +3641,9 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
         case window.WS_MSG.PLUGIN_TOGGLE_ERROR:
           handlePluginToggleError(msg);
           break;
+        case window.WS_MSG.CONFIG_RESET:
+          handleConfigReset(msg);
+          break;
         case window.WS_MSG.SCRIPT_LOG:
           if (msg.line != null) {
             appendScriptLogLine(String(msg.line), msg.level || 'info', msg.id || '');
@@ -16407,6 +16410,31 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     toast.textContent = msg.reason || 'Cannot enable plugin';
     document.body.appendChild(toast);
     setTimeout(function () { if (toast.parentNode) toast.remove(); }, 4500);
+  }
+
+  function handleConfigReset(msg) {
+    // Persistent, dismissible (the server replays this to every client until
+    // dismissed, since the first save runs before the dashboard connects).
+    var existing = document.getElementById('config-reset-banner');
+    if (existing) existing.remove();
+    var banner = document.createElement('div');
+    banner.id = 'config-reset-banner';
+    banner.className = 'config-reset-banner';
+    var text = document.createElement('span');
+    var where = (msg && msg.backup) ? ' A copy of the old file was kept at ' + msg.backup + '.' : '';
+    text.textContent = (msg && msg.writeFailed)
+      ? 'Your settings file was unreadable and settings are not saving.' + where
+      : 'Your settings file was unreadable and was reset.' + where;
+    banner.appendChild(text);
+    var btn = document.createElement('button');
+    btn.className = 'config-reset-banner-action';
+    btn.textContent = 'Dismiss';
+    btn.addEventListener('click', function () {
+      banner.remove();
+      try { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'dismissConfigReset' })); } catch (_e) {}
+    });
+    banner.appendChild(btn);
+    document.body.appendChild(banner);
   }
 
   // ── Home layout edit mode (drag-to-reorder, add/remove cards) ──
