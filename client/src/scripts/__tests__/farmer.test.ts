@@ -145,6 +145,70 @@ describe('farmer beacon selection and level 20 relocation', () => {
   });
 });
 
+describe('farmer realm goal picker', () => {
+  // A 9x9 explored floor. Its bounds centre, the goal the picker aims for, is the
+  // middle tile (4, 4) at (4.5, 4.5). Tiles are shaped like the bridge's MapTile.
+  const floor = (size = 9) => Array.from({ length: size * size }, (_, i) => ({
+    position: { x: (i % size) + 0.5, y: Math.floor(i / size) + 0.5 },
+    isBlocking: false, isOccupied: false, damaging: false, speedMultiplier: 1,
+  }));
+  const at = (tiles: any[], x: number, y: number) =>
+    tiles.find((t) => t.position.x === x + 0.5 && t.position.y === y + 0.5);
+  const goalFor = (tiles: any[], objects: any[] = []) => {
+    const f = fixture();
+    f.sdk.world.tiles = { getAll: () => tiles };
+    f.sdk.world.objects.getAll = () => objects;
+    return f.farmer.computeRealmGoal(19);
+  };
+  const isCentre = (p: any) => p?.x === 4.5 && p?.y === 4.5;
+  const oneStepFromCentre = (p: any) => Math.hypot(p.x - 4.5, p.y - 4.5) <= Math.SQRT2;
+
+  it('still chooses a normal floor tile at the centre', () => {
+    expect(goalFor(floor())).toEqual({ x: 4.5, y: 4.5 });
+  });
+
+  it('never chooses a tile holding a tree or other square-blocking object', () => {
+    const tiles = floor();
+    at(tiles, 4, 4).isOccupied = true;
+    const tree = { objectId: 7, name: 'Tree', blocksMovement: true, position: { x: 4.5, y: 4.5 } };
+    const goal = goalFor(tiles, [tree]);
+    expect(isCentre(goal)).toBe(false);
+    expect(oneStepFromCentre(goal)).toBe(true);
+  });
+
+  it('never chooses deep water that is NoWalk even though it carries a Speed value', () => {
+    const tiles = floor();
+    Object.assign(at(tiles, 4, 4), { name: 'Red Earth Water Deep', isBlocking: true, speedMultiplier: 0.75 });
+    const goal = goalFor(tiles);
+    expect(isCentre(goal)).toBe(false);
+    expect(oneStepFromCentre(goal)).toBe(true);
+  });
+
+  it('never chooses an open tile walled in on all four sides', () => {
+    const tiles = floor();
+    at(tiles, 3, 4).isBlocking = true;            // water
+    at(tiles, 5, 4).isBlocking = true;            // water
+    at(tiles, 4, 3).damaging = true;              // lava, hard-blocked under safe-walk
+    at(tiles, 4, 5).isOccupied = true;            // a rock
+    const rock = { objectId: 8, name: 'Rock', blocksMovement: true, position: { x: 4.5, y: 5.5 } };
+    const goal = goalFor(tiles, [rock]);
+    expect(isCentre(goal)).toBe(false);
+    expect(oneStepFromCentre(goal)).toBe(true);
+    // One open side is enough: the tile is reachable again.
+    at(tiles, 4, 3).damaging = false;
+    expect(goalFor(tiles, [rock])).toEqual({ x: 4.5, y: 4.5 });
+  });
+
+  it('keeps a tile that only a player, enemy or bag stands on', () => {
+    // isOccupied counts every tracked entity, you included. Rejecting on it alone
+    // would push the goal off the tile the player just arrived on.
+    const tiles = floor();
+    at(tiles, 4, 4).isOccupied = true;
+    const self = { objectId: 1, name: 'Wizard', blocksMovement: false, position: { x: 4.4, y: 4.6 } };
+    expect(goalFor(tiles, [self])).toEqual({ x: 4.5, y: 4.5 });
+  });
+});
+
 
 describe('Realm Farmer Oryx integration', () => {
   it.each(["Oryx's Castle", 'Oryx’s Castle', 'Oryx Castle'])('runs %s instead of nexusing', (map) => {
