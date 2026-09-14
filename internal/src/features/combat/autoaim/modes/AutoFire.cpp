@@ -1,6 +1,7 @@
 #include "pch-il2cpp.h"
 
 #include "features/combat/autoaim/modes/AutoFire.h"
+#include "core/runtime/InputFocus.h"
 #include "features/combat/autoaim/shoot/ShootRuntime.h"
 #include "BootGate.h"
 #include "GameState.h"
@@ -37,18 +38,6 @@ static ULONGLONG s_lastGateLogMs    = 0;
 static ULONGLONG s_lastBindLogMs    = 0;
 static ULONGLONG s_lastAliveLogMs   = 0;
 static int       s_lastEngaged      = -1;  // -1 = no edge observed yet
-
-// Same three lines as FeatureRuntime's anonymous-namespace
-// IsCurrentProcessForeground (features/runtime/FeatureRuntime.cpp:88-94).
-// Duplicated deliberately rather than widening FeatureRuntime's public surface.
-static bool IsCurrentProcessForeground()
-{
-    HWND hwnd = GetForegroundWindow();
-    if (!hwnd) return false;
-    DWORD pid = 0;
-    GetWindowThreadProcessId(hwnd, &pid);
-    return pid == GetCurrentProcessId();
-}
 
 // Transition-only edge logging. Never called per-frame while the state holds,
 // so the trace gets exactly one line per press and one per release.
@@ -124,10 +113,9 @@ void Tick(bool menuOpen)
 
     const bool autoEngaged = s_autoEngage.load(std::memory_order_relaxed);
     const int  vk          = s_hotkeyVk.load(std::memory_order_relaxed);
-    bool engaged = autoEngaged
-                || (vk != 0
-                    && IsCurrentProcessForeground()
-                    && (GetAsyncKeyState(vk) & 0x8000) != 0);
+    // The hotkey counts only while the game window owns the foreground
+    // (core/runtime/InputFocus.h).
+    bool engaged = autoEngaged || (vk != 0 && InputFocus::KeyDown(vk));
 
     // Never fire off a keystroke the player is typing into the menu. An
     // auto-engage (plan 89) is programmatic, so it is not affected.

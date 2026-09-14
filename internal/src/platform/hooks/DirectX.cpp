@@ -2,6 +2,7 @@
 #include <cstdio>
 
 #include "DirectX.h"
+#include "core/runtime/InputFocus.h"
 #include "Il2CppHook.h"
 #include "settings.h"
 #include "gui/tabs/TestTAB.h"
@@ -221,6 +222,7 @@ HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags
 		DirectX::pDevice->GetImmediateContext(&DirectX::pContext);
 		DXGI_SWAP_CHAIN_DESC sd; __this->GetDesc(&sd);
 		DirectX::window = sd.OutputWindow;
+		InputFocus::SetGameWindow(DirectX::window);   // native input acts only while this window is foreground
 		UpdateCachedClientSize();
 
 		ImGui::CreateContext();

@@ -31,6 +31,7 @@ using TestTAB::DodgeMode;
 #include "WorldTAB.h"
 #include "CameraTAB.h"
 #include "DirectX.h"
+#include "core/runtime/InputFocus.h"
 #include "ProjectileTracking.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
 #include "features/combat/autoaim/modes/KillAura.h"
@@ -51,8 +52,10 @@ using TestTAB::DodgeMode;
 // State
 // ─────────────────────────────────────────────────────────────────────────────
 static bool  g_followMouse        = false;
-static bool  g_ctrlClickTeleport  = true;  // Ctrl+LMB: instant TP toward cursor (max 2 tiles)
-static bool  s_prevCtrlTpLmbDown  = false; // per-frame LMB edge-detect for Ctrl+TP
+// Ctrl+LMB: instant TP toward cursor (max 2 tiles). OFF by default: it writes the
+// position directly, the instant-jump pattern behind server kicks, and it used to
+// fire on a Ctrl+click in any app. Enable it in the Test tab (INPUT).
+static bool  g_ctrlClickTeleport  = false;
 // Max Euclidean distance (tiles) for Ctrl+click teleport clamp — shared with debug preview.
 static constexpr float kCtrlTeleportMaxTiles = 2.0f;
 
@@ -608,11 +611,13 @@ void TestTAB::Tick(bool menuVisible)
     g_basisMeasured = cs.basisMeasured; g_basisFull     = cs.basisFull;
 
     // ── Mouse position (screen coords, relative to game client area) ────────
-    POINT pt;
-    GetCursorPos(&pt);
-    if (DirectX::window) ScreenToClient(DirectX::window, &pt);
-    g_mouseSX = static_cast<float>(pt.x);
-    g_mouseSY = static_cast<float>(pt.y);
+    // Read only while the game window has focus; otherwise the cursor is over
+    // another app, so the last in-game position is kept (InputFocus.h).
+    POINT pt{};
+    if (InputFocus::CursorClient(DirectX::window, pt)) {
+        g_mouseSX = static_cast<float>(pt.x);
+        g_mouseSY = static_cast<float>(pt.y);
+    }
 
     // ── Update debug world position of mouse ────────────────────────────────
     if (g_w2sValid) {
@@ -816,20 +821,21 @@ void TestTAB::Tick(bool menuVisible)
                 FeatureState::SetWalkTarget(g_walkX, g_walkY, false);
             }
         }
-        else if (!dodgeMoved && !dodgeHandlesNav && g_followMouse && !menuVisible && g_w2sValid && localPlayer) {
+        else if (!dodgeMoved && !dodgeHandlesNav && g_followMouse && !menuVisible && g_w2sValid && localPlayer
+                 && InputFocus::GameHasFocus()) {
             MovePlayer(g_mouseWorldX, g_mouseWorldY, dt, camX, camY, localPlayer);
         }
 
         // ── Ctrl+Click instant teleport (max 2 tiles, avoids blocked tiles) ──
         // KeyBinds::WndProc is never called from dWndProc so KeyState never updates.
-        // Use GetAsyncKeyState with a manual per-frame edge-detect for LMB instead.
+        // Raw key reads go through InputFocus: nothing fires while another app has
+        // focus, and the click that brings the game to the front does not count.
         {
-            const bool lmbDown  = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-            const bool lmbEdge  = lmbDown && !s_prevCtrlTpLmbDown;
-            s_prevCtrlTpLmbDown = lmbDown;
+            static InputFocus::PressEdge s_ctrlTpLmb;
+            const bool lmbEdge = s_ctrlTpLmb.Update(InputFocus::GameHasFocus(), InputFocus::KeyDown(VK_LBUTTON));
 
             if (g_ctrlClickTeleport && localPlayer && g_w2sValid && !menuVisible
-                && (GetAsyncKeyState(VK_CONTROL) & 0x8000) && lmbEdge)
+                && InputFocus::KeyDown(VK_CONTROL) && lmbEdge)
             {
                 float tpX = 0.f, tpY = 0.f;
                 const bool okLand = ComputeCtrlTeleportLanding(
@@ -852,12 +858,12 @@ void TestTAB::Tick(bool menuVisible)
         // again to unlock. Requires Shift to avoid interfering with the
         // game's normal LMB-to-shoot input.
         {
-            static bool s_prevLockChord = false;
-            const bool shiftDown = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0;
-            const bool lmbDown   = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-            const bool chord     = shiftDown && lmbDown;
-            const bool chordEdge = chord && !s_prevLockChord;
-            s_prevLockChord = chord;
+            // Focus-gated like every native input read (InputFocus.h): no lock,
+            // follow or minimap walk from a Shift+click in another app, nor from
+            // the Shift+click that brings the game to the front.
+            static InputFocus::PressEdge s_lockChord;
+            const bool chord     = InputFocus::KeyDown(VK_SHIFT) && InputFocus::KeyDown(VK_LBUTTON);
+            const bool chordEdge = s_lockChord.Update(InputFocus::GameHasFocus(), chord);
 
             // ── Minimap intercept ────────────────────────────────────────
             // A Shift+Click that lands inside the on-screen minimap rectangle
@@ -961,10 +967,8 @@ void TestTAB::Tick(bool menuVisible)
         // target. Click the same enemy again to release (toggle). Picks by screen
         // distance so the click maps exactly to what the player sees on screen.
         {
-            static bool s_prevMmb = false;
-            const bool mmbDown = (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
-            const bool mmbEdge = mmbDown && !s_prevMmb;
-            s_prevMmb = mmbDown;
+            static InputFocus::PressEdge s_mmb;   // focus-gated (InputFocus.h)
+            const bool mmbEdge = s_mmb.Update(InputFocus::GameHasFocus(), InputFocus::KeyDown(VK_MBUTTON));
             if (mmbEdge && g_w2sValid && !menuVisible && !ImGui::GetIO().WantCaptureMouse)
                 ZDodge::Target::ProcessClick(g_mouseSX, g_mouseSY,
                                                   camX, camY, angleRad, zoom, cx, cy);
@@ -1229,6 +1233,22 @@ void TestTAB::Render()
         g_dbgPlayerX, g_dbgPlayerY, g_dbgCamTileX, g_dbgCamTileY);
     ImGui::TextDisabled("%s", "While centred these two should match; a mismatch means the\n"
                               "camera->tile mapping is wrong, not the offset handling.");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Native mouse/keyboard features. Every raw read is gated on the game window
+    // owning the foreground (core/runtime/InputFocus.h).
+    ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.f, 1.f), "INPUT");
+    ImGui::Checkbox("Ctrl+click teleport##ctrlClickTeleportTest", &g_ctrlClickTeleport);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s",
+            "Hold Ctrl and left-click to jump toward the cursor (max 2 tiles), menu hidden.\n"
+            "Off by default: it writes the position directly, which is the kind of\n"
+            "instant jump the server kicks for. Never fires while another window has\n"
+            "focus, or on the click that brings the game to the front.");
+    ImGui::TextDisabled("game window focused: %s", InputFocus::GameHasFocus() ? "yes" : "no");
 
     ImGui::Spacing();
     ImGui::Separator();

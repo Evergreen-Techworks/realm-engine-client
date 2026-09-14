@@ -1,5 +1,6 @@
 #include "pch-il2cpp.h"
 #include "SteerInput.h"
+#include "core/runtime/InputFocus.h"
 
 #include <atomic>
 #include <cmath>
@@ -22,17 +23,15 @@ std::atomic<bool>  s_edgeToIdle{ false };
 // feedback loop (planner moves → game sets Player_Moving → planner thinks
 // WASD is held → planner stops → Player_Moving clears → planner resumes
 // → ...), which shows up as a ~30 Hz stutter. GetAsyncKeyState reads OS
-// input directly and only reports genuine user input.
+// input directly and only reports genuine user input — for the whole desktop, so
+// every read goes through InputFocus::KeyDown: keys typed into another app never
+// steer, and tabbing out while holding W releases the steer.
 bool ReadMovementKeys(bool& outMoving, float& outDx, float& outDy)
 {
-    const bool w = (GetAsyncKeyState('W')     & 0x8000) != 0 ||
-                   (GetAsyncKeyState(VK_UP)   & 0x8000) != 0;
-    const bool a = (GetAsyncKeyState('A')     & 0x8000) != 0 ||
-                   (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
-    const bool s = (GetAsyncKeyState('S')     & 0x8000) != 0 ||
-                   (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
-    const bool d = (GetAsyncKeyState('D')     & 0x8000) != 0 ||
-                   (GetAsyncKeyState(VK_RIGHT)& 0x8000) != 0;
+    const bool w = InputFocus::KeyDown('W') || InputFocus::KeyDown(VK_UP);
+    const bool a = InputFocus::KeyDown('A') || InputFocus::KeyDown(VK_LEFT);
+    const bool s = InputFocus::KeyDown('S') || InputFocus::KeyDown(VK_DOWN);
+    const bool d = InputFocus::KeyDown('D') || InputFocus::KeyDown(VK_RIGHT);
 
     outDx = 0.f;
     outDy = 0.f;
