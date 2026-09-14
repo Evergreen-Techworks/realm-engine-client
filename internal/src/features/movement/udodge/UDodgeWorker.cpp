@@ -1,7 +1,7 @@
 #include "pch-il2cpp.h"
 #include "UDodgeWorker.h"
 #include "UDodgePathfinder.h"
-#include "UDodgeTimedPlanner.h"
+#include "UDodgeWorkerCycle.h"
 
 #include <thread>
 #include <mutex>
@@ -56,73 +56,11 @@ void WorkerLoop()
             g_haveSnap = false;
         }
         // No lock held during compute. Pure plain-data math — no IL2CPP.
-        Path::PlanResult plan{};
-        Path::Compute(local, plan);
-
-        MapInput in{};
-        in.player = local.player;
-        in.speed = local.speed;
-        in.stepTiles = local.moveBudget;
-        in.tickId = local.tickId;
-        in.playerOnHazard = local.playerOnHazard;
-        in.settings = local.settings;
-        in.map = &local.map;
-        in.env.occFlags = local.grid.flags;
-        in.env.occCenter = local.grid.center;
-        in.env.occSide = kUPathMaxSide;
-        in.env.occRadius = kUPathMaxRadCells;
-        in.env.occCellTiles = kUPathCellTiles;
-
-        Solver::Goal goal{};
-        goal.active = local.goalActive;
-        goal.pos = local.goalPos;
-        goal.walkTo = local.goalWalkTo;
-        // Path::Compute may have produced a brand-new navigation corridor from
-        // this snapshot. Solve against that corridor's immediate step, not the
-        // pre-compute goal submitted by the game thread. Otherwise the overlay
-        // shows a correct cyan path while the yellow committed move follows the
-        // previous/raw goal for another worker cycle.
-        if (goal.walkTo && plan.navFound)
-            goal.pos = plan.navStepTarget;
-        goal.fromLock = local.hasLock;
-        goal.lockPos = local.lockPos;
-        goal.maxRange = local.weaponRangeTiles;
-        goal.innerStandoff = local.innerStandoffTiles;
-
-        // ── Bounded temporal search (advisory) ──────────────────────────────
-        // Runs here, never on the game thread: it allocates inside its search
-        // and is bounded by an expansion count and a wall-clock budget. A search
-        // that finds nothing certified publishes an INVALID advice, which the
-        // solver treats exactly as "no advice" — today's behaviour.
-        const auto timed0 = std::chrono::steady_clock::now();
-        static SpacetimeDodge::State timedState;   // retained plan across cycles
-        SpacetimeDodge::Input timedIn{};
-        const double nowMs = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-        Timed::BuildInput(in, nowMs, 16.7f, Timed::Budget{}, timedIn);
-        SpacetimeDodge::Output timedOut{};
-        SpacetimeDodge::Evaluate(timedIn, timedState, timedOut);
-        const Solver::TimedAdvice timed =
-            Timed::ToAdvice(timedOut, in.player, local.moveBudget);
-
-        const auto solve0 = std::chrono::steady_clock::now();
-        CoreState solveState = local.commitment.state;
-        Solver::SolveResult solve{};
-        Solver::Solve(in, local.moveBudget, goal, plan, solveState, solve, timed);
-        const auto solve1 = std::chrono::steady_clock::now();
+        static Result cycle;   // large (plan + solve); keep off the thread stack
+        RunCycle(local, cycle);
         {
             std::lock_guard<std::mutex> lk(g_planMutex);
-            g_latest.plan = plan;
-            g_latest.solve = solve;
-            g_latest.solveGoal = goal.pos;
-            g_latest.timed = timed;
-            g_latest.solveState = solveState;
-            g_latest.commitmentRevision = local.commitment.revision;
-            g_latest.snapshotPlayer = local.player;
-            g_latest.walkGoal = local.navGoal;
-            g_latest.walkActive = local.goalWalkTo;
-            g_latest.timedMs = std::chrono::duration<float, std::milli>(solve0 - timed0).count();
-            g_latest.solveMs = std::chrono::duration<float, std::milli>(solve1 - solve0).count();
+            g_latest = cycle;
             g_havePlan = true;
         }
     }

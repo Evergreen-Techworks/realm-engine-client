@@ -14,6 +14,7 @@
 #include "GameState.h"
 #include "DbgFileLog.h"
 #include "DiagTiming.h"
+#include "features/movement/sensors/TileOccupancy.h"
 #include "LocalPlayer.h"
 #include "helpers.h"
 #include "BeebyteName.h"
@@ -110,15 +111,17 @@ static std::vector<WorldProjectile>  g_projectiles;
 // one FillNavGrid rasterize on the game thread 4.8 ms -> 1.4 ms, one FillOccGrid
 // 0.5 ms -> 0.14 ms. The bits carry exactly the
 // information the sets did (presence == bit set), so every reader below answers
-// identically.
-enum : uint8_t {
-    kTileKnown    = 0x01,   // streamed map square; absence is void/out-of-bounds
-    kTileBlocked  = 0x02,   // movement blocked (NoWalk / OccupySquare / FullOccupy / EnemyOccupySquare)
-    kTileFullOcc  = 0x04,   // tile has a FullOccupy entity (for sub-tile neighbour check)
-    kTileDamaging = 0x08,   // tile deals damage (cached ground damage, or a spike object)
-    kTileSink     = 0x10,   // sink/sinking ground (water) — nav treats as impassable, the dodge does not
-};
+// identically. The bit legend and the occupancy rules over it live in
+// features/movement/sensors/TileOccupancy.h, shared with TestTAB's live check.
+using Movement::TileOccupancy::kTileKnown;
+using Movement::TileOccupancy::kTileBlocked;
+using Movement::TileOccupancy::kTileFullOcc;
+using Movement::TileOccupancy::kTileDamaging;
+using Movement::TileOccupancy::kTileSink;
 static std::unordered_map<uint32_t, uint8_t> s_tileFlags;
+// The squares holding a FullOccupy object, for the half-tile rule's neighbour mask
+// (CopyBoxBlocked builds one per raster from this list; see TileOccupancy.h).
+static std::vector<uint32_t> s_fullOccKeys;
 static std::unordered_map<uint32_t, int>   s_tileMaxDmgMap; // value = tile maxDmg (damaging tiles only)
 static std::unordered_map<uint32_t, float> s_tileSpeedMap; // value = XML speed multiplier (non-zero tiles only)
 static std::mutex s_tileMapMutex;
@@ -141,6 +144,7 @@ static void RebuildBlockedMap()
     std::unordered_map<uint32_t, uint8_t> tileFlags;
     std::unordered_map<uint32_t, int>  tileMaxDmgMap;
     std::unordered_map<uint32_t, float> tileSpeedMap;
+    std::vector<uint32_t> fullOccKeys;
 
     tileFlags.reserve(g_tiles.size() + g_entities.size());
 
@@ -153,36 +157,20 @@ static void RebuildBlockedMap()
         // 0x1aa1 is 'EH Secret Floor', the proxy safewalk replacement tile.
         // It lacks TCOND_NOWALK, but we must treat it as blocked to prevent autododge
         // from pathfinding onto what is actually lava on the server.
-        bool isNoWalk = (t.conds & TCOND_NOWALK) || t.tileType == 0x1aa1;
-        
-        // Moving tiles (conveyor belts) natively allow walking. Due to XML offset aliasing
-        // in some client versions, they may mistakenly read as having <NoWalk/>.
-        // Explicitly unblock them so the planner doesn't treat them as obstacles.
-        if (t.speed != 0.f || (t.conds & TCOND_PUSH)) {
-            isNoWalk = false;
-        }
-
-        if (isNoWalk)
-            flags |= kTileBlocked;
-        // Damaging tiles tracked separately: damage triggers when the player centre
-        // (floor of world XY) lands on the tile, not when the hitbox overlaps it.
-        // Use the native engine's cached damage (sq+0x10) and ensure there is no cover (sq+0x48).
-        if (t.damageCached > 0 && !t.hasCover) {
-            flags |= kTileDamaging;
+        const bool isNoWalk = (t.conds & TCOND_NOWALK) || t.tileType == 0x1aa1;
+        // Damaging tiles: damage triggers when the player centre (floor of world XY)
+        // lands on the tile, not when the hitbox overlaps it. Use the native engine's
+        // cached damage (sq+0x10) and ensure there is no cover (sq+0x48).
+        const bool damaging = t.damageCached > 0 && !t.hasCover;
+        // NoWalk is authoritative, including the deep-water squares that also carry
+        // <Speed> (they used to be un-blocked here, so routes waded into water the
+        // game refuses). Sink / sinking ground (shallow water, quicksand) is a
+        // separate walkable-but-slow bit. See TileOccupancy::GroundFlags.
+        flags |= Movement::TileOccupancy::GroundFlags(isNoWalk, (t.conds & TCOND_PUSH) != 0, t.speed,
+                                                      (t.conds & (TCOND_SINK | TCOND_SINKING)) != 0,
+                                                      damaging);
+        if (damaging)
             tileMaxDmgMap[k] = (t.maxDmg > 0) ? t.maxDmg : t.damageCached;
-        }
-        // Sink / sinking ground = water and lava-style tiles. The player cannot
-        // realistically cross deep water, so NAVIGATION treats these as impassable
-        // (CopyBoxBlocked bit2, which the nav A* hard-blocks on — it hugs the coast
-        // instead of swimming the lake). Deliberately NOT added to blockedMap: the
-        // immediate dodge must still be free to cross one to escape a shot, and
-        // blockedMap is the dodge's wall source too.
-        // TCOND_SINK and TCOND_SINKING are folded together: both are the same XML
-        // "you sink into this ground" family and nothing we read (no depth, no
-        // separate walk flag) distinguishes a crossable shallow from a deep one, so
-        // the user-reported behaviour (cannot cross) governs both.
-        if (t.conds & (TCOND_SINK | TCOND_SINKING))
-            flags |= kTileSink;
         // Store speed modifier for any tile that has one (0 = no modifier)
         if (t.speed != 0.f)
             tileSpeedMap[k] = t.speed;
@@ -218,12 +206,14 @@ static void RebuildBlockedMap()
             int tx = static_cast<int>(floorf(e.x));
             int ty = static_cast<int>(floorf(e.y));
             tileFlags[BlockedKey(tx, ty)] |= kTileFullOcc;
+            fullOccKeys.push_back(BlockedKey(tx, ty));
         }
     }
 
     {
         std::lock_guard<std::mutex> lock(s_tileMapMutex);
         s_tileFlags.swap(tileFlags);
+        s_fullOccKeys.swap(fullOccKeys);
         s_tileMaxDmgMap.swap(tileMaxDmgMap);
         s_tileSpeedMap.swap(tileSpeedMap);
     }
@@ -594,6 +584,7 @@ static void CopyCachedObjectName(void* props, char* out, size_t outCap)
 // on screen, tiles farther than this are not copied or inserted into the movement
 // maps, which is most of a long realm session's tile list.
 static constexpr int32_t kMovementTileWindow = 128;
+
 
 static void DoRefresh()
 {
@@ -2369,52 +2360,31 @@ namespace WorldTAB {
     }
 
     // Bulk player-box occupancy reader — see the header comment. ONE tile-mutex
-    // acquisition rasterizes the whole grid: for each cell we floor the player-box
-    // footprint (center +/- playerHalfEdge) on each axis and mark the cell blocked
-    // if any tile in that small box is blocked (or damaging when foldHazard, or
-    // sink always — see the bit legend below; one s_tileFlags probe per tile). This is
-    // IsPositionBlocked's box logic hoisted out of the per-cell path. Noclip is
-    // deliberately not consulted (conservative — never unsafe).
+    // acquisition rasterizes the whole grid through TileOccupancy::RasterCell, the
+    // same rule the live check (TestTAB IsPositionBlocked + IsCircleBlocked) uses:
+    //   bit0 (kCellWall)     hard wall under the player box
+    //   bit1 (kCellHazard)   damaging ground under the box, when foldHazard
+    //   bit2 (kCellSink)     sink / shallow water under the box (walkable, slow)
+    //   bit3 (kCellVoid)     unstreamed square under the box
+    //   bit4 (kCellFullRing) the centre breaks the FullOccupy half-tile rule
+    // Noclip is deliberately not consulted (conservative — never unsafe).
     void CopyBoxBlocked(float originX, float originY, int side, float cellTiles,
                         float playerHalfEdge, bool foldHazard, unsigned char* out)
     {
         if (!out || side <= 0) return;
         std::lock_guard<std::mutex> lock(s_tileMapMutex);
+        const auto flagsAt = [](int tx, int ty) { return TileFlagsLocked(BlockedKey(tx, ty)); };
+        // Which squares of this raster sit next to a FullOccupy object; the half-tile
+        // rule is only evaluated there. Game thread only (UDodge), so one buffer.
+        static thread_local Movement::TileOccupancy::NearFullOccupyMask nearFull;
+        Movement::TileOccupancy::PrepareRasterMask(nearFull, s_fullOccKeys.data(), s_fullOccKeys.size(),
+                                                   originX, originY, side, cellTiles, playerHalfEdge);
         for (int gy = 0; gy < side; ++gy) {
             for (int gx = 0; gx < side; ++gx) {
                 const float cx = originX + static_cast<float>(gx) * cellTiles;
                 const float cy = originY + static_cast<float>(gy) * cellTiles;
-                const int x0 = static_cast<int>(std::floor(cx - playerHalfEdge));
-                const int x1 = static_cast<int>(std::floor(cx + playerHalfEdge));
-                const int y0 = static_cast<int>(std::floor(cy - playerHalfEdge));
-                const int y1 = static_cast<int>(std::floor(cy + playerHalfEdge));
-                // bit0 = hard wall (impassable).
-                // bit1 = DAMAGING ground when foldHazard — a SOFT avoid: the nav A*
-                //        routes around it but can still traverse it when boxed in (a
-                //        lava-floored arena must not wall the planner in).
-                // bit2 = SINK/water ground, emitted ALWAYS (independent of foldHazard,
-                //        which is a safe-walk preference; not being able to swim is
-                //        not a preference). Consumers decide: the nav A* hard-blocks
-                //        it, the dodge occupancy grid ignores it (it may cross water
-                //        to escape a shot). Sink used to ride bit1 and only cost the
-                //        nav kUNavHazardCost per tile, which any shoreline detour of
-                //        more than ~6 tiles beat — so walk-to swam the lake.
-                // A true wall always sets bit0 regardless.
-                unsigned char f = 0;
-                for (int tx = x0; tx <= x1; ++tx) {
-                    for (int ty = y0; ty <= y1; ++ty) {
-                        const uint32_t k = BlockedKey(tx, ty);
-                        // Missing streamed squares are map void/boundary, not open
-                        // floor. Autonomous pathing must never route into them.
-                        const uint8_t tf = TileFlagsLocked(k);
-                        if ((tf & kTileKnown) == 0) { f |= 0x8; continue; }
-                        if (tf & kTileBlocked) { f |= 0x1; continue; }
-                        if (foldHazard && (tf & kTileDamaging)) { f |= 0x2; }
-                        if (tf & kTileSink)                     { f |= 0x4; }
-                    }
-                    if (f & 0x1) break;   // a wall dominates; no need to keep scanning
-                }
-                out[gy * side + gx] = f;
+                out[gy * side + gx] = Movement::TileOccupancy::RasterCell(
+                    flagsAt, nearFull, cx, cy, playerHalfEdge, foldHazard);
             }
         }
     }

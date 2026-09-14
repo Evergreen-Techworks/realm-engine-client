@@ -8,6 +8,7 @@
 #include "UDodgeWorker.h"
 #include "UDodgeSensors.h"
 #include "UDodgeDebug.h"
+#include "UDodgeEnemyHazards.h"
 
 #include "MovementRuntime.h"
 #include "DbgFileLog.h"
@@ -102,10 +103,54 @@ struct NavCache {
     int  n = 0;
     Vec2 wpts[kMaxNavWpts]{};     // route polyline (world; [0] = player at plan time)
     bool partial = false;        // route only reaches toward the goal (needs extending near its end)
+    bool crossesHazard = false;  // the A* found no route without damaging ground (PlanResult::navCrossesHazard)
 };
 NavCache g_navCache;
 Navigation::Progress g_navProgress;
 bool g_navAwaiting = false;
+// Stuck memory (get-unstuck). A stall re-plans, but a re-plan over the same tile
+// map returns the same route, so a blocker the map does not show (an object the
+// world scan missed, say) held the player against it indefinitely. When a stall
+// coincides with the game refusing our commanded steps, the square being pushed
+// into is remembered for kNavAvoidMs and priced in the next A* (never a wall: a
+// wrong guess costs a detour, not the route). Cleared with the walk goal.
+struct NavAvoid { Vec2 pos{}; ULONGLONG untilMs = 0; };
+NavAvoid g_navAvoid[kMaxNavAvoid]{};
+int      g_navAvoidNext = 0;
+int      g_refusedFrames = 0;         // consecutive commands the game granted < 25% of
+ULONGLONG g_lastRefusedMs = 0;        // when the latest of those was measured
+Vec2     g_lastCmdFrom{}, g_lastCmdTo{};
+bool     g_lastCmdValid = false;
+constexpr ULONGLONG kNavAvoidMs = 12000ULL;
+constexpr int       kNavRefusedFramesForAvoid = 12;   // ~0.2 s of refusal at 60 FPS
+constexpr ULONGLONG kNavRefusalFreshMs = 300ULL;       // a refusal older than this says nothing about now
+
+// Active stuck-memory squares (expired entries skipped) into a plain array.
+int ActiveNavAvoid(Vec2* out, ULONGLONG nowMs)
+{
+    int n = 0;
+    for (const NavAvoid& a : g_navAvoid)
+        if (a.untilMs > nowMs) out[n++] = a.pos;
+    return n;
+}
+
+void ClearNavAvoid()
+{
+    for (NavAvoid& a : g_navAvoid) a = NavAvoid{};
+    g_navAvoidNext = 0;
+    g_refusedFrames = 0;
+    g_lastRefusedMs = 0;
+    g_lastCmdValid = false;
+}
+
+// Locked target beyond engagement range: approached through the walk-to route
+// pipeline toward its engagement disk (see Tick). The goal is frozen while the
+// target stays within a tile of it, so a moving boss does not invalidate every
+// worker result (walkMatches compares goals to 0.25 tiles).
+bool    g_lockApproach = false;
+bool    g_lockApproachGoalValid = false;
+Vec2    g_lockApproachGoal{};
+int32_t g_lockApproachId = 0;
 // Distance-sampled dungeon breadcrumbs. Global (rather than Tick-local statics)
 // so realm/location transitions can invalidate them explicitly.
 Vec2 g_trail[16]{};       // newest at [0]
@@ -149,6 +194,33 @@ float Clamp(float value, float lo, float hi)
     return std::clamp(value, lo, hi);
 }
 int ClampInt(int value, int lo, int hi) { return std::clamp(value, lo, hi); }
+
+// Locked-target distances, shared by the approach decision and the orbit goal.
+struct LockGeometry {
+    float weaponRange = 6.f;
+    float innerStandoff = 0.f;     // annulus inner radius (never fight point-blank)
+    float engagementRange = 0.f;   // inset outer radius: shots connect reliably
+    float standoff = 0.f;          // orbit standoff point distance
+};
+LockGeometry ComputeLockGeometry(const Settings& settings)
+{
+    LockGeometry g;
+    // Orbit the locked enemy at a standoff = resolved weapon range × 0.85
+    // (the SetOrbitRange override feeds the standoff directly when non-zero).
+    g.weaponRange = AutoAim::IsProjRangeResolved() ? AutoAim::GetProjRangeTiles() : 6.f;
+    // Inner-standoff annulus radius: keep the player at least this far from the
+    // boss so it never fights point-blank. Fraction of weapon range (scales
+    // across classes) with an absolute tile floor.
+    g.innerStandoff = std::max(kUInnerStandoffMinTiles, g.weaponRange * kUInnerStandoffFrac);
+    g.engagementRange = std::max(g.innerStandoff + kUDurablePocketMargin,
+                                 g.weaponRange - kUEngagementRangeInset);
+    // The orbit standoff POINT must sit inside the annulus [innerStandoff,
+    // weaponRange], so clamp it above the inner radius (with a small margin)
+    // and never past weapon range — the soft goal never aims point-blank.
+    const float standoff = settings.orbitRange > 0.f ? settings.orbitRange : g.weaponRange * 0.85f;
+    g.standoff = std::clamp(standoff, g.innerStandoff + kUDurablePocketMargin, g.engagementRange);
+    return g;
+}
 
 // ── Per-phase perf instrumentation (diagnostics only) ────────────────────────
 // Phase timers and decision counters feed DiagTiming::Game(); the detour in
@@ -311,6 +383,10 @@ void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls)
                 if (wallScratch[i] & 0x8) f |= 0x1; // unstreamed/void is a hard boundary
                 if (wallScratch[i] & 0x2) f |= 0x2;
                 else                      f &= static_cast<uint8_t>(~0x2);
+                // FullOccupy half-tile rule at this cell's centre: the live check
+                // (Sensors::CanOccupy) refuses it, so the worker must too.
+                if (wallScratch[i] & 0x10) f |= 0x10;
+                else                       f &= static_cast<uint8_t>(~0x10);
             }
         }
     }
@@ -351,8 +427,13 @@ Vec2 NavStepFromCache(const NavCache& c, Vec2 player, float lookahead,
     outDev = 0.f; outNearEnd = false;
     if (!c.valid || c.n < 2) return player;
 
+    Vec2 avoid[kMaxNavAvoid];
+    const int avoidCount = ActiveNavAvoid(avoid, GetTickCount64());
     return Navigation::Follow(c.wpts, c.n, player, lookahead, outDev, outNearEnd,
-        [&](Vec2 from, Vec2 to) { return Navigation::PaddedPathClear(in, from, to); });
+        [&](Vec2 from, Vec2 to) {
+            return Navigation::PaddedPathClear(in, from, to) &&
+                   Navigation::AvoidClear(avoid, avoidCount, from, to);
+        });
 }
 
 // ── Autopilot auto-lock ──────────────────────────────────────────────────────
@@ -424,6 +505,10 @@ void SetEnabled(bool enabled)
         g_route = Path::PlanResult{};
         g_lastPubSeq = 0;
         g_solveSeq = 0;
+        g_lockApproach = false;
+        g_lockApproachGoalValid = false;
+        g_lockApproachId = 0;
+        ClearNavAvoid();
         // Clear the AutoNexus last-resort signal (plan 77): udodge is no longer
         // handling anything, so it must not report itself as covering the player.
         g_udExposed.store(false, std::memory_order_relaxed);
@@ -479,6 +564,10 @@ void OnEnter()
     g_navCache = NavCache{};
     g_navAwaiting = false;
     g_navProgress.Reset();
+    g_lockApproach = false;
+    g_lockApproachGoalValid = false;
+    g_lockApproachId = 0;
+    ClearNavAvoid();
     g_trailCount = 0;
     for (Vec2& p : g_trail) p = {};
     // Every one of these stores world coordinates/object ids and is therefore
@@ -585,6 +674,7 @@ void Tick(void* player, float px, float py, float dt)
     in.settings = settings;
     in.env.canOccupy = &Sensors::CanOccupy;
     in.env.isHazard = &Sensors::IsHazardAt;
+    in.env.wallsClear = &Sensors::WallsClear;
     in.map = &g_map;
 
     // in.stepTiles IS the per-tick move budget (tilesPerSec × kServerTickSec).
@@ -670,6 +760,63 @@ void Tick(void* player, float px, float py, float dt)
         }
     }
 
+    // ── Locked target out of engagement range: approach it by route ──────────
+    // The orbit below only ranks one-budget steps toward a standoff point, with a
+    // penalty that grows with distance past weapon range. That is right in range,
+    // but from outside it the player walks straight at the boss and stops against
+    // the first concave wall in between — the dodge grid is 12 tiles, and nothing
+    // else routed. So beyond engagement range the approach runs through the walk-to
+    // pipeline (72-tile A*, cached route, follower) toward the ENGAGEMENT DISK: the
+    // nearest cell by path within range, not one point that may sit behind a wall.
+    // Hysteresis keeps the hand-off to the orbit from flickering at the edge.
+    constexpr float kLockApproachEnterTiles = 1.0f;   // start routing this far past engagement range
+    constexpr float kLockApproachExitTiles  = 0.25f;  // hand back to the orbit this far inside it
+    constexpr float kLockApproachInsetTiles = 0.75f;  // the route's goal disk sits this far inside
+    float navGoalRadius = 0.f;
+    bool  lockApproach = false;
+    if (!walkActive && !wasdActive && g_map.hasLock) {
+        const LockGeometry lg = ComputeLockGeometry(settings);
+        const float dist = Len(Sub(in.player, g_map.lockPos));
+        if (g_map.lockId != g_lockApproachId) {
+            g_lockApproachId = g_map.lockId;
+            g_lockApproach = false;
+        }
+        if (dist > lg.engagementRange + kLockApproachEnterTiles) g_lockApproach = true;
+        else if (dist <= lg.engagementRange - kLockApproachExitTiles) g_lockApproach = false;
+        if (g_lockApproach) {
+            if (!g_lockApproachGoalValid || LenSq(Sub(g_lockApproachGoal, g_map.lockPos)) > 1.f) {
+                g_lockApproachGoal = g_map.lockPos;
+                g_lockApproachGoalValid = true;
+            }
+            walkX = g_lockApproachGoal.x;
+            walkY = g_lockApproachGoal.y;
+            walkActive = true;
+            lockApproach = true;
+            navGoalRadius = std::max(0.5f, lg.engagementRange - kLockApproachInsetTiles);
+        } else {
+            g_lockApproachGoalValid = false;
+        }
+    } else {
+        g_lockApproach = false;
+        g_lockApproachGoalValid = false;
+    }
+
+    // Enemy-centred keep-outs are hard for the dodge and for fights, but a walk-to
+    // has to be able to pass the enemy it walks by (UDodgeEnemyHazards.h).
+    if (walkActive && !lockApproach) EnemyHazards::SoftenForWalkTo(g_map);
+
+    // A route the A* could only find across damaging ground is followed with
+    // safe-walk relaxed: the follower and the solver would otherwise refuse the very
+    // squares the route needs and hold at the edge. Only walk-to, only while that
+    // route is the one being followed; FillNavGrid still folds hazard (settings).
+    const bool playerOnHazardRaw = in.playerOnHazard;
+    const auto applyNavHazardRelax = [&]() {
+        in.settings.safeWalk = settings.safeWalk &&
+            !(walkActive && g_navCache.valid && g_navCache.crossesHazard);
+        in.playerOnHazard = in.settings.safeWalk && playerOnHazardRaw;
+    };
+    applyNavHazardRelax();
+
     // ── Nav re-plan decision (walk-to route caching) ─────────────────────────
     // Follow the cached route and only re-run the A* on a real trigger. navStep is
     // the steering target ~lookahead budgets ahead along the cached polyline.
@@ -700,9 +847,30 @@ void Tick(void* player, float px, float py, float dt)
         // not count as progress; real movement around a wall does, even when
         // temporarily moving away from the final destination.
         const ULONGLONG nowNav = GetTickCount64();
-        if (goalMoved) g_navProgress.Reset();
+        if (goalMoved) { g_navProgress.Reset(); ClearNavAvoid(); }
         const bool blocked = g_navCache.valid && !Navigation::PaddedPathClear(in, in.player, navStep);
         const bool stalled = in.speed > 0.f && g_navProgress.Stalled(in.player, nowNav, g_navAwaiting);
+        if (stalled && g_refusedFrames >= kNavRefusedFramesForAvoid &&
+            nowNav - g_lastRefusedMs <= kNavRefusalFreshMs) {
+            // Remember the square just past the player box in the refused direction,
+            // and its two neighbours across that direction: whatever refused the step
+            // is more often a wall than a single post, and one square per stall made
+            // the re-plan crawl along it a square at a time.
+            const Vec2 dir = Normalize(Sub(g_lastCmdTo, g_lastCmdFrom));
+            if (LenSq(dir) > 1e-6f) {
+                const Vec2 ahead = Add(in.player, Mul(dir, kUOccPlayerHalfEdge + 0.35f));
+                const Vec2 centre{ std::floor(ahead.x) + 0.5f, std::floor(ahead.y) + 0.5f };
+                const Vec2 across = std::fabs(dir.x) >= std::fabs(dir.y) ? Vec2{ 0.f, 1.f } : Vec2{ 1.f, 0.f };
+                for (float k : { 0.f, -1.f, 1.f }) {
+                    NavAvoid& a = g_navAvoid[g_navAvoidNext];
+                    a.pos = Add(centre, Mul(across, k));
+                    a.untilMs = nowNav + kNavAvoidMs;
+                    g_navAvoidNext = (g_navAvoidNext + 1) % kMaxNavAvoid;
+                }
+                DBG_FILE_LOG("[UDodge] stuck: game refused the route step; avoiding squares around ("
+                             << centre.x << "," << centre.y << ") for the next plans");
+            }
+        }
         if (diagOn) {
             if (blocked) ++DiagTiming::Game().navBlocked;
             if (stalled) ++DiagTiming::Game().navStalls;
@@ -713,9 +881,10 @@ void Tick(void* player, float px, float py, float dt)
             g_navCache.valid = false;
             navStep = in.player;
         }
-        g_wedged.store(blocked || stalled, std::memory_order_relaxed);
+        g_wedged.store(!lockApproach && (blocked || stalled), std::memory_order_relaxed);
         // Plan 89: publish the wedge observation (goal, player, freshness stamp).
-        g_wedgeWalkActive.store(true, std::memory_order_relaxed);
+        // A locked-target approach is not a commanded walk; it never asks for walls to break.
+        g_wedgeWalkActive.store(!lockApproach, std::memory_order_relaxed);
         g_wedgeGoalX.store(wg.x, std::memory_order_relaxed);
         g_wedgeGoalY.store(wg.y, std::memory_order_relaxed);
         g_wedgePlayerX.store(in.player.x, std::memory_order_relaxed);
@@ -735,6 +904,7 @@ void Tick(void* player, float px, float py, float dt)
         g_navProgress.Reset();
         g_navAwaiting = false;
         g_navCache.valid = false;              // walk-to ended → drop the cache
+        ClearNavAvoid();
         g_wedged.store(false, std::memory_order_relaxed);            // plan 89: walk-to ended
         g_wedgeWalkActive.store(false, std::memory_order_relaxed);
     }
@@ -763,24 +933,10 @@ void Tick(void* player, float px, float py, float dt)
         goal.walkTo = true;
         goal.pos = navStep;
     } else if (g_map.hasLock) {
-        // Orbit the locked enemy at a standoff = resolved weapon range × 0.85
-        // (the SetOrbitRange override feeds the standoff directly when non-zero).
-        const float weaponRange = AutoAim::IsProjRangeResolved()
-            ? AutoAim::GetProjRangeTiles() : 6.f;
-        // Inner-standoff annulus radius: keep the player at least this far from the
-        // boss so it never fights point-blank. Fraction of weapon range (scales
-        // across classes) with an absolute tile floor.
-        const float innerStandoff = std::max(kUInnerStandoffMinTiles,
-                                             weaponRange * kUInnerStandoffFrac);
-        const float engagementRange = std::max(innerStandoff + kUDurablePocketMargin,
-                                               weaponRange - kUEngagementRangeInset);
-        // The orbit standoff POINT must sit inside the annulus [innerStandoff,
-        // weaponRange], so clamp it above the inner radius (with a small margin)
-        // and never past weapon range — the soft goal never aims point-blank.
-        float standoff = settings.orbitRange > 0.f
-            ? settings.orbitRange : weaponRange * 0.85f;
-        standoff = std::clamp(standoff, innerStandoff + kUDurablePocketMargin,
-                              engagementRange);
+        const LockGeometry lg = ComputeLockGeometry(settings);
+        const float innerStandoff = lg.innerStandoff;
+        const float engagementRange = lg.engagementRange;
+        const float standoff = lg.standoff;
         const Vec2 fromLock = Sub(in.player, g_map.lockPos);
         const float dist = Len(fromLock);
         if (dist > 1e-3f) {
@@ -895,6 +1051,9 @@ void Tick(void* player, float px, float py, float dt)
         // here on most ticks. This is the walk-to perf win.
         s_snap.navActive        = walkActive && navReplan;
         s_snap.navGoal          = { walkX, walkY };
+        s_snap.navGoalRadius    = navGoalRadius;
+        s_snap.navAvoidCount    = ActiveNavAvoid(s_snap.navAvoid, GetTickCount64());
+        s_snap.navFollowingHazardRoute = walkActive && g_navCache.valid && g_navCache.crossesHazard;
         if (s_snap.navActive) {
             PhaseTimer _p(DiagTiming::Game().rasterNav);
             FillNavGrid(s_snap.navGrid, in.player, settings.safeWalk);
@@ -993,6 +1152,7 @@ void Tick(void* player, float px, float py, float dt)
             g_navCache.n       = std::min(g_route.navWptCount, kMaxNavWpts);
             for (int i = 0; i < g_navCache.n; ++i) g_navCache.wpts[i] = g_route.navWpts[i];
             g_navCache.partial = g_route.navPartial;
+            g_navCache.crossesHazard = g_route.navCrossesHazard;
         } else if (acceptFresh && g_route.navPops > 0 &&
                    g_route.navWptCount < 2 && !g_route.navArrived) {
             // No reachable route is not permission to drive at the raw goal.
@@ -1006,6 +1166,7 @@ void Tick(void* player, float px, float py, float dt)
     // Refresh BOTH the local waiting flag and steering goal before any fallback
     // solve; otherwise an accepted route is immediately overwritten by HOLD.
     navWaiting = g_navAwaiting;
+    applyNavHazardRelax();   // the cache may have been replaced above
     if (goal.walkTo && navArrivedFresh) navStep = {walkX, walkY};
     else if (goal.walkTo && navCacheRefreshed && g_navCache.valid && !navWaiting) {
         float dev = 0.f; bool nearEnd = false;
@@ -1054,6 +1215,21 @@ void Tick(void* player, float px, float py, float dt)
     // Normal temporal solving is performed with the path search on the worker.
     // The game thread keeps only the emergency same-frame re-solve below when a
     // live re-anchor invalidates the worker's already-published target.
+
+    // How much of last frame's commanded step the game actually granted. Refusal
+    // (under a quarter of the command, frame after frame) is the stuck-memory cue.
+    if (g_lastCmdValid) {
+        const Vec2 cmd = Sub(g_lastCmdTo, g_lastCmdFrom);
+        const float cmdLen = Len(cmd);
+        const float granted = cmdLen > 1e-4f ? Dot(Sub(in.player, g_lastCmdFrom), Mul(cmd, 1.f / cmdLen)) : 0.f;
+        if (cmdLen >= 0.01f && granted < 0.25f * cmdLen) {
+            ++g_refusedFrames;
+            g_lastRefusedMs = GetTickCount64();
+        } else {
+            g_refusedFrames = 0;
+        }
+    }
+    g_lastCmdValid = false;
 
     const float frameMs = Clamp(dt * 1000.f, 1.f, 250.f);
     Vec2 moveTarget = in.player;
@@ -1117,6 +1293,7 @@ void Tick(void* player, float px, float py, float dt)
         // re-assert the position, so skip the call and keep the commitment.
         const bool ok = reach > 1e-4f
             ? DodgeRuntime::CallMoveTo(player, moveTarget.x, moveTarget.y) : true;
+        if (reach > 1e-4f) { g_lastCmdFrom = in.player; g_lastCmdTo = moveTarget; g_lastCmdValid = true; }
         if (!ok) moveFailed = true;
         if (diagOn) ++(ok ? DiagTiming::Game().moves : DiagTiming::Game().moveRefused);
         g_commitment.Record(proposedState, Sub(moveTarget, in.player), ok);

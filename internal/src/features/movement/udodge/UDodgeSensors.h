@@ -17,6 +17,9 @@ void RecordAoePacket(const char* encoded);
 // Host environment probes (match the Env fn-pointer signatures).
 bool IsHazardAt(float worldX, float worldY);
 bool CanOccupy(float worldX, float worldY, bool safeWalk);
+// Walls only: the player box against blocked squares, without the FullOccupy
+// half-tile rule or damaging ground (Env::wallsClear, navigation padding).
+bool WallsClear(float worldX, float worldY);
 
 // ── Instantaneous danger map (plan 45) ──────────────────────────────────────
 // Reads the WorldManager server-tick counter (increments once per processed

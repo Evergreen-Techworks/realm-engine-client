@@ -11,6 +11,7 @@
 #include "RePP.h"
 #include "PJDodge.h"
 #include "features/movement/udodge/UDodge.h"
+#include "features/movement/sensors/TileOccupancy.h"
 #include "AutoNexus.h"
 #include "DbgFileLog.h"
 #include "BootGate.h"
@@ -327,15 +328,12 @@ static bool IsPositionBlocked(float cx, float cy)
     if (NoclipWalkabilityOverride(cx, cy, noclipBlocked))
         return noclipBlocked;
 
-    int x0 = static_cast<int>(floorf(cx - kPlayerChebyshevScale));
-    int x1 = static_cast<int>(floorf(cx + kPlayerChebyshevScale));
-    int y0 = static_cast<int>(floorf(cy - kPlayerChebyshevScale));
-    int y1 = static_cast<int>(floorf(cy + kPlayerChebyshevScale));
-    for (int tx = x0; tx <= x1; ++tx)
-        for (int ty = y0; ty <= y1; ++ty)
-            if (WorldTAB::IsTileBlocked(tx, ty))
-                return true;
-    return false;
+    // The shared rule (TileOccupancy.h) — the worker rasters apply the same one.
+    return Movement::TileOccupancy::BoxBlocked(
+        [](int tx, int ty) -> uint8_t {
+            return WorldTAB::IsTileBlocked(tx, ty) ? Movement::TileOccupancy::kTileBlocked : 0;
+        },
+        cx, cy, kPlayerChebyshevScale);
 }
 
 // Flash isValidPosition section B — sub-tile FullOccupy neighbour check.
@@ -343,37 +341,24 @@ static bool IsPositionBlocked(float cx, float cy)
 // fractional position is in the left/right/top/bottom half of the tile, the
 // corresponding adjacent tile(s) must not be FullOccupy.
 //
-// Replicates Player.isFullOccupy() neighbour queries exactly as in the Flash client:
+// Replicates Player.isFullOccupy() neighbour queries as in the Flash client:
 //   frac_x < 0.5 → check left cardinal + left diagonals
 //   frac_x > 0.5 → check right cardinal + right diagonals
 //   frac_x == 0.5 → only cardinal Y checks apply
-// (The original splits at exactly 0.5 with no hysteresis.)
+// The original splits at exactly 0.5; the shared rule (TileOccupancy.h) treats a
+// centre within kCentreLineTolerance of the line as on it, and the worker rasters
+// apply the identical rule, so a route they plan is one this check accepts.
 static bool IsCircleBlocked(float cx, float cy)
 {
     bool noclipBlocked = false;
     if (NoclipWalkabilityOverride(cx, cy, noclipBlocked))
         return noclipBlocked;
 
-    const int   tx = static_cast<int>(floorf(cx));
-    const int   ty = static_cast<int>(floorf(cy));
-    const float fx = cx - static_cast<float>(tx);
-    const float fy = cy - static_cast<float>(ty);
-
-    auto fo = [](int x, int y) { return WorldTAB::IsTileFullOccupied(x, y); };
-
-    if (fx < 0.5f) {
-        if (fo(tx - 1, ty)) return true;
-        if      (fy < 0.5f) { if (fo(tx, ty - 1) || fo(tx - 1, ty - 1)) return true; }
-        else if (fy > 0.5f) { if (fo(tx, ty + 1) || fo(tx - 1, ty + 1)) return true; }
-    } else if (fx > 0.5f) {
-        if (fo(tx + 1, ty)) return true;
-        if      (fy < 0.5f) { if (fo(tx, ty - 1) || fo(tx + 1, ty - 1)) return true; }
-        else if (fy > 0.5f) { if (fo(tx, ty + 1) || fo(tx + 1, ty + 1)) return true; }
-    } else {
-        if      (fy < 0.5f) { if (fo(tx, ty - 1)) return true; }
-        else if (fy > 0.5f) { if (fo(tx, ty + 1)) return true; }
-    }
-    return false;
+    return Movement::TileOccupancy::FullOccupyBlocked(
+        [](int tx, int ty) -> uint8_t {
+            return WorldTAB::IsTileFullOccupied(tx, ty) ? Movement::TileOccupancy::kTileFullOcc : 0;
+        },
+        cx, cy);
 }
 
 // Clamp movement along one axis so the hitbox's LEADING EDGE doesn't cross

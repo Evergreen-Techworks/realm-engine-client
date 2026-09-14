@@ -131,6 +131,17 @@ struct PlannerSnapshot {
     // ── Navigation (Shift+Click walk-to) — second job on the same worker ─────
     bool     navActive = false;   // a walk-to is in progress → run the nav A* too
     Vec2     navGoal{};           // world walk-to target (the clicked spot)
+    float    navGoalRadius = 0.f; // > 0: any cell within this many tiles of navGoal is the goal
+                                  // (a locked target's engagement disk); 0 = the goal cell itself
+    // Stuck memory: squares the player recently pushed into while the game refused
+    // the move (a blocker the tile map does not show). Priced at kUNavAvoidCost so a
+    // re-plan after a stall takes a different line instead of the same one.
+    Vec2     navAvoid[kMaxNavAvoid]{};
+    int      navAvoidCount = 0;
+    // The game thread is following a cached route that crosses damaging ground
+    // (PlanResult::navCrossesHazard): the worker's solve relaxes safe-walk for it on
+    // every cycle, not only on the cycle that planned the route.
+    bool     navFollowingHazardRoute = false;
     NavGrid  navGrid{};           // coarse 1-tile occupancy (game thread fills from WorldTAB)
 };
 
@@ -179,6 +190,12 @@ struct PlanResult {
     int   navWptCount  = 0;     // number of route cells in navWpts
     Vec2  navWpts[kMaxNavWpts]{}; // route polyline (world; [0] = player cell) — driver + overlay
     int   navPops      = 0;     // A* cells finalized (perf diagnostics)
+    // The route crosses damaging ground. Under safe-walk the A* first treats that
+    // ground as a wall; only when no route exists without it does it take the
+    // least-damaging one and set this. The game thread then follows that route
+    // with safe-walk relaxed (the follower and the solver hard-refuse damaging
+    // ground otherwise, which used to leave the player pacing at the hazard edge).
+    bool  navCrossesHazard = false;
     // ── Worker phase timing (perf diagnostics) — plain data, filled by Compute
     // on the worker thread, read by the game thread through the normal handoff.
     float computeDodgeMs = 0.f; // wall-clock of ComputeDodge (ms)

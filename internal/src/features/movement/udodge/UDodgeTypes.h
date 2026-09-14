@@ -521,6 +521,8 @@ constexpr int   kUNavRadCells  = 72;     // window radius (cells = tiles) — re
 constexpr int   kUNavSide      = kUNavRadCells * 2 + 1;          // 145
 constexpr int   kUNavCells     = kUNavSide * kUNavSide;          // 145x145 = 21025
 constexpr int   kUNavHeapCap   = kUNavCells * 8;                 // fixed A* min-heap (lazy, done-check on pop)
+constexpr int   kMaxNavAvoid   = 8;      // stuck-memory squares carried into the nav A* (see UDodge.cpp)
+constexpr float kUNavAvoidCost = 30.f;   // extra A* cost to enter a remembered stuck square (a price, never a wall)
 constexpr int   kMaxNavWpts    = 96;     // route polyline cap handed back to the driver (bigger window → longer routes)
 constexpr float kUNavRefillTiles = 16.f; // re-rasterize the nav window only after the player moves this far
                                          // (else reuse the cached grid — the worker handles the player's
@@ -667,8 +669,14 @@ struct Env {
     bool (*canOccupy)(float x, float y, bool safeWalk) = nullptr;
     // "Is (x, y) damaging ground?" — used by the hazard-escape mode.
     bool (*isHazard)(float x, float y) = nullptr;
+    // "Is the player box at (x, y) clear of walls?" — walls only: no FullOccupy
+    // half-tile rule, no damaging ground. Navigation's extra wall padding samples
+    // with this (see PaddingClearAt). Null falls back to canOccupy without safe-walk.
+    bool (*wallsClear)(float x, float y) = nullptr;
     // Worker-safe occupancy snapshot. When canOccupy is null, the solver reads
-    // these copied flags instead of touching WorldTAB/game memory.
+    // these copied flags instead of touching WorldTAB/game memory. Cell bits follow
+    // TileOccupancy.h: 0x01 wall, 0x02 hazard, 0x04 sink, 0x08 void, 0x10 the
+    // FullOccupy half-tile rule.
     const uint8_t* occFlags = nullptr;
     Vec2 occCenter{};
     int occSide = 0;
@@ -761,6 +769,8 @@ struct ZoneThreat {
     float radius = 1.f;
     bool  active = false;  // true = detonated & persisting (HARD danger);
                            // false = telegraphed, not yet landed (SOFT cost)
+    bool  enemyKeepout = false; // an enemy-centred avoidance policy (UDodgeEnemyHazards),
+                                // not an observed blast — softened during walk-to
 };
 
 struct DangerMap {
@@ -806,9 +816,31 @@ inline bool CanOccupyAt(const MapInput& in, Vec2 pos)
                                                 in.env.occCellTiles)) + in.env.occRadius;
     if (gx < 0 || gy < 0 || gx >= in.env.occSide || gy >= in.env.occSide) return false;
     const uint8_t f = in.env.occFlags[gy * in.env.occSide + gx];
-    if (f & 0x1) return false;
+    if (f & (0x1 | 0x10)) return false;   // wall, or the FullOccupy half-tile rule (the live check applies both)
     if (in.settings.safeWalk && (f & 0x2)) return false;
     return true;
+}
+
+// Walls-only probe for navigation's extra wall padding. The padding exists to keep
+// the player BOX off wall corners; sampling its offsets with the full CanOccupyAt
+// also tested them against the FullOccupy half-tile rule, which already keeps the
+// centre half a tile from those objects. A route along that rule's boundary — the
+// only route through a one-tile gap, and the one the A* takes around every
+// FullOccupy corner — then had no padded sample that passed, so the follower could
+// return nothing but the player's own position and the player held in place.
+inline bool PaddingClearAt(const MapInput& in, Vec2 pos)
+{
+    if (in.env.canOccupy)
+        return in.env.wallsClear ? in.env.wallsClear(pos.x, pos.y)
+                                 : in.env.canOccupy(pos.x, pos.y, false);
+    if (!in.env.occFlags || in.env.occSide <= 0 || in.env.occCellTiles <= 0.f)
+        return true;
+    const int gx = static_cast<int>(std::lround((pos.x - in.env.occCenter.x) /
+                                                in.env.occCellTiles)) + in.env.occRadius;
+    const int gy = static_cast<int>(std::lround((pos.y - in.env.occCenter.y) /
+                                                in.env.occCellTiles)) + in.env.occRadius;
+    if (gx < 0 || gy < 0 || gx >= in.env.occSide || gy >= in.env.occSide) return false;
+    return (in.env.occFlags[gy * in.env.occSide + gx] & 0x1) == 0;
 }
 
 // Swept movement occupancy/hazard gate. Endpoint-only safe-walk permits a long
