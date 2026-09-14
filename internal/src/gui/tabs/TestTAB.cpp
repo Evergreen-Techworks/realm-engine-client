@@ -1331,6 +1331,11 @@ void TestTAB::Render()
         if (nFallback > 0 || nSuspect > 0)
             ImGui::TextColored(ImVec4(1.f, 0.45f, 0.2f, 1.f),
                 "STALE OFFSETS after this patch — update RuntimeOffsets (names/values).");
+        // BootGate holds every gated feature (and all dodge dispatch, via Degraded) until the
+        // generated bindings verify; the native trace log names the failing rows.
+        if (!RuntimeOffsets::BindingsReady())
+            ImGui::TextColored(ImVec4(1.f, 0.35f, 0.35f, 1.f),
+                "Bindings not verified — features held (the native trace log says why).");
 
         static bool s_showAllOffsets = false;
         ImGui::Checkbox("Show all (not just problems)##offhealth", &s_showAllOffsets);

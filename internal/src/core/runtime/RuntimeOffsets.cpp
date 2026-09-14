@@ -3,6 +3,8 @@
 #include "BuildBindings.h"
 #include "Il2CppResolver.h"
 #include "DbgFileLog.h"
+#include <atomic>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -663,6 +665,10 @@ const char* GetUnresolvedClassNames()  { return s_unresolvedClassNames; }
 static OffsetState s_entryState[kEntryCount];     // OffsetState::Pending (0) by default
 static uint32_t    s_entryFallback[kEntryCount];  // snapshot of each initial fallback
 static bool        s_fallbackSnapped = false;
+// Set when a live offset disagreed with the entry's binding, so the failure log can
+// give both values; a Suspect set by a sanity check leaves it false.
+static bool        s_entryDisagreed[kEntryCount];
+static uint32_t    s_entryLiveOffset[kEntryCount];
 
 int GetOffsetReport(OffsetReportRow* out, int maxRows)
 {
@@ -792,23 +798,201 @@ bool ReadyForActivation()
     return true;
 }
 
+namespace {
+
+constexpr int kListedFailures = 20;
+
+// The failing rows of one check, as log clauses. Every clause feeds the signature, so a
+// change beyond the listed twenty still counts as a change of the failing set.
+struct FailureList {
+    char     text[4096] = {};
+    size_t   used = 0;
+    int      count = 0;
+    uint64_t signature = 14695981039346656037ULL;  // FNV-1a
+
+    void Add(const char* format, ...)
+    {
+        char clause[256];
+        va_list args;
+        va_start(args, format);
+        vsnprintf(clause, sizeof(clause), format, args);
+        va_end(args);
+        for (const unsigned char* c = reinterpret_cast<const unsigned char*>(clause); ; ++c) {
+            signature = (signature ^ *c) * 1099511628211ULL;
+            if (!*c) break;
+        }
+        if (count++ >= kListedFailures || used + 1 >= sizeof(text)) return;
+        const int n = snprintf(text + used, sizeof(text) - used, "%s%s", count > 1 ? "; " : "", clause);
+        if (n > 0) used = (used + static_cast<size_t>(n) < sizeof(text)) ? used + static_cast<size_t>(n) : sizeof(text) - 1;
+    }
+};
+
+} // namespace
+
+static bool EntryUnverified(int i)
+{
+    return (s_entryState[i] != OffsetState::ResolvedMatch && s_entryState[i] != OffsetState::ResolvedShifted) ||
+           !BuildBindings::Field(s_entries[i].className, s_entries[i].tryNames[0], s_entries[i].key);
+}
+
+// A declared method by its exact name and arity, wherever it now lives: the installed
+// method lookup refuses one away from its bound address, and the log wants that address.
+static const MethodInfo* FindDeclaredMethod(Il2CppClass* klass, const char* name, int args)
+{
+    if (!il2cpp_class_get_methods || !il2cpp_method_get_name || !il2cpp_method_get_param_count) return nullptr;
+    void* iter = nullptr;
+    while (const MethodInfo* method = il2cpp_class_get_methods(klass, &iter))
+        if (strcmp(il2cpp_method_get_name(method), name) == 0 &&
+            static_cast<int>(il2cpp_method_get_param_count(method)) == args) return method;
+    return nullptr;
+}
+
+// Why ReadyForActivation() is false. It reads what that check reads -- the entry states,
+// the FieldInfo pointers, and every generated field and method row against the live
+// classes -- but names every failing row instead of stopping at the first. A binding row
+// whose table entry already failed is named once, by the entry.
+static void DescribeBindingFailures(FailureList& list)
+{
+    for (int i = 0; i < kEntryCount; ++i) {
+        if (!EntryUnverified(i)) continue;
+        const Entry& e = s_entries[i];
+        const char* key = e.key ? e.key : "?";
+        const auto* binding = BuildBindings::Field(e.className, e.tryNames[0], e.key);
+        if (!binding) { list.Add("field.%s has no generated binding", key); continue; }
+        switch (s_entryState[i]) {
+        case OffsetState::Suspect:
+            if (s_entryDisagreed[i])
+                list.Add("field.%s %s::%s bound offset 0x%X, live 0x%X", key, binding->targetOwner, binding->target,
+                    binding->offset, s_entryLiveOffset[i]);
+            else
+                list.Add("field.%s %s::%s failed a live sanity check", key, binding->targetOwner, binding->target);
+            break;
+        case OffsetState::FallbackFieldName:
+            list.Add("field.%s %s::%s not declared (bound offset 0x%X)", key, binding->targetOwner, binding->target, binding->offset);
+            break;
+        case OffsetState::FallbackGaveUp:
+            list.Add("field.%s class %s not loaded before the give-up", key, binding->targetOwner);
+            break;
+        default:
+            list.Add("field.%s not resolved yet", key);
+            break;
+        }
+    }
+    for (int i = 0; i < kFIEntryCount; ++i)
+        if (!*s_fieldInfoEntries[i].out)
+            list.Add("FieldInfo %s::%s not resolved", s_fieldInfoEntries[i].className, s_fieldInfoEntries[i].fieldName);
+
+    std::vector<std::pair<const char*, Il2CppClass*>> byName;
+    il2cpp_class_for_each([](Il2CppClass* klass, void* ud) {
+        static_cast<std::vector<std::pair<const char*, Il2CppClass*>>*>(ud)
+            ->emplace_back(il2cpp_class_get_name(klass), klass);
+    }, &byName);
+    for (const auto& row : BuildBindings::fields) {
+        if (!row.owner[0]) continue;
+        bool named = false;
+        for (int i = 0; row.entry && i < kEntryCount && !named; ++i)
+            named = s_entries[i].key && strcmp(s_entries[i].key, row.entry) == 0 && EntryUnverified(i);
+        if (named) continue;
+        bool loaded = false, declared = false, matched = false;
+        uint32_t live = 0;
+        for (const auto& entry : byName) {
+            if (strcmp(entry.first, row.targetOwner) != 0) continue;
+            loaded = true;
+            FieldInfo* field = FindExactFieldOnHierarchy(entry.second, row.target);
+            if (!field) continue;
+            const uint32_t offset = static_cast<uint32_t>(il2cpp_field_get_offset(field));
+            if (offset == row.offset) { matched = true; break; }
+            if (!declared) { declared = true; live = offset; }
+        }
+        if (matched) continue;
+        const char* key = row.entry ? row.entry : row.source;
+        if (!loaded) list.Add("field.%s class %s not loaded", key, row.targetOwner);
+        else if (!declared) list.Add("field.%s %s::%s not declared", key, row.targetOwner, row.target);
+        else list.Add("field.%s %s::%s bound offset 0x%X, live 0x%X", key, row.targetOwner, row.target, row.offset, live);
+    }
+    const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"GameAssembly.dll"));
+    for (const auto& row : BuildBindings::methods) {
+        if (!row.owner[0]) continue;
+        bool loaded = false, declared = false, matched = false;
+        uintptr_t live = 0;
+        for (const auto& entry : byName) {
+            if (strcmp(entry.first, row.targetOwner) != 0) continue;
+            loaded = true;
+            const MethodInfo* method = il2cpp_class_get_method_from_name(entry.second, row.source, row.args);
+            if (method && reinterpret_cast<uintptr_t>(method->methodPointer) == base + row.rva) { matched = true; break; }
+            if (!method) method = FindDeclaredMethod(entry.second, row.target, row.args);
+            if (method && !declared) {
+                declared = true;
+                const uintptr_t pointer = reinterpret_cast<uintptr_t>(method->methodPointer);
+                live = pointer >= base ? pointer - base : 0;
+            }
+        }
+        if (matched) continue;
+        if (!loaded)
+            list.Add("method.%s.%s/%d class %s not loaded", row.owner, row.source, row.args, row.targetOwner);
+        else if (!declared)
+            list.Add("method.%s.%s/%d %s::%s not declared", row.owner, row.source, row.args, row.targetOwner, row.target);
+        else
+            list.Add("method.%s.%s/%d %s::%s bound rva 0x%llX, live 0x%llX", row.owner, row.source, row.args,
+                row.targetOwner, row.target, static_cast<unsigned long long>(row.rva), static_cast<unsigned long long>(live));
+    }
+}
+
+// One ungated line the first time verification fails, and again whenever the failing
+// set changes: a Release build otherwise holds its features without saying why. Nothing
+// is written while the table is still resolving -- lazy-loading classes are not failures
+// yet. Only a thread that just ran a failing check calls this; one that finds another
+// thread already writing skips, and the next check logs whatever that one did not.
+static void LogBindingFailures()
+{
+    static std::atomic<bool> s_busy{ false };
+    if (!s_allDone || s_busy.exchange(true)) return;
+    static FailureList s_list;
+    static bool s_logged = false;
+    static uint64_t s_signature = 0;
+    static char s_line[4400];
+    s_list = FailureList{};
+    DescribeBindingFailures(s_list);
+    if (s_list.count > 0 && (!s_logged || s_list.signature != s_signature)) {
+        s_logged = true;
+        s_signature = s_list.signature;
+        char more[32] = "";
+        if (s_list.count > kListedFailures) snprintf(more, sizeof(more), "; and %d more", s_list.count - kListedFailures);
+        snprintf(s_line, sizeof(s_line), "[RuntimeOffsets] Bindings not verified, gated features held. %d failing: %s%s",
+            s_list.count, s_list.text, more);
+        DbgFileLogWrite(s_line);
+    }
+    s_busy.store(false);
+}
+
 // Latched, throttled readiness for the frame path. A build with no generated
 // bindings has nothing to verify, so it is ready immediately and every developer
 // build behaves exactly as it did before this header existed.
+//
+// Called from the game-update thread (dodge dispatch, feature installs) and the render
+// thread (BootGate, the Test tab). The latch only ever goes from false to true, and a
+// compare-exchange on the timestamp lets exactly one thread run each second's check.
 bool BindingsReady()
 {
-    static bool s_ready = false;
-    static ULONGLONG s_lastCheck = 0;
+    static std::atomic<bool> s_ready{ false };
+    static std::atomic<ULONGLONG> s_lastCheck{ 0 };
     if (s_ready) return true;
     if (!BuildBindings::fields[0].owner[0] && !BuildBindings::methods[0].owner[0]) {
         s_ready = true;
         return true;
     }
+    // The timestamp is read before the clock, so `now` never precedes it and the
+    // unsigned difference cannot wrap.
+    ULONGLONG last = s_lastCheck.load();
     const ULONGLONG now = GetTickCount64();
-    if (s_lastCheck != 0 && now - s_lastCheck < 1000ULL) return false;
-    s_lastCheck = now;
-    s_ready = ReadyForActivation();
-    if (s_ready) DbgFileLogWrite("[RuntimeOffsets] Generated bindings verified against the live process.");
+    if (last != 0 && now - last < 1000ULL) return false;
+    if (!s_lastCheck.compare_exchange_strong(last, now)) return s_ready;
+    if (ReadyForActivation()) {
+        if (!s_ready.exchange(true))
+            DbgFileLogWrite("[RuntimeOffsets] Generated bindings verified against the live process.");
+        return true;
+    }
+    LogBindingFailures();
     return s_ready;
 }
 
@@ -908,6 +1092,16 @@ void EnsureAll()
         }
         if (s_unresolvedClassNames[0] != '\0')
             DBG_FILE_LOG("[RuntimeOffsets] Unresolved (BeeByte renamed): " << s_unresolvedClassNames);
+        // Terminal on a build with generated bindings: these entries are marked done on
+        // their fallbacks, so ReadyForActivation cannot turn true again. Say so ungated.
+        if (s_unresolvedClassNames[0] != '\0' && (BuildBindings::fields[0].owner[0] || BuildBindings::methods[0].owner[0])) {
+            char line[768];
+            snprintf(line, sizeof(line),
+                "[RuntimeOffsets] Offset table gave up after %llu ms with classes not loaded: %s. "
+                "Their entries keep fallback offsets and cannot verify, so gated features stay held for this session.",
+                static_cast<unsigned long long>(kGiveUpMs), s_unresolvedClassNames);
+            DbgFileLogWrite(line);
+        }
     }
 
     // Cache last class lookup to avoid calling FindClassLoose once per entry
@@ -971,6 +1165,8 @@ void EnsureAll()
                     "[RuntimeOffsets] %s (%s::%s) disagrees with its binding: bound offset 0x%X, live offset 0x%X; keeping fallback 0x%X",
                     e.key ? e.key : "?", e.className, binding->target, binding->offset, rawOffset, fallback);
                 DbgFileLogWrite(line);
+                s_entryDisagreed[i] = true;
+                s_entryLiveOffset[i] = rawOffset;
                 s_entryState[i] = OffsetState::Suspect;
                 e.done = true;
                 continue;
