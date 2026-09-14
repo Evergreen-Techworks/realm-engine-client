@@ -25,10 +25,14 @@ const BAG_TYPES = new Set<number>([
 // so the farmer's white-bag rule took every item out of every potion bag.
 //
 // Ten bag colours share five LootRarity buckets. 'white' is the farmer's
-// collect-everything bucket, so it holds the rare white, gold, orange and red
-// bags. The two blue bags share 'blue'. The egg basket stays 'green', which
-// RARITY_RANK orders below blue and purple; that is not the in-game order, and
-// it is kept so farmer bag priority does not silently change.
+// collect-everything bucket, and only the real white bag (Loot Bag 6) is in it.
+// 'blue' is the filtered bucket: on those bags the farmer only drinks useful
+// stat potions, takes UT/ST items and equips upgrades, and Auto Loot's filter
+// decides the rest. Both blue bags and the gold, orange and red bags are in it;
+// LootRarity has no gold/orange/red, so use `bagType` to tell them apart. #64
+// put gold, orange and red under 'white', which emptied them. The egg basket
+// stays 'green', which RARITY_RANK orders below blue and purple; that is not the
+// in-game order, and it is kept so farmer bag priority does not silently change.
 const BAG_RARITY: Readonly<Record<number, LootRarity>> = {
   1280: 'common',  // Loot Bag 0        — brown
   1281: 'common',  // (alt brown; not in objects.xml, kept)
@@ -39,19 +43,19 @@ const BAG_RARITY: Readonly<Record<number, LootRarity>> = {
   1289: 'blue',    // Loot Bag 4        — light blue
   1291: 'blue',    // Loot Bag 5        — dark blue, potions (was 'white')
   1292: 'white',   // Loot Bag 6        — white
-  1294: 'white',   // Loot Bag 7        — gold
-  1295: 'white',   // Loot Bag 8        — orange
+  1294: 'blue',    // Loot Bag 7        — gold (was 'white')
+  1295: 'blue',    // Loot Bag 8        — orange (was 'white')
   1296: 'white',   // Loot Bag 6 Boost  — white
-  1708: 'white',   // Loot Bag 9        — red
+  1708: 'blue',    // Loot Bag 9        — red (was 'white')
   1709: 'common',  // Loot Bag 0 Boost  — brown
   1710: 'common',  // Loot Bag 1 Boost  — pink
   1722: 'purple',  // Loot Bag 2 Boost  — purple
   1723: 'green',   // Loot Bag 3 Boost  — egg basket
-  1724: 'white',   // Loot Bag 7 Boost  — gold
+  1724: 'blue',    // Loot Bag 7 Boost  — gold (was 'white')
   1725: 'blue',    // Loot Bag 4 Boost  — light blue
   1726: 'blue',    // Loot Bag 5 Boost  — dark blue, potions (was 'white')
-  1727: 'white',   // Loot Bag 8 Boost  — orange
-  1728: 'white',   // Loot Bag 9 Boost  — red
+  1727: 'blue',    // Loot Bag 8 Boost  — orange (was 'white')
+  1728: 'blue',    // Loot Bag 9 Boost  — red (was 'white')
   8239: 'common',  // Guill Potion Bag
 };
 

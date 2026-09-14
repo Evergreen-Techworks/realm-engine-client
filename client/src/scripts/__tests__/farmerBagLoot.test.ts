@@ -31,21 +31,34 @@ vi.mock('../../util/Logger.js', () => ({
 // RotMG 86ad651b), trimmed to the tags the SDK reads. The bag colour comment on
 // each bag is its sprite (lofiObj4) sampled from mapObjects.png: "Loot Bag 5" is
 // the dark-blue bag that stat potions (BagType 5) drop in; "Loot Bag 6" is the
-// white bag that untiered items (BagType 6) drop in.
+// white bag that untiered items (BagType 6) drop in; Loot Bags 7, 8 and 9 are the
+// gold, orange and red bags.
 const OBJECTS_XML = `<Objects>
   <Object type="0x0307" id="Archer"><Class>Player</Class><Player /><MaxHitPoints max="750">150</MaxHitPoints><MaxMagicPoints max="300">100</MaxMagicPoints><Attack max="75">17</Attack><Defense max="25">0</Defense><Speed max="55">22</Speed><Dexterity max="50">15</Dexterity><HpRegen max="40">5</HpRegen><MpRegen max="50">15</MpRegen></Object>
   <Object type="0x050B" id="Loot Bag 5"><DisplayId>Loot Bag</DisplayId><Class>Container</Class><Container /><CanPutNormalObjects /><CanPutSoulboundObjects /><Loot /><SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes></Object>
   <Object type="0x06be" id="Loot Bag 5 Boost"><Class>Container</Class><Container /><CanPutNormalObjects /><CanPutSoulboundObjects /><Loot /><SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes></Object>
   <Object type="0x050C" id="Loot Bag 6"><DisplayId>Loot Bag</DisplayId><Class>Container</Class><Container /><CanPutNormalObjects /><CanPutSoulboundObjects /><Loot /><SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes></Object>
+  <Object type="0x0510" id="Loot Bag 6 Boost"><DisplayId>Loot Bag</DisplayId><Class>Container</Class><Container /><CanPutNormalObjects /><CanPutSoulboundObjects /><Loot /><SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes></Object>
+  <Object type="0x050E" id="Loot Bag 7"><DisplayId>Loot Bag</DisplayId><Class>Container</Class><Container /><CanPutNormalObjects /><CanPutSoulboundObjects /><Loot /><SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes></Object>
+  <Object type="0x6bc" id="Loot Bag 7 Boost"><DisplayId>Loot Bag</DisplayId><Class>Container</Class><Container /><CanPutNormalObjects /><CanPutSoulboundObjects /><Loot /><SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes></Object>
+  <Object type="0x50f" id="Loot Bag 8"><DisplayId>Loot Bag</DisplayId><Class>Container</Class><Container /><CanPutNormalObjects /><CanPutSoulboundObjects /><Loot /><SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes></Object>
+  <Object type="0x6bf" id="Loot Bag 8 Boost"><DisplayId>Loot Bag</DisplayId><Class>Container</Class><Container /><CanPutNormalObjects /><CanPutSoulboundObjects /><Loot /><SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes></Object>
+  <Object type="0x6ac" id="Loot Bag 9"><DisplayId>Loot Bag</DisplayId><Class>Container</Class><Container /><CanPutNormalObjects /><CanPutSoulboundObjects /><Loot /><SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes></Object>
+  <Object type="0x6c0" id="Loot Bag 9 Boost"><DisplayId>Loot Bag</DisplayId><Class>Container</Class><Container /><CanPutNormalObjects /><CanPutSoulboundObjects /><Loot /><SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes></Object>
   <Object type="0xa17" id="Obsidian Dagger"><Class>Equipment</Class><SlotType>2</SlotType><Tier>6</Tier><BagType>1</BagType></Object>
+  <Object type="0xa8d" id="Bow of Innocent Blood"><Class>Equipment</Class><SlotType>3</SlotType><Tier>11</Tier><BagType>4</BagType></Object>
   <Object type="0xb02" id="Bow of Covert Havens"><Class>Equipment</Class><SlotType>3</SlotType><Tier>12</Tier><BagType>4</BagType></Object>
+  <Object type="0xc0b" id="Orb of Conflict"><Class>Equipment</Class><SlotType>21</SlotType><BagType>6</BagType><Soulbound /></Object>
   <Object type="0xa1f" id="Potion of Attack"><Class>Equipment</Class><SlotType>10</SlotType><Tier>2</Tier><Activate stat="ATT" amount="1">IncrementStat</Activate><Consumable /><Potion /><BagType>5</BagType></Object>
   <Object type="0xa21" id="Potion of Speed"><Class>Equipment</Class><SlotType>10</SlotType><Tier>2</Tier><Activate stat="SPD" amount="1">IncrementStat</Activate><Consumable /><Potion /><BagType>5</BagType></Object>
 </Objects>`;
 const TILES_XML = `<GroundTypes><Ground type="0xb04c" id="O3 Normal Tile Corner"/></GroundTypes>`;
 const TYPE = {
-  ARCHER: 0x0307, LOOT_BAG_5: 0x050b, LOOT_BAG_5_BOOST: 0x06be, LOOT_BAG_6: 0x050c,
-  OBSIDIAN_DAGGER: 0xa17, COVERT_BOW: 0xb02, POT_ATTACK: 0xa1f, POT_SPEED: 0xa21, FLOOR: 0xb04c,
+  ARCHER: 0x0307, LOOT_BAG_5: 0x050b, LOOT_BAG_5_BOOST: 0x06be, LOOT_BAG_6: 0x050c, LOOT_BAG_6_BOOST: 0x0510,
+  LOOT_BAG_7: 0x050e, LOOT_BAG_7_BOOST: 0x06bc, LOOT_BAG_8: 0x050f, LOOT_BAG_8_BOOST: 0x06bf,
+  LOOT_BAG_9: 0x06ac, LOOT_BAG_9_BOOST: 0x06c0,
+  OBSIDIAN_DAGGER: 0xa17, INNOCENT_BLOOD_BOW: 0xa8d, COVERT_BOW: 0xb02, ORB_OF_CONFLICT: 0xc0b,
+  POT_ATTACK: 0xa1f, POT_SPEED: 0xa21, FLOOR: 0xb04c,
 };
 const ME = 1000;
 const BAG = 5000;
@@ -146,7 +159,7 @@ function standOnBag(bagType: number, items: number[], playerStats: Stats = {}) {
     return sent.filter((p) => p.name === 'INVENTORYSWAP' || p.name === 'USEITEM')
       .map((p) => p.name === 'USEITEM'
         ? { use: p.data.slotObject.slotId, item: p.data.slotObject.objectType }
-        : { take: p.data.slotObject1.slotId, item: p.data.slotObject1.objectType });
+        : { take: p.data.slotObject1.slotId, item: p.data.slotObject1.objectType, to: p.data.slotObject2.slotId });
   };
   return { farmer, loot };
 }
@@ -160,9 +173,39 @@ describe('Realm Farmer bag loot on the real SDK', () => {
     expect(s.loot()).toEqual([{ use: 1, item: TYPE.POT_ATTACK }]);
   });
 
-  it('a white bag still has every item collected', () => {
-    const s = standOnBag(TYPE.LOOT_BAG_6, [TYPE.OBSIDIAN_DAGGER]);
-    expect(s.loot()).toEqual([{ take: 0, item: TYPE.OBSIDIAN_DAGGER }]);
+  it.each([
+    ['Loot Bag 6', TYPE.LOOT_BAG_6],
+    ['Loot Bag 6 Boost', TYPE.LOOT_BAG_6_BOOST],
+  ])('a white bag (%s) still has every item collected', (_name, bagType) => {
+    const s = standOnBag(bagType, [TYPE.OBSIDIAN_DAGGER]);
+    expect(s.loot()).toEqual([{ take: 0, item: TYPE.OBSIDIAN_DAGGER, to: 4 }]);
+  });
+
+  // Gold, orange and red bags go through Auto Loot's filter like the blue bags:
+  // the farmer itself only drinks useful potions, takes UT/ST items and equips upgrades.
+  const RARE_BAGS: Array<[string, number]> = [
+    ['gold bag (Loot Bag 7)', TYPE.LOOT_BAG_7],
+    ['gold bag (Loot Bag 7 Boost)', TYPE.LOOT_BAG_7_BOOST],
+    ['orange bag (Loot Bag 8)', TYPE.LOOT_BAG_8],
+    ['orange bag (Loot Bag 8 Boost)', TYPE.LOOT_BAG_8_BOOST],
+    ['red bag (Loot Bag 9)', TYPE.LOOT_BAG_9],
+    ['red bag (Loot Bag 9 Boost)', TYPE.LOOT_BAG_9_BOOST],
+  ];
+
+  it.each(RARE_BAGS)('the %s holding only an item nothing wants is left alone', (_name, bagType) => {
+    const s = standOnBag(bagType, [TYPE.OBSIDIAN_DAGGER]);
+    expect(s.loot()).toEqual([]);
+  });
+
+  it.each(RARE_BAGS)('the %s gives up its UT item and keeps the unwanted one', (_name, bagType) => {
+    const s = standOnBag(bagType, [TYPE.OBSIDIAN_DAGGER, TYPE.ORB_OF_CONFLICT]);
+    expect(s.loot()).toEqual([{ take: 1, item: TYPE.ORB_OF_CONFLICT, to: 4 }]);
+  });
+
+  it.each(RARE_BAGS)('the %s still has its equip upgrade equipped', (_name, bagType) => {
+    const s = standOnBag(bagType, [TYPE.OBSIDIAN_DAGGER, TYPE.COVERT_BOW],
+      { [StatType.Inventory0]: TYPE.INNOCENT_BLOOD_BOW });
+    expect(s.loot()).toEqual([{ take: 1, item: TYPE.COVERT_BOW, to: 0 }]);
   });
 
   it('skips a Potion of Attack once Attack is capped, even while Defense is not', () => {
