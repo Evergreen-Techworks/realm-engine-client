@@ -585,6 +585,42 @@ static void CopyCachedObjectName(void* props, char* out, size_t outCap)
 // maps, which is most of a long realm session's tile list.
 static constexpr int32_t kMovementTileWindow = 128;
 
+// Streamed-square coordinate cache (render thread only; DoRefresh is its only user).
+//
+// Movement needs every streamed square inside the movement window, wherever it sits
+// in the game's square list. The list only grows while a map is loaded, and a square
+// never changes position, so each entry's coordinates are read once and kept by list
+// index. A refresh then reads the entries streamed since the last one, plus the
+// squares inside the window (their type and properties can change, so those are
+// re-read every time). An in-window entry whose object pointer no longer matches the
+// cache means the list was rebuilt or reordered: the cache is dropped and rebuilt.
+//
+// This replaces "the newest 65,536 entries" (2026-09-12), which kept the squares
+// around the player's current position in a long session but dropped them again
+// once the player walked back through ground streamed earlier; before that, "the
+// first 65,536" dropped the new ground instead. A dropped square reads as void,
+// which the dodge grid and the walk-to A* both treat as a wall.
+struct SquareCoordCache {
+    void*                list = nullptr;      // the List object these indices belong to
+    std::vector<void*>   ptr;
+    std::vector<int32_t> x, y;
+    // Indices within kMovementTileWindow + kSlack of (winCx, winCy), valid for entries
+    // [0, windowKnown). Rebuilt when the player moves kSlack tiles; extended as entries
+    // are appended.
+    std::vector<int32_t> inWindow;
+    int32_t winCx = 0, winCy = 0;
+    size_t  windowKnown = 0;
+    bool    windowValid = false;
+    static constexpr int32_t kSlack = 8;
+    void Reset(void* owner)
+    {
+        list = owner;
+        ptr.clear(); x.clear(); y.clear(); inWindow.clear();
+        windowKnown = 0; windowValid = false;
+    }
+};
+static SquareCoordCache s_squareCoords;
+static constexpr size_t kSquareCoordCacheMax = static_cast<size_t>(1) << 20;   // 16 MB; beyond it, fall back
 
 static void DoRefresh()
 {
@@ -756,33 +792,26 @@ static void DoRefresh()
 
     // Primary: List<BGAIOPJMHLO> @ wm+0x60 — all tiles received this session
     if (Mem::AddrOk(listItems) && listSize > 0) {
-        // NEWEST squares first. The list only grows while a map is loaded (squares
-        // are appended as the server first streams them), so in a long realm session
-        // it passes MAX_TILES. Reading only the first MAX_TILES entries then dropped
-        // exactly the squares around the player's CURRENT position, and CopyBoxBlocked
-        // reports an unscanned square as void (bit3), which the dodge grid and the
-        // walk-to A* both treat as a hard wall. Keep the most recently streamed ones.
-        const int32_t cap = listSize < (int32_t)MAX_TILES ? listSize : (int32_t)MAX_TILES;
-        const int32_t first = listSize - cap;
         const uint8_t* base = reinterpret_cast<const uint8_t*>(listItems) + Il2CppC::kArrData;
         // Movement window (see kMovementTileWindow); the World table wants every tile.
         const bool windowed = !detail && (g_localX != 0.f || g_localY != 0.f);
         const int32_t winCx = static_cast<int32_t>(std::floor(g_localX));
         const int32_t winCy = static_cast<int32_t>(std::floor(g_localY));
-        for (int32_t i = first; i < listSize; ++i) {
-            void* tp = nullptr;
-            if (!Mem::TryRead(base + (size_t)i * sizeof(void*), 0u, tp) || !Mem::AddrOk(tp)) continue;
+        int32_t scanned = 0;
+
+        // Copy one square whose object pointer and coordinates are already known.
+        const auto copySquare = [&](void* tp, int32_t tileX, int32_t tileY) {
             WorldTile t;
             t.ptr = tp;
             g_sampleTilePtr = tp;   // A4: any valid tile instance (ptr is good regardless of offset staleness)
-            Mem::TryRead(tp, RuntimeOffsets::TileX,    t.tileX);
-            Mem::TryRead(tp, RuntimeOffsets::TileY,    t.tileY);
+            t.tileX = tileX;
+            t.tileY = tileY;
             Mem::TryRead(tp, RuntimeOffsets::TileType, t.tileType);
-            if (t.tileType == TILE_VOID) continue;   // skip void/unset slots
+            if (t.tileType == TILE_VOID) return;   // skip void/unset slots
             if (windowed && (std::abs(t.tileX - winCx) > kMovementTileWindow ||
-                             std::abs(t.tileY - winCy) > kMovementTileWindow)) continue;
+                             std::abs(t.tileY - winCy) > kMovementTileWindow)) return;
             ReadTileProps(tp, t);
-            
+
             // Read Discord method cached values from the Square object directly
             Mem::TryRead(tp, RuntimeOffsets::Sq_DamageCached, t.damageCached);
             void* coverPtr = nullptr;
@@ -799,9 +828,72 @@ static void DoRefresh()
                     Il2CppC::ReadString(idStr, t.tileName, sizeof(t.tileName));
             }
             g_tiles.push_back(t);
+        };
+
+        bool copied = false;
+        if (windowed && static_cast<size_t>(listSize) <= kSquareCoordCacheMax) {
+            SquareCoordCache& c = s_squareCoords;
+            if (c.list != tileListPtr || static_cast<size_t>(listSize) < c.ptr.size())
+                c.Reset(tileListPtr);
+            // Entries streamed since the last refresh. Stop at the first one that is not
+            // readable yet; the next refresh resumes there.
+            for (int32_t i = static_cast<int32_t>(c.ptr.size()); i < listSize; ++i) {
+                void* tp = nullptr;
+                int32_t tx = 0, ty = 0;
+                if (!Mem::TryRead(base + (size_t)i * sizeof(void*), 0u, tp) || !Mem::AddrOk(tp) ||
+                    !Mem::TryRead(tp, RuntimeOffsets::TileX, tx) ||
+                    !Mem::TryRead(tp, RuntimeOffsets::TileY, ty)) break;
+                c.ptr.push_back(tp); c.x.push_back(tx); c.y.push_back(ty);
+                ++scanned;
+            }
+            // Which cached entries are near the player. Rebuilt only after the player
+            // moves kSlack tiles; otherwise just extended over the new entries.
+            const int32_t reach = kMovementTileWindow + SquareCoordCache::kSlack;
+            if (!c.windowValid || std::abs(winCx - c.winCx) > SquareCoordCache::kSlack ||
+                std::abs(winCy - c.winCy) > SquareCoordCache::kSlack) {
+                c.inWindow.clear();
+                c.windowKnown = 0;
+                c.winCx = winCx; c.winCy = winCy;
+                c.windowValid = true;
+            }
+            for (size_t i = c.windowKnown; i < c.ptr.size(); ++i)
+                if (std::abs(c.x[i] - c.winCx) <= reach && std::abs(c.y[i] - c.winCy) <= reach)
+                    c.inWindow.push_back(static_cast<int32_t>(i));
+            c.windowKnown = c.ptr.size();
+
+            bool stale = false;
+            for (int32_t i : c.inWindow) {
+                void* tp = nullptr;
+                if (!Mem::TryRead(base + (size_t)i * sizeof(void*), 0u, tp) || tp != c.ptr[i]) {
+                    stale = true;
+                    break;
+                }
+                ++scanned;
+                copySquare(tp, c.x[i], c.y[i]);
+            }
+            if (stale) {
+                c.Reset(nullptr);   // rebuilt from scratch next refresh
+                g_tiles.clear();
+            } else {
+                copied = true;
+            }
+        }
+        if (!copied) {
+            // The World table (every tile), no player position yet, or a cache that
+            // just went stale: the newest MAX_TILES entries, as before.
+            const int32_t cap = listSize < (int32_t)MAX_TILES ? listSize : (int32_t)MAX_TILES;
+            for (int32_t i = listSize - cap; i < listSize; ++i) {
+                void* tp = nullptr;
+                if (!Mem::TryRead(base + (size_t)i * sizeof(void*), 0u, tp) || !Mem::AddrOk(tp)) continue;
+                int32_t tx = 0, ty = 0;
+                Mem::TryRead(tp, RuntimeOffsets::TileX, tx);
+                Mem::TryRead(tp, RuntimeOffsets::TileY, ty);
+                ++scanned;
+                copySquare(tp, tx, ty);
+            }
         }
         DiagTiming::Render().tileListSize = listSize;
-        DiagTiming::Render().tileScanned  = cap;
+        DiagTiming::Render().tileScanned  = scanned;
     }
     DiagTiming::Render().tilesKept = static_cast<int32_t>(g_tiles.size());
     DiagTiming::Render().entities  = static_cast<int32_t>(g_entities.size());
