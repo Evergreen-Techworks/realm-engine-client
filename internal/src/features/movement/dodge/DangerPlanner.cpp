@@ -22,6 +22,7 @@
 #include "BootGate.h"
 #include "helpers.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
+#include "features/combat/enemytracker/EnemyTracker.h"
 #include "ChatToast.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
@@ -590,8 +591,32 @@ void OnHazardSpawn(const WorldProjectile& /*p*/, void*)
 // preempts on imminent danger). Pure algorithm; the game-move path is
 // untouched. Off (s_lockFollowEnabled) ⇒ no movement effect = today.
 // ─────────────────────────────────────────────────────────────────────────────
+// Field capture for "it locks onto invisible enemies": one [Diag/Lock] line each
+// time the enemy lock (script or Shift+Click) or auto-aim's focus changes, naming
+// the object. OFF unless RE_ASSETS/diag-timing.flag exists (DiagTiming::On()).
+// Game-update thread (runs from the dodge tick, before any lock-follow gate).
+static void LogTargetChanges()
+{
+    if (!DiagTiming::On()) return;
+    static int32_t s_lastLock = -1, s_lastAim = -1;
+    const int32_t lock = s_lockEnemyId.load(std::memory_order_relaxed);
+    const int32_t aim  = AutoAim::HasTarget() ? AutoAim::GetAimFocusEnemyId() : 0;
+    char desc[512];
+    if (lock != s_lastLock) {
+        s_lastLock = lock;
+        EnemyTracker::DescribeObject(lock, desc, sizeof(desc));
+        DiagTiming::Logf("[Diag/Lock] enemy lock -> %s", desc);
+    }
+    if (aim != s_lastAim) {
+        s_lastAim = aim;
+        EnemyTracker::DescribeObject(aim, desc, sizeof(desc));
+        DiagTiming::Logf("[Diag/Lock] aim focus -> %s", desc);
+    }
+}
+
 static void ResolveEnemyLock(float px, float py)
 {
+    LogTargetChanges();
     if (!s_lockFollowEnabled.load(std::memory_order_relaxed)) return;
 
     const int32_t id = s_lockEnemyId.load(std::memory_order_relaxed);

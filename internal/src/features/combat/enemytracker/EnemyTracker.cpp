@@ -13,6 +13,8 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <unordered_map>
 #include <vector>
 
@@ -367,6 +369,81 @@ bool ResolveObjectPos(int32_t id, float& outX, float& outY)
     });
     if (found) { outX = fx; outY = fy; }
     return found;
+}
+
+namespace {
+struct ObjectFacts {
+    int32_t  objType = 0, hp = 0, maxHp = 0;
+    float    x = 0.f, y = 0.f;
+    uint8_t  isEnemy = 0, noHealthBar = 0, isStatic = 0, invincibleXml = 0;
+    void*    idStr = nullptr;
+};
+
+static bool SehReadObjectFacts(void* entity, ObjectFacts& f)
+{
+    __try {
+        const uint8_t* ent = reinterpret_cast<const uint8_t*>(entity);
+        f.objType = *reinterpret_cast<const int32_t*>(ent + RuntimeOffsets::ObjType);  // raw-access-ok: diagnostics, shared SEH
+        f.hp      = *reinterpret_cast<const int32_t*>(ent + RuntimeOffsets::HP);       // raw-access-ok: diagnostics, shared SEH
+        f.maxHp   = *reinterpret_cast<const int32_t*>(ent + RuntimeOffsets::MaxHP);    // raw-access-ok: diagnostics, shared SEH
+        f.x       = *reinterpret_cast<const float*>(ent + RuntimeOffsets::PosX);       // raw-access-ok: diagnostics, shared SEH
+        f.y       = *reinterpret_cast<const float*>(ent + RuntimeOffsets::PosY);       // raw-access-ok: diagnostics, shared SEH
+        void* op  = *reinterpret_cast<void* const*>(ent + RuntimeOffsets::ObjProps);   // raw-access-ok: diagnostics, shared SEH
+        if (!Mem::AddrOk(op)) return true;
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(op);
+        f.isEnemy     = *(p + RuntimeOffsets::OP_IsEnemy);       // raw-access-ok: diagnostics, shared SEH
+        f.noHealthBar = *(p + RuntimeOffsets::OP_NoHealthBar);   // raw-access-ok: diagnostics, shared SEH
+        f.isStatic    = *(p + RuntimeOffsets::OP_IsStatic);      // raw-access-ok: diagnostics, shared SEH
+        f.invincibleXml = Mem::AddrOk(*reinterpret_cast<void* const*>(p + RuntimeOffsets::OP_InvincibleElem)) ? 1 : 0;  // raw-access-ok: diagnostics, shared SEH
+        f.idStr = *reinterpret_cast<void* const*>(p + RuntimeOffsets::OP_IdStr);  // raw-access-ok: diagnostics, shared SEH
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+} // namespace
+
+void DescribeObject(int32_t id, char* out, size_t outCap)
+{
+    if (!out || outCap == 0) return;
+    out[0] = '\0';
+    if (id <= 0) { snprintf(out, outCap, "id=%d (none)", id); return; }
+
+    void* entity = nullptr;
+    void* wm = GameState::GetWorldMgr();
+    void* allDict = Mem::AddrOk(wm) ? Mem::ReadPtr(wm, RuntimeOffsets::WM_AllDict) : nullptr;
+    if (Mem::AddrOk(allDict))
+        Il2CppC::WalkDict(allDict, 4096, [&](int32_t key, void* e) { if (!entity && key == id) entity = e; });
+    if (!Mem::AddrOk(entity)) { snprintf(out, outCap, "id=%d NOT IN WORLD (despawned / out of view)", id); return; }
+
+    ObjectFacts f{};
+    const bool ok = SehReadObjectFacts(entity, f);
+    char name[64] = "?";
+    if (ok && Mem::AddrOk(f.idStr)) Il2CppC::ReadString(f.idStr, name, sizeof(name));
+    uint32_t c0 = 0, c1 = 0;
+    const bool condOk = RuntimeOffsets::TryReadMapObjectConditions(entity, &c0, &c1);
+
+    const Entry* tracked = nullptr;
+    for (const Entry& e : s_snapshot) if (e.id == id) { tracked = &e; break; }
+
+    float px = 0.f, py = 0.f;
+    void* local = GameState::GetLocalPtr();
+    const bool havePlayer = local && Game::Entity(local).TryPos(px, py);
+    const float dist = havePlayer ? std::sqrt((f.x - px) * (f.x - px) + (f.y - py) * (f.y - py)) : -1.f;
+
+    snprintf(out, outCap,
+        "id=%d name='%s' type=0x%X hp=%d/%d cond=%s%08X:%08X xml{enemy=%u noHealthBar=%u static=%u invincible=%u} "
+        "tracked=%s%s pos=(%.2f,%.2f) dist=%.1f%s",
+        id, name, static_cast<unsigned>(f.objType), f.hp, f.maxHp, condOk ? "" : "UNREAD ", c0, c1,
+        f.isEnemy, f.noHealthBar, f.isStatic, f.invincibleXml,
+        tracked ? "yes" : "NO",
+        tracked ? (tracked->isInvulnerable ? " invulnerable" : "") : "",
+        f.x, f.y, dist,
+        tracked ? "" : " (filtered out of the enemy snapshot)");
+    if (tracked) {
+        const size_t used = std::strlen(out);
+        if (used + 1 < outCap)
+            snprintf(out + used, outCap - used, " healthBar=%d scenery=%d reach=%.1f",
+                     tracked->hasHealthBar ? 1 : 0, tracked->isScenery ? 1 : 0, tracked->shotRangeTiles);
+    }
 }
 
 } // namespace EnemyTracker

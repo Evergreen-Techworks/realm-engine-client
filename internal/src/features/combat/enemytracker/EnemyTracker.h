@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -42,5 +43,12 @@ int32_t GetLocalPlayerObjectId();
 // Dictionary and reads PosX/PosY off the matching entity. Returns false if the id
 // is not in view / the world manager is unreadable. Game-update thread only.
 bool ResolveObjectPos(int32_t id, float& outX, float& outY);
+
+// Diagnostics only (lock / aim target capture): one line describing the world
+// object with this id — XML name, type, HP, condition words, the ObjectProperties
+// flags the target filters read, position, and whether the enemy snapshot holds
+// it. Walks the world dictionary, so call it on a change, never per frame.
+// Game-update thread only. Always writes a NUL-terminated line into `out`.
+void DescribeObject(int32_t id, char* out, size_t outCap);
 
 } // namespace EnemyTracker
