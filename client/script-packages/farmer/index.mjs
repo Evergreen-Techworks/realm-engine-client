@@ -33,6 +33,25 @@ const BEACON_MOVED_TILES = 8;     // moved at least this far ⇒ the teleport re
 // but never accepts guardian enemies or explicitly inactive destinations.
 const BEACON_NAME_OK = /^(teleport|active|actual active|captured)\s+beacon\b|\bbeacon(?:\s*\([^)]*\))?$/i;
 const BEACON_NAME_BAD = /guardian|inactive|decoy|anchor|patrol/i;
+// ── Bosses protected by their adds ───────────────────────────────────────────
+// Some bosses are healed while their adds live, so damage spent on the boss is
+// wasted until the adds die. objects.xml cannot express that: the heal is server
+// behaviour, and none of these objects carries a Spawn/Protect/Heal tag. So the
+// known cases are listed here, keyed by DisplayId (what the SDK reports as
+// enemy.name). DisplayId survived DECA re-adding the Lich under new type ids.
+// Adds are listed in kill order. The list is the full rule for a listed boss.
+// Any other boss becomes protected only after it is seen healing (observeHeals).
+const BOSS_DEPENDENTS = new Map([
+  // Realm Lich: 0x091b "Lich", 0x091c "Actual Lich" and 0x55B0 "New Actual Lich"
+  // (DisplayId Lich). Its adds are Phylactery Bearer (0x091d; 0x55B1 "New Phylactery
+  // Bearer") and Haunted Spirit (0x091e; 0x55B2 "New Haunted Spirit"). Which add
+  // heals is unconfirmed, so the Bearer goes first by name and both die before the Lich.
+  ['lich', ['phylactery bearer', 'haunted spirit']],
+]);
+const DEPENDENT_RADIUS = 12;     // an add this close to its boss is treated as protecting it
+const HEAL_MEMORY_MS = 8000;     // a boss seen healing keeps the enemies beside it as priority this long
+
+const nameKey = (value) => String(value ?? '').trim().toLowerCase();
 
 export default class Farmer {
   constructor() {
@@ -70,6 +89,8 @@ export default class Farmer {
     this.beaconPending = null;       // attempt awaiting verification
     this.beaconRetryAfter = new Map();
     this.beaconListedFor = '';       // map whose beacon candidates we already logged
+    this.enemyHp = new Map();        // objectId -> { hp, maxHp } from the previous loop
+    this.healedAt = new Map();       // objectId -> when its HP last rose at an unchanged max HP
   }
 
   setFiring(enabled) {
@@ -145,6 +166,8 @@ export default class Farmer {
     this.lastBeaconAt = 0;
     this.beaconPending = null;
     this.beaconRetryAfter.clear();
+    this.enemyHp = new Map();
+    this.healedAt = new Map();
     // A destination is scoped to the map that created it. Drop the old Realm
     // quest/loot route before Nexus installs its forward-search corridor.
     RealmEngine.dodge.clearWaypoint();
@@ -153,10 +176,43 @@ export default class Farmer {
     this.setFiring(false);
   }
 
+  // A boss whose HP rises while its max HP stays put was healed. Max HP rising too
+  // is HP scaling (players joining), and a first non-zero reading is not a rise.
+  observeHeals(enemies, now) {
+    const seen = new Map();
+    for (const e of enemies) {
+      const prev = this.enemyHp.get(e.objectId);
+      if (prev && prev.hp > 0 && e.hp > prev.hp && e.maxHp === prev.maxHp) this.healedAt.set(e.objectId, now);
+      seen.set(e.objectId, { hp: e.hp, maxHp: e.maxHp });
+    }
+    for (const id of this.healedAt.keys()) if (!seen.has(id)) this.healedAt.delete(id);
+    this.enemyHp = seen;
+  }
+
+  // Living, targetable enemies that must die before damage on `boss` sticks, best
+  // first. For a listed boss these are its listed adds within DEPENDENT_RADIUS. For any
+  // boss seen healing in the last HEAL_MEMORY_MS they are every other enemy that close.
+  // Empty otherwise, so a boss with no adds is fought as before.
+  bossGuards(boss, enemies, now) {
+    if (!boss?.position) return [];
+    const near = enemies.filter((e) => e.objectId !== boss.objectId && e.hp > 0 && e.isTargetable
+      && Math.hypot(e.position.x - boss.position.x, e.position.y - boss.position.y) <= DEPENDENT_RADIUS);
+    const listed = BOSS_DEPENDENTS.get(nameKey(boss.name));
+    const rank = (e) => (listed ? listed.indexOf(nameKey(e.name)) : -1);
+    let guards = listed ? near.filter((e) => rank(e) >= 0) : [];
+    if (!guards.length && now - (this.healedAt.get(boss.objectId) ?? -Infinity) <= HEAL_MEMORY_MS) guards = near;
+    const px = RealmEngine.self.getX();
+    const py = RealmEngine.self.getY();
+    return guards.sort((a, b) => rank(a) - rank(b)
+      || Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
+      || Math.hypot(a.position.x - px, a.position.y - py) - Math.hypot(b.position.x - px, b.position.y - py));
+  }
+
   updateTarget(preferredId = 0, enabled = true) {
     const px = RealmEngine.self.getX();
     const py = RealmEngine.self.getY();
-    const eligible = enabled ? RealmEngine.enemies.getAll()
+    const all = enabled ? RealmEngine.enemies.getAll() : [];
+    const eligible = all
       .filter((e) => e.hp > 0 && (e.isTargetable || e.objectId === this.lockId)
         && Math.hypot(e.position.x - px, e.position.y - py)
           <= (e.objectId === this.lockId ? TARGET_RELEASE_RADIUS : TARGET_RADIUS))
@@ -164,8 +220,9 @@ export default class Farmer {
         || Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
         || b.maxHp - a.maxHp || b.hp - a.hp
         || Math.hypot(a.position.x - px, a.position.y - py)
-          - Math.hypot(b.position.x - px, b.position.y - py)) : [];
-    const target = eligible[0] ?? null;
+          - Math.hypot(b.position.x - px, b.position.y - py));
+    // The best pick may be protected: its adds die first, even just past our own radius.
+    const target = this.bossGuards(eligible[0], all, Date.now())[0] ?? eligible[0] ?? null;
     if (!target) {
       this.setFiring(false);
       if (this.lockId) {
@@ -185,7 +242,9 @@ export default class Farmer {
     return target;
   }
 
-  handleBossAdds(enemies, boss, label, waitingStatus = 'waiting for adds or vulnerable boss') {
+  // `guards`, when given, are the adds to clear in order (bossGuards); otherwise any
+  // targetable add near the boss is cleared, nearest first.
+  handleBossAdds(enemies, boss, label, waitingStatus = 'waiting for adds or vulnerable boss', guards = null) {
     // Keep add-clearing inside the encounter, even if an add or a dodge pulls
     // the player outward. Navigation returns to the boss's eight-tile ring.
     const center = boss.position;
@@ -197,7 +256,7 @@ export default class Farmer {
       RealmEngine.ui.status(`${label}: returning to boss area`);
       return;
     }
-    const add = enemies.filter(e => e.objectId !== boss.objectId && e.hp > 0 && e.isTargetable
+    const add = guards ? guards[0] : enemies.filter(e => e.objectId !== boss.objectId && e.hp > 0 && e.isTargetable
       && Math.hypot(e.position.x - center.x, e.position.y - center.y) <= 12)
       .sort((a, b) => Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
         || RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position))[0];
@@ -249,6 +308,12 @@ export default class Farmer {
     if (!boss || !boss.isTargetable) {
       this.handleBossAdds(enemies, this.bossEncounter, this.bossEncounter.name,
         boss ? 'waiting for adds or vulnerable boss' : 'waiting for encounter visibility');
+      return true;
+    }
+    // A vulnerable boss can still be healed by its adds; clear those first.
+    const guards = this.bossGuards(boss, enemies, now);
+    if (guards.length) {
+      this.handleBossAdds(enemies, this.bossEncounter, this.bossEncounter.name, 'waiting for adds', guards);
       return true;
     }
     const distance = RealmEngine.self.distanceTo(boss.position);
@@ -750,6 +815,8 @@ export default class Farmer {
       this.handleNexus(now);
       return LOOP_MS;
     }
+    // Every loop, whatever owns movement, so a heal is seen even during a loot detour.
+    this.observeHeals(RealmEngine.enemies.getAll(), now);
 
     // A useful bag takes movement ownership before combat. Do not clear and
     // recreate its waypoint by running target selection during the detour.
