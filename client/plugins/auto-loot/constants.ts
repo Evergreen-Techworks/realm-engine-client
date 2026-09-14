@@ -127,10 +127,14 @@ export const LIFE_MANA_POTION_IDS = new Set<number>([
 
 export const MYSTERY_STAT_POT_ID = 5094;
 
-/** Which permanent stat each (single-stat) potion raises; base, SB, and Greater variants. */
+/**
+ * Which permanent stat each (single-stat) potion raises; base, SB, and Greater variants.
+ * Each is the potion's <Activate stat="..."> in objects.xml. Must agree with POT_STAT
+ * in src/scripts/bridge/loot/index.ts.
+ */
 export const STAT_POT_ITEM_TO_PERMANENT: Record<number, PermanentStatKey> = {
-  2591: 'defense',  2592: 'speed',     2593: 'attack',
-  2612: 'wisdom',   2613: 'vitality',  2636: 'dexterity',
+  2591: 'attack',   2592: 'defense',   2593: 'speed',
+  2612: 'vitality', 2613: 'wisdom',    2636: 'dexterity',
   5465: 'attack',   5466: 'defense',   5467: 'speed',
   5468: 'vitality', 5469: 'wisdom',    5470: 'dexterity',
   9064: 'attack',   9065: 'defense',   9066: 'speed',
