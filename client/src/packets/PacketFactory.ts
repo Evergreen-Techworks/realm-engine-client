@@ -271,12 +271,22 @@ export class PacketFactory {
   private writeFields(writer: PacketWriter, fields: FieldDef[], data: Record<string, any>): void {
     let currentStatId = 0;
 
-    for (const field of fields) {
+    // The wire has no presence flags: the reader treats an optional field as
+    // absent only when the bytes run out. So an optional field may be omitted
+    // only if nothing after it is written. One that precedes a written field
+    // must be written, with its default when it has no value, or every later
+    // field shifts.
+    let lastWritten = -1;
+    for (let i = 0; i < fields.length; i++) {
+      const field = fields[i];
       const value = data[field.name];
+      if (!field.optional || (value !== undefined && value !== field.default)) lastWritten = i;
+    }
 
-      // Skip optional fields with no value
-      if (field.optional && value === undefined) continue;
-      if (field.optional && value === field.default) continue;
+    for (let i = 0; i <= lastWritten; i++) {
+      const field = fields[i];
+      const given = data[field.name];
+      const value = field.optional && given === undefined ? field.default : given;
 
       this.writeField(writer, field, value, () => currentStatId);
 

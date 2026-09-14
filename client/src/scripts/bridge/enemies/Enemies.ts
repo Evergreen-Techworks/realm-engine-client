@@ -48,7 +48,8 @@ export class BridgeEnemies {
         isEventBoss: def?.isEventBoss,
         biome: def?.biome,
         group: def?.group,
-        name: def?.displayId ?? def?.id ?? `Enemy 0x${e.objectType.toString(16)}`,
+        // GameDataLoader stores a missing <DisplayId> as '', so `??` would name the enemy ''.
+        name: def?.displayId || def?.id || `Enemy 0x${e.objectType.toString(16)}`,
         position: new Position(e.pos.x, e.pos.y),
         hp: Number.isFinite(hp) ? hp : 0,
         maxHp: Number.isFinite(maxHp) ? maxHp : 0,

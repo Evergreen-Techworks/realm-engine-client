@@ -19,6 +19,7 @@ export const WS_MSG = Object.freeze({
   ALL_PLAYERS_RAW_STATS: 'allPlayersRawStats',
   CLIENT_LIST: 'clientList',
   CONFIG: 'config',
+  CONFIG_RESET: 'configReset',
   GAME_CLIENT: 'gameClient',
   GAME_UPDATE_STATUS: 'gameUpdateStatus',
   GAME_WIKI_CATALOG: 'gameWikiCatalog',

@@ -94,7 +94,7 @@ export { discord, DiscordWebhook } from './discord';
 export { Self } from './self/Self';
 export { Walking } from './walking/Walking';
 export { Combat } from './combat/Combat';
-export type { CombatAimTarget } from './combat/Combat';
+export type { CombatAimTarget, CombatAimOptions } from './combat/Combat';
 export { Players } from './players/Players';
 export { Enemies } from './enemies/Enemies';
 export { Inventory } from './inventory/Inventory';

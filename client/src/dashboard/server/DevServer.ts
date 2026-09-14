@@ -22,6 +22,7 @@ import { DebugManager } from '../../util/DebugManager.js';
 import { RuntimeScheduler } from '../../util/RuntimeScheduler.js';
 import { injectDll } from '../../native/injector.js';
 import { getRealmengineDataDir, getRealmengineDocumentsDir } from '../../util/rotmgAssetExtractor.js';
+import { getClientConfigWritePath, readMergedClientConfigRaw, writeClientConfig } from '../../util/clientConfigStore.js';
 import { extractGameXmls } from '../../util/rotmgAssetExtractor.js';
 import { extractLocalGameAssets } from '../../util/rotmgLocalExtractor.js';
 import { ensureRotmgMetadataXml } from '../../util/ensureRotmgMetadataXml.js';
@@ -326,6 +327,8 @@ export class DevServer {
   private gameUpdater!: GameUpdater;
   /** One automatic update check per process, fired when a dashboard first connects. */
   private autoUpdateCheckDone = false;
+  /** Set when a save found the config unreadable; replayed to every client until dismissed. */
+  private configResetNotice: { backup: string | null; writeFailed: boolean } | null = null;
   private serverNames: string[] = [];
   private servers: Record<string, string> = {};
   private lastSeedToken: string | null = null;
@@ -467,7 +470,7 @@ export class DevServer {
       () => { this.saveConfig(); this.broadcastConfig(); },
       () => this.broadcastPluginState(),
       () => this.syncPluginHotkeysToDll(),
-      // Beside the bundled data/config.json (see configPath below).
+      // Beside the bundled data/config.json.
       join(publicDir, '..', '..', '..', 'data', BUNDLED_PLUGIN_DEFAULTS_FILE),
     );
     this.wikiSprites = new WikiSpriteService(
@@ -532,18 +535,21 @@ export class DevServer {
       }
     });
 
-    // Load config for persisted settings (e.g. custom RotMG path)
-    this.configPath = join(publicDir, '..', '..', '..', 'data', 'config.json');
+    // Load persisted settings (e.g. custom RotMG path) the way startup does
+    // (index.ts): bundled data/config.json with the user overlay on top, and
+    // save to the overlay. Packaged builds point the overlay outside the
+    // resources tree (REALM_ENGINE_USER_CONFIG_PATH; RE_ASSETS for the
+    // portable) because that tree is replaced by the next build or launch.
+    const resourcesRoot = join(publicDir, '..', '..', '..');
+    this.configPath = getClientConfigWritePath(resourcesRoot);
     try {
-      if (existsSync(this.configPath)) {
-        const raw = JSON.parse(readFileSync(this.configPath, 'utf8'));
-        this.config = {
-          rotmgPath: raw.rotmgPath,
-          rotmgExtractorGameDataPath: raw.rotmgExtractorGameDataPath,
-          lastPluginConfigId: raw.lastPluginConfigId,
-          singleClientOnly: true,
-        };
-      }
+      const raw = readMergedClientConfigRaw(resourcesRoot);
+      this.config = {
+        rotmgPath: raw.rotmgPath as string | undefined,
+        rotmgExtractorGameDataPath: raw.rotmgExtractorGameDataPath as string | undefined,
+        lastPluginConfigId: raw.lastPluginConfigId as string | undefined,
+        singleClientOnly: true,
+      };
     } catch (err) {
       Logger.warn('DevServer', `Failed to load config.json: ${(err as Error).message}`);
     }
@@ -908,9 +914,32 @@ export class DevServer {
    */
   private saveConfig(): void {
     try {
-      writeFileSync(this.configPath, JSON.stringify(this.config, null, 2), 'utf8');
+      const result = writeClientConfig(join(this.publicDir, '..', '..', '..'), this.config);
+      this.configPath = result.path;
+      if (result.corruptBackup) {
+        // broadcastConfig alone would show the change as saved and hide that the
+        // old file was unreadable, so persist and broadcast that it was reset.
+        Logger.warn('DevServer', `Config file was unreadable; kept a copy at ${result.corruptBackup} and wrote a fresh one.`);
+        this.setConfigResetNotice(result.corruptBackup, false);
+      }
     } catch (err) {
-      Logger.warn('DevServer', `Failed to save config: ${(err as Error).message}`);
+      const backup = (err as { corruptBackup?: string }).corruptBackup;
+      if (backup) {
+        // The old file was set aside but the fresh write failed: the user's
+        // bytes are safe at `backup`, but settings are not saving.
+        Logger.warn('DevServer', `Config file was unreadable; kept a copy at ${backup}, but writing a fresh one failed: ${(err as Error).message}`);
+        this.setConfigResetNotice(backup, true);
+      } else {
+        Logger.warn('DevServer', `Failed to save config: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  private setConfigResetNotice(backup: string | null, writeFailed: boolean): void {
+    this.configResetNotice = { backup, writeFailed };
+    const msg = JSON.stringify({ type: WS_MSG.CONFIG_RESET, backup, writeFailed });
+    for (const client of this.wss.clients) {
+      if (client.readyState === WebSocket.OPEN) client.send(msg);
     }
   }
 
@@ -2538,6 +2567,12 @@ export class DevServer {
       ws.send(JSON.stringify({ type: WS_MSG.UNRESOLVED_CLASSES, classes: this.lastUnresolvedClasses }));
     }
 
+    // The first save of a launch runs before any dashboard connects, so replay a
+    // pending config-reset notice to every client until it is dismissed.
+    if (this.configResetNotice !== null) {
+      ws.send(JSON.stringify({ type: WS_MSG.CONFIG_RESET, backup: this.configResetNotice.backup, writeFailed: this.configResetNotice.writeFailed }));
+    }
+
     // Send recent packets
     const recent = this.inspector.getRecent(100);
     ws.send(JSON.stringify({
@@ -2611,7 +2646,9 @@ export class DevServer {
     ws.on('message', async (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
-        if (msg.type === 'togglePlugin') {
+        if (msg.type === 'dismissConfigReset') {
+          this.configResetNotice = null;
+        } else if (msg.type === 'togglePlugin') {
           const result = this.pluginManager.togglePlugin(msg.pluginId, msg.enabled);
           if (!result.ok && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: WS_MSG.PLUGIN_TOGGLE_ERROR, pluginId: msg.pluginId, reason: result.reason, requiredPlan: result.requiredPlan ?? null }));

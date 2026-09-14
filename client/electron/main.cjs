@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { WindowHostBridge } = require('./services/window-host-bridge.cjs');
 const { InstanceManager } = require('./services/instance-manager.cjs');
+const { acquireInstanceLock, allowSetForegroundWindow, machineInstancePipePath } = require('./services/single-instance.cjs');
 const { IPC } = require('./ipc-channels.cjs');
 
 const APP_NAME = 'Realm Engine';
@@ -29,6 +30,15 @@ if (process.platform === 'win32') {
 // Take the lock here: after portable-paths.cjs has repointed userData at
 // RE_ASSETS (so the lock is scoped to this EXE's own data folder), and before
 // anything can spawn the proxy. Instance #2 exits having started nothing.
+// A copy in a *different* folder has a different data directory, so it passes
+// this lock; the machine-wide lock below stops that one.
+function focusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+}
+
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   // Say so rather than vanishing — in dev, a stale Electron still holding the
@@ -36,12 +46,7 @@ if (!hasSingleInstanceLock) {
   console.log('[Electron] Another Realm Engine instance owns this data directory — focusing it and exiting.');
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    if (!mainWindow.isVisible()) mainWindow.show();
-    mainWindow.focus();
-  });
+  app.on('second-instance', focusMainWindow);
 }
 
 // Wine/Proton cannot initialize Chromium's Windows sandbox reliably. Keep the
@@ -54,6 +59,29 @@ if (runningUnderWine) {
   app.commandLine.appendSwitch('no-sandbox');
   app.commandLine.appendSwitch('disable-gpu-sandbox');
 }
+
+// ── Machine-wide single instance ─────────────────────────────────────────────
+// One Realm Engine per Windows user, from any folder: a second copy (say, a new
+// download opened while the old one still runs) would otherwise start its own
+// proxy and injector against the same game. services/single-instance.cjs holds
+// a named pipe that the OS frees when this process exits or crashes, and a
+// later copy uses it to bring this window forward. whenReady waits for the
+// result before it creates a window or starts the proxy.
+//
+// Not under Wine/Proton: a pipe there lives in one prefix's wineserver, so it
+// could not be machine-wide anyway, and this path is unmeasured there. Those
+// launches keep the per-data-directory lock above, as before.
+const machineInstancePipe = hasSingleInstanceLock && !runningUnderWine ? machineInstancePipePath() : null;
+const machineInstanceLock = machineInstancePipe
+  ? acquireInstanceLock(machineInstancePipe, {
+    onFocusRequest: ({ pid }) => {
+      console.log('[Electron] Another Realm Engine copy' + (pid ? ' (pid ' + pid + ')' : '') + ' was opened — focusing this one.');
+      focusMainWindow();
+    },
+    beforeFocus: ({ pid }) => allowSetForegroundWindow(pid),
+    log: (message) => console.warn('[Electron] ' + message),
+  }).catch((error) => ({ status: 'unavailable', error }))
+  : Promise.resolve({ status: 'skipped' });
 
 
 let mainWindow = null;
@@ -646,6 +674,33 @@ ipcMain.handle(IPC.STEAM_CONNECT, () => new Promise((resolve) => {
 
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return; // another instance owns this RE_ASSETS
+
+  // Nothing (window, updater, proxy, injector) starts until this copy owns the
+  // machine-wide lock.
+  const instanceLock = await machineInstanceLock;
+  if (instanceLock.status === 'focused') {
+    const owner = instanceLock.owner && instanceLock.owner.pid ? ' (pid ' + instanceLock.owner.pid + ')' : '';
+    console.log('[Electron] Realm Engine is already running' + owner + ' — focused it and exiting.');
+    app.quit();
+    return;
+  }
+  if (instanceLock.status === 'unreachable') {
+    console.warn('[Electron] Realm Engine is already running but did not answer:', instanceLock.error && instanceLock.error.message);
+    dialog.showMessageBoxSync({
+      type: 'warning',
+      title: APP_NAME,
+      message: 'Realm Engine is already running. Close it before opening another copy.',
+      buttons: ['OK'],
+      noLink: true,
+    });
+    app.quit();
+    return;
+  }
+  if (instanceLock.status === 'unavailable') {
+    // No other copy is known to be running; refusing to start would lock the
+    // user out over a lock failure. The per-data-directory lock still applies.
+    console.warn('[Electron] Machine-wide instance lock unavailable (continuing):', instanceLock.error && instanceLock.error.message);
+  }
 
   // Window FIRST. NSIS has already spent several seconds unpacking with nothing
   // on screen; the update gate below is a network round trip on top of that

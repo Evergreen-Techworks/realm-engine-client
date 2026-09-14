@@ -8250,6 +8250,39 @@ body.packet-sniffer-hidden #sniffer-drawer {
   0%, 72% { opacity: 1; }
   100% { opacity: 0; }
 }
+/* Config-reset notice: persistent (does not auto-fade) and dismissible. */
+.config-reset-banner {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(90vw, 640px);
+  background: var(--red-dark);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+.config-reset-banner-action {
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.3);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.config-reset-banner-action:hover {
+  background: rgba(255,255,255,0.25);
+}
 
 /* ===== FIRST-TIME TUTORIAL OVERLAY ===== */
 .tutorial-overlay {
