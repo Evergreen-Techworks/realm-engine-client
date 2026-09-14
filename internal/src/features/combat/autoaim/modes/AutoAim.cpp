@@ -275,6 +275,10 @@ void SetKillAuraAimOverride(bool active, float x, float y, int32_t enemyId) {
     AimHooks::SetKillAuraOverride(active, x, y, enemyId);
 }
 
+float ShotAngleTo(float px, float py, float tx, float ty) {
+    return AimHooks::ShotAngleTo(px, py, tx, ty);
+}
+
 void SetShootInvulnerable(bool on)   { s_shootInvulnerable.store(on, std::memory_order_relaxed); }
 bool IsShootInvulnerable()           { return s_shootInvulnerable.load(std::memory_order_relaxed); }
 

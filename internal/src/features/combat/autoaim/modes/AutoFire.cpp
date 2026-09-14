@@ -1,9 +1,16 @@
 #include "pch-il2cpp.h"
 
 #include "features/combat/autoaim/modes/AutoFire.h"
+#include "features/combat/autoaim/modes/AutoFireDecision.h"
+#include "features/combat/autoaim/modes/AutoAim.h"
+#include "features/combat/autoaim/core/TargetSelector.h"
+#include "features/combat/enemytracker/EnemyTracker.h"
 #include "core/runtime/InputFocus.h"
 #include "features/combat/autoaim/shoot/ShootRuntime.h"
+#include "game/objects/GameObjects.h"
 #include "BootGate.h"
+#include "DangerPlanner.h"
+#include "DiagTiming.h"
 #include "GameState.h"
 #include "LocalPlayer.h"
 #include "keybinds.h"
@@ -22,6 +29,8 @@ static std::atomic<bool> s_enabled{ false };
 static std::atomic<int>  s_hotkeyVk{ 0 };
 static std::atomic<int>  s_slot{ 0 };
 static std::atomic<bool> s_autoEngage{ false };
+static std::atomic<bool> s_scriptArmed{ false };
+static std::atomic<uint32_t> s_sceneEpoch{ 0 };
 
 // ── Diagnostics (render-thread writes, UI reads) ─────────────────────────────
 static std::atomic<bool>     s_diagResolved{ false };
@@ -30,6 +39,8 @@ static std::atomic<bool>     s_diagEngaged{ false };
 static std::atomic<bool>     s_diagCanShoot{ false };
 static std::atomic<uint32_t> s_shotsSent{ 0 };
 static std::atomic<uint32_t> s_framesEngaged{ 0 };
+static std::atomic<uint8_t>  s_diagScriptBlock{ static_cast<uint8_t>(AutoFireDecision::Block::NotArmed) };
+static std::atomic<uint32_t> s_scriptPulls{ 0 };
 
 // ── Render-thread-only bookkeeping ───────────────────────────────────────────
 static uint64_t  s_frame            = 0;   // monotonic Tick counter (one per Present)
@@ -67,7 +78,114 @@ static void LogAlive()
     s_lastAliveLogMs = now;
     DBG_FILE_LOG("[AutoFire] alive engaged=" << (s_diagEngaged.load(std::memory_order_relaxed) ? 1 : 0)
                  << " resolved=" << (s_diagResolved.load(std::memory_order_relaxed) ? 1 : 0)
-                 << " shots=" << s_shotsSent.load(std::memory_order_relaxed));
+                 << " shots=" << s_shotsSent.load(std::memory_order_relaxed)
+                 << " scriptArmed=" << (s_scriptArmed.load(std::memory_order_relaxed) ? 1 : 0)
+                 << " scriptPulls=" << s_scriptPulls.load(std::memory_order_relaxed));
+}
+
+// ── Script trigger: the live game behind AutoFireDecision::ScriptStep ────────
+//
+// Game-update thread only. Why not the render thread the manual trigger ticks on:
+// ShootWithAngle spawns projectiles and queues the shot packet, and Present runs
+// on Unity's render thread, concurrently with the main thread's Update. Firing
+// from inside AppEngineManager.Update keeps the call on the main thread, where the
+// game's InputManager also calls ShootWithAngle, so the game's own auto-fire and
+// this trigger take turns on one per-attack timer instead of racing it.
+//
+// Why not ShootRuntime::TryComputeShootAngle's canShoot, which the manual trigger
+// waits on: in games 4a8beb50 and 86ad651b the method ShootRuntime binds under that
+// name (RVA 0x3E4DA0 in 86ad651b) is a condition-effect/status-text routine; for
+// slot 0 it returns at once and canShoot stays false. ShootWithAngle itself checks
+// the weapon, two condition masks and the per-attack timer, so it is called directly.
+static AutoFireDecision::MapWatch s_mapWatch;   // game-update thread only
+
+class LiveWorld {
+public:
+    LiveWorld() : m_local(GameState::GetLocalPtr()) {}   // one read, so every question is about the same player
+
+    bool ScriptArmed() const
+    {
+        return s_enabled.load(std::memory_order_relaxed) && s_scriptArmed.load(std::memory_order_relaxed);
+    }
+    bool ManualEngaged() const { return s_diagEngaged.load(std::memory_order_relaxed); }
+    bool ShootReady() const
+    {
+        return BootGate::FeatureAllowed("AutoFire") && ShootRuntime::IsResolved();
+    }
+    uintptr_t LocalPlayer() const { return reinterpret_cast<uintptr_t>(m_local); }
+    uint32_t  SceneEpoch() const  { return s_sceneEpoch.load(std::memory_order_relaxed); }
+    bool LocalHp(int32_t& hp) const
+    {
+        int32_t maxHp = 0;
+        return Game::Character(m_local).TryHp(hp, maxHp);
+    }
+    bool PlayerPos(float& x, float& y) const { return Game::Entity(m_local).TryPos(x, y); }
+    AutoFireDecision::AimTarget Aim() const
+    {
+        AutoFireDecision::AimTarget t;
+        t.aimEnabled = AutoAim::IsEnabled();
+        t.hasTarget  = AutoAim::HasTarget();
+        t.enemyId    = AutoAim::GetAimFocusEnemyId();
+        return t;
+    }
+    // This thread's own snapshot copy (EnemyTracker.h), brought up to the latest
+    // published build first. Self-throttled, and only reached with a target.
+    AutoFireDecision::EnemyView FindEnemy(int32_t id) const
+    {
+        EnemyTracker::Tick();
+        AutoFireDecision::EnemyView v;
+        for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot()) {
+            if (e.id != id) continue;
+            v.found = true;
+            v.hp = e.hp;
+            v.x = e.x;
+            v.y = e.y;
+            break;
+        }
+        return v;
+    }
+    float RangeTiles() const
+    {
+        const WeaponProfile weapon = AutoAim::GetWeaponProfile();   // copy: the render thread refreshes it
+        return TargetSelector::AutoAimSelectionRangeTiles(weapon, AutoAim::GetRangeLeadBias());
+    }
+    bool Fire(float px, float py, float tx, float ty)
+    {
+        if (!ShootRuntime::CallShootWithAngle(m_local, AutoAim::ShotAngleTo(px, py, tx, ty))) return false;
+        s_scriptPulls.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
+private:
+    void* m_local;
+};
+
+// Field capture (DiagTiming.h, OFF unless RE_ASSETS/diag-timing.flag exists): one
+// line when the script trigger's state changes, e.g. firing -> no-target. At most
+// one line per 250 ms; a state that flaps faster is reported once it holds.
+//   GREP THE TRACE LOG FOR:  [Diag/AutoFire]
+static void DiagScriptState(AutoFireDecision::Block block)
+{
+    if (!DiagTiming::On()) return;
+    static AutoFireDecision::Block s_logged = AutoFireDecision::Block::NotArmed;
+    static ULONGLONG s_lastLogMs = 0;
+    if (block == s_logged) return;
+    const ULONGLONG now = GetTickCount64();
+    if (now - s_lastLogMs < 250ULL) return;
+    DiagTiming::Logf("[Diag/AutoFire] script %s -> %s aimEnabled=%d aimId=%d pulls=%u",
+                     AutoFireDecision::Name(s_logged), AutoFireDecision::Name(block),
+                     AutoAim::IsEnabled() ? 1 : 0, AutoAim::GetAimFocusEnemyId(),
+                     s_scriptPulls.load(std::memory_order_relaxed));
+    s_logged = block;
+    s_lastLogMs = now;
+}
+
+static void GameThreadTickBody()
+{
+    LiveWorld world;
+    const AutoFireDecision::Block block = AutoFireDecision::ScriptStep(s_mapWatch, world, GetTickCount64());
+    s_diagScriptBlock.store(static_cast<uint8_t>(block), std::memory_order_relaxed);
+    DiagScriptState(block);
 }
 
 } // namespace
@@ -111,15 +229,19 @@ void Tick(bool menuOpen)
         return;
     }
 
+    // The script trigger fires from the AppEngineManager.Update detour
+    // (GameThreadTick). Dodge modes install it too; a script may arm with dodge off.
+    if (s_scriptArmed.load(std::memory_order_relaxed) && GameState::GetLocalPtr())
+        DangerPlanner::TryInstall();
+
     const bool autoEngaged = s_autoEngage.load(std::memory_order_relaxed);
     const int  vk          = s_hotkeyVk.load(std::memory_order_relaxed);
     // The hotkey counts only while the game window owns the foreground
-    // (core/runtime/InputFocus.h).
-    bool engaged = autoEngaged || (vk != 0 && InputFocus::KeyDown(vk));
-
-    // Never fire off a keystroke the player is typing into the menu. An
-    // auto-engage (plan 89) is programmatic, so it is not affected.
-    if (menuOpen && !autoEngaged) engaged = false;
+    // (core/runtime/InputFocus.h), and never off a keystroke the player is typing
+    // into the menu. An auto-engage (plan 89) is programmatic, so the menu does
+    // not affect it. Rule: AutoFireDecision::ManualEngaged.
+    const bool engaged = AutoFireDecision::ManualEngaged(
+        autoEngaged, vk != 0 && InputFocus::KeyDown(vk), menuOpen);
 
     if (!engaged) {
         SetEngaged(false, menuOpen ? "menu-open" : "key-up");
@@ -151,12 +273,40 @@ void Tick(bool menuOpen)
     s_shotsSent.fetch_add(1, std::memory_order_relaxed);
 }
 
+// SEH firewall for the script trigger, same shape as DangerPlanner's
+// DodgeTickGuarded: a fault must never take down the game's Update. The handler
+// uses only the plain DbgFileLogWrite, so nothing here needs unwinding (C2712).
+void GameThreadTick()
+{
+    __try {
+        GameThreadTickBody();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        static volatile LONG s_ex = 0;
+        if ((InterlockedIncrement(&s_ex) % 240) == 1)
+            DbgFileLogWrite("[AutoFire] script trigger: SEH caught a fault — update skipped");
+    }
+}
+
 void SetEnabled(bool on)
 {
     s_enabled.store(on, std::memory_order_relaxed);
-    if (!on) s_autoEngage.store(false, std::memory_order_relaxed);
+    if (!on) {
+        s_autoEngage.store(false, std::memory_order_relaxed);
+        s_scriptArmed.store(false, std::memory_order_relaxed);
+    }
 }
 bool IsEnabled() { return s_enabled.load(std::memory_order_relaxed); }
+
+void SetScriptArmed(bool on)
+{
+    // The game thread fires only while both flags are set (LiveWorld::ScriptArmed),
+    // so a disarm stops it at the first store.
+    s_scriptArmed.store(on, std::memory_order_relaxed);
+    SetEnabled(on);
+}
+bool IsScriptArmed() { return s_scriptArmed.load(std::memory_order_relaxed); }
+
+void NotifyMapChange() { s_sceneEpoch.fetch_add(1, std::memory_order_relaxed); }
 
 void SetHotkeyVk(int vk) { s_hotkeyVk.store(vk, std::memory_order_relaxed); }
 int  GetHotkeyVk()       { return s_hotkeyVk.load(std::memory_order_relaxed); }
@@ -181,6 +331,10 @@ Diag GetDiag()
     d.lastCanShoot  = s_diagCanShoot.load(std::memory_order_relaxed);
     d.shotsSent     = s_shotsSent.load(std::memory_order_relaxed);
     d.framesEngaged = s_framesEngaged.load(std::memory_order_relaxed);
+    d.scriptArmed   = s_scriptArmed.load(std::memory_order_relaxed);
+    d.scriptState   = AutoFireDecision::Name(static_cast<AutoFireDecision::Block>(
+                          s_diagScriptBlock.load(std::memory_order_relaxed)));
+    d.scriptPulls   = s_scriptPulls.load(std::memory_order_relaxed);
     return d;
 }
 
@@ -194,7 +348,7 @@ void RenderSettings()
         SetEnabled(on);
     ImGui::SameLine(); ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Hold the bound key to fire continuously. Drives the game's own shoot\nentry, so its rate limit / MP / silence checks all still apply.");
+        ImGui::SetTooltip("Hold the bound key to fire continuously. Drives the game's own shoot\nentry, so its rate limit / MP / silence checks all still apply.\n\nA script's autoFireEnabled fires with no key, but only at Auto Aim's\ntarget while it is in the enemy list, alive and in range. Never at the cursor.");
 
     ImGui::Spacing();
     ImGui::PushItemWidth(180.f);
@@ -231,6 +385,8 @@ void RenderSettings()
                         d.resolved ? 1 : 0, d.gated ? 1 : 0,
                         d.engaged ? 1 : 0, d.lastCanShoot ? 1 : 0,
                         d.shotsSent);
+    ImGui::TextDisabled("script armed=%d state=%s pulls=%u",
+                        d.scriptArmed ? 1 : 0, d.scriptState, d.scriptPulls);
 }
 
 } // namespace AutoFire
