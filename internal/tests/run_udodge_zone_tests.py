@@ -20,11 +20,11 @@ inline void QueryPerformanceCounter(LARGE_INTEGER* p) {
     spacetime = internal / "src/features/movement/spacetime"
     for test in ("udodge_zone_tests", "udodge_temporal_tests", "udodge_admission_tests",
                  "udodge_speed_expiry_tests", "udodge_commitment_tests", "udodge_navigation_tests",
-                 "udodge_timed_tests", "udodge_prune_tests"):
+                 "udodge_timed_tests", "udodge_prune_tests", "udodge_pathing_rules_tests"):
         binary = build / test
         extra = [str(core / "UDodgeWorker.cpp"), str(spacetime / "SpacetimeCore.cpp")] \
             if test == "udodge_commitment_tests" else []
-        if test == "udodge_navigation_tests":
+        if test in ("udodge_navigation_tests", "udodge_pathing_rules_tests"):
             extra = [str(core / "UDodgePathfinder.cpp")]
         if test == "udodge_timed_tests":
             extra = [str(spacetime / "SpacetimeCore.cpp")]
@@ -36,3 +36,6 @@ inline void QueryPerformanceCounter(LARGE_INTEGER* p) {
             "-o", str(binary),
         ], check=True)
         subprocess.run([str(binary)], check=True)
+
+# End-to-end pathing scenarios against the production planner (tests/scenario).
+subprocess.run(["python3", str(internal / "tests/scenario/run_scenarios.py"), "--check"], check=True)
