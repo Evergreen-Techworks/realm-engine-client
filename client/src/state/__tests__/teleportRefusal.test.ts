@@ -34,14 +34,14 @@ const REPLY_WINDOW_MS = 1_500;
 const ACCEPTED_COOLDOWN_MS = 12_000;
 
 const factory = new PacketFactory(PACKET_DEFINITIONS as any, STAT_TYPES as any);
-const fromHex = (hex: string): Packet => factory.createFromBytes(Buffer.from(hex, 'hex'));
+const fromHex = (hex: string): Packet => factory.createFromBytes(Buffer.from(hex, 'hex'), 'server');
 
 /** A packet built, serialized and re-read by the real factory, as the proxy would see it. */
 function wire(name: string, data: Record<string, unknown>, trailing?: Buffer): Packet {
   const p = factory.createByName(name);
   Object.assign(p.data, data);
   if (trailing) p.unreadData = trailing;
-  return factory.createFromBytes(factory.serialize(p));
+  return factory.createFromBytes(factory.serialize(p), p.direction as 'client' | 'server');
 }
 
 /** int16 length prefix + UTF-8, the protocol's string encoding. */

@@ -392,8 +392,9 @@ export class ClientConnection {
         // Decrypt the body (skip 5-byte header)
         cipher.cipher(rawPacket);
 
-        // Parse the packet
-        const packet = this.proxy.packetFactory.createFromBytes(rawPacket);
+        // Parse the packet with the layout of the direction it travelled: some ids
+        // carry a different packet each way (215 and 217 on game 86ad651b).
+        const packet = this.proxy.packetFactory.createFromBytes(rawPacket, isClient ? 'client' : 'server');
 
         // Log any server FAILURE packet so rejection reasons are visible.
         //

@@ -25,6 +25,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { packetEntries } from './lib/packet-keys.mjs';
+
 const CLIENT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => fs.readFileSync(path.join(CLIENT_ROOT, rel), 'utf8');
 const readJson = (rel) => JSON.parse(read(rel));
@@ -64,35 +66,47 @@ import { invertPacketMap } from '../packet-map.js';
 // \`protocolOnlyPackets\`; \`PacketType\` members with no id live in
 // \`protocolOrphanNames\`.
 //
+// An id can carry a different packet in each direction. PACKET_MAP (id -> name)
+// then holds the incoming packet, because numeric lookups name the frames a game
+// client receives (PacketIO.onData), and OUTGOING_AT_SHARED_IDS holds the outgoing
+// one; BIDIR_PACKET_MAP maps both names to the id. Upstream realmlib's rule too.
+//
 // A handful of packet names differ between REC's historical naming and realmlib's.
 // The map entry uses REC's name (so downstream string comparisons keep working);
 // realmlib's name is exported as an alias below so imports from either world resolve.
 `;
 
 function buildPacketMap(defs) {
+  // A `protocolName` that is an orphan `PacketType` member has no Layer B id —
+  // Layer A's id must not invent one. This is divergence D2/D3: Layer A id 100
+  // is SHOOTACK, but Layer B's SHOOTACK is the orphan aliased to SHOOT_ACK (121).
+  const packets = packetEntries(defs.packets).filter(({ packet }) => !(packet.protocolName in defs.protocolOrphanNames));
+  const directionsAt = new Map();
+  for (const { id } of packets) directionsAt.set(id, (directionsAt.get(id) ?? 0) + 1);
+
   const entries = [];
-  for (const [id, packet] of Object.entries(defs.packets)) {
-    // A `protocolName` that is an orphan `PacketType` member has no Layer B id —
-    // Layer A's id must not invent one. This is divergence D2/D3: Layer A id 100
-    // is SHOOTACK, but Layer B's SHOOTACK is the orphan aliased to SHOOT_ACK (121).
-    if (packet.protocolName in defs.protocolOrphanNames) continue;
-    entries.push({ id: Number(id), name: packet.protocolName, comment: packet.protocolMapComment });
+  const outgoingAtShared = [];
+  for (const { id, packet } of packets) {
+    const entry = { id, name: packet.protocolName, comment: packet.protocolMapComment };
+    if (directionsAt.get(id) > 1 && packet.direction === 'client') outgoingAtShared.push(entry);
+    else entries.push(entry);
   }
   for (const [id, packet] of Object.entries(defs.protocolOnlyPackets)) {
     entries.push({ id: Number(id), name: packet.name, comment: packet.protocolMapComment });
   }
   entries.sort((a, b) => a.id - b.id);
+  outgoingAtShared.sort((a, b) => a.id - b.id);
 
   // A name that some alias points at carries a `// realmlib: <alias>` marker.
   const aliasByTarget = new Map();
   for (const [alias, target] of Object.entries(defs.protocolAliases)) aliasByTarget.set(target, alias);
 
-  const lines = entries.map((e) => {
+  const render = (e) => {
     const alias = aliasByTarget.get(e.name);
     const comment = alias ? `  // realmlib: ${alias}` : e.comment ? `  // ${e.comment}` : '';
     return `  "${e.id}": "${e.name}",${comment}`;
-  });
-  return { entries, lines };
+  };
+  return { entries, lines: entries.map(render), outgoingAtShared, outgoingLines: outgoingAtShared.map(render) };
 }
 
 function directionOf(defs, name, byProtocolName, protocolOnlyByName) {
@@ -109,7 +123,7 @@ function directionOf(defs, name, byProtocolName, protocolOnlyByName) {
 }
 
 function generatePacketMap(defs) {
-  const { entries, lines } = buildPacketMap(defs);
+  const { entries, lines, outgoingAtShared, outgoingLines } = buildPacketMap(defs);
 
   const byProtocolName = new Map();
   for (const packet of Object.values(defs.packets)) byProtocolName.set(packet.protocolName, packet);
@@ -117,12 +131,21 @@ function generatePacketMap(defs) {
   for (const packet of Object.values(defs.protocolOnlyPackets)) protocolOnlyByName.set(packet.name, packet);
 
   // PacketType: every mapped name plus every orphan, `Array.prototype.sort()` order.
-  const typeNames = [...new Set([...entries.map((e) => e.name), ...Object.keys(defs.protocolOrphanNames)])].sort();
+  const typeNames = [...new Set([
+    ...entries.map((e) => e.name), ...outgoingAtShared.map((e) => e.name), ...Object.keys(defs.protocolOrphanNames),
+  ])].sort();
 
   let out = PACKET_MAP_HEADER;
   out += 'export const PACKET_MAP: PacketMap = {\n';
   out += lines.join('\n');
-  out += '\n};\n\nexport const BIDIR_PACKET_MAP: PacketMap = invertPacketMap(PACKET_MAP);\n\n';
+  out += '\n};\n\n';
+  out += `/** Outgoing packets at ids whose PACKET_MAP entry is the incoming packet. */
+export const OUTGOING_AT_SHARED_IDS: PacketMap = {
+`;
+  out += outgoingLines.length ? `${outgoingLines.join('\n')}\n` : '';
+  out += '};\n\n';
+  out += '// Numeric lookups resolve to the incoming packet; every name resolves to its id.\n';
+  out += 'export const BIDIR_PACKET_MAP: PacketMap = { ...invertPacketMap(OUTGOING_AT_SHARED_IDS), ...invertPacketMap(PACKET_MAP) };\n\n';
 
   out += 'export enum PacketType {\n';
   for (const name of typeNames) out += `  ${name} = "${name}",\n`;

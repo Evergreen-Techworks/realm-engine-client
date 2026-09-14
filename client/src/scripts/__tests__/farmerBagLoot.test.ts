@@ -75,7 +75,7 @@ const running: Array<{ onStop(): void }> = [];
 function wire(name: string, data: Record<string, unknown>): Packet {
   const p = factory.createByName(name);
   Object.assign(p.data, data);
-  const back = factory.createFromBytes(factory.serialize(p));
+  const back = factory.createFromBytes(factory.serialize(p), p.direction as 'client' | 'server');
   if (!back.isDefined || back.name !== name) throw new Error(`${name} did not survive the wire`);
   return back;
 }
@@ -125,7 +125,7 @@ function standOnBag(bagType: number, items: number[], playerStats: Stats = {}) {
   const sent: Packet[] = [];
   Object.assign(conn as any, {
     serverSendCipher: { cipher() {} },
-    serverSocket: { destroyed: false, write: (b: Buffer) => { sent.push(factory.createFromBytes(Buffer.from(b))); return true; } },
+    serverSocket: { destroyed: false, write: (b: Buffer) => { sent.push(factory.createFromBytes(Buffer.from(b), 'client')); return true; } },
   });
   clientRef.current = conn;
   const server = (name: string, data: Record<string, unknown>) => proxy.fireServerPacket(conn, wire(name, data));

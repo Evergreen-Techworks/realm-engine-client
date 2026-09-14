@@ -32,7 +32,7 @@ function frame(id: number, parts: Buffer[]): Buffer {
 
 /** The proxy's modified-packet path: parse, then serialize from the parsed fields only. */
 function reserialize(bytes: Buffer): Buffer {
-  const parsed = factory.createFromBytes(bytes);
+  const parsed = factory.createFromBytes(bytes, 'server');
   expect(parsed.isDefined).toBe(true);
   expect(parsed.unreadData.length).toBe(0);
   parsed.modified = true;
@@ -68,7 +68,7 @@ describe('PacketFactory optional fields at their default before a written field'
 
     expect(out.length).toBe(bytes.length);
     expect(out.equals(bytes)).toBe(true);
-    expect(factory.createFromBytes(out).data.currentRealmScore).toBe(1234);
+    expect(factory.createFromBytes(out, 'server').data.currentRealmScore).toBe(1234);
   });
 
   it('MAPINFO: defaults in the middle are written, and absent trailing fields stay absent', () => {
@@ -82,7 +82,7 @@ describe('PacketFactory optional fields at their default before a written field'
       i16(7),        // unknownShort2 (not the default): the last field on the wire
     ]);
 
-    const parsed = factory.createFromBytes(bytes);
+    const parsed = factory.createFromBytes(bytes, 'server');
     // The read side is unchanged: running out of bytes means the optional is absent.
     expect(parsed.data.maxRealmScore).toBe(0);
     expect(parsed.data.currentRealmScore).toBe(0);
@@ -94,14 +94,14 @@ describe('PacketFactory optional fields at their default before a written field'
 
   it('MAPINFO: a hook edit keeps the length and every other field', () => {
     const bytes = frame(92, [...MAPINFO_HEAD, i32(0), str(''), i16(0), bool(false), i16(0), i32(0), i32(1234)]);
-    const parsed = factory.createFromBytes(bytes);
+    const parsed = factory.createFromBytes(bytes, 'server');
     parsed.data.currentRealmScore = 4321;
     parsed.modified = true;
 
     const out = factory.serialize(parsed);
 
     expect(out.length).toBe(bytes.length);
-    const back = factory.createFromBytes(out);
+    const back = factory.createFromBytes(out, 'server');
     expect(back.unreadData.length).toBe(0);
     expect(back.data).toEqual({ ...parsed.data, currentRealmScore: 4321 });
   });
@@ -117,7 +117,7 @@ describe('PacketFactory optional fields at their default before a written field'
 
     expect(out.length).toBe(bytes.length);
     expect(out.equals(bytes)).toBe(true);
-    expect(factory.createFromBytes(out).data.angleInc).toBe(0.25);
+    expect(factory.createFromBytes(out, 'server').data.angleInc).toBe(0.25);
   });
 
   it('SERVERPLAYERSHOOT: bulletType at its default before numShots and angleInc re-serializes byte-exactly', () => {
