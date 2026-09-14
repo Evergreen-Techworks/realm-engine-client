@@ -362,3 +362,77 @@ it('expires a missing encounter with no replacement quest and reacquires a vulne
   f.quest.isTargetable=true; f.farmer.handleBossEncounter(f.quest,43000);
   expect(f.farmer.lockId).toBe(10); expect(f.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(true);
 });
+
+describe('bosses protected by their adds', () => {
+  // objects.xml: 0x55B0 "New Actual Lich" (DisplayId Lich), 0x55B1 "New Phylactery Bearer"
+  // (DisplayId Phylactery Bearer), 0x55B2 "New Haunted Spirit" (DisplayId Haunted Spirit).
+  // The SDK reports DisplayId as enemy.name.
+  const lichFight = () => {
+    vi.useFakeTimers(); vi.setSystemTime(10000);
+    const f = fixture();
+    Object.assign(f.quest, { name: 'Lich', objectType: 0x55B0, hp: 1100, maxHp: 1100 });
+    const bearer = { objectId: 11, objectType: 0x55B1, name: 'Phylactery Bearer', position: { x: 7, y: 2 },
+      hp: 1000, maxHp: 1000, isTargetable: true };
+    const spirit = { objectId: 12, objectType: 0x55B2, name: 'Haunted Spirit', position: { x: 4, y: -1 },
+      hp: 400, maxHp: 400, isTargetable: true };
+    return { f, bearer, spirit };
+  };
+
+  it('kills the Lich adds first, healer before spirit, then the Lich', () => {
+    const { f, bearer, spirit } = lichFight();
+    f.setEnemies([f.quest, bearer, spirit]); f.farmer.onLoop();
+    expect(f.farmer.lockId).toBe(11);
+    expect(f.sdk.combat.aimAt).toHaveBeenLastCalledWith(11);
+    f.setEnemies([f.quest, spirit]); vi.setSystemTime(10100); f.farmer.onLoop();
+    expect(f.farmer.lockId).toBe(12);
+    f.setEnemies([f.quest]); vi.setSystemTime(10200); f.farmer.onLoop();
+    expect(f.farmer.lockId).toBe(10);
+    expect(f.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(true);
+  });
+
+  it('ignores adds far from the Lich and still fights a boss that has no adds', () => {
+    const { f, bearer } = lichFight();
+    bearer.position = { x: 30, y: 0 };
+    f.setEnemies([f.quest, bearer]); f.farmer.onLoop();
+    expect(f.farmer.lockId).toBe(10);
+    const plain = fixture();
+    plain.setEnemies([plain.quest, { ...bearer, objectId: 13, position: { x: 7, y: 0 } }]);
+    plain.farmer.onLoop();
+    expect(plain.farmer.lockId).toBe(10); // "Boss" has no listed dependents and has not healed
+  });
+
+  it('applies the same order when the Lich is fought outside a quest encounter', () => {
+    const { f, bearer, spirit } = lichFight();
+    f.sdk.world.objects.getQuestObject = () => null;
+    f.sdk.world.objects.getById = () => null;
+    f.sdk.world.tiles = { getAll: () => [] };
+    bearer.position = { x: 8.5, y: 2 }; // beside the Lich, but past the player's own target radius
+    f.setEnemies([f.quest, spirit, bearer]); f.farmer.onLoop();
+    expect(f.farmer.lockId).toBe(11);
+  });
+
+  it('learns a healing boss from its HP rising and clears the enemies beside it first', () => {
+    vi.useFakeTimers(); vi.setSystemTime(10000);
+    const f = fixture();
+    Object.assign(f.quest, { hp: 500, maxHp: 1000 });
+    const minion = { objectId: 20, name: 'Minion', position: { x: 7, y: 1 }, hp: 50, maxHp: 50, isTargetable: true };
+    f.setEnemies([f.quest, minion]); f.farmer.onLoop();
+    expect(f.farmer.lockId).toBe(10);
+    f.quest.hp = 620; vi.setSystemTime(10100); f.farmer.onLoop(); // healed: max HP unchanged
+    expect(f.farmer.lockId).toBe(20);
+    f.setEnemies([f.quest]); vi.setSystemTime(10200); f.farmer.onLoop();
+    expect(f.farmer.lockId).toBe(10);
+  });
+
+  it('does not treat HP scaling (max HP rising too) or a first HP reading as a heal', () => {
+    vi.useFakeTimers(); vi.setSystemTime(10000);
+    const f = fixture();
+    Object.assign(f.quest, { hp: 0, maxHp: 1000 });
+    const minion = { objectId: 20, name: 'Minion', position: { x: 7, y: 1 }, hp: 50, maxHp: 50, isTargetable: true };
+    f.setEnemies([f.quest, minion]); f.farmer.observeHeals([f.quest, minion], 10000);
+    Object.assign(f.quest, { hp: 1000 }); f.farmer.onLoop();
+    expect(f.farmer.lockId).toBe(10);
+    Object.assign(f.quest, { hp: 1500, maxHp: 1500 }); vi.setSystemTime(10100); f.farmer.onLoop();
+    expect(f.farmer.lockId).toBe(10);
+  });
+});
