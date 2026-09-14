@@ -45,12 +45,23 @@ inline bool AvoidClear(const Vec2* avoid, int count, Vec2 from, Vec2 to)
 {
     if (count <= 0) return true;
     constexpr float reach = 0.5f + kUOccPlayerHalfEdge;
+    const auto inside = [&](Vec2 p, int a) {
+        return std::fabs(p.x - avoid[a].x) < reach && std::fabs(p.y - avoid[a].y) < reach;
+    };
     const float d = Len(Sub(to, from));
     const int steps = std::max(1, static_cast<int>(std::ceil(d / 0.20f)));
     for (int i = 1; i <= steps; ++i) {
         const Vec2 p = Add(from, Mul(Sub(to, from), static_cast<float>(i) / static_cast<float>(steps)));
-        for (int a = 0; a < count; ++a)
-            if (std::fabs(p.x - avoid[a].x) < reach && std::fabs(p.y - avoid[a].y) < reach) return false;
+        for (int a = 0; a < count; ++a) {
+            // A remembered square the player already stands within reach of must not
+            // block leaving it — the same escape rule zones and enemy bodies use. The
+            // game's collision is a point test, so the player is pushed right up to
+            // the square that refused it (0.01 away), inside this reach; without the
+            // exception every leg, even one leading away, was refused and the follower
+            // held there forever while the planner kept re-routing.
+            if (inside(from, a)) continue;
+            if (inside(p, a)) return false;
+        }
     }
     return true;
 }

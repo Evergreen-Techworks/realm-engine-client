@@ -132,6 +132,12 @@ int main()
     const Vec2 avoid[] = { { 5, 0 } };
     Check(!Navigation::AvoidClear(avoid, 1, { 0, 0 }, { 10, 0 }) && Navigation::AvoidClear(avoid, 1, { 0, 2 }, { 10, 2 }),
           "the follower's shortcut test honours remembered squares");
+    // The game's point collision leaves the player 0.01 from the square that refused
+    // it — inside the remembered square's reach. Leaving must stay possible.
+    Check(Navigation::AvoidClear(avoid, 1, { 4.49f, 0 }, { 2, 0 }),
+          "a player already within a remembered square's reach can walk away from it");
+    Check(!Navigation::AvoidClear(avoid, 1, { 4.49f, 3 }, { 5, 0 }),
+          "walking into a remembered square from outside is still refused");
 
     // ── Enemy keep-outs are hard for walk-to too, and the route goes round them ──
     DangerMap map{};

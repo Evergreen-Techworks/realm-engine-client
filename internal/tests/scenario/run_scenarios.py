@@ -13,7 +13,11 @@ HERE = Path(__file__).resolve().parent
 # Known limitations: reported, never asserted. A locked boss firing a dense ring
 # plus aimed volleys keeps the player at the edge of the rings' reach — the solver
 # ranks safety over range — so these reach no engagement range today.
-KNOWN_LIMITATIONS = {"d_boss_open_dense", "d_boss_wall_dense"}
+# m_pinch_nowalk: the game's collision is a point test (HJMBOMEHGDJ::PEGDEDNHEHD), so it
+# lets the player through a corner where two NoWalk / OccupySquare squares touch
+# diagonally. The DLL's occupancy keeps a 0.2285 box, the nav A* refuses corner
+# cuts and the follower pads its sweep, so today the route never takes that corner.
+KNOWN_LIMITATIONS = {"d_boss_open_dense", "d_boss_wall_dense", "m_pinch_nowalk"}
 
 SCENARIOS = [
     "a_lake_deep_speed", "a_lake_deep_plain", "a_lake_shallow", "a_river_deep_speed", "a_river_shallow",
@@ -25,6 +29,7 @@ SCENARIOS = [
     "i_tilelist_revisit", "i_tilelist_frontier",
     "k_slowed_midwalk", "k_paralyzed_midwalk", "k_water_midpath", "k_dodge_in_water",
     "l_walk_past_shotgun", "l_walk_past_bomber", "l_lock_boss_dies", "l_lock_boss_invuln",
+    "m_pinch_nowalk", "m_pinch_fulloccupy",
 ]
 
 def main():

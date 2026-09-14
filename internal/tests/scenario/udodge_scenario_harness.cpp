@@ -141,7 +141,14 @@ struct World {
 World* g_world = nullptr;
 
 // ── "Game truth" collision (modelled) ───────────────────────────────────────
+// The game's walkability test is a POINT test (86ad651b HJMBOMEHGDJ::PEGDEDNHEHD,
+// reached from FKALGHJIADI::CJCEGCEMIGE, the move routine): the centre's square must
+// be walkable with no occupySquare object, then the FullOccupy half-tile rule at 0.5.
+// There is no player box — no 0.2285 constant exists anywhere in GameAssembly. The
+// DLL's own occupancy keeps its 0.2285 box as a margin; the truth does not.
+// kGameHalf remains for the self-blast reach test (a body-sized contact margin).
 constexpr float kGameHalf = 0.2285f;
+constexpr float kGameCollisionHalf = 0.f;
 
 bool TruthSquareOpen(const World& w, int tx, int ty)
 {
@@ -159,8 +166,8 @@ bool TruthFull(const World& w, int tx, int ty)
 }
 bool TruthValid(const World& w, float x, float y)
 {
-    for (int tx = FloorI(x - kGameHalf); tx <= FloorI(x + kGameHalf); ++tx)
-        for (int ty = FloorI(y - kGameHalf); ty <= FloorI(y + kGameHalf); ++ty)
+    for (int tx = FloorI(x - kGameCollisionHalf); tx <= FloorI(x + kGameCollisionHalf); ++tx)
+        for (int ty = FloorI(y - kGameCollisionHalf); ty <= FloorI(y + kGameCollisionHalf); ++ty)
             if (!TruthSquareOpen(w, tx, ty)) return false;
     // Flash Player.isValidPosition section B (the FullOccupy half-tile rule).
     const int tx = FloorI(x), ty = FloorI(y);
@@ -1209,6 +1216,35 @@ void ScenarioLockBossChange(const char* name, bool dies)
     Emit(r);
 }
 
+// (m) a diagonal pinch: two blocked squares touching only at a corner, the only way
+// through. With NoWalk squares the game's point test lets the player through the
+// corner; with FullOccupy walls the half-tile rule does not.
+void ScenarioDiagonalPinch(const char* name, bool fullOccupy)
+{
+    World w; Floor(w);
+    // Left region: x <= 7 plus the column x = 8 above y = 0. Right region: the column
+    // x = 9 at y <= 0 plus x >= 10. Squares (8,0) and (9,1) close everything except
+    // their shared corner at (9,1).
+    for (int y = -40; y <= 40; ++y) {
+        const bool leftWall = y <= 0, rightWall = y >= 1;
+        if (fullOccupy) {
+            if (leftWall) w.PutObj(8, y, true);
+            if (rightWall) w.PutObj(9, y, true);
+        } else {
+            if (leftWall) w.SetGround(8, y, kNoWalkWall);
+            if (rightWall) w.SetGround(9, y, kNoWalkWall);
+        }
+    }
+    w.px = 0.5f; w.py = 0.5f;
+    Result r = Run(name, w, Goal::WalkTo, { 16.5f, 0.5f }, 30);
+    if (fullOccupy) {
+        // The game refuses this pinch: never arriving is correct, and nothing may
+        // be commanded through it.
+        r.success = !r.success && w.px < 9.f;
+    }
+    Emit(r);
+}
+
 // (i) long session: the streamed-tile list exceeds 65,536 and the player walks
 // where the list is OLDEST (revisit) or NEWEST (frontier). Replicates DoRefresh's
 // selection, assuming the list is append-on-stream.
@@ -1350,6 +1386,8 @@ int main(int argc, char** argv)
     if (want("l_walk_past_bomber")) H::ScenarioWalkPastBomber("l_walk_past_bomber");
     if (want("l_lock_boss_dies"))   H::ScenarioLockBossChange("l_lock_boss_dies", true);
     if (want("l_lock_boss_invuln")) H::ScenarioLockBossChange("l_lock_boss_invuln", false);
+    if (want("m_pinch_nowalk"))     H::ScenarioDiagonalPinch("m_pinch_nowalk", false);
+    if (want("m_pinch_fulloccupy")) H::ScenarioDiagonalPinch("m_pinch_fulloccupy", true);
     if (scanMode != 0) {
         H::g_tileScanMode = scanMode;
         if (want("i_tilelist_revisit"))  H::ScenarioTileList("i_tilelist_revisit", true);
