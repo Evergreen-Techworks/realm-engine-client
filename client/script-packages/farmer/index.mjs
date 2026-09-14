@@ -373,6 +373,16 @@ export default class Farmer {
     }
   }
 
+  // A boss encounter whose boss is not known to be dead. User decision 2026-09-14:
+  // while one is on, only white bags interrupt; everything else waits for the kill or
+  // for the encounter to end, and the boss lock is kept.
+  bossFightActive() {
+    const encounter = this.bossEncounter;
+    if (!encounter || RealmEngine.world.objects.isDead?.(encounter.objectId)) return false;
+    const boss = RealmEngine.enemies.getAll().find((e) => e.objectId === encounter.objectId);
+    return !(boss && boss.hp <= 0 && boss.maxHp > 0);
+  }
+
   bagIsUseful(bag) {
     return (bag.rarity === 'white' && bag.items.length > 0)
       || bag.items.some((item) =>
@@ -382,11 +392,11 @@ export default class Farmer {
         || RealmEngine.loot.isEquipmentUpgrade(item.objectType));
   }
 
-  chooseLootBag() {
+  chooseLootBag(whiteOnly = false) {
     const px = RealmEngine.self.getX();
     const py = RealmEngine.self.getY();
     return RealmEngine.loot.getNearbyBags(LOOT_RADIUS)
-      .filter((bag) => this.bagIsUseful(bag))
+      .filter((bag) => this.bagIsUseful(bag) && (!whiteOnly || bag.rarity === 'white'))
       .sort((a, b) => Number(b.rarity === 'white') - Number(a.rarity === 'white')
         || Number(b.items.some((item) => RealmEngine.loot.isUT(item.objectType) || RealmEngine.loot.isST(item.objectType)))
           - Number(a.items.some((item) => RealmEngine.loot.isUT(item.objectType) || RealmEngine.loot.isST(item.objectType)))
@@ -417,13 +427,16 @@ export default class Farmer {
     return false;
   }
 
-  handleLoot(now) {
-    if (this.useInventoryUpgradesAndPots(now)) return true;
+  // `whiteOnly`: a boss fight is on. Only a white bag may take movement; other bags and
+  // inventory upgrades wait and are picked up again once it is over.
+  handleLoot(now, whiteOnly = false) {
+    if (!whiteOnly && this.useInventoryUpgradesAndPots(now)) return true;
     let bag = this.lootBagId
-      ? RealmEngine.loot.getBags().find((b) => b.objectId === this.lootBagId && this.bagIsUseful(b))
+      ? RealmEngine.loot.getBags().find((b) => b.objectId === this.lootBagId && this.bagIsUseful(b)
+        && (!whiteOnly || b.rarity === 'white'))
       : null;
     if (!bag) {
-      bag = this.chooseLootBag();
+      bag = this.chooseLootBag(whiteOnly);
       this.lootBagId = bag?.objectId ?? 0;
       this.lootArrivedAt = 0;
     }
@@ -892,7 +905,8 @@ export default class Farmer {
       this.beaconPending = null;
     }
     if (this.beaconPending) return LOOP_MS;
-    if (this.handleLoot(now)) {
+    // During a live boss fight only a white bag may take over (bossFightActive).
+    if (this.handleLoot(now, this.bossFightActive())) {
       this.updateTarget(0, false);
       return LOOP_MS;
     }

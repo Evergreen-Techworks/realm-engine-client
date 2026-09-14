@@ -1,5 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { loot } from '@realmengine/sdk';
+import { install as installLootBridge } from '../bridge/loot/index.js';
+import { StatType } from '../../constants/StatType.js';
 const runnerSource = readFileSync(new URL('../../../script-packages/farmer/oryx-runner.mjs', import.meta.url), 'utf8')
   .replace('export default class OryxRunner', 'return class OryxRunner');
 const OryxRunner = new Function(runnerSource)();
@@ -28,6 +31,32 @@ function fixture() {
   return { farmer, sdk, quest, setEnemies: (value: any[]) => { enemies = value; } };
 }
 afterEach(() => vi.useRealTimers());
+// Bags built by the real loot bridge from an UPDATE, so their rarity comes from the
+// bridge's BAG_RARITY table (after #77: only Loot Bag 6 and its Boost are 'white').
+const bridgeBags = (() => {
+  const hooks = new Map<string, any>();
+  const entities = new Map<number, any>();
+  installLootBridge({ proxy: { hookPacket: (name: string, hook: any) => hooks.set(name, hook) },
+    worldState: { getEntity: (id: number) => entities.get(id) },
+    gameData: { getAllObjects: () => [], getObject: () => undefined },
+    clientRef: { current: undefined } } as any);
+  return {
+    drop(objectType: number, objectId: number, position: { x: number; y: number }, itemTypes: number[]) {
+      const data = itemTypes.map((value, slot) => ({ id: StatType.Inventory0 + slot, value }));
+      entities.set(objectId, { objectId, objectType, pos: position,
+        stats: Object.fromEntries(data.map((d) => [String(d.id), d.value])) });
+      hooks.get('UPDATE')({}, { isDefined: true, data: { newObjs: [{ objectType, status: { objectId, position, data } }] } });
+      return loot.getBags().find((bag) => bag.objectId === objectId)!;
+    },
+    pickUp(objectId: number) {
+      entities.delete(objectId);
+      hooks.get('UPDATE')({}, { isDefined: true, data: { drops: [objectId] } });
+    },
+    reset() { entities.clear(); hooks.get('MAPINFO')(); },
+  };
+})();
+const LOOT_BAG_6 = 0x050c;   // white
+const LOOT_BAG_7 = 0x050e;   // gold, labelled 'blue' by the bridge since #77
 describe('farmer control ownership', () => {
   it('engages at weapon-like range when there is no useful loot', () => {
     const f = fixture(); f.setEnemies([f.quest]); f.farmer.onLoop();
@@ -40,21 +69,68 @@ describe('farmer control ownership', () => {
     expect(f.sdk.dodge.clearEnemyLock).toHaveBeenCalled();
     expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
   });
-  it('lets useful loot interrupt a boss fight and resumes combat after it disappears', () => {
-    const f = fixture(); f.setEnemies([f.quest]); f.farmer.onLoop();
-    const bag = { objectId: 20, rarity: 'blue', position: { x: 2, y: 0 }, items: [{ slotIndex: 1, objectType: 2592 }] };
-    let bags = [bag];
-    f.sdk.loot.getNearbyBags.mockImplementation(() => bags);
-    f.sdk.loot.getBags = () => bags;
+  // User decision 2026-09-14: during a boss encounter only white bags interrupt. Every
+  // other bag waits, with the boss lock kept, until the boss dies or the encounter ends.
+  const bossFightWithBridgeLoot = () => {
+    bridgeBags.reset();
+    const f = fixture();
+    f.sdk.loot.getNearbyBags = vi.fn((radius: number) => loot.getNearbyBags(radius));
+    f.sdk.loot.getBags = () => loot.getBags();
+    f.setEnemies([f.quest]); f.farmer.onLoop();
+    expect(f.farmer.lockId).toBe(10);
+    return f;
+  };
+
+  it('keeps fighting the boss when a gold bag drops: no detour, lock kept', () => {
+    const f = bossFightWithBridgeLoot();
+    const bag = bridgeBags.drop(LOOT_BAG_7, 20, { x: 2, y: 0 }, [2592]);
+    expect(bag.rarity).toBe('blue');
+    f.farmer.onLoop(); f.farmer.onLoop();
+    expect(f.farmer.lockId).toBe(10);
+    expect(f.farmer.lootBagId).toBe(0);
+    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalledWith(bag.position);
+    expect(f.sdk.dodge.clearEnemyLock).not.toHaveBeenCalled();
+    expect(f.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(true);
+  });
+
+  it('lets a white bag interrupt the boss fight and resumes combat once it is gone', () => {
+    const f = bossFightWithBridgeLoot();
+    const bag = bridgeBags.drop(LOOT_BAG_6, 21, { x: 2, y: 0 }, [2592]);
+    expect(bag.rarity).toBe('white');
     f.farmer.onLoop();
     expect(f.farmer.lockId).toBe(0);
     expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(bag.position);
     const clears = f.sdk.dodge.clearWaypoint.mock.calls.length;
     f.farmer.onLoop();
     expect(f.sdk.dodge.clearWaypoint).toHaveBeenCalledTimes(clears);
-    bags = [];
+    bridgeBags.pickUp(21);
     f.farmer.onLoop();
     expect(f.farmer.lockId).toBe(10);
+  });
+
+  it('collects a deferred bag once the boss dies', () => {
+    const f = bossFightWithBridgeLoot();
+    const bag = bridgeBags.drop(LOOT_BAG_7, 22, { x: 2, y: 0 }, [2592]);
+    f.farmer.onLoop();
+    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalledWith(bag.position);
+    f.sdk.world.objects.isDead = (id: number) => id === f.quest.objectId;
+    f.setEnemies([]);
+    f.farmer.onLoop(); f.farmer.onLoop();
+    expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(bag.position);
+  });
+
+  it('collects a deferred bag once the encounter ends without a kill', () => {
+    vi.useFakeTimers(); vi.setSystemTime(10000);
+    const f = bossFightWithBridgeLoot();
+    const bag = bridgeBags.drop(LOOT_BAG_7, 23, { x: 2, y: 0 }, [2592]);
+    f.setEnemies([]);                                 // boss gone from view, not known dead
+    f.farmer.onLoop();
+    expect(f.farmer.bossEncounter).not.toBeNull();
+    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalledWith(bag.position);
+    vi.setSystemTime(13500); f.farmer.onLoop();       // quest encounter grace (3 s) lapses
+    expect(f.farmer.bossEncounter).toBeNull();
+    f.farmer.onLoop();
+    expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(bag.position);
   });
   it('uses the actual second bag slot when the first has emptied', () => {
     const f = fixture();
