@@ -15,6 +15,7 @@ function fixture(map = "Oryx's Castle") {
     enemies: { getAll: () => state.enemies },
     world: { getSize: () => ({ width: 100, height: 100 }),
       objects: { getAll: () => state.objects, getPortals: () => state.portals,
+        getById: (id: number) => state.objects.find((o: any) => o.objectId === id) ?? null,
         getQuestObject: () => null, isDead: (id: number) => state.dead.has(id),
         getTypeName: (id: number) => id === 42 ? 'Wine Cellar Incantation' : 'Potion of Defense' },
       tiles: { getAll: () => state.tiles } },
@@ -31,6 +32,25 @@ function fixture(map = "Oryx's Castle") {
 const portal = (destination: string, name = `${destination} Portal`, objectId = 50): any => ({
   objectId, name, destination, isOpen: true, position: { x: 0.5, y: 0.5 }, enter: vi.fn(() => true),
 });
+const GATE = 77;
+const wall = (objectId: number, x: number, y: number): any => ({ objectId, objectType: 0x0D70,
+  name: 'Destructible Castle Wall', position: { x, y }, hp: 9000, maxHp: 9000, isTargetable: true, blocksMovement: true });
+const blank = (x: number, y: number): any => ({ objectType: 0x0D75, name: 'Castle Wall Blank', position: { x, y }, blocksMovement: true });
+/** Castle floor x/y 0..10 ringed by permanent walls (x=0, x=10, y=10 and y=5), row y=5 open
+ *  only at a destructible wall at (5, 5). The player starts south of that row. */
+function sealedRoom() {
+  const f = fixture(); floor(f, 11, 11);
+  f.sdk.world.getSize = () => ({ width: 11, height: 11 });
+  const objects = [];
+  for (let i = 0; i <= 10; i++) {
+    objects.push(blank(0.5, i + 0.5), blank(10.5, i + 0.5));
+    if (i > 0 && i < 10) objects.push(blank(i + 0.5, 10.5));
+    if (i > 0 && i < 10 && i !== 5) objects.push(blank(i + 0.5, 5.5));
+  }
+  const gate = wall(GATE, 5.5, 5.5);
+  f.state.objects = [...objects, gate]; f.state.enemies = [gate];
+  return f;
+}
 function floor(f: ReturnType<typeof fixture>, width: number, height: number) {
   f.state.tiles = Array.from({ length: width * height }, (_, i) => ({
     position: { x: i % width + 0.5, y: Math.floor(i / width) + 0.5 },
@@ -223,12 +243,74 @@ describe('Oryx terrain navigation', () => {
     f.state.tiles[3].hasConditionEffect = false; f.state.tiles[3].isBlocking = true;
     expect(f.runner.graph().parents.has('4,0')).toBe(false);
   });
-  it('shoots destructible castle walls even when they are props', () => {
-    const f = fixture(); f.state.objects = [{ ...enemy('Fortified Destructible Castle Wall', 99, 4, 0), blocksMovement: true }];
+  it('never fights a destructible wall as a creature, and leaves one that seals nothing alone', () => {
+    // Open 10x10 floor: the wall has reachable floor on every side.
+    const f = fixture(); floor(f, 10, 10); f.state.position = { x: 2.5, y: 5.5 };
+    const w = wall(99, 4.5, 5.5); f.state.objects = [w]; f.state.enemies = [w];
     f.runner.tick(0);
-    expect(f.sdk.combat.aimAtPosition).toHaveBeenCalledWith(4, 0);
+    expect(f.sdk.combat.aimAt).not.toHaveBeenCalled();
+    expect(f.sdk.combat.aimAtPosition).not.toHaveBeenCalled();
+    expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalled();
+    expect(f.sdk.dodge.navigateToPosition).toHaveBeenCalled();
+  });
+  it('breaks a wall that seals the reachable floor, with Auto Aim told it is a structure', () => {
+    const f = sealedRoom(); f.state.position = { x: 5.5, y: 7.5 };
+    f.runner.tick(0);
+    expect(f.sdk.combat.aimAt).toHaveBeenLastCalledWith(GATE, { includeStructures: true });
     expect(f.farmer.setFiring).toHaveBeenLastCalledWith(true);
     expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalled();
+    expect(f.sdk.ui.status).toHaveBeenLastCalledWith('Castle: breaking Destructible Castle Wall');
+    // Held on later loops without re-issuing the lock.
+    f.runner.tick(100); f.runner.tick(200);
+    expect(f.sdk.combat.aimAt).toHaveBeenCalledOnce();
+    expect(f.sdk.combat.stopAiming).not.toHaveBeenCalled();
+  });
+  it('walks through the gap once the wall is gone, releasing the wall lock', () => {
+    const f = sealedRoom(); f.state.position = { x: 5.5, y: 7.5 };
+    f.runner.tick(0);
+    f.state.objects = f.state.objects.filter((o: any) => o.objectId !== GATE);
+    f.state.enemies = [];
+    f.runner.tick(100);
+    expect(f.sdk.combat.stopAiming).toHaveBeenCalled();
+    const next = f.sdk.dodge.navigateToPosition.mock.calls.at(-1)?.[0];
+    expect(next.y).toBeLessThan(5.5);
+  });
+  it('walks up to a sealing wall before shooting it', () => {
+    const f = sealedRoom(); f.state.position = { x: 8.5, y: 8.5 };
+    f.runner.tick(0);
+    expect(f.sdk.combat.aimAt).not.toHaveBeenCalled();
+    expect(f.sdk.ui.status).toHaveBeenLastCalledWith('Castle: walking to Destructible Castle Wall');
+    const next = f.sdk.dodge.navigateToPosition.mock.calls.at(-1)?.[0];
+    expect(next.x).toBeLessThan(8.5);
+  });
+  it('sees through a wall two tiles thick', () => {
+    const f = sealedRoom(); f.state.position = { x: 5.5, y: 7.5 };
+    // A second destructible layer just north of the gate; open floor resumes at y=3.
+    f.state.objects.push(wall(GATE + 1, 5.5, 4.5));
+    f.runner.tick(0);
+    expect(f.sdk.combat.aimAt).toHaveBeenLastCalledWith(GATE, { includeStructures: true });
+  });
+  it('reports a wall that loses no HP and keeps trying when it is the only way on', () => {
+    const f = sealedRoom(); f.state.position = { x: 5.5, y: 7.5 };
+    f.runner.tick(0); f.runner.tick(14900);
+    expect(f.sdk.log.info).not.toHaveBeenCalledWith(expect.stringContaining('lost no HP'));
+    f.runner.tick(15000);
+    expect(f.sdk.log.info).toHaveBeenCalledWith(expect.stringContaining('Destructible Castle Wall #77 lost no HP in 15s'));
+    f.runner.tick(15100);
+    expect(f.sdk.ui.status).toHaveBeenLastCalledWith('Castle: breaking Destructible Castle Wall');
+    // Damage landing resets the clock.
+    f.state.objects.find((o: any) => o.objectId === GATE).hp = 8000;
+    f.runner.tick(29000); f.runner.tick(30200);
+    expect(f.sdk.log.info.mock.calls.filter(([m]: [string]) => m.includes('lost no HP'))).toHaveLength(1);
+  });
+  it('explores reachable floor nearer the goal before breaking a wall', () => {
+    // Same room, but the bottom-right corner opens onto unseen tiles next to the goal.
+    const f = sealedRoom(); f.state.position = { x: 5.5, y: 7.5 };
+    f.sdk.world.getSize = () => ({ width: 30, height: 20 });   // hint (15, 0): east of the room
+    f.state.objects = f.state.objects.filter((o: any) => !(o.position.x === 10.5 && o.position.y === 6.5));
+    f.runner.tick(0);
+    expect(f.sdk.combat.aimAt).not.toHaveBeenCalled();
+    expect(f.sdk.dodge.navigateToPosition.mock.calls.at(-1)?.[0].x).toBeGreaterThan(5.5);
   });
   it('does not navigate on unavailable terrain or while the character is spawning', () => {
     const f = fixture(); f.runner.tick(0);

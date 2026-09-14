@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { RealmEngine } from '@realmengine/sdk';
 import { SDKBridge } from '../bridge/index.js';
 import type { BridgeDeps } from '../bridge/BridgeDeps.js';
-import { setDllFeatureSender } from '../../bridge/DllFeatureBus.js';
+import { sendDllFeature, setDllFeatureSender } from '../../bridge/DllFeatureBus.js';
 import { PacketFactory } from '../../packets/PacketFactory.js';
 import type { Packet } from '../../packets/Packet.js';
 import PACKET_DEFINITIONS from '../../packets/packetDefinitions.generated.js';
@@ -50,14 +50,19 @@ const OBJECTS_XML = `<Objects>
   <Object type="0x7119" id="Oryx Tall Brick Wall"><Class>GameObject</Class><OccupySquare/><EnemyOccupySquare/><FullOccupy/><BlocksSight/><Static/></Object>
   <Object type="0xb13b" id="LH Marble Defender"><Class>Character</Class><DisplayId>Marble Defender</DisplayId><Enemy/><Quest/><MaxHitPoints>54375</MaxHitPoints><Defense>30</Defense></Object>
   <Object type="0xb095" id="LH Marble Wall"><Class>Wall</Class><Enemy/><MaxHitPoints>12000</MaxHitPoints><OccupySquare/><EnemyOccupySquare/><FullOccupy/><BlocksSight/><Static/></Object>
+  <Object type="0x0D70" id="Destructible Castle Wall"><Class>Wall</Class><MaxHitPoints>9000</MaxHitPoints><Static/><FullOccupy/><OccupySquare/><EnemyOccupySquare/><Enemy/><BlocksSight/></Object>
+  <Object type="0x0D75" id="Castle Wall Blank"><Class>Wall</Class><Static/><FullOccupy/><OccupySquare/><EnemyOccupySquare/><BlocksSight/></Object>
+  <Object type="0x2748" id="Oryx Noble"><Class>Character</Class><Group>Gemsbok Minions</Group><Enemy/><Size>100</Size><MaxHitPoints>5625</MaxHitPoints><Defense>20</Defense></Object>
 </Objects>`;
 const TILES_XML = `<GroundTypes>
   <Ground type="0xb04c" id="O3 Normal Tile Corner"/>
   <Ground type="0xb01a" id="LH Main Tile"/>
+  <Ground type="0x18" id="Castle Stone Floor Tile"/>
 </GroundTypes>`;
 const TYPE = {
   ARCHER: 0x0307, MAGIC_QUIVER: 0x0a61, ORYX_3: 0xb133, BRICK_WALL: 0x7119,
   DEFENDER: 0xb13b, LH_WALL: 0xb095, O3_FLOOR: 0xb04c, LH_FLOOR: 0xb01a,
+  CASTLE_BREAKABLE: 0x0D70, CASTLE_WALL: 0x0D75, CASTLE_FLOOR: 0x18, ORYX_NOBLE: 0x2748,
 };
 // Oryx 3's guard animation (RealmShark Tomato; tomatoBossGuards.ts).
 const ORYX_GUARD_ANIMATION = -935464302;
@@ -178,8 +183,8 @@ function session(map: string, allowPlayerTeleport = false) {
     conn, sent,
     server: (name: string, data: Record<string, unknown>) => proxy.fireServerPacket(conn, wire(name, data)),
     frame: (hex: string) => proxy.fireServerPacket(conn, factory.createFromBytes(Buffer.from(hex, 'hex'))),
-    update: (tiles: unknown[], newObjs: unknown[]) =>
-      s.server('UPDATE', { position: { x: 0, y: 0 }, levelType: 0, tiles, newObjs, drops: [] }),
+    update: (tiles: unknown[], newObjs: unknown[], drops: number[] = []) =>
+      s.server('UPDATE', { position: { x: 0, y: 0 }, levelType: 0, tiles, newObjs, drops }),
     newTick: (statuses: unknown[]) =>
       s.server('NEWTICK', { tickId: ++tickId, tickTime: 200, serverRealTimeMs: 0, serverLastRttMs: 0, statuses }),
     lastDll: (key: string) => [...recorded.dll].reverse().find(([k]) => k === key)?.[1],
@@ -300,6 +305,20 @@ describe('Oryx runner on the real SDK', () => {
     expect(s.lastDll('autoFireEnabled')).toBe(true);
   });
 
+  it('names an enemy that has no DisplayId by its id, so Sanctuary room clearing can recognise it', () => {
+    // Oryx Noble, like every Sanctuary room enemy, Treasurer Gemsbok, Archbishop Leucoryx
+    // and the Orbs of Light/Chaos, has no <DisplayId> in objects.xml.
+    const s = session("Oryx's Sanctuary");
+    const noble = entity(TYPE.ORYX_NOBLE, 2100, 9.5, 5.5, { [StatType.MaxHP]: 5625, [StatType.HP]: 5625 });
+    s.update(floor(TYPE.O3_FLOOR, 0, 19, 0, 11), [archer(5.5, 5.5), noble]);
+    const farmer = startFarmer(new Farmer());
+    farmer.onLoop();
+
+    expect(RealmEngine.enemies.getById(2100)?.name).toBe('Oryx Noble');
+    expect(s.lastStatus()).toBe('Sanctuary: fighting Oryx Noble');
+    expect(s.lastDll('scriptCombatTargetId')).toBe(2100);
+  });
+
   it('sourceObjectId: a Celestial cue spoken by the boss holds fire; the same words from anyone else do not', () => {
     const s = sanctuary();
     s.farmer.onLoop();
@@ -318,6 +337,82 @@ describe('Oryx runner on the real SDK', () => {
     s.farmer.onLoop();
     expect(s.lastStatus()).toBe('Sanctuary: Oryx 3: Celestial — Unified Dodge controls movement');
     expect(s.lastDll('autoFireEnabled')).toBe(false);
+  });
+});
+
+// ─── Oryx's Castle: the first thing to do is break a wall ────────────────────
+// The user's run on 2026-09-14 entered Oryx's Castle and did nothing: no wall
+// broken, no progress. A Destructible Castle Wall is <Enemy/>, so the SDK lists
+// it as a targetable enemy, and it is <Static/> with no projectiles, so Auto
+// Aim's shipped "Ignore walls / breakables" filter (plugins/auto-aim.ts,
+// TargetSelector.cpp Locked branch) drops a lock on it.
+const GATE = 4000;     // the destructible wall that seals the start room
+const DECOY = 4001;    // a destructible wall standing inside the room, sealing nothing
+
+/**
+ * The start room: castle floor x/y 0..15, ringed by permanent castle walls, with
+ * the row y=9 walled off except one destructible wall at (7, 9). Above that row
+ * is floor the player cannot reach until the wall dies.
+ */
+function castleStart(x: number, y: number) {
+  const s = session("Oryx's Castle");
+  // What the Auto Aim plugin sends on enable with its shipped settings.
+  sendDllFeature('autoAimIgnoreWalls', true);
+  sendDllFeature('autoAimIgnoreScenery', true);
+  const walls = [];
+  let id = 5000;
+  for (let i = 0; i <= 15; i++) {
+    walls.push(entity(TYPE.CASTLE_WALL, id++, 0.5, i + 0.5), entity(TYPE.CASTLE_WALL, id++, 15.5, i + 0.5));
+    if (i > 0 && i < 15) walls.push(entity(TYPE.CASTLE_WALL, id++, i + 0.5, 15.5));
+    if (i > 0 && i < 15 && i !== 7) walls.push(entity(TYPE.CASTLE_WALL, id++, i + 0.5, 9.5));
+  }
+  const hp = { [StatType.MaxHP]: 9000, [StatType.HP]: 9000 };
+  s.update(floor(TYPE.CASTLE_FLOOR, 0, 15, 0, 15), [archer(x, y),
+    entity(TYPE.CASTLE_BREAKABLE, GATE, 7.5, 9.5, hp), entity(TYPE.CASTLE_BREAKABLE, DECOY, 6.5, 11.5, hp), ...walls]);
+  const farmer = startFarmer(new Farmer());
+  return { ...s, farmer };
+}
+
+describe("Oryx's Castle walls on the real SDK", () => {
+  it('breaks the wall that seals the start room, through Auto Aim\'s wall filters, then walks through the gap', () => {
+    const s = castleStart(7.5, 11.5);
+    // Why "fight the nearest enemy" found walls: the SDK lists them as targetable enemies.
+    expect(RealmEngine.enemies.getById(DECOY)).toMatchObject({ isTargetable: true, name: 'Destructible Castle Wall' });
+    s.farmer.onLoop();
+
+    expect(s.lastStatus()).toBe('Castle: breaking Destructible Castle Wall');
+    expect(s.lastDll('scriptCombatTargetId')).toBe(GATE);
+    expect(s.lastDll('autoFireEnabled')).toBe(true);
+    expect(s.lastDll('walkTargetActive')).toBe(false);
+    // The lock survives Auto Aim's filters only because they are lifted first.
+    const at = (k: string, v: unknown) => recorded.dll.findIndex(([key, value]) => key === k && value === v);
+    expect(at('autoAimIgnoreScenery', false)).toBeGreaterThan(-1);
+    expect(at('autoAimIgnoreWalls', false)).toBeGreaterThan(-1);
+    expect(at('autoAimIgnoreScenery', false)).toBeLessThan(at('scriptCombatTargetId', GATE));
+    // A wall is not a creature: no dodge orbit on it, and the one sealing nothing is left alone.
+    expect(recorded.dll.some(([k, v]) => k === 'scriptEnemyLockId' && (v === GATE || v === DECOY))).toBe(false);
+    expect(at('scriptCombatTargetId', DECOY)).toBe(-1);
+
+    // The wall dies: the server drops it.
+    vi.advanceTimersByTime(600);
+    s.update([], [], [GATE]);
+    s.farmer.onLoop();
+    expect(s.lastDll('autoAimIgnoreScenery')).toBe(true);    // the plugin's settings are back
+    expect(s.lastDll('autoAimIgnoreWalls')).toBe(true);
+    expect(s.lastDll('walkTargetActive')).toBe(true);
+    expect(s.lastDll('walkTargetY')).toBeLessThan(9.5);        // through the gap, north
+    expect(s.lastStatus()).toBe('Castle: clearing route toward next encounter');
+  });
+
+  it('walks up to a sealing wall out of reach before shooting it', () => {
+    const s = castleStart(13.5, 13.5);
+    s.farmer.onLoop();
+
+    expect(s.lastStatus()).toBe('Castle: walking to Destructible Castle Wall');
+    expect(s.lastDll('walkTargetActive')).toBe(true);
+    expect(s.lastDll('walkTargetX')).toBeLessThan(13.5);
+    expect(recorded.dll.some(([k, v]) => k === 'scriptCombatTargetId' && v === GATE)).toBe(false);
+    expect(recorded.dll.some(([k, v]) => k === 'autoAimIgnoreScenery' && v === false)).toBe(false);
   });
 });
 
