@@ -372,7 +372,8 @@ export default class Farmer {
   }
 
   computeRealmGoal(level) {
-    const tiles = RealmEngine.world.tiles.getAll().filter((t) => !t.isBlocking && !t.damaging);
+    const known = RealmEngine.world.tiles.getAll();
+    const tiles = known.filter((t) => !t.isBlocking && !t.damaging);
     if (!tiles.length) return null;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const tile of tiles) {
@@ -383,8 +384,23 @@ export default class Farmer {
     // Leveling direction comes from quests now; no bottom-right heuristic.
     const base = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
     const desired = base;
+    // Skip goals the player can never stand on: a tile holding a square-blocking
+    // object (tree, rock, wall prop), and an open tile walled in on all four sides.
+    // NoWalk ground, deep water with a Speed value included, is already isBlocking.
+    // isOccupied is not used: it counts every tracked entity, the player included.
+    const cell = (x, y) => Math.floor(x) * 65536 + Math.floor(y);
+    const closed = new Set();
+    for (const o of RealmEngine.world.objects?.getAll?.() ?? []) {
+      if (o?.blocksMovement && Number.isFinite(o.position?.x) && Number.isFinite(o.position?.y)) {
+        closed.add(cell(o.position.x, o.position.y));
+      }
+    }
+    for (const t of known) if (t.isBlocking || t.damaging) closed.add(cell(t.position.x, t.position.y));
+    const standable = ({ position: { x, y } }) => !closed.has(cell(x, y))
+      && !(closed.has(cell(x - 1, y)) && closed.has(cell(x + 1, y))
+        && closed.has(cell(x, y - 1)) && closed.has(cell(x, y + 1)));
     return tiles.sort((a, b) => Math.hypot(a.position.x - desired.x, a.position.y - desired.y)
-      - Math.hypot(b.position.x - desired.x, b.position.y - desired.y))[0]?.position ?? null;
+      - Math.hypot(b.position.x - desired.x, b.position.y - desired.y)).find(standable)?.position ?? null;
   }
 
   // Rank real destinations by distance to the travel goal, not to the player.
