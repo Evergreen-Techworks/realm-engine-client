@@ -114,7 +114,9 @@ namespace {
             FH_FLOAT("killauraStandoffTiles",  KillAura::SetStandoffTiles),
             FH_BOOL ("killauraOverlayEnabled", KillAura::SetOverlayEnabled),
             FH_BOOL ("killauraDriveAimEnabled", KillAura::SetDriveAimAngle),
-            FH_BOOL("autoFireEnabled", AutoFire::SetEnabled),
+            // Scripts only (combat.setAutoFire); the in-game checkbox calls
+            // AutoFire::SetEnabled. Fires by itself at Auto Aim's real target.
+            FH_BOOL("autoFireEnabled", AutoFire::SetScriptArmed),
             FH("scriptEnemyLockId", {
                 const int32_t id = f.Int();
                 DangerPlanner::SetEnemyLock(id);
@@ -134,7 +136,11 @@ namespace {
                 FeatureState::SetProjectileNoclipEnabled(on);
                 if (!on) ProjNoclip::SetEnabled(false);
             }),
-            FH("playerColliderSceneReset", PlayerCollider::ResetScene()),
+            // Sent on every HELLO, i.e. every new map connection.
+            FH("playerColliderSceneReset", {
+                PlayerCollider::ResetScene();
+                AutoFire::NotifyMapChange();
+            }),
             FH_BOOL("colliderEnabled", PlayerCollider::SetEnabled),
             FH_FLOAT("colliderMultiplier", PlayerCollider::SetMultiplier),
             FH("clientDefense", FeatureState::SetClientDefense(static_cast<int32_t>(f.Int()))),

@@ -47,6 +47,16 @@ with tempfile.TemporaryDirectory(prefix="enemy-tracker-tests-") as directory:
     ], check=True)
     subprocess.run([str(binary)], check=True)
 
+# Native AutoFire trigger rules: script-armed firing only at a real Auto Aim target.
+with tempfile.TemporaryDirectory(prefix="autofire-decision-tests-") as directory:
+    binary = Path(directory) / "autofire_decision_tests"
+    subprocess.run([
+        os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-pthread",
+        "-I", str(internal / "src"), str(internal / "tests/autofire_decision_tests.cpp"),
+        "-o", str(binary),
+    ], check=True)
+    subprocess.run([str(binary)], check=True)
+
 # End-to-end pathing scenarios against the production planner (tests/scenario).
 subprocess.run(["python3", str(internal / "tests/scenario/run_scenarios.py"), "--check"], check=True)
 

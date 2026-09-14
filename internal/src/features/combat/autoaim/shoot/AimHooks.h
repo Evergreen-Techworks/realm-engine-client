@@ -44,4 +44,8 @@ void SetKillAuraOverride(bool active, float x, float y, int32_t enemyId);
 void SetReverseCultStaff(bool v);
 void SetOffsetColossusSword(bool v);
 
+// The shot angle from (px,py) toward (tx,ty), with the weapon tweaks above: the
+// same formula the detours redirect with. Any thread.
+float ShotAngleTo(float px, float py, float tx, float ty);
+
 } // namespace AimHooks

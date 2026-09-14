@@ -53,6 +53,12 @@ Result Select(const Config& cfg,
               float mouseX,  float mouseY,
               const WeaponProfile& weapon);
 
+// The radius Select() filters AUTOMATIC picks on: the weapon's range (a 15-tile
+// placeholder until the first shot calibrates it) plus `rangeLeadBias`. Select()'s
+// Locked branch does not filter on it, so a caller that needs "the target is in
+// range" (native AutoFire's script trigger) checks against this same number.
+float AutoAimSelectionRangeTiles(const WeaponProfile& weapon, float rangeLeadBias);
+
 // Killaura selection. Thin wrapper over Select():
 //   atMouse == false -> reference point is the player
 //   atMouse == true  -> reference point is the mouse world position

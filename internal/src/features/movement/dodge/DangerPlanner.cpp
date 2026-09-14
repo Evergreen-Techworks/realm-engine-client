@@ -22,6 +22,7 @@
 #include "BootGate.h"
 #include "helpers.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
+#include "features/combat/autoaim/modes/AutoFire.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
 #include "ChatToast.h"
 #include "gui/tabs/TestTAB.h"
@@ -918,6 +919,9 @@ void __fastcall Detour_AppEngineUpdate(void* __this, void* method)
     const double t1 = diagOn ? DiagTiming::NowMs() : 0.0;
     DodgeTickGuarded();
     if (diagOn) DiagAfterUpdate(t0, t1, DiagTiming::NowMs());
+    // A script's auto-fire, on the thread the game shoots from (AutoFire.h). After
+    // the dodge body so the dodge timings above stay the dodge's own.
+    AutoFire::GameThreadTick();
 }
 
 } // namespace
