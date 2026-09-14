@@ -41,7 +41,7 @@
 //          trace to t=1.
 //        — If no goal and player is safe: do nothing.
 //     4. Fallback: if BFS finds no path at all, quick-scan t=0 for any
-//        safe reachable cell and NativeMoveTo it (game speed-clamps).
+//        safe reachable cell and NativeMoveTo it (the game does not speed-clamp MoveTo).
 //
 //   Every game tick (17ms @ 60fps):
 //     NativeMoveTo the planned next-step target.
@@ -1160,7 +1160,7 @@ static bool RunBFS(int pGX, int pGY, int goalGX, int goalGY, bool hasGoal)
 // ─────────────────────────────────────────────────────────────────────────────
 // FallbackScan
 // If BFS fails entirely (completely surrounded), scan t=0 for any safe cell
-// and move there. NativeMoveTo is speed-clamped so this is safe.
+// and move there. The game's MoveTo does NOT speed-clamp; the step must fit the player's speed.
 // ─────────────────────────────────────────────────────────────────────────────
 static bool FallbackScan(int pGX, int pGY)
 {

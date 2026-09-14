@@ -13,7 +13,11 @@ HERE = Path(__file__).resolve().parent
 # Known limitations: reported, never asserted. A locked boss firing a dense ring
 # plus aimed volleys keeps the player at the edge of the rings' reach — the solver
 # ranks safety over range — so these reach no engagement range today.
-KNOWN_LIMITATIONS = {"d_boss_open_dense", "d_boss_wall_dense"}
+# m_pinch_nowalk: the game's collision is a point test (HJMBOMEHGDJ::PEGDEDNHEHD), so it
+# lets the player through a corner where two NoWalk / OccupySquare squares touch
+# diagonally. The DLL's occupancy keeps a 0.2285 box, the nav A* refuses corner
+# cuts and the follower pads its sweep, so today the route never takes that corner.
+KNOWN_LIMITATIONS = {"d_boss_open_dense", "d_boss_wall_dense", "m_pinch_nowalk"}
 
 SCENARIOS = [
     "a_lake_deep_speed", "a_lake_deep_plain", "a_lake_shallow", "a_river_deep_speed", "a_river_shallow",
@@ -23,6 +27,9 @@ SCENARIOS = [
     "e_corridor1_nowalk", "e_corridor1_fullocc", "e_corridor2_fullocc",
     "f_damaging_row", "g_fullocc_gap", "h_learned_keepout", "j_hidden_blocker",
     "i_tilelist_revisit", "i_tilelist_frontier",
+    "k_slowed_midwalk", "k_paralyzed_midwalk", "k_water_midpath", "k_dodge_in_water",
+    "l_walk_past_shotgun", "l_walk_past_bomber", "l_lock_boss_dies", "l_lock_boss_invuln",
+    "m_pinch_nowalk", "m_pinch_fulloccupy",
 ]
 
 def main():
@@ -50,8 +57,11 @@ def main():
     else:
         scan = 1
     defines = []
-    if "ObserveBlast" in (ud / "UDodgeEnemyHazards.h").read_text():
+    hazards = (ud / "UDodgeEnemyHazards.h").read_text()
+    if "ObserveBlast" in hazards:
         defines.append("-DHARNESS_TREE_POST70=1")
+    if "BurstKeepoutRadius" in hazards:
+        defines.append("-DHARNESS_TREE_BURST=1")
     with tempfile.TemporaryDirectory(prefix="udodge-scenarios-") as tmp:
         tmp = Path(tmp)
         stubs = tmp / "stubs"
@@ -84,6 +94,10 @@ def main():
                     print(json.dumps(row), flush=True)
                 if not row["success"] and name not in KNOWN_LIMITATIONS:
                     failed.append(name)
+                # The game's MoveTo does not clamp distance: a step longer than the
+                # game's own speed allows is what the server sees, in every scenario.
+                elif row.get("overspeed_moves", 0) > 0:
+                    failed.append(name + " (overspeed)")
         if args.check:
             if failed:
                 print("Pathing scenarios FAILED: " + ", ".join(failed))

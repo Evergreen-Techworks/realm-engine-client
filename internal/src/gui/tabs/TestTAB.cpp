@@ -1052,19 +1052,24 @@ void TestTAB::RenderMovementSection()
 
         ImGui::TextDisabled("Tier filter:");
         struct { const char* label; BagLooter::BagTier tier; } rows[] = {
-            { "Brown##bltb",     BagLooter::Brown     },
-            { "Pink##bltpk",     BagLooter::Pink      },
-            { "Purple##bltpu",   BagLooter::Purple    },
-            { "Cyan##bltc",      BagLooter::Cyan      },
-            { "Blue##bltbl",     BagLooter::Blue      },
-            { "White##bltwh",    BagLooter::White     },
-            { "Soulbound##blts", BagLooter::Soulbound },
+            { "Brown##bltb",      BagLooter::Brown     },
+            { "Pink##bltpk",      BagLooter::Pink      },
+            { "Purple##bltpu",    BagLooter::Purple    },
+            { "Egg##blteg",       BagLooter::Egg       },
+            { "Light blue##bltlb",BagLooter::LightBlue },
+            { "Dark blue##bltdb", BagLooter::DarkBlue  },
+            { "White##bltwh",     BagLooter::White     },
+            { "Gold##bltgd",      BagLooter::Gold      },
+            { "Orange##bltor",    BagLooter::Orange    },
+            { "Red##bltrd",       BagLooter::Red       },
+            { "Soulbound##blts",  BagLooter::Soulbound },
         };
-        for (int i = 0; i < 7; ++i) {
+        constexpr int kRows = static_cast<int>(sizeof(rows) / sizeof(rows[0]));
+        for (int i = 0; i < kRows; ++i) {
             bool on = BagLooter::IsTierEnabled(rows[i].tier);
             if (ImGui::Checkbox(rows[i].label, &on))
                 BagLooter::SetTierEnabled(rows[i].tier, on);
-            if ((i % 4) != 3 && i != 6) ImGui::SameLine();
+            if ((i % 4) != 3 && i != kRows - 1) ImGui::SameLine();
         }
 
         float walkDist = BagLooter::GetMaxWalkDistance();

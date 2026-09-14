@@ -818,15 +818,11 @@ static void DoRefresh()
             if (Mem::TryRead(tp, RuntimeOffsets::Sq_Cover, coverPtr) && coverPtr != nullptr) {
                 t.hasCover = true;
             }
-            // Tile XML name via same chain as entities: KJMONHENJEN.OBAKMCCDBJA[0x18] → ObjectProperties.id[0x38]
-            // Display-only (World tab tile table), so only while that table can be shown.
-            if (detail) {
-                void* op = nullptr;
-                void* idStr = nullptr;
-                if (Mem::TryRead(tp, RuntimeOffsets::ObjProps, op) && Mem::AddrOk(op) &&
-                    Mem::TryRead(op, RuntimeOffsets::OP_IdStr, idStr) && Mem::AddrOk(idStr))
-                    Il2CppC::ReadString(idStr, t.tileName, sizeof(t.tileName));
-            }
+            // No tile XML name: a square (BGAIOPJMHLO) is not a map object. The old read
+            // took the ENTITY ObjectProperties offset (0x18) on the square, where the
+            // 86ad651b layout has a Single (PPFJMDEHCNG), dereferenced it and read +0x38
+            // — the access violations at dll+0xc7ab with RCX=0x40200000 (2.5f) whenever
+            // the World tab's tile table was open. It never produced a name.
             g_tiles.push_back(t);
         };
 

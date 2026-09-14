@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "ConditionWords.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RuntimeOffsets — centralised, table-driven IL2CPP field offset resolver.
@@ -150,8 +151,10 @@ namespace RuntimeOffsets {
     extern uint32_t MaxHP;     // NCBIICBDGAG   max HP, fallback 0x208
     extern uint32_t Defense;    // HODJPKFINKF   fallback 0x210
     extern uint32_t PlayerIGN;  // DPGEBOCBKEF   fallback 0x178  (below ACTK point, no shift)
-    // MapObject (LKHPPBEGNOM) UInt32[] — first two elements = 64-bit status bitmask (offset_map.md)
-    extern uint32_t MoConditions; // COHCKAPOLCA   fallback 0x298 (dump 0x248 + ACTK 0x50)
+    // MapObject (LKHPPBEGNOM) Int32[3] — first two elements = 64-bit status bitmask.
+    // NOT ACTK-shifted: the game's own condition checks and constructor use the
+    // metadata offset (see the table row in RuntimeOffsets.cpp).
+    extern uint32_t MoConditions; // COHCKAPOLCA   fallback 0x250
     // ECGPFJKCCAN — Vector2 velocity stored on LKHPPBEGNOM (and all PMMFLLAIPGN/enemy subclasses).
     // vx = *(entity + MoVelocity), vy = *(entity + MoVelocity + 4).
     // Fallback 0 = not yet resolved; AutoAim will fall back to position-history velocity.
@@ -218,11 +221,12 @@ namespace RuntimeOffsets {
         InCombat         = 1ull << 58,
     };
 
-    // Combine COHCKAPOLCA[0] and COHCKAPOLCA[1] into a single uint64_t.
-    // Matches DIA4A MapObject::GetFullConditions(): conditions[0] | conditions[1] << 31.
+    // Combine COHCKAPOLCA[0] and COHCKAPOLCA[1] into a single uint64_t. The game
+    // batches 32 bits per word (its bit-63 check tests word1 & 0x80000000), so
+    // word 1 starts at bit 32 — the old `<< 31` put every bit above 31 one low.
     inline uint64_t GetFullConditions(uint32_t w0, uint32_t w1)
     {
-        return static_cast<uint64_t>(w0) | (static_cast<uint64_t>(w1) << 31);
+        return RuntimeConditions::Combine(w0, w1);
     }
 
     // Test a single condition effect. Matches DIA4A MapObject::HasCondition().

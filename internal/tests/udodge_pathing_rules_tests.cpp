@@ -5,6 +5,7 @@
 #include "UDodgeEnemyHazards.h"
 #include "features/movement/sensors/TileOccupancy.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <unordered_map>
@@ -131,16 +132,55 @@ int main()
     const Vec2 avoid[] = { { 5, 0 } };
     Check(!Navigation::AvoidClear(avoid, 1, { 0, 0 }, { 10, 0 }) && Navigation::AvoidClear(avoid, 1, { 0, 2 }, { 10, 2 }),
           "the follower's shortcut test honours remembered squares");
+    // The game's point collision leaves the player 0.01 from the square that refused
+    // it — inside the remembered square's reach. Leaving must stay possible.
+    Check(Navigation::AvoidClear(avoid, 1, { 4.49f, 0 }, { 2, 0 }),
+          "a player already within a remembered square's reach can walk away from it");
+    Check(!Navigation::AvoidClear(avoid, 1, { 4.49f, 3 }, { 5, 0 }),
+          "walking into a remembered square from outside is still refused");
 
-    // ── Enemy keep-outs soften only for walk-to ────────────────────────────────
+    // ── Enemy keep-outs are hard for walk-to too, and the route goes round them ──
     DangerMap map{};
     Check(EnemyHazards::Append(map, 0xb2a9, 100, { 3, 0 }, { 0, 0 }) && map.zones[0].active && map.zones[0].enemyKeepout,
           "keep-outs are hard zones for the dodge");
-    map.zones[map.zoneCount] = ZoneThreat{ { 9, 9 }, 1.f, true, false };
-    ++map.zoneCount;
-    EnemyHazards::SoftenForWalkTo(map);
-    Check(!map.zones[0].active && map.zones[1].active,
-          "walk-to softens enemy keep-outs to cost and leaves real blasts hard");
+    Check(EnemyHazards::BurstKeepoutRadius(4.5f) == 5.f, "a point-blank shooter keeps out its reach plus margin");
+    Check(EnemyHazards::BurstKeepoutRadius(8.f) == 0.f, "a long-range shooter is left to the bullet dodge");
+    Check(EnemyHazards::BurstKeepoutRadius(0.f) == 0.f && EnemyHazards::BurstKeepoutRadius(-1.f) == 0.f,
+          "no projectiles, no keep-out");
+    DangerMap burst{};
+    Check(EnemyHazards::Append(burst, 0x1234, 100, { 3, 0 }, { 0, 0 }, 4.5f) && burst.zones[0].radius == 5.f,
+          "a shooter's reach makes a keep-out without any learned blast");
+    Check(!EnemyHazards::Append(burst, 0x1234, 100, { 3, 0 }, { 0, 0 }, 0.f),
+          "the locked target passes no reach and gets no burst keep-out");
+    Check(!EnemyHazards::Append(burst, 0x1234, 0, { 3, 0 }, { 0, 0 }, 4.5f), "a dead enemy keeps nothing out");
+
+    // Nav A*: a keep-out across the straight line is routed round, never through.
+    reset();
+    for (int x = -20; x <= 20; ++x) for (int y = -20; y <= 20; ++y) cell(x, y) = 0;
+    snap.navGoal = { 16, 0 };
+    snap.map.zoneCount = 0;
+    EnemyHazards::Append(snap.map, 0x1234, 100, { 8, 1 }, { 0, 0 }, 4.5f);
+    Path::Compute(snap, plan);
+    float closest = 1e9f;
+    for (int i = 0; i + 1 < plan.navWptCount; ++i)
+        for (int k = 0; k <= 20; ++k) {
+            const Vec2 q = Add(plan.navWpts[i], Mul(Sub(plan.navWpts[i + 1], plan.navWpts[i]), k / 20.f));
+            closest = std::min(closest, Len(Sub(q, { 8, 1 })));
+        }
+    Check(plan.navFound && !plan.navPartial && closest >= 5.f,
+          "a walk-to route detours around an enemy keep-out");
+    // Standing inside one: the way out stays open.
+    snap.player = { 7, 1 };
+    snap.navGoal = { -10, 1 };
+    Path::Compute(snap, plan);
+    Check(plan.navFound && !plan.navPartial, "a player already inside a keep-out can route out of it");
+    // Walled corridor fully covered by the keep-out: no route through (the player waits).
+    reset();
+    for (int x = 0; x <= 16; ++x) for (int y = -1; y <= 1; ++y) cell(x, y) = 0;
+    snap.navGoal = { 16, 0 };
+    EnemyHazards::Append(snap.map, 0x1234, 100, { 8, 0 }, { 0, 0 }, 4.5f);
+    Path::Compute(snap, plan);
+    Check(!plan.navFound || plan.navPartial, "with no way round, the route does not cross the keep-out");
 
     std::printf("Pathing rules tests: %d checks, 0 failures\n", g_checks);
     return 0;

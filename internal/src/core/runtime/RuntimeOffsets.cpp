@@ -39,10 +39,11 @@ uint32_t HP          = 0x20C;
 uint32_t MaxHP       = 0x208;
 uint32_t Defense     = 0x210;
 uint32_t PlayerIGN   = 0x178;
-// COHCKAPOLCA dump 0x248 on LKHPPBEGNOM (not 0x218 — that is HMMHAKPBEDK). +0x50 ACTK => 0x298.
-// AV on PMMFLLAIPGN is handled gracefully: AutoAim SEH catches it and returns false (untargetable).
-// PMMFLLAIPGN that AV are treated as targetable (correct fallback — assume no immunity).
-uint32_t MoConditions = 0x298;
+// COHCKAPOLCA — Int32[3] conditions array, at its metadata offset (0x250 on 86ad651b).
+// Unlike HP/MaxHP/Defense it is NOT ACTK-shifted: the game's own IsSlowed / IsSpeedy
+// and LKHPPBEGNOM..ctor all read and write [this+0x250], while meta + 0x50 (0x2A0) is a
+// Single. The +0x50 shift here left every native condition read "no conditions".
+uint32_t MoConditions = 0x250;
 // ECGPFJKCCAN — Vector2 velocity. 0 = unresolved; AutoAim falls back to history.
 uint32_t MoVelocity   = 0;
 // KKENJFFDMPO — LKHPPBEGNOM ObjectProperties alias. Runtime metadata resolves this at 0x1C8.
@@ -414,7 +415,8 @@ static Entry s_entries[] = {
     { "LKHPPBEGNOM", { "NCBIICBDGAG" },                              1, kActk, &MaxHP,         false, "MaxHP" },
     { "LKHPPBEGNOM", { "HODJPKFINKF" },                              1, kActk, &Defense,       false, "Defense" },
     { "LKHPPBEGNOM", { "DPGEBOCBKEF" },                              1, 0,     &PlayerIGN,     false, "PlayerIGN" },
-    { "LKHPPBEGNOM", { "COHCKAPOLCA" },                           1, kActk, &MoConditions,  false, "MoConditions" },
+    // No ACTK shift: the game's compiled condition checks use the metadata offset.
+    { "LKHPPBEGNOM", { "COHCKAPOLCA" },                           1, 0,     &MoConditions,  false, "MoConditions" },
     { "LKHPPBEGNOM", { "ECGPFJKCCAN" },                           1, kActk, &MoVelocity,    false, "MoVelocity" },
     { "LKHPPBEGNOM", { "KKENJFFDMPO" },                           1, 0,     &MoObjectProps, false, "MoObjectProps" },
     { "LKHPPBEGNOM", { "GGBCADDBAPN" },                           1, 0,     &PlayerCollisionProps, false, "PlayerCollisionProps" },
@@ -1345,12 +1347,16 @@ bool MapObjectConditionsMakeUntargetable(uint32_t word0, uint32_t word1)
         || HasCondition(full, ConditionEffects::Invulnerable);// bit 24 — permanent immunity
 }
 
-// Guarded single-offset read + strict shape validation. COHCKAPOLCA is always a
-// 1-D UInt32[2]: object header {klass, monitor, bounds==null, max_length==2}.
-// A wrong offset reads some other field (this build: a float 1.0f dereferenced as
-// a pointer → the 0x3F800018 first-chance AVs), which this validation rejects
-// before we trust the data. Returns: 1 = validated array read, 0 = null array at
-// this offset (legit "no conditions"), -1 = not a conditions array / fault.
+// Guarded single-offset read + shape validation. COHCKAPOLCA is a 1-D Int32[]
+// the game allocates with THREE elements (LKHPPBEGNOM..ctor: `new Int32[3]`):
+// object header {klass, monitor, bounds==null, max_length}. The old check demanded
+// max_length == 2 and so rejected the real array at every candidate offset. A wrong
+// offset reads some other field (a float dereferenced as a pointer), which the shape
+// check rejects before the data is trusted; once one read validates, the array class
+// is pinned and nothing of another class validates again. Returns: 1 = validated
+// array read, 0 = null array at this offset, -1 = not a conditions array / fault.
+static uintptr_t s_condArrayKlass = 0;   // game-update thread; a benign race at worst re-pins the same class
+
 static int TryReadCondArrayAt(void* entity, uint32_t off, uint32_t* outW0, uint32_t* outW1)
 {
     __try {
@@ -1362,15 +1368,15 @@ static int TryReadCondArrayAt(void* entity, uint32_t off, uint32_t* outW0, uint3
         if (a < 0x10000 || a > 0x7FFFFFFFFFFFULL || (a & 7) != 0)
             return -1;
         uint8_t* ap = reinterpret_cast<uint8_t*>(arr);
-        void*   klass  = *reinterpret_cast<void**>(ap + 0x00);
-        void*   bounds = *reinterpret_cast<void**>(ap + 0x10);
-        int32_t maxLen = *reinterpret_cast<int32_t*>(ap + 0x18);
-        const uintptr_t k = reinterpret_cast<uintptr_t>(klass);
-        if (k < 0x10000 || k > 0x7FFFFFFFFFFFULL || bounds != nullptr || maxLen != 2)
+        const uintptr_t klass  = *reinterpret_cast<uintptr_t*>(ap + 0x00);
+        const uintptr_t bounds = *reinterpret_cast<uintptr_t*>(ap + 0x10);
+        const int32_t   maxLen = *reinterpret_cast<int32_t*>(ap + 0x18);
+        if (!RuntimeConditions::ArrayShapeOk(klass, bounds, maxLen, s_condArrayKlass))
             return -1;
         auto* data = reinterpret_cast<uint32_t*>(ap + 0x20);
         *outW0 = data[0];
         *outW1 = data[1];
+        if (s_condArrayKlass == 0) s_condArrayKlass = klass;
         return 1;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
@@ -1386,10 +1392,12 @@ bool TryReadMapObjectConditions(void* mapObjectPtr, uint32_t* outWord0, uint32_t
     if (MoConditions == 0)
         return false;
 
-    // ACTK's per-field runtime shuffle keeps moving COHCKAPOLCA relative to its
-    // metadata offset (the fixed +0x50 assumption broke on the 2026-08 build).
-    // Self-locate instead: once a candidate offset yields a validated UInt32[2]
-    // on a live entity, lock it in for the rest of the session.
+    // Self-locate: once a candidate offset yields a validated conditions array on a
+    // live entity, lock it in for the rest of the session. `base` is the baked
+    // metadata offset, which the game's own condition checks use, so on a correct
+    // bake the first candidate validates on the first character read (the game never
+    // leaves the array null). Callers pass LKHPPBEGNOM instances only — the world
+    // dictionary is Dictionary<Int32, LKHPPBEGNOM> — so the offset is in bounds.
     static uint32_t s_lockedOff = 0;   // 0 = not yet locked
 
     if (s_lockedOff != 0) {
@@ -1397,8 +1405,8 @@ bool TryReadMapObjectConditions(void* mapObjectPtr, uint32_t* outWord0, uint32_t
         return r >= 0;   // null array at the right offset = "no conditions", still success
     }
 
-    // Candidates around the name-resolved (metadata + kActk) value, most likely
-    // first: as-resolved, ±8, +0x10, and the raw metadata offset (no ACTK shift).
+    // Candidates around the baked value, most likely first: as-baked, ±8, ±0x10,
+    // and 0x50 below (a leftover of the old ACTK-shift assumption).
     const uint32_t base = MoConditions;
     const uint32_t candidates[6] = {
         base, base + 8, base - 8, base + 0x10, base - 0x10, base - kActk,

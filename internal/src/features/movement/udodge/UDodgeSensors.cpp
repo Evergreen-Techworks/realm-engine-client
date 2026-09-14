@@ -738,10 +738,15 @@ void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& 
     s_aoes.clear();
     AoeTracking::CopyActiveForDraw(s_aoes);
     LearnFromAoePackets(s_aoes, nowMs);
+    // The locked target's distance belongs to the engagement logic (weapon range,
+    // inner standoff), so its own point-blank reach is not walled off here; a
+    // learned self blast on it still is.
+    const int32_t lockId = DangerPlanner::GetEnemyLock();
     for (const auto& enemy : EnemyTracker::GetSnapshot())
         EnemyHazards::Append(out, enemy.objType,
             (enemy.hp > 0 || enemy.isInvulnerable) ? 1 : 0,
-            {enemy.x, enemy.y}, {playerX, playerY});
+            {enemy.x, enemy.y}, {playerX, playerY},
+            (lockId != 0 && enemy.id == lockId) ? 0.f : enemy.shotRangeTiles);
 
     // AoeTracking retains up to 128 entries while DangerMap is deliberately
     // equally sized. Its ring-buffer order is not spatial; the old first-32 cap made

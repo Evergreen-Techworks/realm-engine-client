@@ -6,11 +6,15 @@
 #include "core/runtime/MemRead.h"
 #include "core/il2cpp/Il2CppContainers.h"
 #include "game/objects/GameObjects.h"
+#include "features/combat/autoaim/core/AimMath.h"
+#include "ProjectileTracking.h"
 
 #include <Windows.h>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <unordered_map>
 #include <vector>
 
@@ -124,7 +128,39 @@ struct CandidateOut {
     float   x, y;
     bool    isInvulnerable, hasHealthBar, isScenery;
     void*   ptr;
+    void*   projectiles;       // ObjectProperties.Projectiles (ProjectileProperties[]), may be null
+    uintptr_t projectileCount;
 };
+
+// Longest reach (tiles) among a type's projectile definitions — the same distance
+// model the weapon profile uses (speed and lifetime with acceleration, or the
+// parametric magnitude). 0 when there are none or none can be read. Called once
+// per object type (the result is cached by the caller), never per frame.
+static float SehProjectileReachTiles(void* projectiles, uintptr_t count)
+{
+    __try {
+        if (!Mem::AddrOk(projectiles) || count == 0) return 0.f;
+        if (count > 16) count = 16;
+        float best = 0.f;
+        for (uintptr_t i = 0; i < count; ++i) {
+            void* pp = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(projectiles) + 0x20 + i * sizeof(void*));  // raw-access-ok: Il2CppArray element, shared SEH
+            if (!Mem::AddrOk(pp)) continue;
+            Game::ProjProps props(pp);
+            float reach = 0.f;
+            if (props.IsParametric()) {
+                reach = props.Magnitude();
+            } else {
+                const int32_t speed = props.Speed();
+                const float lifeMs = ProjectileTracking::NormalizeProjectileLifetimeMs(props.Lifetime());
+                if (speed > 0 && speed < 500000 && lifeMs > 1.f && std::isfinite(lifeMs))
+                    reach = AimMath::IntegratedProjectileDistance(reinterpret_cast<uint8_t*>(pp), lifeMs, 1.f,
+                                                                  static_cast<float>(speed));
+            }
+            if (std::isfinite(reach) && reach > best && reach < 100.f) best = reach;
+        }
+        return best;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return 0.f; }
+}
 
 // Returns true if the dict entry describes a targetable enemy.
 // Soft properties (invulnerable, hasHealthBar) are always populated so callers
@@ -204,12 +240,17 @@ static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t loc
         out.hasHealthBar  = (noHB == 0);
         out.isScenery     = isStatic && projectileCount == 0;
         out.ptr           = entity;
+        out.projectiles   = projectiles;
+        out.projectileCount = projectileCount;
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
 // ── Frame state ──────────────────────────────────────────────────────────────
 static std::vector<EnemyTracker::Entry> s_snapshot;
+// Projectile reach per object type. ObjectProperties are shared per type and
+// immutable, so one read per type per session is exact.
+static std::unordered_map<int32_t, float> s_reachByType;
 static std::atomic<int32_t>  s_localPlayerObjectId{ 0 };
 static ULONGLONG             s_lastTickMs = 0;
 
@@ -269,6 +310,13 @@ void Tick()
         e.hasHealthBar   = cand.hasHealthBar;
         e.isScenery      = cand.isScenery;
         e.ptr            = cand.ptr;
+        {
+            auto reach = s_reachByType.find(cand.objType);
+            if (reach == s_reachByType.end())
+                reach = s_reachByType.emplace(cand.objType,
+                    SehProjectileReachTiles(cand.projectiles, cand.projectileCount)).first;
+            e.shotRangeTiles = reach->second;
+        }
 
         // Populate velocity from the just-updated map
         auto it = s_velMap.find(cand.id);
@@ -321,6 +369,81 @@ bool ResolveObjectPos(int32_t id, float& outX, float& outY)
     });
     if (found) { outX = fx; outY = fy; }
     return found;
+}
+
+namespace {
+struct ObjectFacts {
+    int32_t  objType = 0, hp = 0, maxHp = 0;
+    float    x = 0.f, y = 0.f;
+    uint8_t  isEnemy = 0, noHealthBar = 0, isStatic = 0, invincibleXml = 0;
+    void*    idStr = nullptr;
+};
+
+static bool SehReadObjectFacts(void* entity, ObjectFacts& f)
+{
+    __try {
+        const uint8_t* ent = reinterpret_cast<const uint8_t*>(entity);
+        f.objType = *reinterpret_cast<const int32_t*>(ent + RuntimeOffsets::ObjType);  // raw-access-ok: diagnostics, shared SEH
+        f.hp      = *reinterpret_cast<const int32_t*>(ent + RuntimeOffsets::HP);       // raw-access-ok: diagnostics, shared SEH
+        f.maxHp   = *reinterpret_cast<const int32_t*>(ent + RuntimeOffsets::MaxHP);    // raw-access-ok: diagnostics, shared SEH
+        f.x       = *reinterpret_cast<const float*>(ent + RuntimeOffsets::PosX);       // raw-access-ok: diagnostics, shared SEH
+        f.y       = *reinterpret_cast<const float*>(ent + RuntimeOffsets::PosY);       // raw-access-ok: diagnostics, shared SEH
+        void* op  = *reinterpret_cast<void* const*>(ent + RuntimeOffsets::ObjProps);   // raw-access-ok: diagnostics, shared SEH
+        if (!Mem::AddrOk(op)) return true;
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(op);
+        f.isEnemy     = *(p + RuntimeOffsets::OP_IsEnemy);       // raw-access-ok: diagnostics, shared SEH
+        f.noHealthBar = *(p + RuntimeOffsets::OP_NoHealthBar);   // raw-access-ok: diagnostics, shared SEH
+        f.isStatic    = *(p + RuntimeOffsets::OP_IsStatic);      // raw-access-ok: diagnostics, shared SEH
+        f.invincibleXml = Mem::AddrOk(*reinterpret_cast<void* const*>(p + RuntimeOffsets::OP_InvincibleElem)) ? 1 : 0;  // raw-access-ok: diagnostics, shared SEH
+        f.idStr = *reinterpret_cast<void* const*>(p + RuntimeOffsets::OP_IdStr);  // raw-access-ok: diagnostics, shared SEH
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+} // namespace
+
+void DescribeObject(int32_t id, char* out, size_t outCap)
+{
+    if (!out || outCap == 0) return;
+    out[0] = '\0';
+    if (id <= 0) { snprintf(out, outCap, "id=%d (none)", id); return; }
+
+    void* entity = nullptr;
+    void* wm = GameState::GetWorldMgr();
+    void* allDict = Mem::AddrOk(wm) ? Mem::ReadPtr(wm, RuntimeOffsets::WM_AllDict) : nullptr;
+    if (Mem::AddrOk(allDict))
+        Il2CppC::WalkDict(allDict, 4096, [&](int32_t key, void* e) { if (!entity && key == id) entity = e; });
+    if (!Mem::AddrOk(entity)) { snprintf(out, outCap, "id=%d NOT IN WORLD (despawned / out of view)", id); return; }
+
+    ObjectFacts f{};
+    const bool ok = SehReadObjectFacts(entity, f);
+    char name[64] = "?";
+    if (ok && Mem::AddrOk(f.idStr)) Il2CppC::ReadString(f.idStr, name, sizeof(name));
+    uint32_t c0 = 0, c1 = 0;
+    const bool condOk = RuntimeOffsets::TryReadMapObjectConditions(entity, &c0, &c1);
+
+    const Entry* tracked = nullptr;
+    for (const Entry& e : s_snapshot) if (e.id == id) { tracked = &e; break; }
+
+    float px = 0.f, py = 0.f;
+    void* local = GameState::GetLocalPtr();
+    const bool havePlayer = local && Game::Entity(local).TryPos(px, py);
+    const float dist = havePlayer ? std::sqrt((f.x - px) * (f.x - px) + (f.y - py) * (f.y - py)) : -1.f;
+
+    snprintf(out, outCap,
+        "id=%d name='%s' type=0x%X hp=%d/%d cond=%s%08X:%08X xml{enemy=%u noHealthBar=%u static=%u invincible=%u} "
+        "tracked=%s%s pos=(%.2f,%.2f) dist=%.1f%s",
+        id, name, static_cast<unsigned>(f.objType), f.hp, f.maxHp, condOk ? "" : "UNREAD ", c0, c1,
+        f.isEnemy, f.noHealthBar, f.isStatic, f.invincibleXml,
+        tracked ? "yes" : "NO",
+        tracked ? (tracked->isInvulnerable ? " invulnerable" : "") : "",
+        f.x, f.y, dist,
+        tracked ? "" : " (filtered out of the enemy snapshot)");
+    if (tracked) {
+        const size_t used = std::strlen(out);
+        if (used + 1 < outCap)
+            snprintf(out + used, outCap - used, " healthBar=%d scenery=%d reach=%.1f",
+                     tracked->hasHealthBar ? 1 : 0, tracked->isScenery ? 1 : 0, tracked->shotRangeTiles);
+    }
 }
 
 } // namespace EnemyTracker

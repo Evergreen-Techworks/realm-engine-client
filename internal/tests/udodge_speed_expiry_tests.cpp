@@ -4,6 +4,7 @@
 #include "../src/features/movement/dodge/MovementSpeed.h"
 #include "../src/features/projectiles/ProjectileRetirePolicy.h"
 #include "../src/features/movement/dodge/MovementFrameBudget.h"
+#include "../src/core/runtime/ConditionWords.h"
 #include <cstdio>
 #include <limits>
 using namespace UDodge;
@@ -25,6 +26,78 @@ int main() {
     Check(SpeedOrFallback(0.f, base) == 0.f, "fallback preserves valid zero");
     Check(SpeedOrFallback(-1.f, base) == base, "fallback handles failed read");
     Check(ResolveTilesPerSec(20, SpeedOrFallback(-1.f, 1.f)) == ResolveTilesPerSec(20, 1.f), "unknown multiplier retains known SPD");
+
+    // ── Effective speed: the game's own rules, not just the SPD curve ────────
+    // The game's MoveTo does not clamp distance (86ad651b LKHPPBEGNOM::DGLCONCOIBO),
+    // so the step the dodge commands is the speed the server sees. Slowed pins the
+    // game's speed to MIN_MOVE_SPEED (FKALGHJIADI::GAFGPNKFMOJ), whatever SPD says.
+    {
+        auto near = [](float a, float b) { return std::fabs(a - b) < 1e-4f; };
+        SpeedSample s{};
+        s.clientSpd = 75; s.tileMultiplier = 1.f; s.conditionsKnown = true;
+        Check(near(EffectiveTilesPerSec(s), 9.6f), "no conditions: the SPD curve");
+        s.cond0 = kCondSlowed;
+        Check(near(EffectiveTilesPerSec(s), 4.f), "slowed pins MIN_MOVE_SPEED regardless of SPD");
+        s.tileMultiplier = 0.5f;
+        Check(near(EffectiveTilesPerSec(s), 2.f), "slowed still takes the square's speed");
+        s.cond0 = 0;
+        Check(near(EffectiveTilesPerSec(s), 4.8f), "slow water scales the SPD curve");
+        s.tileMultiplier = 1.f;
+        for (uint32_t stop : { kCondParalyzed, kCondStasis }) {
+            s.cond0 = stop;
+            Check(EffectiveTilesPerSec(s) == 0.f, "paralyzed / stasis cannot move");
+        }
+        s.cond0 = 0; s.cond1 = kCond1Petrified;
+        Check(EffectiveTilesPerSec(s) == 0.f, "petrified (bit 34) lives in word 1 bit 2");
+        s.cond1 = 1u << 3;
+        Check(near(EffectiveTilesPerSec(s), 9.6f), "word 1 bit 3 is not petrified");
+        s.cond1 = 0; s.cond0 = kCondSpeedy;
+        Check(near(EffectiveTilesPerSec(s), 9.6f), "speedy alone never raises the commanded speed");
+
+        // Unreadable conditions keep today's curve; the game's getter still wins downward.
+        SpeedSample u{};
+        u.clientSpd = 75; u.tileMultiplier = 1.f;
+        Check(near(EffectiveTilesPerSec(u), 9.6f), "unknown conditions: the SPD curve");
+        u.gameTilesPerMs = 0.004f;
+        Check(near(EffectiveTilesPerSec(u), 4.f), "the game's slowed speed wins over the curve");
+        u.gameTilesPerMs = 0.02f;
+        Check(near(EffectiveTilesPerSec(u), 9.6f), "the game's getter cannot raise the speed past the curve");
+        u.conditionsKnown = true; u.cond0 = kCondSpeedy;
+        Check(near(EffectiveTilesPerSec(u), 14.4f), "speedy confirmed by the game allows x1.5");
+        u.cond0 = kCondNinjaSpeedy; u.gameTilesPerMs = 0.012f;
+        Check(near(EffectiveTilesPerSec(u), 12.f), "ninja speedy is capped by the game's own number");
+        u.cond0 = 0;
+        for (float bad : { -1.f, 4.0f, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity() }) {
+            u.gameTilesPerMs = bad;
+            Check(near(EffectiveTilesPerSec(u), 9.6f), "an implausible game speed is ignored");
+        }
+        u.gameTilesPerMs = 0.f;
+        Check(EffectiveTilesPerSec(u) == 0.f, "the game saying zero is honoured");
+
+        SpeedSample f{};
+        f.tileMultiplier = -1.f;
+        Check(near(EffectiveTilesPerSec(f), ResolveTilesPerSec(50, 1.f)), "nothing known: SPD 50 on plain ground");
+        f.conditionsKnown = true; f.cond0 = kCondSlowed;
+        Check(near(EffectiveTilesPerSec(f), 4.f), "slowed needs no SPD stat");
+    }
+
+    // ── The conditions array the game allocates ──────────────────────────────
+    // LKHPPBEGNOM..ctor allocates COHCKAPOLCA as Int32[3]; the old shape check
+    // demanded exactly 2 elements and so rejected the real array at every offset.
+    {
+        using namespace RuntimeConditions;
+        const uintptr_t intArray = 0x7ff612340000ULL;
+        Check(ArrayShapeOk(intArray, 0, 3, 0), "the game's Int32[3] is a conditions array");
+        Check(ArrayShapeOk(intArray, 0, 2, 0), "a two-word array is accepted");
+        Check(!ArrayShapeOk(intArray, 0, 1, 0), "one word cannot hold the second batch");
+        Check(!ArrayShapeOk(intArray, 0, 4096, 0), "a huge length is not a conditions array");
+        Check(!ArrayShapeOk(intArray, 0x1000, 3, 0), "a multi-dimensional array is rejected");
+        Check(!ArrayShapeOk(0x3F800000ULL >> 16, 0, 3, 0), "a small integer is not a class pointer");
+        Check(ArrayShapeOk(intArray, 0, 3, intArray), "the pinned array class matches");
+        Check(!ArrayShapeOk(intArray + 0x40, 0, 3, intArray), "a different class is rejected once pinned");
+        Check(Combine(0, 1) == (1ull << 32), "word 1 carries bits 32 and up");
+        Check(Combine(kCondSlowed, 0) == kCondSlowed, "word 0 carries bits 0-31");
+    }
 
     static DangerMap map{};
     MapInput in{}; in.map = &map;

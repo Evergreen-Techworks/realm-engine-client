@@ -1,5 +1,7 @@
 #pragma once
 #include "UDodgeTypes.h"
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace UDodge { namespace EnemyHazards {
@@ -79,10 +81,31 @@ inline float KeepoutRadius(int objectType)
     return learned > 0.f ? learned + kLearnedMarginTiles : 0.f;
 }
 
-// `hp` > 0 means "alive". Invulnerable scenery that reports no HP passes 1.
-inline bool Append(DangerMap& map, int objectType, int hp, Vec2 position, Vec2 player)
+// ── Point-blank shooters ─────────────────────────────────────────────────────
+// A shotgun spread fired from a tile or two away is seen about a server tick
+// late, already most of the way to the player: it lands before any dodge can
+// react. Whatever reaches no further than kBurstRangeMaxTiles is that kind of
+// attacker, so its whole reach (plus a margin) is kept out of, like a self blast.
+// The reach is the type's longest projectile, read once per type from its
+// ObjectProperties (EnemyTracker::Entry::shotRangeTiles). Long-range shooters are
+// left to the bullet dodge, which has time to see their shots coming.
+constexpr float kBurstRangeMaxTiles = 5.0f;
+constexpr float kBurstMarginTiles   = 0.5f;
+
+inline float BurstKeepoutRadius(float shotRangeTiles)
 {
-    const float radius = KeepoutRadius(objectType);
+    if (!std::isfinite(shotRangeTiles) || shotRangeTiles <= 0.f || shotRangeTiles > kBurstRangeMaxTiles)
+        return 0.f;
+    return std::min(shotRangeTiles + kBurstMarginTiles, kLearnedMaxRadiusTiles);
+}
+
+// `hp` > 0 means "alive". Invulnerable scenery that reports no HP passes 1.
+// `shotRangeTiles` is the type's longest projectile reach (0 = none / unknown, or
+// deliberately 0 for the locked target, whose distance the engagement logic owns).
+inline bool Append(DangerMap& map, int objectType, int hp, Vec2 position, Vec2 player,
+                   float shotRangeTiles = 0.f)
+{
+    const float radius = std::max(KeepoutRadius(objectType), BurstKeepoutRadius(shotRangeTiles));
     if (hp <= 0 || radius <= 0.f || !std::isfinite(position.x) || !std::isfinite(position.y)
         || LenSq(Sub(position, player)) > (16.f + radius) * (16.f + radius)) return false;
     if (map.zoneCount >= kMaxAoes) { map.limited = true; return false; }
@@ -95,18 +118,13 @@ inline bool Append(DangerMap& map, int objectType, int hp, Vec2 position, Vec2 p
     return true;
 }
 
-// A commanded walk-to (Shift+Click, the farmer's every move) must be able to pass
-// an enemy it is walking by. As HARD zones these keep-outs walled off any corridor
-// narrower than their diameter for as long as the enemy lived — and a learned
-// keep-out applies to every instance of the type for the whole session — so the
-// player held at the edge. During walk-to they are priced like a telegraph
-// instead: the solver and planner still keep off them when there is room, and
-// still refuse to loiter in one, but can walk through. Fights keep them hard.
-inline void SoftenForWalkTo(DangerMap& map)
-{
-    for (int i = 0; i < map.zoneCount; ++i)
-        if (map.zones[i].enemyKeepout) map.zones[i].active = false;
-}
+// These keep-outs are HARD for every kind of movement, walk-to included. They were
+// briefly softened for walk-to (a corridor narrower than a keep-out's diameter held
+// the player at its edge), but that let every commanded walk — the farmer's every
+// move — stroll through self blasts and shotgun reach, which is how the player died.
+// The nav A* now routes around them (UDodgePathfinder NavBlocked), so a detour is
+// taken whenever one exists; with none, the player waits at the edge for the enemy
+// to move or die rather than walking in.
 
 // ── Learning (pure classifiers; the caller supplies the world) ──────────────
 struct EnemyRef     { int objectType = 0; Vec2 pos{}; };

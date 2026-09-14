@@ -8,6 +8,7 @@
 #include "DbgFileLog.h"
 #include "features/control/FeatureState.h"
 #include "game/objects/GameObjects.h"
+#include "RuntimeOffsets.h"
 
 #include <algorithm>
 #include <cmath>
@@ -23,9 +24,11 @@ using GetDeltaTimeFn = float(__cdecl*)(void* method);
 MoveToFn s_fnMoveTo = nullptr;
 const MethodInfo* s_miMoveTo = nullptr;
 CalcMoveSpeedFn s_fnCalcMoveSpeed = nullptr;
+CalcMoveSpeedFn s_fnGameMoveSpeed = nullptr;
 GetDeltaTimeFn s_fnGetDeltaTime = nullptr;
 bool s_moveResolved = false;
 bool s_cmsResolved = false;
+bool s_gmsResolved = false;
 bool s_dtResolved = false;
 float s_lastDeltaTime = 0.016f;
 
@@ -90,8 +93,10 @@ MoveToFn ResolveMoveToForObject(void* player)
     return fn;
 }
 
-// Raw CalcMoveSpeed (FKALGHJIADI::GCFKGLKAPND) call, SEH-guarded. Returns
-// a negative sentinel on failure; zero remains a valid measured value.
+// Raw CalcMoveSpeed (FKALGHJIADI::GCFKGLKAPND) call, SEH-guarded. Despite the
+// name it returns only the SQUARE's speed multiplier (XmlTileProperties speed,
+// lerped while sinking): no SPD stat, no conditions. Returns a negative sentinel
+// on failure; zero remains a valid measured value.
 float CallCalcMoveSpeedRaw(void* player)
 {
     if (!s_fnCalcMoveSpeed || !player) return DodgeRuntime::kUnknownSpeed;
@@ -109,6 +114,28 @@ void ResolveCalcMoveSpeed()
     if (!mi) return;
     s_fnCalcMoveSpeed = reinterpret_cast<CalcMoveSpeedFn>(mi->methodPointer);
     s_cmsResolved = true;
+}
+
+// The game's own move speed (FKALGHJIADI::GAFGPNKFMOJ, tiles per ms): the value
+// its move update multiplies the input direction by — Slowed, Speedy, the SPD
+// curve and the square speed included. SEH-guarded; negative when unavailable.
+float CallGameMoveSpeedRaw(void* player)
+{
+    if (!s_fnGameMoveSpeed || !player) return DodgeRuntime::kUnknownSpeed;
+    float v = 0.f;
+    __try { v = s_fnGameMoveSpeed(player, nullptr); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return DodgeRuntime::kUnknownSpeed; }
+    if (!std::isfinite(v) || v < 0.f) return DodgeRuntime::kUnknownSpeed;
+    return v;
+}
+
+void ResolveGameMoveSpeed()
+{
+    if (s_gmsResolved) return;
+    const MethodInfo* mi = Il2CppHook::ResolveMethodCached("FKALGHJIADI", "GAFGPNKFMOJ", 0);
+    if (!mi) return;
+    s_fnGameMoveSpeed = reinterpret_cast<CalcMoveSpeedFn>(mi->methodPointer);
+    s_gmsResolved = true;
 }
 
 void ResolveDeltaTime()
@@ -129,6 +156,7 @@ bool EnsureResolved()
 {
     ResolveMoveTo();
     ResolveCalcMoveSpeed();
+    ResolveGameMoveSpeed();
     ResolveDeltaTime();
     return s_fnMoveTo != nullptr;
 }
@@ -212,12 +240,17 @@ void EndMovementFrame(void* player)
 float GetTilesPerSec(void* player)
 {
     ResolveCalcMoveSpeed();
-    const int32_t spd = FeatureState::GetClientSpeed();
-    const float mul = CallCalcMoveSpeedRaw(player);
-    // A readable multiplier still applies before the first SPD packet. Retain
-    // the existing SPD-50 fallback only for the missing base stat, not the slow.
-    const float speed = ResolveTilesPerSec(spd >= 0 ? spd : 50, SpeedOrFallback(mul, 1.f));
-    return speed;
+    ResolveGameMoveSpeed();
+    // The game's MoveTo does not clamp distance, so this number IS the speed the
+    // server sees every native step at. One model for every mover and planner
+    // (MovementSpeed.h): SPD curve with Slowed / Paralyzed / Stasis / Petrified
+    // applied and the square's speed, capped by the game's own getter.
+    SpeedSample s{};
+    s.clientSpd = FeatureState::GetClientSpeed();
+    s.tileMultiplier = CallCalcMoveSpeedRaw(player);
+    s.conditionsKnown = player && RuntimeOffsets::TryReadMapObjectConditions(player, &s.cond0, &s.cond1);
+    s.gameTilesPerMs = CallGameMoveSpeedRaw(player);
+    return EffectiveTilesPerSec(s);
 }
 
 void Reset()
@@ -226,9 +259,11 @@ void Reset()
     s_haveCommandedPos = false;
     s_moveResolved = false;
     s_cmsResolved = false;
+    s_gmsResolved = false;
     s_dtResolved = false;
     s_fnMoveTo = nullptr;
     s_fnCalcMoveSpeed = nullptr;
+    s_fnGameMoveSpeed = nullptr;
     s_fnGetDeltaTime = nullptr;
     s_lastDeltaTime = 0.016f;
 }

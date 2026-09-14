@@ -26,7 +26,7 @@
 #define MANGLED_EXPLOSIONRING_CLS  "FGOFPGIIEPC"  // ExplosionRingEffect (real blast). +0x150 = currentRadius
 
 // ── Methods ────────────────────────────────────────────────────────────────
-#define MANGLED_MOVE_TO            "DGLCONCOIBO"  // FKALGHJIADI::moveTo(float x, float y) — speed-clamped, server-acked
+#define MANGLED_MOVE_TO            "DGLCONCOIBO"  // FKALGHJIADI::moveTo(float x, float y) — NOT speed-clamped (the caller sizes the step)
 #define MANGLED_CALC_MOVE_SPEED    "GCFKGLKAPND"  // FKALGHJIADI::CalcMoveSpeed -> float
 #define MANGLED_PROJ_SPAWN         "KOBMINBDOBD"  // HBEAKBIHANL::SpawnProjectile (also used as the AoE spawn detour target)
 #define MANGLED_PROJ_PERFRAME      "GJFKGLJEGKO"  // HBEAKBIHANL::PerFrameUpdate (RVA 0x0198A100)

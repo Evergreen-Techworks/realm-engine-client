@@ -31,6 +31,7 @@
 #include "UDodgeEnemyHazards.h"
 #include "UDodgeTimedPlanner.h"
 #include "MovementRuntime.h"
+#include "features/movement/dodge/MovementSpeed.h"
 #include "DangerPlanner.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
@@ -66,7 +67,8 @@ uint64_t g_frame = 0;
 struct Ground { bool noWalk = false, sink = false, push = false; float speed = 0.f; int damage = 0; };
 struct Obj    { int tx = 0, ty = 0; bool occ = false, full = false, enemyOcc = false; };
 struct Enemy  { int id = 0, type = 0; float x = 0.f, y = 0.f; int hp = 1000, maxHp = 1000;
-                bool healthBar = true, scenery = false, invuln = false; };
+                bool healthBar = true, scenery = false, invuln = false;
+                float shotRange = 0.f; };   // longest projectile reach of the type (EnemyTracker::Entry)
 struct Bullet { double t0 = 0; float x0 = 0, y0 = 0, vx = 0, vy = 0; float lifeMs = 0, half = 0.4f;
                 int owner = 0, id = 0; bool alive = true; };
 
@@ -88,6 +90,11 @@ struct World {
     int      nextBulletId = 1;
     float px = 0, py = 0;
     float tps = 6.0f;                             // base tiles/s (SPD ~35)
+    bool  slowed = false;                         // Slowed condition: the game pins MIN_MOVE_SPEED
+    bool  paralyzed = false;                      // Paralyzed / Stasis / Petrified: no movement at all
+    uint32_t extraHits = 0;                       // damage the script dealt outside bullets (self blasts)
+    int   watchId = 0;                            // enemy whose closest approach is recorded
+    float watchMinDist = 1e9f;
     int32_t lockId = 0;
     bool  walkActive = false;
     float walkX = 0, walkY = 0;
@@ -134,7 +141,14 @@ struct World {
 World* g_world = nullptr;
 
 // ── "Game truth" collision (modelled) ───────────────────────────────────────
+// The game's walkability test is a POINT test (86ad651b HJMBOMEHGDJ::PEGDEDNHEHD,
+// reached from FKALGHJIADI::CJCEGCEMIGE, the move routine): the centre's square must
+// be walkable with no occupySquare object, then the FullOccupy half-tile rule at 0.5.
+// There is no player box — no 0.2285 constant exists anywhere in GameAssembly. The
+// DLL's own occupancy keeps its 0.2285 box as a margin; the truth does not.
+// kGameHalf remains for the self-blast reach test (a body-sized contact margin).
 constexpr float kGameHalf = 0.2285f;
+constexpr float kGameCollisionHalf = 0.f;
 
 bool TruthSquareOpen(const World& w, int tx, int ty)
 {
@@ -152,8 +166,8 @@ bool TruthFull(const World& w, int tx, int ty)
 }
 bool TruthValid(const World& w, float x, float y)
 {
-    for (int tx = FloorI(x - kGameHalf); tx <= FloorI(x + kGameHalf); ++tx)
-        for (int ty = FloorI(y - kGameHalf); ty <= FloorI(y + kGameHalf); ++ty)
+    for (int tx = FloorI(x - kGameCollisionHalf); tx <= FloorI(x + kGameCollisionHalf); ++tx)
+        for (int ty = FloorI(y - kGameCollisionHalf); ty <= FloorI(y + kGameCollisionHalf); ++ty)
             if (!TruthSquareOpen(w, tx, ty)) return false;
     // Flash Player.isValidPosition section B (the FullOccupy half-tile rule).
     const int tx = FloorI(x), ty = FloorI(y);
@@ -178,6 +192,15 @@ float TruthSpeedMul(const World& w, float x, float y)
     const Ground* g = w.GroundAt(FloorI(x), FloorI(y));
     return (g && g->speed > 0.f) ? g->speed : 1.f;
 }
+// The game's own move speed (86ad651b FKALGHJIADI::GAFGPNKFMOJ): Slowed pins
+// MIN_MOVE_SPEED (4 tiles/s) before the SPD curve, then the square's speed applies.
+float TruthTilesPerSec(const World& w, float x, float y)
+{
+    if (w.paralyzed) return 0.f;
+    return (w.slowed ? 4.f : w.tps) * TruthSpeedMul(w, x, y);
+}
+// Server SPD that yields a base tiles/s on the game's curve (4 + 5.6 * SPD / 75).
+int TruthSpd(const World& w) { return static_cast<int>(std::lround((w.tps - 4.f) / 5.6f * 75.f)); }
 
 // One refused axis snaps to the half-tile border it was crossing (Flash
 // modifyStep), so a player can settle onto a FullOccupy corridor's centre line.
@@ -188,7 +211,7 @@ float SnapAxis(float from, float to)
     return (border >= lo && border <= hi) ? border : from;
 }
 
-struct MoveStats { uint32_t calls = 0, refused = 0; double refusedTiles = 0; };
+struct MoveStats { uint32_t calls = 0, refused = 0, overspeed = 0; double refusedTiles = 0, maxStepRatio = 0; };
 MoveStats g_move;
 
 Vec2 TruthMove(const World& w, Vec2 from, Vec2 to)
@@ -322,7 +345,10 @@ void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s)
         }
         if (lock != 0 && e.id == lock) { out.hasLock = true; out.lockId = e.id; out.lockPos = { e.x, e.y }; }
         // RebuildZones: enemy-centred keep-outs (hard-coded Brawler, plus learned ones where the tree has them).
-#ifdef HARNESS_TREE_POST70
+#ifdef HARNESS_TREE_BURST
+        EnemyHazards::Append(out, e.type, (e.hp > 0 || e.invuln) ? 1 : 0, { e.x, e.y }, { playerX, playerY },
+                             (lock != 0 && e.id == lock) ? 0.f : e.shotRange);
+#elif defined(HARNESS_TREE_POST70)
         EnemyHazards::Append(out, e.type, (e.hp > 0 || e.invuln) ? 1 : 0, { e.x, e.y }, { playerX, playerY });
 #else
         EnemyHazards::Append(out, e.type, e.hp, { e.x, e.y }, { playerX, playerY });
@@ -338,6 +364,7 @@ void RefreshSnapshot()
         EnemyTracker::Entry en{};
         en.id = e.id; en.objType = e.type; en.x = e.x; en.y = e.y; en.hp = e.hp; en.maxHp = e.maxHp;
         en.isInvulnerable = e.invuln; en.hasHealthBar = e.healthBar; en.isScenery = e.scenery;
+        en.shotRangeTiles = e.shotRange;
         g_snapshot.push_back(en);
     }
 }
@@ -366,12 +393,17 @@ bool  CallMoveTo(void*, float x, float y)
 {
     H::World& w = *H::g_world;
     const Vec2 from{ w.px, w.py };
-    Vec2 to{ x, y };
-    // The game's own speed clamp for this frame (tile speed included).
-    const float maxStep = w.tps * H::TruthSpeedMul(w, w.px, w.py) / 60.f * 1.001f;
-    const Vec2 d = Sub(to, from);
-    const float len = Len(d);
-    if (len > maxStep) to = Add(from, Mul(d, maxStep / len));
+    const Vec2 to{ x, y };
+    // The game's MoveTo does NOT clamp distance (86ad651b LKHPPBEGNOM::DGLCONCOIBO:
+    // square lookup, position set, tile/collision update, return true). Whatever
+    // step the dodge commands is the step the server sees, so every commanded step
+    // is measured against what the game's own speed allows this frame.
+    const float allowed = H::TruthTilesPerSec(w, w.px, w.py) / 60.f;
+    const float len = Len(Sub(to, from));
+    if (len > allowed * 1.02f + 1e-4f) ++H::g_move.overspeed;
+    if (len > 1e-4f)
+        H::g_move.maxStepRatio = std::max(H::g_move.maxStepRatio,
+            allowed > 1e-6f ? static_cast<double>(len / allowed) : 1e9);
     const Vec2 got = H::TruthMove(w, from, to);
     ++H::g_move.calls;
     const float wanted = Len(Sub(to, from)), achieved = Len(Sub(got, from));
@@ -465,8 +497,18 @@ void  CopyBoxBlocked(float originX, float originY, int side, float cellTiles,
 namespace TestTAB {
 void ReadDodgePlayerStats(int32_t& hp, int32_t& maxHp, float& spd, float& tps)
 {
-    hp = 1000; maxHp = 1000; spd = 35.f;
-    tps = H::g_world->tps * H::TruthSpeedMul(*H::g_world, H::g_world->px, H::g_world->py);
+    // Line-for-line MovementRuntime GetTilesPerSec, with the game's values supplied
+    // by the modelled world: the server SPD stat, CalcMoveSpeed's square speed and
+    // the live condition words. The game's own getter is not modelled (-1), so the
+    // native model alone has to keep every step inside the game's speed.
+    const H::World& w = *H::g_world;
+    hp = 1000; maxHp = 1000; spd = static_cast<float>(H::TruthSpd(w));
+    DodgeRuntime::SpeedSample s{};
+    s.clientSpd = H::TruthSpd(w);
+    s.tileMultiplier = H::TruthSpeedMul(w, w.px, w.py);
+    s.conditionsKnown = true;
+    s.cond0 = (w.slowed ? DodgeRuntime::kCondSlowed : 0u) | (w.paralyzed ? DodgeRuntime::kCondParalyzed : 0u);
+    tps = DodgeRuntime::EffectiveTilesPerSec(s);
 }
 #ifdef HARNESS_SHARED_OCCUPANCY
 bool IsWalkPositionBlocked(float cx, float cy)
@@ -728,6 +770,10 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
         const Vec2 cur{ w.px, w.py };
         r.pathTiles += Len(Sub(cur, prev));
         prev = cur;
+        if (w.watchId != 0)
+            for (const Enemy& e : w.enemies)
+                if (e.id == w.watchId && e.hp > 0)
+                    w.watchMinDist = std::min(w.watchMinDist, Len(Sub(cur, { e.x, e.y })));
         // Hits: point player vs Chebyshev half (the production contact model).
         for (Bullet& b : w.bullets) {
             if (!b.alive) continue;
@@ -767,6 +813,7 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
             }
         }
     }
+    r.hits += w.extraHits;
     if (kind == Goal::WalkTo) {
         r.finalDist = Len(Sub({ w.px, w.py }, goal));
         if (!r.success) r.timeS = limitS;
@@ -787,10 +834,12 @@ void Emit(const Result& r)
     const double cycleAvg = g_worker.cycles ? g_worker.cycleMsSum / g_worker.cycles : 0;
     std::printf("{\"scenario\":\"%s\",\"success\":%s,\"time_s\":%.2f,\"path_tiles\":%.1f,\"final_dist\":%.2f,"
                 "\"stuck_s\":%.1f,\"hits\":%u,\"in_range_frac\":%.2f,\"refused_moves\":%u,"
+                "\"overspeed_moves\":%u,\"max_step_ratio\":%.3f,"
                 "\"tick_ms_avg\":%.3f,\"tick_ms_max\":%.3f,\"nav_plans\":%u,\"nav_ms_avg\":%.3f,\"nav_ms_max\":%.3f,"
                 "\"dodge_ms_avg\":%.3f,\"dodge_ms_max\":%.3f,\"cycle_ms_avg\":%.3f,\"cycle_ms_max\":%.3f}\n",
                 r.name.c_str(), r.success ? "true" : "false", r.timeS, r.pathTiles, r.finalDist, r.stuckS, r.hits,
-                r.inRangeFrac, g_move.refused, tickAvg, g_tick.max, g_worker.navRuns, navAvg, g_worker.navMsMax,
+                r.inRangeFrac, g_move.refused, g_move.overspeed, std::min(g_move.maxStepRatio, 999.0),
+                tickAvg, g_tick.max, g_worker.navRuns, navAvg, g_worker.navMsMax,
                 dodgeAvg, g_worker.dodgeMsMax, cycleAvg, g_worker.cycleMsMax);
     std::fflush(stdout);
 }
@@ -952,6 +1001,7 @@ void ScenarioLearnedKeepout(const char* name)
     for (int x = -3; x <= 24; ++x) { w.Fill(x, -8, x, -3, kNoWalkWall); w.Fill(x, 3, x, 8, kNoWalkWall); }
     Enemy mob; mob.id = 902; mob.type = 0x0601; mob.x = 10.5f; mob.y = 0.5f; mob.hp = mob.maxHp = 400;
     w.enemies.push_back(mob);
+    w.watchId = mob.id;
     w.px = 0.5f; w.py = 0.5f;
 #ifdef HARNESS_TREE_POST70
     // The mob's attack is a server AOE centred on itself with no telegraph — exactly
@@ -960,7 +1010,13 @@ void ScenarioLearnedKeepout(const char* name)
     EnemyHazards::ClearLearned();
     EnemyHazards::ObserveBlast({ mob.x, mob.y }, 3.f, mob.type, &ref, 1, nullptr, 0);
 #endif
-    Emit(Run(name, w, Goal::WalkTo, { 20.5f, 0.5f }, 60));
+    Result r = Run(name, w, Goal::WalkTo, { 20.5f, 0.5f }, 60);
+#ifdef HARNESS_TREE_BURST
+    // The keep-out covers the corridor's whole width, so the walk goes round the
+    // walls' far end (a detour exists) and never through the blast.
+    r.success = r.success && w.watchMinDist >= EnemyHazards::KeepoutRadius(mob.type) - 0.05f;
+#endif
+    Emit(r);
 #ifdef HARNESS_TREE_POST70
     EnemyHazards::ClearLearned();
 #endif
@@ -974,6 +1030,219 @@ void ScenarioHiddenBlocker(const char* name)
     for (int y = -3; y <= 3; ++y) { Obj o; o.tx = 8; o.ty = y; o.occ = true; w.hiddenObjs[Key(8, y)] = o; }
     w.px = 0.5f; w.py = 0.5f;
     Emit(Run(name, w, Goal::WalkTo, { 16.5f, 0.5f }, 60));
+}
+
+// (k) movement speed the game allows. The game's MoveTo does not clamp, so these
+// pass only when every commanded step fits the game's own speed for that frame
+// (overspeed_moves == 0, enforced for every scenario by run_scenarios.py --check).
+//
+// k_slowed_midwalk: Slowed lands mid-walk and lifts again. SPD ~75 base, so the
+// SPD curve alone would command 2.4x what the game allows while Slowed.
+void ScenarioSlowedMidWalk(const char* name)
+{
+    World w; Floor(w);
+    w.tps = 9.6f;
+    w.px = 0.5f; w.py = 0.5f;
+    w.script = [](World& ww) {
+        const double t = (g_nowMs - 100000.0) / 1000.0;
+        ww.slowed = t >= 0.5 && t < 3.0;
+    };
+    Result r = Run(name, w, Goal::WalkTo, { 24.5f, 0.5f }, 30);
+    r.success = r.success && g_move.overspeed == 0;
+    Emit(r);
+}
+
+// k_paralyzed_midwalk: Paralyzed for a second mid-walk; the game moves nobody then.
+void ScenarioParalyzedMidWalk(const char* name)
+{
+    World w; Floor(w);
+    w.px = 0.5f; w.py = 0.5f;
+    w.script = [](World& ww) {
+        const double t = (g_nowMs - 100000.0) / 1000.0;
+        ww.paralyzed = t >= 0.5 && t < 1.5;
+    };
+    Result r = Run(name, w, Goal::WalkTo, { 16.5f, 0.5f }, 30);
+    r.success = r.success && g_move.overspeed == 0;
+    Emit(r);
+}
+
+// k_water_midpath: a band of shallow water across the whole route.
+void ScenarioWaterMidPath(const char* name)
+{
+    World w; Floor(w);
+    w.tps = 9.6f;
+    w.Fill(8, -40, 12, 40, kShallowWater);
+    w.px = 0.5f; w.py = 0.5f;
+    Result r = Run(name, w, Goal::WalkTo, { 20.5f, 0.5f }, 30);
+    r.success = r.success && g_move.overspeed == 0;
+    Emit(r);
+}
+
+// k_dodge_in_water: the player wades a shallow pool while a turret sweeps shots
+// across the ford. Dodging must be planned at wading speed.
+void ScenarioDodgeInWater(const char* name)
+{
+    World w; Floor(w);
+    w.tps = 9.6f;
+    w.Fill(-3, -6, 14, 6, kShallowWater);
+    w.px = 0.5f; w.py = 0.5f;
+    double next = 100400.0;
+    int k = 0;
+    w.script = [=](World& ww) mutable {
+        if (g_nowMs < next) return;
+        next += 700.0;
+        // Shots from the north crossing the ford line, walking along it.
+        const float x = 2.5f + static_cast<float>((k++ * 3) % 10);
+        ww.Fire(x, -9.5f, kTwoPi / 4.f, 7.f, 2600.f, 0.4f, 950);
+    };
+    Enemy turret; turret.id = 950; turret.type = 0x0d52; turret.x = 6.5f; turret.y = -9.5f;
+    turret.hp = turret.maxHp = 5000;
+    w.enemies.push_back(turret);
+    Result r = Run(name, w, Goal::WalkTo, { 12.5f, 0.5f }, 30);
+    r.success = r.success && g_move.overspeed == 0;
+    Emit(r);
+}
+
+// (l) walking past enemies that punish closeness, and the locked target changing state.
+//
+// A shotgun mob: when the player comes within its reach it fires a tight five-shot
+// spread at them. At point blank the shots land before any dodge can react, so the
+// only defence is not to walk into that reach while any detour exists.
+void ShotgunScript(World& ww, int mobId, float reach, double& nextMs)
+{
+    if (g_nowMs < nextMs) return;
+    for (const Enemy& e : ww.enemies) {
+        if (e.id != mobId || e.hp <= 0) continue;
+        if (Len(Sub({ ww.px, ww.py }, { e.x, e.y })) > reach) return;
+        nextMs = g_nowMs + 400.0;
+        // The client sees an enemy's shot about one server tick after it was fired,
+        // already that far along its path: at point blank it lands on arrival.
+        constexpr double kSeenLateMs = 200.0;
+        constexpr float  kShotTps = 20.f;
+        const float a = std::atan2(ww.py - e.y, ww.px - e.x);
+        for (int k = -3; k <= 3; ++k) {
+            ww.Fire(e.x, e.y, a + k * 0.14f, kShotTps, reach / kShotTps * 1000.f, 0.4f, e.id);
+            ww.bullets.back().t0 -= kSeenLateMs;
+        }
+        return;
+    }
+}
+
+// l_walk_past_shotgun: open ground, the straight route passes one tile from a shotgun
+// mob whose shots reach 4.5 tiles. A detour exists all round.
+void ScenarioWalkPastShotgun(const char* name)
+{
+    World w; Floor(w);
+    Enemy mob; mob.id = 960; mob.type = 0x0e01; mob.x = 12.5f; mob.y = 1.5f; mob.hp = mob.maxHp = 2000;
+    mob.shotRange = 4.5f;
+    w.enemies.push_back(mob);
+    w.watchId = mob.id;
+    w.px = 0.5f; w.py = 0.5f;
+    double next = 0.0;
+    w.script = [=](World& ww) mutable { ShotgunScript(ww, 960, 4.5f, next); };
+    Result r = Run(name, w, Goal::WalkTo, { 24.5f, 0.5f }, 40);
+    // Never inside the shotgun's reach (small tolerance for the keep-out's edge).
+    r.success = r.success && r.hits == 0 && w.watchMinDist >= 4.5f - 0.1f;
+    std::fprintf(stderr, "%s: closest approach %.2f\n", name, w.watchMinDist);
+    Emit(r);
+}
+
+// l_walk_past_bomber: a mob that blasts itself (radius 3, no telegraph) whenever the
+// player is within 3 tiles, standing beside the route. Its keep-out is already learned.
+void ScenarioWalkPastBomber(const char* name)
+{
+    World w; Floor(w);
+    Enemy mob; mob.id = 961; mob.type = 0x0e02; mob.x = 12.5f; mob.y = 1.5f; mob.hp = mob.maxHp = 2000;
+    w.enemies.push_back(mob);
+    w.watchId = mob.id;
+    w.px = 0.5f; w.py = 0.5f;
+#ifdef HARNESS_TREE_POST70
+    EnemyHazards::EnemyRef ref{ mob.type, { mob.x, mob.y } };
+    EnemyHazards::ClearLearned();
+    EnemyHazards::ObserveBlast({ mob.x, mob.y }, 3.f, mob.type, &ref, 1, nullptr, 0);
+#endif
+    double next = 0.0;
+    w.script = [=](World& ww) mutable {
+        if (g_nowMs < next) return;
+        const Enemy& e = ww.enemies[0];
+        const float d = Len(Sub({ ww.px, ww.py }, { e.x, e.y }));
+        if (d > 3.f + kGameHalf) return;
+        next = g_nowMs + 1000.0;
+        ++ww.extraHits;   // the blast lands the instant it is visible
+    };
+    Result r = Run(name, w, Goal::WalkTo, { 24.5f, 0.5f }, 40);
+    r.success = r.success && r.hits == 0 && w.watchMinDist >= 3.f + kGameHalf;
+    std::fprintf(stderr, "%s: closest approach %.2f\n", name, w.watchMinDist);
+    Emit(r);
+#ifdef HARNESS_TREE_POST70
+    EnemyHazards::ClearLearned();
+#endif
+}
+
+// l_lock_boss_*: a locked boss firing rings, two shotgun adds flanking the approach.
+// Mid-fight the boss either dies (removed, shots still in flight) or turns
+// invulnerable and keeps firing. No hit may be taken either way.
+void ScenarioLockBossChange(const char* name, bool dies)
+{
+    World w; Floor(w);
+    w.px = 0.5f; w.py = 0.5f;
+    Enemy boss; boss.id = 970; boss.type = 0x0d51; boss.x = 16.5f; boss.y = 0.5f; boss.hp = boss.maxHp = 50000;
+    w.enemies.push_back(boss);
+    for (int s : { -1, 1 }) {
+        Enemy add; add.id = 971 + (s > 0); add.type = 0x0e01; add.x = 9.5f; add.y = 0.5f + 4.f * s;
+        add.hp = add.maxHp = 1500; add.shotRange = 4.5f;
+        w.enemies.push_back(add);
+    }
+    w.lockId = boss.id;
+    double nextRing = 100500.0, nextAdd0 = 0.0, nextAdd1 = 0.0;
+    int ringPhase = 0;
+    w.script = [=](World& ww) mutable {
+        const double t = (g_nowMs - 100000.0) / 1000.0;
+        Enemy& b = ww.enemies[0];
+        if (t >= 8.0) {
+            if (dies) b.hp = 0;
+            else b.invuln = true;
+        }
+        if (b.hp > 0 && g_nowMs >= nextRing) {
+            nextRing += 1000.0;
+            const float off = (ringPhase++ % 2) ? kTwoPi / 32.f : 0.f;
+            for (int i = 0; i < 8; ++i) ww.Fire(b.x, b.y, off + kTwoPi * i / 8, 5.f, 1800.f, 0.4f, b.id);
+        }
+        ShotgunScript(ww, 971, 4.5f, nextAdd0);
+        ShotgunScript(ww, 972, 4.5f, nextAdd1);
+    };
+    Result r = Run(name, w, Goal::Lock, {}, 20);
+    r.success = r.hits == 0 && g_move.overspeed == 0;
+    Emit(r);
+}
+
+// (m) a diagonal pinch: two blocked squares touching only at a corner, the only way
+// through. With NoWalk squares the game's point test lets the player through the
+// corner; with FullOccupy walls the half-tile rule does not.
+void ScenarioDiagonalPinch(const char* name, bool fullOccupy)
+{
+    World w; Floor(w);
+    // Left region: x <= 7 plus the column x = 8 above y = 0. Right region: the column
+    // x = 9 at y <= 0 plus x >= 10. Squares (8,0) and (9,1) close everything except
+    // their shared corner at (9,1).
+    for (int y = -40; y <= 40; ++y) {
+        const bool leftWall = y <= 0, rightWall = y >= 1;
+        if (fullOccupy) {
+            if (leftWall) w.PutObj(8, y, true);
+            if (rightWall) w.PutObj(9, y, true);
+        } else {
+            if (leftWall) w.SetGround(8, y, kNoWalkWall);
+            if (rightWall) w.SetGround(9, y, kNoWalkWall);
+        }
+    }
+    w.px = 0.5f; w.py = 0.5f;
+    Result r = Run(name, w, Goal::WalkTo, { 16.5f, 0.5f }, 30);
+    if (fullOccupy) {
+        // The game refuses this pinch: never arriving is correct, and nothing may
+        // be commanded through it.
+        r.success = !r.success && w.px < 9.f;
+    }
+    Emit(r);
 }
 
 // (i) long session: the streamed-tile list exceeds 65,536 and the player walks
@@ -1109,6 +1378,16 @@ int main(int argc, char** argv)
     if (want("g_fullocc_gap"))      H::ScenarioFullOccupyGap("g_fullocc_gap");
     if (want("h_learned_keepout"))  H::ScenarioLearnedKeepout("h_learned_keepout");
     if (want("j_hidden_blocker"))   H::ScenarioHiddenBlocker("j_hidden_blocker");
+    if (want("k_slowed_midwalk"))   H::ScenarioSlowedMidWalk("k_slowed_midwalk");
+    if (want("k_paralyzed_midwalk"))H::ScenarioParalyzedMidWalk("k_paralyzed_midwalk");
+    if (want("k_water_midpath"))    H::ScenarioWaterMidPath("k_water_midpath");
+    if (want("k_dodge_in_water"))   H::ScenarioDodgeInWater("k_dodge_in_water");
+    if (want("l_walk_past_shotgun"))H::ScenarioWalkPastShotgun("l_walk_past_shotgun");
+    if (want("l_walk_past_bomber")) H::ScenarioWalkPastBomber("l_walk_past_bomber");
+    if (want("l_lock_boss_dies"))   H::ScenarioLockBossChange("l_lock_boss_dies", true);
+    if (want("l_lock_boss_invuln")) H::ScenarioLockBossChange("l_lock_boss_invuln", false);
+    if (want("m_pinch_nowalk"))     H::ScenarioDiagonalPinch("m_pinch_nowalk", false);
+    if (want("m_pinch_fulloccupy")) H::ScenarioDiagonalPinch("m_pinch_fulloccupy", true);
     if (scanMode != 0) {
         H::g_tileScanMode = scanMode;
         if (want("i_tilelist_revisit"))  H::ScenarioTileList("i_tilelist_revisit", true);

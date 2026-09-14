@@ -11,6 +11,7 @@ struct Entry {
     bool    isInvulnerable;
     bool    hasHealthBar;
     bool    isScenery;
+    float   shotRangeTiles;
     void*   ptr;
 };
 void Tick();
