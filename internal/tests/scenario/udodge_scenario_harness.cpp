@@ -67,7 +67,8 @@ uint64_t g_frame = 0;
 struct Ground { bool noWalk = false, sink = false, push = false; float speed = 0.f; int damage = 0; };
 struct Obj    { int tx = 0, ty = 0; bool occ = false, full = false, enemyOcc = false; };
 struct Enemy  { int id = 0, type = 0; float x = 0.f, y = 0.f; int hp = 1000, maxHp = 1000;
-                bool healthBar = true, scenery = false, invuln = false; };
+                bool healthBar = true, scenery = false, invuln = false;
+                float shotRange = 0.f; };   // longest projectile reach of the type (EnemyTracker::Entry)
 struct Bullet { double t0 = 0; float x0 = 0, y0 = 0, vx = 0, vy = 0; float lifeMs = 0, half = 0.4f;
                 int owner = 0, id = 0; bool alive = true; };
 
@@ -91,6 +92,9 @@ struct World {
     float tps = 6.0f;                             // base tiles/s (SPD ~35)
     bool  slowed = false;                         // Slowed condition: the game pins MIN_MOVE_SPEED
     bool  paralyzed = false;                      // Paralyzed / Stasis / Petrified: no movement at all
+    uint32_t extraHits = 0;                       // damage the script dealt outside bullets (self blasts)
+    int   watchId = 0;                            // enemy whose closest approach is recorded
+    float watchMinDist = 1e9f;
     int32_t lockId = 0;
     bool  walkActive = false;
     float walkX = 0, walkY = 0;
@@ -334,7 +338,10 @@ void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s)
         }
         if (lock != 0 && e.id == lock) { out.hasLock = true; out.lockId = e.id; out.lockPos = { e.x, e.y }; }
         // RebuildZones: enemy-centred keep-outs (hard-coded Brawler, plus learned ones where the tree has them).
-#ifdef HARNESS_TREE_POST70
+#ifdef HARNESS_TREE_BURST
+        EnemyHazards::Append(out, e.type, (e.hp > 0 || e.invuln) ? 1 : 0, { e.x, e.y }, { playerX, playerY },
+                             (lock != 0 && e.id == lock) ? 0.f : e.shotRange);
+#elif defined(HARNESS_TREE_POST70)
         EnemyHazards::Append(out, e.type, (e.hp > 0 || e.invuln) ? 1 : 0, { e.x, e.y }, { playerX, playerY });
 #else
         EnemyHazards::Append(out, e.type, e.hp, { e.x, e.y }, { playerX, playerY });
@@ -350,6 +357,7 @@ void RefreshSnapshot()
         EnemyTracker::Entry en{};
         en.id = e.id; en.objType = e.type; en.x = e.x; en.y = e.y; en.hp = e.hp; en.maxHp = e.maxHp;
         en.isInvulnerable = e.invuln; en.hasHealthBar = e.healthBar; en.isScenery = e.scenery;
+        en.shotRangeTiles = e.shotRange;
         g_snapshot.push_back(en);
     }
 }
@@ -755,6 +763,10 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
         const Vec2 cur{ w.px, w.py };
         r.pathTiles += Len(Sub(cur, prev));
         prev = cur;
+        if (w.watchId != 0)
+            for (const Enemy& e : w.enemies)
+                if (e.id == w.watchId && e.hp > 0)
+                    w.watchMinDist = std::min(w.watchMinDist, Len(Sub(cur, { e.x, e.y })));
         // Hits: point player vs Chebyshev half (the production contact model).
         for (Bullet& b : w.bullets) {
             if (!b.alive) continue;
@@ -794,6 +806,7 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
             }
         }
     }
+    r.hits += w.extraHits;
     if (kind == Goal::WalkTo) {
         r.finalDist = Len(Sub({ w.px, w.py }, goal));
         if (!r.success) r.timeS = limitS;
@@ -981,6 +994,7 @@ void ScenarioLearnedKeepout(const char* name)
     for (int x = -3; x <= 24; ++x) { w.Fill(x, -8, x, -3, kNoWalkWall); w.Fill(x, 3, x, 8, kNoWalkWall); }
     Enemy mob; mob.id = 902; mob.type = 0x0601; mob.x = 10.5f; mob.y = 0.5f; mob.hp = mob.maxHp = 400;
     w.enemies.push_back(mob);
+    w.watchId = mob.id;
     w.px = 0.5f; w.py = 0.5f;
 #ifdef HARNESS_TREE_POST70
     // The mob's attack is a server AOE centred on itself with no telegraph — exactly
@@ -989,7 +1003,13 @@ void ScenarioLearnedKeepout(const char* name)
     EnemyHazards::ClearLearned();
     EnemyHazards::ObserveBlast({ mob.x, mob.y }, 3.f, mob.type, &ref, 1, nullptr, 0);
 #endif
-    Emit(Run(name, w, Goal::WalkTo, { 20.5f, 0.5f }, 60));
+    Result r = Run(name, w, Goal::WalkTo, { 20.5f, 0.5f }, 60);
+#ifdef HARNESS_TREE_BURST
+    // The keep-out covers the corridor's whole width, so the walk goes round the
+    // walls' far end (a detour exists) and never through the blast.
+    r.success = r.success && w.watchMinDist >= EnemyHazards::KeepoutRadius(mob.type) - 0.05f;
+#endif
+    Emit(r);
 #ifdef HARNESS_TREE_POST70
     EnemyHazards::ClearLearned();
 #endif
@@ -1073,6 +1093,119 @@ void ScenarioDodgeInWater(const char* name)
     w.enemies.push_back(turret);
     Result r = Run(name, w, Goal::WalkTo, { 12.5f, 0.5f }, 30);
     r.success = r.success && g_move.overspeed == 0;
+    Emit(r);
+}
+
+// (l) walking past enemies that punish closeness, and the locked target changing state.
+//
+// A shotgun mob: when the player comes within its reach it fires a tight five-shot
+// spread at them. At point blank the shots land before any dodge can react, so the
+// only defence is not to walk into that reach while any detour exists.
+void ShotgunScript(World& ww, int mobId, float reach, double& nextMs)
+{
+    if (g_nowMs < nextMs) return;
+    for (const Enemy& e : ww.enemies) {
+        if (e.id != mobId || e.hp <= 0) continue;
+        if (Len(Sub({ ww.px, ww.py }, { e.x, e.y })) > reach) return;
+        nextMs = g_nowMs + 400.0;
+        // The client sees an enemy's shot about one server tick after it was fired,
+        // already that far along its path: at point blank it lands on arrival.
+        constexpr double kSeenLateMs = 200.0;
+        constexpr float  kShotTps = 20.f;
+        const float a = std::atan2(ww.py - e.y, ww.px - e.x);
+        for (int k = -3; k <= 3; ++k) {
+            ww.Fire(e.x, e.y, a + k * 0.14f, kShotTps, reach / kShotTps * 1000.f, 0.4f, e.id);
+            ww.bullets.back().t0 -= kSeenLateMs;
+        }
+        return;
+    }
+}
+
+// l_walk_past_shotgun: open ground, the straight route passes one tile from a shotgun
+// mob whose shots reach 4.5 tiles. A detour exists all round.
+void ScenarioWalkPastShotgun(const char* name)
+{
+    World w; Floor(w);
+    Enemy mob; mob.id = 960; mob.type = 0x0e01; mob.x = 12.5f; mob.y = 1.5f; mob.hp = mob.maxHp = 2000;
+    mob.shotRange = 4.5f;
+    w.enemies.push_back(mob);
+    w.watchId = mob.id;
+    w.px = 0.5f; w.py = 0.5f;
+    double next = 0.0;
+    w.script = [=](World& ww) mutable { ShotgunScript(ww, 960, 4.5f, next); };
+    Result r = Run(name, w, Goal::WalkTo, { 24.5f, 0.5f }, 40);
+    // Never inside the shotgun's reach (small tolerance for the keep-out's edge).
+    r.success = r.success && r.hits == 0 && w.watchMinDist >= 4.5f - 0.1f;
+    std::fprintf(stderr, "%s: closest approach %.2f\n", name, w.watchMinDist);
+    Emit(r);
+}
+
+// l_walk_past_bomber: a mob that blasts itself (radius 3, no telegraph) whenever the
+// player is within 3 tiles, standing beside the route. Its keep-out is already learned.
+void ScenarioWalkPastBomber(const char* name)
+{
+    World w; Floor(w);
+    Enemy mob; mob.id = 961; mob.type = 0x0e02; mob.x = 12.5f; mob.y = 1.5f; mob.hp = mob.maxHp = 2000;
+    w.enemies.push_back(mob);
+    w.watchId = mob.id;
+    w.px = 0.5f; w.py = 0.5f;
+#ifdef HARNESS_TREE_POST70
+    EnemyHazards::EnemyRef ref{ mob.type, { mob.x, mob.y } };
+    EnemyHazards::ClearLearned();
+    EnemyHazards::ObserveBlast({ mob.x, mob.y }, 3.f, mob.type, &ref, 1, nullptr, 0);
+#endif
+    double next = 0.0;
+    w.script = [=](World& ww) mutable {
+        if (g_nowMs < next) return;
+        const Enemy& e = ww.enemies[0];
+        const float d = Len(Sub({ ww.px, ww.py }, { e.x, e.y }));
+        if (d > 3.f + kGameHalf) return;
+        next = g_nowMs + 1000.0;
+        ++ww.extraHits;   // the blast lands the instant it is visible
+    };
+    Result r = Run(name, w, Goal::WalkTo, { 24.5f, 0.5f }, 40);
+    r.success = r.success && r.hits == 0 && w.watchMinDist >= 3.f + kGameHalf;
+    std::fprintf(stderr, "%s: closest approach %.2f\n", name, w.watchMinDist);
+    Emit(r);
+#ifdef HARNESS_TREE_POST70
+    EnemyHazards::ClearLearned();
+#endif
+}
+
+// l_lock_boss_*: a locked boss firing rings, two shotgun adds flanking the approach.
+// Mid-fight the boss either dies (removed, shots still in flight) or turns
+// invulnerable and keeps firing. No hit may be taken either way.
+void ScenarioLockBossChange(const char* name, bool dies)
+{
+    World w; Floor(w);
+    w.px = 0.5f; w.py = 0.5f;
+    Enemy boss; boss.id = 970; boss.type = 0x0d51; boss.x = 16.5f; boss.y = 0.5f; boss.hp = boss.maxHp = 50000;
+    w.enemies.push_back(boss);
+    for (int s : { -1, 1 }) {
+        Enemy add; add.id = 971 + (s > 0); add.type = 0x0e01; add.x = 9.5f; add.y = 0.5f + 4.f * s;
+        add.hp = add.maxHp = 1500; add.shotRange = 4.5f;
+        w.enemies.push_back(add);
+    }
+    w.lockId = boss.id;
+    double nextRing = 100500.0, nextAdd0 = 0.0, nextAdd1 = 0.0;
+    int ringPhase = 0;
+    w.script = [=](World& ww) mutable {
+        const double t = (g_nowMs - 100000.0) / 1000.0;
+        Enemy& b = ww.enemies[0];
+        if (t >= 8.0) {
+            if (dies) b.hp = 0;
+            else b.invuln = true;
+        }
+        if (b.hp > 0 && g_nowMs >= nextRing) {
+            nextRing += 1000.0;
+            const float off = (ringPhase++ % 2) ? kTwoPi / 32.f : 0.f;
+            for (int i = 0; i < 8; ++i) ww.Fire(b.x, b.y, off + kTwoPi * i / 8, 5.f, 1800.f, 0.4f, b.id);
+        }
+        ShotgunScript(ww, 971, 4.5f, nextAdd0);
+        ShotgunScript(ww, 972, 4.5f, nextAdd1);
+    };
+    Result r = Run(name, w, Goal::Lock, {}, 20);
+    r.success = r.hits == 0 && g_move.overspeed == 0;
     Emit(r);
 }
 
@@ -1213,6 +1346,10 @@ int main(int argc, char** argv)
     if (want("k_paralyzed_midwalk"))H::ScenarioParalyzedMidWalk("k_paralyzed_midwalk");
     if (want("k_water_midpath"))    H::ScenarioWaterMidPath("k_water_midpath");
     if (want("k_dodge_in_water"))   H::ScenarioDodgeInWater("k_dodge_in_water");
+    if (want("l_walk_past_shotgun"))H::ScenarioWalkPastShotgun("l_walk_past_shotgun");
+    if (want("l_walk_past_bomber")) H::ScenarioWalkPastBomber("l_walk_past_bomber");
+    if (want("l_lock_boss_dies"))   H::ScenarioLockBossChange("l_lock_boss_dies", true);
+    if (want("l_lock_boss_invuln")) H::ScenarioLockBossChange("l_lock_boss_invuln", false);
     if (scanMode != 0) {
         H::g_tileScanMode = scanMode;
         if (want("i_tilelist_revisit"))  H::ScenarioTileList("i_tilelist_revisit", true);

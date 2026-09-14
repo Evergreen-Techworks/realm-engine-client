@@ -6,6 +6,8 @@
 #include "core/runtime/MemRead.h"
 #include "core/il2cpp/Il2CppContainers.h"
 #include "game/objects/GameObjects.h"
+#include "features/combat/autoaim/core/AimMath.h"
+#include "ProjectileTracking.h"
 
 #include <Windows.h>
 #include <atomic>
@@ -124,7 +126,39 @@ struct CandidateOut {
     float   x, y;
     bool    isInvulnerable, hasHealthBar, isScenery;
     void*   ptr;
+    void*   projectiles;       // ObjectProperties.Projectiles (ProjectileProperties[]), may be null
+    uintptr_t projectileCount;
 };
+
+// Longest reach (tiles) among a type's projectile definitions — the same distance
+// model the weapon profile uses (speed and lifetime with acceleration, or the
+// parametric magnitude). 0 when there are none or none can be read. Called once
+// per object type (the result is cached by the caller), never per frame.
+static float SehProjectileReachTiles(void* projectiles, uintptr_t count)
+{
+    __try {
+        if (!Mem::AddrOk(projectiles) || count == 0) return 0.f;
+        if (count > 16) count = 16;
+        float best = 0.f;
+        for (uintptr_t i = 0; i < count; ++i) {
+            void* pp = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(projectiles) + 0x20 + i * sizeof(void*));  // raw-access-ok: Il2CppArray element, shared SEH
+            if (!Mem::AddrOk(pp)) continue;
+            Game::ProjProps props(pp);
+            float reach = 0.f;
+            if (props.IsParametric()) {
+                reach = props.Magnitude();
+            } else {
+                const int32_t speed = props.Speed();
+                const float lifeMs = ProjectileTracking::NormalizeProjectileLifetimeMs(props.Lifetime());
+                if (speed > 0 && speed < 500000 && lifeMs > 1.f && std::isfinite(lifeMs))
+                    reach = AimMath::IntegratedProjectileDistance(reinterpret_cast<uint8_t*>(pp), lifeMs, 1.f,
+                                                                  static_cast<float>(speed));
+            }
+            if (std::isfinite(reach) && reach > best && reach < 100.f) best = reach;
+        }
+        return best;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return 0.f; }
+}
 
 // Returns true if the dict entry describes a targetable enemy.
 // Soft properties (invulnerable, hasHealthBar) are always populated so callers
@@ -204,12 +238,17 @@ static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t loc
         out.hasHealthBar  = (noHB == 0);
         out.isScenery     = isStatic && projectileCount == 0;
         out.ptr           = entity;
+        out.projectiles   = projectiles;
+        out.projectileCount = projectileCount;
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
 // ── Frame state ──────────────────────────────────────────────────────────────
 static std::vector<EnemyTracker::Entry> s_snapshot;
+// Projectile reach per object type. ObjectProperties are shared per type and
+// immutable, so one read per type per session is exact.
+static std::unordered_map<int32_t, float> s_reachByType;
 static std::atomic<int32_t>  s_localPlayerObjectId{ 0 };
 static ULONGLONG             s_lastTickMs = 0;
 
@@ -269,6 +308,13 @@ void Tick()
         e.hasHealthBar   = cand.hasHealthBar;
         e.isScenery      = cand.isScenery;
         e.ptr            = cand.ptr;
+        {
+            auto reach = s_reachByType.find(cand.objType);
+            if (reach == s_reachByType.end())
+                reach = s_reachByType.emplace(cand.objType,
+                    SehProjectileReachTiles(cand.projectiles, cand.projectileCount)).first;
+            e.shotRangeTiles = reach->second;
+        }
 
         // Populate velocity from the just-updated map
         auto it = s_velMap.find(cand.id);

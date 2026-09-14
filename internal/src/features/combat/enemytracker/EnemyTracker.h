@@ -17,6 +17,7 @@ struct Entry {
     bool    isInvulnerable;  // XML <Invincible/> flag
     bool    hasHealthBar;    // false for walls/destructibles (noHealthBar)
     bool    isScenery;       // static object with no projectile definitions
+    float   shotRangeTiles;  // longest projectile reach of this TYPE (tiles); 0 = none / unreadable
     void*   ptr;             // raw entity pointer (for direct field reads)
 };
 

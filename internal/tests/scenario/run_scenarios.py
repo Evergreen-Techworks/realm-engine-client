@@ -24,6 +24,7 @@ SCENARIOS = [
     "f_damaging_row", "g_fullocc_gap", "h_learned_keepout", "j_hidden_blocker",
     "i_tilelist_revisit", "i_tilelist_frontier",
     "k_slowed_midwalk", "k_paralyzed_midwalk", "k_water_midpath", "k_dodge_in_water",
+    "l_walk_past_shotgun", "l_walk_past_bomber", "l_lock_boss_dies", "l_lock_boss_invuln",
 ]
 
 def main():
@@ -51,8 +52,11 @@ def main():
     else:
         scan = 1
     defines = []
-    if "ObserveBlast" in (ud / "UDodgeEnemyHazards.h").read_text():
+    hazards = (ud / "UDodgeEnemyHazards.h").read_text()
+    if "ObserveBlast" in hazards:
         defines.append("-DHARNESS_TREE_POST70=1")
+    if "BurstKeepoutRadius" in hazards:
+        defines.append("-DHARNESS_TREE_BURST=1")
     with tempfile.TemporaryDirectory(prefix="udodge-scenarios-") as tmp:
         tmp = Path(tmp)
         stubs = tmp / "stubs"

@@ -795,7 +795,15 @@ bool NavBlocked(const PlannerSnapshot& in, int gx, int gy, bool isStart)
     if (gx < 0 || gx >= kNS || gy < 0 || gy >= kNS) return true;
     if (isStart) return false;
     if (in.navGrid.flags[NavIdx(gx, gy)] & (0x1 | 0x10)) return true;   // wall / FullOccupy rule (bit2 sink = COST, not a wall)
-    return EnemyBlockedLocal(in.map, NavCellWorld(in.navGrid.center, gx, gy));
+    const Vec2 w = NavCellWorld(in.navGrid.center, gx, gy);
+    if (EnemyBlockedLocal(in.map, w)) return true;
+    // Enemy keep-outs (self blasts, point-blank shooters) are walls for the route:
+    // the solver refuses to step into them, so a route through one is a route the
+    // player cannot follow. Routing around them takes the detour whenever there is
+    // one; with none the partial route ends at the edge and the player waits there.
+    for (int i = 0; i < in.map.zoneCount; ++i)
+        if (InsideEnemyKeepout(in.map.zones[i], in.player, w, kUPlayerHalf)) return true;
+    return false;
 }
 
 // Does this cell touch a square the server has NOT streamed yet (nav grid bit3)?

@@ -770,8 +770,20 @@ struct ZoneThreat {
     bool  active = false;  // true = detonated & persisting (HARD danger);
                            // false = telegraphed, not yet landed (SOFT cost)
     bool  enemyKeepout = false; // an enemy-centred avoidance policy (UDodgeEnemyHazards),
-                                // not an observed blast — softened during walk-to
+                                // not an observed blast — hard for walk-to too
 };
+
+// Enemy keep-out test shared by the walk-to planner (nav A*) and the follower's
+// re-plan trigger. A keep-out the player already stands in never blocks — the way
+// out must stay open — which is the same escape rule the zone floors use.
+inline bool InsideEnemyKeepout(const ZoneThreat& z, Vec2 player, Vec2 p, float playerHalf)
+{
+    if (!z.enemyKeepout || !z.active) return false;
+    const float r = z.radius + playerHalf;
+    const float dx = p.x - z.pos.x, dy = p.y - z.pos.y;
+    const float px = player.x - z.pos.x, py = player.y - z.pos.y;
+    return dx * dx + dy * dy < r * r && px * px + py * py >= r * r;
+}
 
 struct DangerMap {
     uint32_t tickId    = 0;      // WM_TickId this layout was built from

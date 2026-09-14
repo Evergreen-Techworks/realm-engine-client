@@ -858,9 +858,9 @@ void Tick(void* player, float px, float py, float dt)
         g_lockApproachGoalValid = false;
     }
 
-    // Enemy-centred keep-outs are hard for the dodge and for fights, but a walk-to
-    // has to be able to pass the enemy it walks by (UDodgeEnemyHazards.h).
-    if (walkActive && !lockApproach) EnemyHazards::SoftenForWalkTo(g_map);
+    // Enemy-centred keep-outs (self blasts, point-blank shooters) stay HARD during
+    // walk-to as well: the route goes around them, and with no way round the player
+    // waits at the edge (UDodgeEnemyHazards.h).
 
     // A route the A* could only find across damaging ground is followed with
     // safe-walk relaxed: the follower and the solver would otherwise refuse the very
@@ -905,7 +905,24 @@ void Tick(void* player, float px, float py, float dt)
         // temporarily moving away from the final destination.
         const ULONGLONG nowNav = GetTickCount64();
         if (goalMoved) { g_navProgress.Reset(); ClearNavAvoid(); }
-        const bool blocked = g_navCache.valid && !Navigation::PaddedPathClear(in, in.player, navStep);
+        // A keep-out that moved onto the route (its enemy walked there) blocks it as
+        // surely as a wall: the solver will not step in, so re-plan now rather than
+        // waiting for the stall timer.
+        const auto keepoutOnRoute = [&]() {
+            for (int i = 0; i < g_map.zoneCount; ++i) {
+                const ZoneThreat& z = g_map.zones[i];
+                if (!z.enemyKeepout || !z.active) continue;
+                const float r = z.radius + kUPlayerHalf;
+                if (Len(Sub(in.player, z.pos)) < r) continue;   // standing in it: leaving is allowed
+                const Vec2 ab = Sub(navStep, in.player);
+                const float l2 = LenSq(ab);
+                const float s = l2 > 1e-12f ? std::clamp(Dot(Sub(z.pos, in.player), ab) / l2, 0.f, 1.f) : 0.f;
+                if (Len(Sub(z.pos, Add(in.player, Mul(ab, s)))) < r) return true;
+            }
+            return false;
+        };
+        const bool blocked = g_navCache.valid &&
+            (!Navigation::PaddedPathClear(in, in.player, navStep) || keepoutOnRoute());
         const bool stalled = in.speed > 0.f && g_navProgress.Stalled(in.player, nowNav, g_navAwaiting);
         if (stalled && g_refusedFrames >= kNavRefusedFramesForAvoid &&
             nowNav - g_lastRefusedMs <= kNavRefusalFreshMs) {
