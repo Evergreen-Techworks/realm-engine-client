@@ -61,6 +61,7 @@ import { GameHooker } from './hooker/GameHooker.js';
 import { ExaltFinder } from './hooker/ExaltFinder.js';
 import { InternalBridge } from './bridge/InternalBridge.js';
 import { setDllFeatureSender } from './bridge/DllFeatureBus.js';
+import { attachHiddenHelperTypeSync } from './bridge/HiddenHelperTypes.js';
 import { Logger } from './util/Logger.js';
 import { ensureRotmgMetadataXml } from './util/ensureRotmgMetadataXml.js';
 import { getRealmengineDataDir } from './util/rotmgAssetExtractor.js';
@@ -333,6 +334,9 @@ async function main() {
 
   const internalBridge = new InternalBridge('admin-dev');
   setDllFeatureSender((key, value) => internalBridge.setFeature(key, value));
+  // objects.xml hidden helpers (invisible spawners/triggers) for the native enemy
+  // lock and auto-aim: sent now, on every DLL (re)connect, and on game-data reload.
+  attachHiddenHelperTypeSync(gameData, internalBridge);
 
   // 7. Mirror XML + plugin loading in parallel (metadata fetch can be slow if mirrors are down)
   const [metadataResult] = await Promise.all([

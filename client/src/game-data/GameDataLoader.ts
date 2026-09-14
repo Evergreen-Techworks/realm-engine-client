@@ -691,6 +691,20 @@ export class GameDataLoader {
     return result;
   }
 
+  /**
+   * `<Enemy/>` types flagged `hiddenHelper`, ascending. Sent to the DLL as
+   * `enemyHiddenHelperTypes` (bridge/HiddenHelperTypes.ts) so the native enemy
+   * snapshot drops what Enemies.getAll drops. Native classifies only objects whose
+   * ObjectProperties mark them as enemies, so non-enemy helpers are left out.
+   */
+  getHiddenHelperEnemyTypes(): number[] {
+    const out: number[] = [];
+    for (const obj of this.objects.values()) {
+      if (obj.isEnemy && obj.hiddenHelper) out.push(obj.type);
+    }
+    return out.sort((a, b) => a - b);
+  }
+
   /** Returns the set of object types that are enemies (have <Enemy> tag). */
   getEnemyTypes(): Set<number> {
     const result = new Set<number>();
