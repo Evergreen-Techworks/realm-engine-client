@@ -15,7 +15,17 @@ const LABEL = { castle: 'Castle', chamber: 'Oryx 1', cellar: 'Wine Cellar', sanc
 const GUARDIAN = /^(?:(?:parasite|oryx|red|blue|purple)\s+)*stone guardian(?:\s+(?:left|right|red|blue|purple))?$/i;
 const ORYX = /^(?:exalted\s+)?oryx(?: the mad god)?(?:\s+[123])?$/i;
 const MINI = /^(?:chancellor dammah|treasurer gemsbok|archbishop leucoryx|chief beisa)$/i;
-const WALL = /^(?:fortified\s+)?destructible castle wall$/i;
+// Destructible castle walls, by object type from RE_ASSETS/data/objects.xml (game 86ad651b):
+// 0x0D70 Destructible Castle Wall (9000 HP), 0x0B70 Fortified Destructible Castle Wall (24000),
+// 0x0B09 Destructible Castle Ice Wall (9000), 0x0B0A Fortified Destructible Castle Ice Wall (24000).
+// Each is <Enemy/> <Static/> <OccupySquare/> with no projectiles: the SDK lists it as a
+// targetable enemy, and Auto Aim's "Ignore walls / breakables" filter drops a plain lock on it.
+const WALL_TYPES = new Set([0x0D70, 0x0B70, 0x0B09, 0x0B0A]);
+const WALL_RANGE = 3;          // shoot a wall from this close: inside every weapon's reach
+const WALL_COST = 4;           // a wall tile costs this much distance when weighed against exploring
+const UNKNOWN_EXIT_COST = 8;   // extra when only unseen tiles lie behind a wall
+const WALL_DEPTH = 3;          // look through walls up to this many tiles thick
+const WALL_STALL_MS = 15000;   // a wall losing no HP for this long is reported and deprioritised
 const ROOM_ENEMY = /^oryx (?:ambassador|minister|judge|noble|aristocrat|patrician|deacon|cleric|cardinal|officer|sergeant|major)$/i;
 const PRIORITY_ADD = /^(?:orb of (?:light|chaos)|messengers? of oryx)$/i;
 const OPTIONAL = /janus|suit of armor|haunted armor|stone guardian sword|quiet bomb|artifact|portal of oryx/i;
@@ -44,6 +54,9 @@ export default class OryxRunner {
     this.usedUnlocks = new Set();
     this.navAt = -Infinity;
     this.navGoal = null;
+    this.breaking = null;      // { wall, stand } while a wall blocks the route
+    this.wallId = 0;           // the wall Auto Aim is locked on
+    this.wallProgress = null;  // { id, hp, at }: the wall's HP when it last dropped
     this.tickGraph = null;
     this.graphAt = -Infinity;
     this.frontier = null;
@@ -95,8 +108,29 @@ export default class OryxRunner {
 
   stopCombat() {
     this.farmer.updateTarget(0, false);
-    // Walls are aimed at by position and don't own an enemy lock.
+    // A wall lock is an Auto Aim lock only, with no dodge enemy lock.
+    this.wallId = 0;
     this.sdk.combat.stopAiming();
+  }
+
+  // Walls, barrels and other square-occupying enemies are structures, not creatures:
+  // never a combat target. A wall that blocks the route is broken by route() instead.
+  isStructure(e) {
+    return WALL_TYPES.has(e.objectType) || (this.tickGraph?.blockerIds?.has(e.objectId) ?? false);
+  }
+
+  lineBlocked(position, ignoreId) {
+    const sdk = this.sdk;
+    const blockers = new Set(sdk.world.objects.getAll().filter(o => o.blocksMovement && o.objectId !== ignoreId)
+      .map(o => key(o.position)));
+    const origin = { x: sdk.self.getX(), y: sdk.self.getY() };
+    const steps = Math.ceil(distance(origin, position) * 4);
+    for (let step = 1; step < steps; step++) {
+      const t = step / steps;
+      const p = { x: origin.x + (position.x - origin.x) * t, y: origin.y + (position.y - origin.y) * t };
+      if (blockers.has(key(p)) || sdk.world.tiles?.getAt?.(p.x, p.y)?.isBlocking) return true;
+    }
+    return false;
   }
 
   isBoss(e) {
@@ -149,8 +183,13 @@ export default class OryxRunner {
     const sdk = this.sdk;
     const cells = new Map();
     const known = new Set();
-    const blocked = new Set(sdk.world.objects.getAll().filter(o => o.blocksMovement)
-      .map(o => key(o.position)));
+    const blocked = new Set(), blockerIds = new Set(), walls = new Map();
+    for (const o of sdk.world.objects.getAll()) {
+      if (!o.blocksMovement || !valid(o.position)) continue;
+      blocked.add(key(o.position)); blockerIds.add(o.objectId);
+      if (WALL_TYPES.has(o.objectType) && !(o.hp <= 0) && !sdk.world.objects.isDead?.(o.objectId))
+        walls.set(key(o.position), o);
+    }
     for (const t of sdk.world.tiles?.getAll?.() ?? []) {
       if (valid(t.position)) known.add(key(t.position));
       if (valid(t.position) && !t.isBlocking && !t.damaging && !t.hasConditionEffect
@@ -170,16 +209,98 @@ export default class OryxRunner {
         }
       }
     }
-    return { cells, parents, steps, queue, start, known };
+    return { cells, parents, steps, queue, start, known, blockerIds, walls };
+  }
+
+  // Destructible walls that seal the reachable floor off from floor it cannot reach
+  // (or from unseen tiles), best first. A wall with reachable floor on both sides seals nothing.
+  sealingWalls(g, goal, explore) {
+    const out = [];
+    for (const [k, wall] of g.walls) {
+      const c = { x: Math.floor(wall.position.x) + 0.5, y: Math.floor(wall.position.y) + 0.5 };
+      const inside = NEIGHBORS.map(([dx, dy]) => key({ x: c.x + dx, y: c.y + dy })).filter(n => g.parents.has(n));
+      if (!inside.length) continue;
+      let exit = Infinity;
+      const seen = new Set([k]);
+      let layer = [c];
+      for (let depth = 0; depth < WALL_DEPTH && layer.length; depth++) {
+        const next = [];
+        for (const p of layer) for (const [dx, dy] of NEIGHBORS) {
+          const q = { x: p.x + dx, y: p.y + dy }, qk = key(q);
+          if (seen.has(qk) || g.parents.has(qk)) continue;
+          seen.add(qk);
+          if (g.walls.has(qk)) next.push(q);
+          else if (g.cells.has(qk)) exit = Math.min(exit, distance(q, goal) + depth * WALL_COST);
+          else if (!g.known.has(qk)) exit = Math.min(exit, distance(q, goal) + depth * WALL_COST + UNKNOWN_EXIT_COST);
+        }
+        layer = next;
+      }
+      if (exit === Infinity) continue;
+      const stand = inside.sort((a, b) => g.steps.get(a) - g.steps.get(b))[0];
+      out.push({ wall, stand, score: exit + (explore ? WALL_COST : 0)
+        + g.steps.get(stand) * (explore ? 0.12 : 0.001) + (this.visits.get(k) ?? 0) * 40 });
+    }
+    return out.sort((a, b) => a.score - b.score);
+  }
+
+  pathStep(g, target) {
+    const path = [];
+    for (let k = target; k !== g.start; k = g.parents.get(k)) path.push(g.cells.get(k));
+    path.reverse();
+    return path.length ? path[Math.min(4, path.length - 1)] : null;
+  }
+
+  // Shoot the wall that blocks the route, walking up to it first. Auto Aim is locked
+  // on it with its wall filters lifted; no dodge enemy lock, which is for creatures.
+  breakWall(gate, now, g) {
+    const sdk = this.sdk, f = this.farmer, wall = gate.wall;
+    const live = sdk.world.objects.getById ? sdk.world.objects.getById(wall.objectId) : wall;
+    if (!live || live.hp <= 0 || sdk.world.objects.isDead?.(wall.objectId)) {
+      // Broken: rebuild the floor graph so the route runs through the gap.
+      this.breaking = null; this.tickGraph = null; this.graphAt = -Infinity; this.navAt = -Infinity;
+      return false;
+    }
+    this.breaking = gate;
+    const atStand = key({ x: sdk.self.getX(), y: sdk.self.getY() }) === gate.stand;
+    if (!atStand && (sdk.self.distanceTo(wall.position) > WALL_RANGE || this.lineBlocked(wall.position, wall.objectId))) {
+      if (this.wallId || f.lockId) this.stopCombat();
+      const step = this.pathStep(g, gate.stand);
+      if (step) sdk.dodge.navigateToPosition(step); else sdk.dodge.clearWaypoint();
+      this.status(`walking to ${wall.name}`);
+      return true;
+    }
+    sdk.dodge.clearWaypoint();
+    if (this.wallId !== wall.objectId) {
+      if (f.lockId) f.updateTarget(0, false);
+      this.wallId = wall.objectId;
+      sdk.combat.aimAt(wall.objectId, { includeStructures: true });
+    }
+    f.setFiring(true);
+    this.status(`breaking ${wall.name}`);
+    const hp = Number(live.hp);
+    if (this.wallProgress?.id !== wall.objectId || hp < this.wallProgress.hp) {
+      this.wallProgress = { id: wall.objectId, hp, at: now };
+    } else if (now - this.wallProgress.at >= WALL_STALL_MS) {
+      // No damage is landing. Say so, and weigh this wall like a visited frontier so
+      // another way on is tried first; with no other way it is still the one shot.
+      const k = key(wall.position);
+      this.visits.set(k, (this.visits.get(k) ?? 0) + 1);
+      this.wallProgress = { id: wall.objectId, hp, at: now };
+      sdk.log.info(`Realm Farmer — ${LABEL[this.stage]}: ${wall.name} #${wall.objectId} lost no HP in `
+        + `${WALL_STALL_MS / 1000}s of shooting (hp ${Number.isFinite(hp) ? hp : 'unknown'})`);
+    }
+    return true;
   }
 
   route(goal, now, explore = false) {
-    if (!valid(goal)) { this.sdk.dodge.clearWaypoint(); return false; }
-    if (now - this.navAt < 500 && this.navGoal && distance(this.navGoal, goal) < 1) return true;
+    if (!valid(goal)) { this.breaking = null; this.sdk.dodge.clearWaypoint(); return false; }
+    // While breaking a wall, re-check it every loop: its death must hand back movement at once.
+    if (!this.breaking && now - this.navAt < 500 && this.navGoal && distance(this.navGoal, goal) < 1) return true;
     this.navAt = now; this.navGoal = { ...goal };
     const g = this.tickGraph && now - this.graphAt < 500 ? this.tickGraph : this.graph();
-    if (g.queue.length <= 1) { this.sdk.dodge.clearWaypoint(); return false; }
-    explore = explore && !g.parents.has(key(goal));
+    const goalReachable = g.parents.has(key(goal));
+    explore = explore && !goalReachable;
+    if (g.queue.length <= 1 && !g.walls.size) { this.breaking = null; this.sdk.dodge.clearWaypoint(); return false; }
     const known = g.known;
     if (this.frontier && (this.sdk.self.distanceTo(this.frontier) < 2 || now - this.frontierAt >= 8000)) {
       const k = key(this.frontier);
@@ -195,7 +316,8 @@ export default class OryxRunner {
       const s = d + g.steps.get(k) * (explore ? 0.12 : 0.001) + (explore ? visits * 40 : 0);
       if (s < score && (k !== g.start || !explore)) { score = s; best = k; }
     }
-    if (best === null && explore) {
+    const exhausted = best === null && explore;
+    if (exhausted) {
       // Fully revealed maps have no frontiers. Still approach the closest
       // reachable floor toward the goal, stopping on this side of closed gates.
       for (const k of g.queue) {
@@ -203,17 +325,23 @@ export default class OryxRunner {
         if (s < score) { score = s; best = k; }
       }
     }
+    // A destructible wall is the way on when nothing reachable leads anywhere new,
+    // or when what lies behind it is nearer the goal than anything reachable.
+    const [gate] = goalReachable ? [] : this.sealingWalls(g, goal, explore);
+    if (gate && (exhausted || best === null || gate.score < score)) {
+      if (this.breakWall(gate, now, g)) return true;
+      return this.route(goal, now, explore);
+    }
+    this.breaking = null;
     if (best === null) { this.sdk.dodge.clearWaypoint(); return false; }
     const destination = g.cells.get(best);
     if (explore && (!this.frontier || distance(this.frontier, destination) > 2)) {
       this.frontier = destination; this.frontierAt = now;
     }
-    const path = [];
-    for (let k = best; k !== g.start; k = g.parents.get(k)) path.push(g.cells.get(k));
-    path.reverse();
-    if (!path.length) { this.sdk.dodge.clearWaypoint(); return false; }
+    const step = this.pathStep(g, best);
+    if (!step) { this.sdk.dodge.clearWaypoint(); return false; }
     // Feed short steps into native uDodge; it still owns projectile/AoE avoidance.
-    this.sdk.dodge.navigateToPosition(path[Math.min(4, path.length - 1)]);
+    this.sdk.dodge.navigateToPosition(step);
     return true;
   }
 
@@ -229,19 +357,10 @@ export default class OryxRunner {
   fight(target, now, label) {
     const sdk = this.sdk, f = this.farmer;
     const d = sdk.self.distanceTo(target.position);
-    const blockers = new Set(sdk.world.objects.getAll().filter(o => o.blocksMovement && o.objectId !== target.objectId)
-      .map(o => key(o.position)));
-    const origin = { x: sdk.self.getX(), y: sdk.self.getY() };
-    let occluded = false;
-    for (let step = 1; step < Math.ceil(d * 4); step++) {
-      const t = step / Math.ceil(d * 4);
-      const p = { x: origin.x + (target.position.x - origin.x) * t,
-        y: origin.y + (target.position.y - origin.y) * t };
-      if (blockers.has(key(p)) || sdk.world.tiles?.getAt?.(p.x, p.y)?.isBlocking) { occluded = true; break; }
-    }
-    if (d > 8 || occluded) {
-      this.stopCombat();
+    if (d > 8 || this.lineBlocked(target.position, target.objectId)) {
       this.route(target.position, now);
+      if (this.breaking) return;
+      this.stopCombat();
       this.status(`approaching ${label}`);
       return;
     }
@@ -294,14 +413,14 @@ export default class OryxRunner {
       }
       this.phases.delete(remembered.objectId);
     }
-    const priority = enemies.filter(e => e.hp > 0 && e.isTargetable && PRIORITY_ADD.test(e.name)
+    const priority = enemies.filter(e => e.hp > 0 && e.isTargetable && !this.isStructure(e) && PRIORITY_ADD.test(e.name)
       && this.reachable(e.position) && distance(e.position, remembered.position) < 25)
       .sort((a, b) => this.sdk.self.distanceTo(a.position) - this.sdk.self.distanceTo(b.position))[0];
     if (priority) { this.fight(priority, now, priority.name); return true; }
     if (boss?.isTargetable) {
       this.fight(boss, now, this.heavens ? `${boss.name} — Heavens active` : boss.name); return true;
     }
-    const add = enemies.filter(e => e.hp > 0 && e.isTargetable && !this.isBoss(e) && !OPTIONAL.test(e.name)
+    const add = enemies.filter(e => e.hp > 0 && e.isTargetable && !this.isBoss(e) && !this.isStructure(e) && !OPTIONAL.test(e.name)
       && distance(e.position, remembered.position) <= 12 && this.sdk.self.distanceTo(e.position) <= 8)
       .sort((a, b) => this.sdk.self.distanceTo(a.position) - this.sdk.self.distanceTo(b.position))[0];
     if (add) { this.fight(add, now, add.name); return true; }
@@ -428,23 +547,16 @@ export default class OryxRunner {
       this.stopCombat();
       if (f.handleLoot(now)) return true;
     }
-    const target = enemies.filter(e => e.hp > 0 && e.isTargetable && !OPTIONAL.test(e.name) && this.reachable(e.position)
+    const target = enemies.filter(e => e.hp > 0 && e.isTargetable && !this.isStructure(e) && !OPTIONAL.test(e.name)
+      && this.reachable(e.position)
       && (this.stage === 'sanctuary' ? ROOM_ENEMY.test(e.name) : sdk.self.distanceTo(e.position) <= 8))
       .sort((a, b) => sdk.self.distanceTo(a.position) - sdk.self.distanceTo(b.position))[0];
     if (target) { this.fight(target, now, target.name); return true; }
-    this.stopCombat();
-    // Castle destructible walls may be classified as props, not SDK enemies.
-    const wall = this.stage === 'castle' && sdk.world.objects.getAll().filter(o =>
-      WALL.test(o.name) && o.hp !== 0 && !sdk.world.objects.isDead?.(o.objectId)
-      && sdk.self.distanceTo(o.position) <= 6)
-      .sort((a, b) => sdk.self.distanceTo(a.position) - sdk.self.distanceTo(b.position))[0];
-    if (wall) {
-      sdk.dodge.clearWaypoint(); sdk.combat.aimAtPosition(wall.position.x, wall.position.y);
-      f.setFiring(true); this.status('breaking castle wall'); return true;
-    }
     const quest = sdk.world.objects.getQuestObject();
     const goal = quest && this.isBoss(quest) && !this.dead.has(quest.objectId) ? quest.position : this.routeHint();
     const moved = this.route(goal, now, true);
+    if (this.breaking) return true;   // breakWall owns aim, fire and status
+    this.stopCombat();
     this.status(moved ? 'clearing route toward next encounter' : 'waiting for terrain or room gate');
     return true;
   }

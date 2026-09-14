@@ -1,12 +1,20 @@
 import { Combat } from '@realmengine/sdk';
-import type { Enemy } from '@realmengine/sdk';
+import type { CombatAimOptions, Enemy } from '@realmengine/sdk';
 import type { ClientConnection } from '../../../proxy/ClientConnection.js';
 import type { BridgeDeps } from '../BridgeDeps.js';
 import { warnUnimplemented } from '../stubWarn.js';
-import { sendDllFeature } from '../../../bridge/DllFeatureBus.js';
+import { overrideDllFeature, restoreDllFeature, sendDllFeature } from '../../../bridge/DllFeatureBus.js';
 import { pauseAutomaticAbility } from '../../../bridge/AutomaticAbilityPause.js';
 
 const HISTORY_MS = 60 * 60 * 1000; // keep up to 1 hour of events
+
+/**
+ * Auto Aim settings that drop a lock on a structure (TargetSelector.cpp, Locked
+ * branch): "Ignore walls" skips no-health-bar objects, "Ignore walls / breakables"
+ * skips static objects with no projectiles, e.g. every Destructible Castle Wall.
+ * `true` is the DLL's own default for both (AutoAim.cpp s_ignoreWalls/s_ignoreScenery).
+ */
+const STRUCTURE_FILTERS = ['autoAimIgnoreWalls', 'autoAimIgnoreScenery'] as const;
 
 type AimTarget =
   | { kind: 'object'; objectId: number }
@@ -138,12 +146,28 @@ export class BridgeCombat {
       hitTimes.length = 0;
     };
 
-    Combat.aimAt = (target: number | { objectId: number }) => {
+    // A structure lock lifts Auto Aim's wall filters; every other aim change puts
+    // the Auto Aim plugin's settings back. Only this bridge's own lift is undone.
+    let structuresLifted = false;
+    function liftStructureFilters(): void {
+      for (const key of STRUCTURE_FILTERS) overrideDllFeature(key, false);
+      structuresLifted = true;
+    }
+    function restoreStructureFilters(): void {
+      if (!structuresLifted) return;
+      structuresLifted = false;
+      for (const key of STRUCTURE_FILTERS) restoreDllFeature(key, true);
+    }
+
+    Combat.aimAt = (target: number | { objectId: number }, options?: CombatAimOptions) => {
       const objectId = normalizeObjectId(target);
       if (objectId == null) return false;
       // AutoAim-only lock. KillAura chooses independently; UDodge receives its
       // boss lock through Dodge.lockEnemy after navigation reaches the area.
       clearAim();
+      // Lift before locking so no frame sees the lock without the lift.
+      if (options?.includeStructures) liftStructureFilters();
+      else restoreStructureFilters();
       return sendDllFeature('scriptCombatTargetId', objectId);
     };
     Combat.aimAtPosition = (_x: number, _y: number) => {
@@ -157,10 +181,12 @@ export class BridgeCombat {
     Combat.stopAiming = () => {
       clearAim();
       sendDllFeature('scriptCombatTargetId', 0);
+      restoreStructureFilters();
     };
     Combat.autoAimOff = () => {
       clearAim();
       sendDllFeature('scriptCombatTargetId', 0);
+      restoreStructureFilters();
     };
     Combat.useAbility = () => {
       warnUnimplemented('Combat.useAbility');

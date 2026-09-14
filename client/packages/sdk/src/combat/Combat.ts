@@ -3,6 +3,16 @@ import { Enemy } from '../types/entities/Enemy';
 
 export type CombatAimTarget = number | { objectId: number };
 
+export interface CombatAimOptions {
+    /**
+     * The target is a structure: a destructible wall, crate or other breakable
+     * scenery. Auto Aim's "Ignore walls" settings drop a lock on those, so this
+     * lock lifts them while it holds. The Auto Aim plugin's own settings come back
+     * when the lock ends (`stopAiming`, `autoAimOff`, or `aimAt` without this option).
+     */
+    includeStructures?: boolean;
+}
+
 export class Combat {
     /** Pause the Auto Ability plugin for up to 1000 ms; renew during guarded phases. */
     static pauseAutomaticAbility(durationMs = 500): void {
@@ -20,7 +30,7 @@ export class Combat {
     }
 
     /** Auto-aim weapon shots at a tracked object id until stopped or changed. */
-    static aimAt(target: CombatAimTarget): boolean {
+    static aimAt(target: CombatAimTarget, options?: CombatAimOptions): boolean {
         throw new Error('Must be run inside RealmEngine client');
     }
 

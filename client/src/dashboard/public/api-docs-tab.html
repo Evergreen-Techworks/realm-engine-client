@@ -2020,7 +2020,7 @@ readonly [number, number]</code></pre></div></details>
               <table class="api-doc-table">
                 <thead><tr><th data-i18n="docs.apiref.table.method">Method</th><th data-i18n="docs.apiref.table.returns">Returns</th><th data-i18n="docs.apiref.table.description">Description</th></tr></thead>
                 <tbody>
-                  <tr><td><code>aimAt(objectId)</code></td><td><code>boolean</code></td><td>Auto-aim weapon shots at a tracked object id.</td></tr>
+                  <tr><td><code>aimAt(objectId, options?)</code></td><td><code>boolean</code></td><td>Auto-aim weapon shots at a tracked object id. Pass <code>{ includeStructures: true }</code> for a destructible wall or other breakable scenery: Auto Aim's "Ignore walls" settings are lifted while that lock holds.</td></tr>
                   <tr><td><code>aimAtPosition(x, y)</code></td><td><code>boolean</code></td><td>Auto-aim weapon shots at fixed world coordinates.</td></tr>
                   <tr><td><code>stopAiming()</code></td><td><code>void</code></td><td>Clear the active object-id or position aim override.</td></tr>
                   <tr><td><code>autoAimOff()</code></td><td><code>void</code></td><td>Disable SDK auto-aim so manual aim passes through unchanged.</td></tr>
