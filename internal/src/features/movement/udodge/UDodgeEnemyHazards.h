@@ -87,10 +87,25 @@ inline bool Append(DangerMap& map, int objectType, int hp, Vec2 position, Vec2 p
         || LenSq(Sub(position, player)) > (16.f + radius) * (16.f + radius)) return false;
     if (map.zoneCount >= kMaxAoes) { map.limited = true; return false; }
     ZoneThreat& zone = map.zones[map.zoneCount++];
+    zone = ZoneThreat{};
     zone.pos = position;
     zone.radius = radius;
     zone.active = true;
+    zone.enemyKeepout = true;
     return true;
+}
+
+// A commanded walk-to (Shift+Click, the farmer's every move) must be able to pass
+// an enemy it is walking by. As HARD zones these keep-outs walled off any corridor
+// narrower than their diameter for as long as the enemy lived — and a learned
+// keep-out applies to every instance of the type for the whole session — so the
+// player held at the edge. During walk-to they are priced like a telegraph
+// instead: the solver and planner still keep off them when there is room, and
+// still refuse to loiter in one, but can walk through. Fights keep them hard.
+inline void SoftenForWalkTo(DangerMap& map)
+{
+    for (int i = 0; i < map.zoneCount; ++i)
+        if (map.zones[i].enemyKeepout) map.zones[i].active = false;
 }
 
 // ── Learning (pure classifiers; the caller supplies the world) ──────────────

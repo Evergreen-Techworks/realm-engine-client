@@ -1,21 +1,57 @@
 #pragma once
 #include "UDodgeTypes.h"
+#include <algorithm>
 #include <cmath>
 
 namespace UDodge { namespace Navigation {
 constexpr float kWallPadding = 0.15f;
+
+// Swept walls-only test for the padding offsets (PaddingClearAt at the same
+// 0.2-tile sample spacing as OccupancyPathClear).
+inline bool PaddingPathClear(const MapInput& in, Vec2 from, Vec2 to)
+{
+    if (!PaddingClearAt(in, to)) return false;
+    const float d = Len(Sub(to, from));
+    const int steps = std::max(1, static_cast<int>(std::ceil(d / 0.20f)));
+    for (int i = 1; i < steps; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(steps);
+        if (!PaddingClearAt(in, Add(from, Mul(Sub(to, from), t)))) return false;
+    }
+    return true;
+}
+
 // Only navigation asks for extra clearance. Collision/dodge escape keeps the
 // real player footprint, including when the player starts inside the padding.
+// The centre sweep applies the full occupancy rule; the padded corner sweeps keep
+// the player box off walls and nothing more (see PaddingClearAt).
 inline bool PaddedPathClear(const MapInput& in, Vec2 from, Vec2 to)
 {
     if (!OccupancyPathClear(in, from, to)) return false;
     for (Vec2 offset : {Vec2{-kWallPadding,-kWallPadding}, Vec2{-kWallPadding,kWallPadding},
                         Vec2{kWallPadding,-kWallPadding}, Vec2{kWallPadding,kWallPadding}}) {
-        if (!CanOccupyAt(in, Add(from, offset))) return true; // leave an existing tight spot
+        if (!PaddingClearAt(in, Add(from, offset))) return true; // leave an existing tight spot
     }
     for (Vec2 offset : {Vec2{-kWallPadding,-kWallPadding}, Vec2{-kWallPadding,kWallPadding},
                         Vec2{kWallPadding,-kWallPadding}, Vec2{kWallPadding,kWallPadding}})
-        if (!OccupancyPathClear(in, Add(from, offset), Add(to, offset))) return false;
+        if (!PaddingPathClear(in, Add(from, offset), Add(to, offset))) return false;
+    return true;
+}
+
+// Does the straight sweep from→to keep the player box out of every remembered
+// stuck square (centres in `avoid`, one tile each)? The route follower's shortcuts
+// must honour stuck memory too, or its lookahead cuts straight back across the
+// square the re-plan just routed around.
+inline bool AvoidClear(const Vec2* avoid, int count, Vec2 from, Vec2 to)
+{
+    if (count <= 0) return true;
+    constexpr float reach = 0.5f + kUOccPlayerHalfEdge;
+    const float d = Len(Sub(to, from));
+    const int steps = std::max(1, static_cast<int>(std::ceil(d / 0.20f)));
+    for (int i = 1; i <= steps; ++i) {
+        const Vec2 p = Add(from, Mul(Sub(to, from), static_cast<float>(i) / static_cast<float>(steps)));
+        for (int a = 0; a < count; ++a)
+            if (std::fabs(p.x - avoid[a].x) < reach && std::fabs(p.y - avoid[a].y) < reach) return false;
+    }
     return true;
 }
 

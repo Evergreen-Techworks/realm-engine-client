@@ -803,6 +803,7 @@ void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& 
             && landingMs <= ZoneArmWindowMs(radius, playerSpeedTilesPerMs());
 
         ZoneThreat& z = out.zones[out.zoneCount++];
+        z = ZoneThreat{};   // slots are reused every rebuild; never inherit enemyKeepout
         z.pos = { a.destX, a.destY };
         z.radius = radius;
         z.active = hasLanded || armingSoon;
@@ -1233,6 +1234,12 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
 bool IsHazardAt(float worldX, float worldY)
 {
     return Movement::TileSensor::IsHazardAt(s_hazardMemo, worldX, worldY);
+}
+
+bool WallsClear(float worldX, float worldY)
+{
+    return Movement::TileSensor::IsFinitePoint(worldX, worldY) &&
+           !Movement::TileSensor::IsWallAt(worldX, worldY);
 }
 
 bool CanOccupy(float worldX, float worldY, bool safeWalk)

@@ -137,7 +137,7 @@ bool GridBlocked(const OccGrid& g, bool safeWalk, int gx, int gy)
 {
     if (gx < 0 || gx >= kS || gy < 0 || gy >= kS) return true;
     const uint8_t f = g.flags[gy * kS + gx];
-    if (f & 0x1) return true;
+    if (f & (0x1 | 0x10)) return true;   // wall, or the FullOccupy half-tile rule at this centre
     if (safeWalk && (f & 0x2)) return true;
     return false;
 }
@@ -794,7 +794,7 @@ bool NavBlocked(const PlannerSnapshot& in, int gx, int gy, bool isStart)
 {
     if (gx < 0 || gx >= kNS || gy < 0 || gy >= kNS) return true;
     if (isStart) return false;
-    if (in.navGrid.flags[NavIdx(gx, gy)] & 0x1) return true;   // bit0 wall (bit2 sink = COST, not a wall)
+    if (in.navGrid.flags[NavIdx(gx, gy)] & (0x1 | 0x10)) return true;   // wall / FullOccupy rule (bit2 sink = COST, not a wall)
     return EnemyBlockedLocal(in.map, NavCellWorld(in.navGrid.center, gx, gy));
 }
 
@@ -819,6 +819,160 @@ float NavOctile(int ax, int ay, int bx, int by)
     const int dx = std::abs(ax - bx), dy = std::abs(ay - by);
     return static_cast<float>(std::max(dx, dy)) +
            (kUPathRoot2 - 1.f) * static_cast<float>(std::min(dx, dy));
+}
+
+// Admissible remaining-cost estimate (cells) from `idx` to the goal (disk).
+float goalHCells(const PlannerSnapshot& in, int idx, int goalGx, int goalGy)
+{
+    return std::max(0.f, NavOctile(idx % kNS, idx / kNS, goalGx, goalGy) -
+                         std::max(0.f, in.navGoalRadius) / kUNavCellTiles);
+}
+
+// One goal-directed A* pass over the nav grid (worker scratch s_nav*). With
+// `hazardIsWall`, damaging ground (bit1) is impassable; otherwise it is priced at
+// kUNavHazardCost per cell. Fills the search outcome; the route itself stays in
+// s_navPrev until the next pass.
+struct NavSearch {
+    bool  reached = false;
+    int   start = 0, target = 0;
+    int   pops = 0;
+    float targetH = 0.f;   // remaining estimate (cells) from `target` to the goal (disk)
+};
+
+NavSearch RunNavSearch(const PlannerSnapshot& in, int startGx, int startGy, int goalGx, int goalGy,
+                       bool hazardIsWall, float fBound = 1e30f)
+{
+    NavSearch r;
+    r.start = NavIdx(startGx, startGy);
+    const int start = r.start;
+
+    NavHeapClear();
+    // MUST reset the visited/closed scratch every run: these are static, single-
+    // worker-thread arrays, and stale 'closed'/'seen' flags left over from the
+    // PREVIOUS plan make almost every cell look already-visited on the 2nd+ call —
+    // the search then can't expand (navPops=1) and beelines into walls. (g/prev are
+    // only read once seen is set, so they need no clear.) ~21k bytes each; cheap.
+    std::fill(std::begin(s_navSeen),   std::end(s_navSeen),   static_cast<uint8_t>(0));
+    std::fill(std::begin(s_navClosed), std::end(s_navClosed), static_cast<uint8_t>(0));
+    s_navSeen[start] = 1; s_navG[start] = 0.f; s_navPrev[start] = -1; s_navClosed[start] = 0;
+
+    // Goal DISK (in.navGoalRadius > 0): the first cell popped within the radius of
+    // navGoal ends the search, so a locked target is approached to the nearest
+    // in-range cell BY PATH — through the door of its room, around the far side of
+    // a wall — instead of to one standoff point that may sit behind that wall. The
+    // heuristic subtracts the radius, so it stays admissible.
+    const float goalRadius = std::max(0.f, in.navGoalRadius);
+    const auto goalH = [&](int x, int y) {
+        return std::max(0.f, NavOctile(x, y, goalGx, goalGy) - goalRadius / kUNavCellTiles);
+    };
+    const auto isGoal = [&](int idx) {
+        if (goalRadius <= 0.f) return idx == NavIdx(goalGx, goalGy);
+        return LenSq(Sub(NavCellWorld(in.navGrid.center, idx % kNS, idx / kNS), in.navGoal)) <=
+               goalRadius * goalRadius;
+    };
+    NavHeapPush(goalH(startGx, startGy), start);
+
+    int   bestCell = start;                 // closest-to-goal free cell reached (partial fallback)
+    float bestH    = goalH(startGx, startGy);
+    // Frontier partial: among reached cells where THE REACHABLE AREA CONTINUES —
+    // either past the search bound (the window edge) or into map the server has not
+    // streamed yet (NavTouchesVoid) — the one nearest the goal. Heading here walks
+    // the player ALONG a wall/coast toward an opening as the window re-centers —
+    // instead of jamming into the interior dead-end closest to the goal (min-h over
+    // ALL cells), which is what stuck us on walls and made it take the long way.
+    // Falls back to bestCell only when the reachable area is fully enclosed.
+    //
+    // The VOID half is not optional. Unstreamed squares are hard-blocked, so in a
+    // Realm the reachable set is a ~20-tile streamed disc around the player plus the
+    // corridor they already walked. Nothing forward can touch a 72-tile window edge;
+    // the only cells that can are ones on the OLD trail, BEHIND the player. With the
+    // window edge as the sole frontier test, every partial re-plan (and a partial
+    // re-plans the instant its route is consumed) therefore turned the player around
+    // and marched them back down their own trail — the far side of the window scored
+    // as "the frontier" even though it sits ~90 tiles FARTHER from the goal than the
+    // forward exploration boundary does. Counting void-adjacent cells puts the real
+    // frontier — the leading edge of the streamed map — back in the running, where
+    // min-h picks it. A fully streamed map (dungeon/Nexus) has no void, so the
+    // wall-hugging behaviour this rule was written for is unchanged there.
+    int   bestFrontier = -1;
+    float bestFrontierH = 1e30f;
+    int   pops     = 0;
+    bool  reached  = false;
+    auto blocked = [&](int x, int y) {
+        if (NavBlocked(in, x, y, false)) return true;
+        return hazardIsWall && (in.navGrid.flags[NavIdx(x, y)] & 0x2) != 0;
+    };
+
+    float popCost; int cur;
+    while (NavHeapPop(popCost, cur)) {
+        if (s_navClosed[cur]) continue;
+        if (popCost > fBound) break;   // no route within the caller's cost bound remains
+        s_navClosed[cur] = 1;
+        ++pops;
+        const int cgx = cur % kNS, cgy = cur / kNS;
+        const float h = goalH(cgx, cgy);
+        if (h < bestH) { bestH = h; bestCell = cur; }
+        const bool onWindowEdge = (cgx == 0 || cgx == kNS - 1 || cgy == 0 || cgy == kNS - 1);
+        if (cur != start && (onWindowEdge || NavTouchesVoid(in, cgx, cgy)) &&
+            h < bestFrontierH) { bestFrontierH = h; bestFrontier = cur; }
+        if (isGoal(cur)) { reached = true; r.target = cur; break; }
+
+        for (int d = 0; d < 8; ++d) {
+            const int nx = cgx + kDx[d], ny = cgy + kDy[d];
+            if (blocked(nx, ny)) continue;
+            // No diagonal corner-cutting: both shared orthogonal cells must be open.
+            if (kDx[d] != 0 && kDy[d] != 0) {
+                if (blocked(cgx + kDx[d], cgy) || blocked(cgx, cgy + kDy[d])) continue;
+            }
+            const int   nidx = NavIdx(nx, ny);
+            if (s_navClosed[nidx]) continue;
+            float step = (kDx[d] != 0 && kDy[d] != 0) ? kUPathRoot2 : 1.f;
+            // Hazard (bit1: DAMAGING ground) is a SOFT cost on the least-damage pass —
+            // route around it when a clean path is cheaper, but still traverse it when
+            // that's the only way out (so a lava-floored arena never boxes the
+            // planner in). The bounded clean pass treats it as a wall (ComputeNav).
+            if (in.navGrid.flags[nidx] & 0x2) step += kUNavHazardCost;
+            // Sink/slow ground (shallow water, quicksand, honey): a COST, not a wall.
+            // It used to be hard-blocked alongside walls, which made the planner refuse
+            // to set foot in ankle-deep water — 208 of the game's Sink tiles are
+            // walkable (plain "Water" and "Shallow Water" among them) and only the 27
+            // that ALSO carry <NoWalk> are truly impassable, which blockedMap already
+            // catches as bit0. Costing it keeps the coast-hugging preference without
+            // fencing the player out of water they can simply wade across.
+            if (in.navGrid.flags[nidx] & 0x4) step += kUNavSinkCost;
+            // Remembered stuck squares (UDodge.cpp stuck memory). A diagonal step
+            // pays too when it cuts past one: the follower keeps the player box off
+            // them, so a leg clipping one's corner is a leg it would not follow.
+            if (in.navAvoidCount > 0) {
+                const auto avoided = [&](int x, int y) {
+                    const Vec2 cw = NavCellWorld(in.navGrid.center, x, y);
+                    for (int a = 0; a < in.navAvoidCount; ++a)
+                        if (std::fabs(cw.x - in.navAvoid[a].x) <= 0.5f &&
+                            std::fabs(cw.y - in.navAvoid[a].y) <= 0.5f) return true;
+                    return false;
+                };
+                if (avoided(nx, ny) ||
+                    (kDx[d] != 0 && kDy[d] != 0 && (avoided(cgx + kDx[d], cgy) || avoided(cgx, cgy + kDy[d]))))
+                    step += kUNavAvoidCost;
+            }
+            const float ng   = s_navG[cur] + step;
+            if (!s_navSeen[nidx] || ng < s_navG[nidx]) {
+                s_navSeen[nidx] = 1; s_navClosed[nidx] = 0;
+                s_navG[nidx] = ng; s_navPrev[nidx] = cur;
+                NavHeapPush(ng + goalH(nx, ny), nidx);
+            }
+        }
+    }
+
+    r.pops = pops;
+    r.reached = reached;
+    // Prefer the frontier (edge) cell for a partial route so we route AROUND walls
+    // toward an opening; only fall back to the closest-interior cell when nothing
+    // reached the window edge (a fully enclosed pocket).
+    const int partialTarget = (bestFrontier >= 0) ? bestFrontier : bestCell;
+    if (!reached) r.target = partialTarget;
+    r.targetH = goalH(r.target % kNS, r.target / kNS);
+    return r;
 }
 
 // Goal-directed A* over the nav grid toward navGoal. If the goal cell is outside
@@ -847,99 +1001,57 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
     int startGy = static_cast<int>(std::lround((in.player.y - center.y) / kUNavCellTiles)) + kNR;
     startGx = std::clamp(startGx, 0, kNS - 1);
     startGy = std::clamp(startGy, 0, kNS - 1);
-    const int start = NavIdx(startGx, startGy);
 
-    NavHeapClear();
-    // MUST reset the visited/closed scratch every run: these are static, single-
-    // worker-thread arrays, and stale 'closed'/'seen' flags left over from the
-    // PREVIOUS plan make almost every cell look already-visited on the 2nd+ call —
-    // the search then can't expand (navPops=1) and beelines into walls. (g/prev are
-    // only read once seen is set, so they need no clear.) ~21k bytes each; cheap.
-    std::fill(std::begin(s_navSeen),   std::end(s_navSeen),   static_cast<uint8_t>(0));
-    std::fill(std::begin(s_navClosed), std::end(s_navClosed), static_cast<uint8_t>(0));
-    s_navSeen[start] = 1; s_navG[start] = 0.f; s_navPrev[start] = -1; s_navClosed[start] = 0;
-    NavHeapPush(NavOctile(startGx, startGy, goalGx, goalGy), start);
-
-    int   bestCell = start;                 // closest-to-goal free cell reached (partial fallback)
-    float bestH    = NavOctile(startGx, startGy, goalGx, goalGy);
-    // Frontier partial: among reached cells where THE REACHABLE AREA CONTINUES —
-    // either past the search bound (the window edge) or into map the server has not
-    // streamed yet (NavTouchesVoid) — the one nearest the goal. Heading here walks
-    // the player ALONG a wall/coast toward an opening as the window re-centers —
-    // instead of jamming into the interior dead-end closest to the goal (min-h over
-    // ALL cells), which is what stuck us on walls and made it take the long way.
-    // Falls back to bestCell only when the reachable area is fully enclosed.
-    //
-    // The VOID half is not optional. Unstreamed squares are hard-blocked, so in a
-    // Realm the reachable set is a ~20-tile streamed disc around the player plus the
-    // corridor they already walked. Nothing forward can touch a 72-tile window edge;
-    // the only cells that can are ones on the OLD trail, BEHIND the player. With the
-    // window edge as the sole frontier test, every partial re-plan (and a partial
-    // re-plans the instant its route is consumed) therefore turned the player around
-    // and marched them back down their own trail — the far side of the window scored
-    // as "the frontier" even though it sits ~90 tiles FARTHER from the goal than the
-    // forward exploration boundary does. Counting void-adjacent cells puts the real
-    // frontier — the leading edge of the streamed map — back in the running, where
-    // min-h picks it. A fully streamed map (dungeon/Nexus) has no void, so the
-    // wall-hugging behaviour this rule was written for is unchanged there.
-    int   bestFrontier = -1;
-    float bestFrontierH = 1e30f;
-    int   pops     = 0;
-    bool  reached  = false;
-    const int goalIdx = NavIdx(goalGx, goalGy);
-
-    float popCost; int cur;
-    while (NavHeapPop(popCost, cur)) {
-        if (s_navClosed[cur]) continue;
-        s_navClosed[cur] = 1;
-        ++pops;
-        const int cgx = cur % kNS, cgy = cur / kNS;
-        const float h = NavOctile(cgx, cgy, goalGx, goalGy);
-        if (h < bestH) { bestH = h; bestCell = cur; }
-        const bool onWindowEdge = (cgx == 0 || cgx == kNS - 1 || cgy == 0 || cgy == kNS - 1);
-        if (cur != start && (onWindowEdge || NavTouchesVoid(in, cgx, cgy)) &&
-            h < bestFrontierH) { bestFrontierH = h; bestFrontier = cur; }
-        if (cur == goalIdx) { reached = true; break; }
-
-        for (int d = 0; d < 8; ++d) {
-            const int nx = cgx + kDx[d], ny = cgy + kDy[d];
-            if (NavBlocked(in, nx, ny, false)) continue;
-            // No diagonal corner-cutting: both shared orthogonal cells must be open.
-            if (kDx[d] != 0 && kDy[d] != 0) {
-                if (NavBlocked(in, cgx + kDx[d], cgy, false) ||
-                    NavBlocked(in, cgx, cgy + kDy[d], false)) continue;
-            }
-            const int   nidx = NavIdx(nx, ny);
-            if (s_navClosed[nidx]) continue;
-            float step = (kDx[d] != 0 && kDy[d] != 0) ? kUPathRoot2 : 1.f;
-            // Hazard (bit1: DAMAGING ground) is a SOFT cost, not a wall — route around
-            // it when a clean path exists, but still traverse it when that's the only
-            // way out (so a lava-floored arena never boxes the planner in). Water
-            // (bit2) is NOT here: it is impassable and handled in NavBlocked.
-            if (in.navGrid.flags[nidx] & 0x2) step += kUNavHazardCost;
-            // Sink/slow ground (shallow water, quicksand, honey): a COST, not a wall.
-            // It used to be hard-blocked alongside walls, which made the planner refuse
-            // to set foot in ankle-deep water — 208 of the game's Sink tiles are
-            // walkable (plain "Water" and "Shallow Water" among them) and only the 27
-            // that ALSO carry <NoWalk> are truly impassable, which blockedMap already
-            // catches as bit0. Costing it keeps the coast-hugging preference without
-            // fencing the player out of water they can simply wade across.
-            if (in.navGrid.flags[nidx] & 0x4) step += kUNavSinkCost;
-            const float ng   = s_navG[cur] + step;
-            if (!s_navSeen[nidx] || ng < s_navG[nidx]) {
-                s_navSeen[nidx] = 1; s_navClosed[nidx] = 0;
-                s_navG[nidx] = ng; s_navPrev[nidx] = cur;
-                NavHeapPush(ng + NavOctile(nx, ny, goalGx, goalGy), nidx);
-            }
+    // Damaging ground and safe-walk. The live follower and the solver hard-refuse
+    // damaging ground under safe-walk, so a route that merely PRICES it (the old
+    // single pass) was a route the player could not follow: it paced at the edge
+    // while the stall timer re-planned onto the same corridor. So:
+    //   1. the least-damaging route is searched first (damaging ground priced at
+    //      kUNavHazardCost) — on open ground it touches none and this is the only pass;
+    //   2. when it does cross damaging ground, a clean search (damaging ground as a
+    //      wall) is run, bounded by that route's cost plus kHazardDetourSlack: a
+    //      clean route that is not much longer wins;
+    //   3. otherwise the crossing route stands, flagged navCrossesHazard, and the game
+    //      thread follows it with safe-walk relaxed.
+    constexpr float kHazardDetourWinCells = 4.f;
+    constexpr float kHazardDetourSlack    = 12.f;   // tiles of detour worth taking to stay clean
+    static int s_navChain[kUNavCells];       // worker-thread scratch (single-threaded)
+    static int s_navSoftChain[kUNavCells];
+    const auto buildChain = [&](int target, int* chain) {
+        int n = 0;
+        for (int c = target; c != -1 && n < kUNavCells; c = s_navPrev[c]) chain[n++] = c;
+        return n;
+    };
+    NavSearch search = RunNavSearch(in, startGx, startGy, goalGx, goalGy, false);
+    int totalPops = search.pops;
+    int len = search.target == search.start ? 0 : buildChain(search.target, s_navChain);
+    bool crossesHazard = false;
+    if (in.settings.safeWalk && len >= 2) {
+        for (int i = 0; i < len && !crossesHazard; ++i)
+            crossesHazard = (in.navGrid.flags[s_navChain[i]] & 0x2) != 0;
+    }
+    if (crossesHazard) {
+        const NavSearch soft = search;
+        const int softLen = len;
+        std::copy(s_navChain, s_navChain + softLen, s_navSoftChain);
+        const float bound = s_navG[soft.target] + goalHCells(in, soft.target, goalGx, goalGy) + kHazardDetourSlack;
+        const NavSearch clean = RunNavSearch(in, startGx, startGy, goalGx, goalGy, true, bound);
+        totalPops += clean.pops;
+        const bool cleanWins = clean.target != clean.start &&
+            (clean.reached || (!soft.reached && clean.targetH <= soft.targetH + kHazardDetourWinCells));
+        if (cleanWins) {
+            search = clean;
+            len = buildChain(clean.target, s_navChain);
+            crossesHazard = false;
+        } else {
+            std::copy(s_navSoftChain, s_navSoftChain + softLen, s_navChain);
         }
     }
+    const bool reached = search.reached;
+    const int  start = search.start;
+    const int  target = search.target;
 
-    out.navPops = pops;
-    // Prefer the frontier (edge) cell for a partial route so we route AROUND walls
-    // toward an opening; only fall back to the closest-interior cell when nothing
-    // reached the window edge (a fully enclosed pocket).
-    const int partialTarget = (bestFrontier >= 0) ? bestFrontier : bestCell;
-    const int target = reached ? goalIdx : partialTarget;
+    out.navPops = totalPops;
     if (target == start) {                  // already at the goal cell (or boxed in at start)
         out.navFound   = true;
         out.navArrived = reached && goalInWindow;
@@ -948,13 +1060,8 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
         out.navWptCount = 1; out.navWpts[0] = in.player;
         return;
     }
-
-    // Reconstruct backward target→start, then reverse into world waypoints.
-    static int s_navChain[kUNavCells];   // worker-thread scratch (single-threaded)
-    int len = 0;
-    for (int c = target; c != -1 && len < kUNavCells; c = s_navPrev[c])
-        s_navChain[len++] = c;
     if (len < 2) return;                    // no usable route
+    out.navCrossesHazard = crossesHazard;
 
     // Forward order [0]=start; collinear-reduce to turn points, cap at kMaxNavWpts.
     out.navWpts[0] = in.player;
@@ -992,6 +1099,7 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
     // reads its snapshot; no game-object calls are made here.
     MapInput navInput{};
     navInput.settings = in.settings;
+    if (crossesHazard) navInput.settings.safeWalk = false;   // the route itself crosses it
     navInput.env.occFlags = in.navGrid.flags;
     navInput.env.occCenter = center;
     navInput.env.occSide = kNS;
@@ -1000,7 +1108,10 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
     float deviation = 0.f; bool nearEnd = false;
     out.navStepTarget = Navigation::Follow(out.navWpts, wn, in.player,
         std::max(in.moveBudget, 1.f) * kUNavLookaheadBudgets, deviation, nearEnd,
-        [&](Vec2 from, Vec2 to) { return OccupancyPathClear(navInput, from, to); });
+        [&](Vec2 from, Vec2 to) {
+            return OccupancyPathClear(navInput, from, to) &&
+                   Navigation::AvoidClear(in.navAvoid, in.navAvoidCount, from, to);
+        });
 
 }
 

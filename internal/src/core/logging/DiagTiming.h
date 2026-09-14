@@ -143,6 +143,7 @@ struct GameStats {
     uint32_t revalidateResolves = 0, navReplans = 0, navStalls = 0, navBlocked = 0, navWaitFrames = 0;
     uint32_t moves = 0, moveRefused = 0, holds = 0, safes = 0, fallbacks = 0, surrounded = 0;
     uint32_t workerAccepted = 0, workerDiscarded = 0, routeFound = 0, routePartial = 0;
+    uint32_t navAvoids = 0, lockApproachFrames = 0, hazardRoutes = 0;   // stuck memory / lock approach / hazard-crossing routes
     int32_t  maxLanes = 0, maxZones = 0, maxEnemies = 0;
     uint32_t mapLimited = 0;
     float    workerDodgeMsMax = 0.f, workerNavMsMax = 0.f, workerTimedMsMax = 0.f, workerSolveMsMax = 0.f;
@@ -156,6 +157,7 @@ struct GameStats {
         revalidateResolves = navReplans = navStalls = navBlocked = navWaitFrames = 0;
         moves = moveRefused = holds = safes = fallbacks = surrounded = 0;
         workerAccepted = workerDiscarded = routeFound = routePartial = 0;
+        navAvoids = lockApproachFrames = hazardRoutes = 0;
         maxLanes = maxZones = maxEnemies = 0;
         mapLimited = 0;
         workerDodgeMsMax = workerNavMsMax = workerTimedMsMax = workerSolveMsMax = 0.f;

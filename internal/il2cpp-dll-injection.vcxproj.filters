@@ -216,9 +216,11 @@
     <ClInclude Include="src\features\movement\udodge\UDodgeSolver.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgePathfinder.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeWorker.h" />
+    <ClInclude Include="src\features\movement\udodge\UDodgeWorkerCycle.h" />
     <ClInclude Include="src\features\movement\udodge\UDodge.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeDebug.h" />
     <ClInclude Include="src\features\movement\sensors\TileSensor.h" />
+    <ClInclude Include="src\features\movement\sensors\TileOccupancy.h" />
     <ClInclude Include="vendor\minhook\MinHook.h" />
     <ClInclude Include="src\core\config\keybinds.h" />
     <ClInclude Include="src\core\runtime\Il2CppResolver.h" />
