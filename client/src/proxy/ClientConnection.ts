@@ -396,8 +396,22 @@ export class ClientConnection {
         const packet = this.proxy.packetFactory.createFromBytes(rawPacket);
 
         // Log any server FAILURE packet so rejection reasons are visible.
-        if (!isClient && packet.name === 'FAILURE' && packet.isDefined) {
-          Logger.warn('Client', `[DIAG-FAILURE] errorId=${packet.data.errorId} errorMessage="${packet.data.errorMessage}"`);
+        //
+        // The isDefined gate used to sit on this branch, which meant a FAILURE we
+        // could not parse logged NOTHING — and an unparseable FAILURE is exactly
+        // the interesting case, because it is what a stale packet definition
+        // produces. Observed symptom: repeated kicks logging errorMessage="" with
+        // errorId=0, i.e. the server was telling us why and we discarded it. Dump
+        // the raw body when parsing fails so the reason is recoverable.
+        if (!isClient && packet.name === 'FAILURE') {
+          if (packet.isDefined) {
+            Logger.warn('Client', `[DIAG-FAILURE] errorId=${packet.data.errorId} errorMessage="${packet.data.errorMessage}"`);
+          } else {
+            const body = rawPacket.subarray(5);
+            const hex = body.subarray(0, 64).toString('hex');
+            const ascii = body.subarray(0, 64).toString('latin1').replace(/[^\x20-\x7e]/g, '.');
+            Logger.warn('Client', `[DIAG-FAILURE] UNPARSEABLE len=${body.length} hex=${hex} ascii="${ascii}"`);
+          }
         }
 
         // Fire hooks

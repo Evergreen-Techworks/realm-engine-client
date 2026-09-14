@@ -249,16 +249,14 @@ export class StateManager {
     //   "Wait 48 seconds to teleport after server change"
     // (`_unreadTrailingHex` is only the dashboard inspector's hex copy of those
     // bytes — it does not exist on the packet the hooks receive.)
-    // Deliberately loose — any "<n> second(s)" — because the wording varies by
-    // refusal reason ("...after server change" vs other cooldowns).
     let waitMs = StateManager.TELEPORT_REFUSED_BACKOFF_MS;
     let message = '';
     if (packet.isDefined && packet.unreadData.length > 2) {
       try {
         message = new PacketReader(packet.unreadData).readString();
-        const m = /(\d+(?:\.\d+)?)\s*second/i.exec(message);
-        if (m) {
-          const stated = Math.round(Number(m[1]) * 1000) + StateManager.TELEPORT_WAIT_MARGIN_MS;
+        const seconds = StateManager.statedTeleportWaitSeconds(message);
+        if (seconds !== null) {
+          const stated = Math.round(seconds * 1000) + StateManager.TELEPORT_WAIT_MARGIN_MS;
           if (stated >= StateManager.TELEPORT_WAIT_MIN_MS && stated <= StateManager.TELEPORT_WAIT_MAX_MS) {
             waitMs = stated;
           }
@@ -268,6 +266,25 @@ export class StateManager {
     client.teleportBlockedUntil = now + waitMs;
     Logger.warn('State', `[TELEPORT-REFUSED] typeValue=${typeValue} `
       + `wait=${(waitMs / 1000).toFixed(1)}s msg="${message}"`);
+  }
+
+  /**
+   * The wait, in seconds, that a teleport refusal's message states, or null.
+   * Only the DURATION comes from here; the refusal itself was already decided
+   * by protocol. Two shapes have been seen on the wire:
+   *   plain text        "Wait 48 seconds to teleport after server change"   (2026-09-10)
+   *   localisation key  {"k":"s.teleport_cooldown","t":{"amount":"3",}}     (2026-09-12)
+   * The key form is the client's template call, not valid JSON (note the
+   * trailing comma), so it is matched rather than parsed. Its `amount` carries
+   * no unit; seconds is assumed — unconfirmed — and the caller's 1 s–10 min
+   * band bounds the cost of that assumption being wrong.
+   */
+  private static statedTeleportWaitSeconds(message: string): number | null {
+    const text = /(\d+(?:\.\d+)?)\s*second/i.exec(message);
+    if (text) return Number(text[1]);
+    const amount = /"amount"\s*:\s*"?(\d+(?:\.\d+)?)"?/.exec(message);
+    if (amount) return Number(amount[1]);
+    return null;
   }
 
   private onGoto(client: ClientConnection, packet: Packet): void {

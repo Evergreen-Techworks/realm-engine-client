@@ -125,6 +125,12 @@ describe('teleport refusal (game-client TELEPORT)', () => {
     ['Wait 0 seconds to teleport', FALLBACK_MS],
     ['Wait 5000 seconds to teleport', FALLBACK_MS],
     ['Teleport failed', FALLBACK_MS],
+    // Localisation-key form, text verbatim from realm-engine-proxy.log 2026-09-12
+    // 00:16:42 / 00:26:01 / 00:42:09 UTC, which fell back to 10 s. Not valid JSON
+    // (trailing comma). `amount` is taken as seconds — unconfirmed.
+    ['{"k":"s.teleport_cooldown","t":{"amount":"3",}}', 3_000 + MARGIN_MS],
+    ['{"k":"s.teleport_cooldown","t":{"amount":"6",}}', 6_000 + MARGIN_MS],
+    ['{"k":"s.teleport_cooldown","t":{}}', FALLBACK_MS],
   ])('"%s" holds for %d ms', (message, expected) => {
     const { proxy, conn } = session();
     vi.setSystemTime(1_000_000);

@@ -42,9 +42,25 @@ export class ProjectileTracker {
     this.worldState = worldState ?? null;
   }
 
+  /** Last time expired bullets were swept; the sweep runs at most once per interval. */
+  private lastCleanupAt = 0;
+  private static readonly CLEANUP_INTERVAL_MS = 1000;
+
   attach(proxy: Proxy): void {
     proxy.hookPacket('ENEMYSHOOT', (c, p) => this.onEnemyShoot(c, p));
     proxy.hookPacket('MAPINFO', () => this.clear());
+    // cleanup() used to have no caller, so every enemy bullet of a realm visit
+    // stayed in the map until the next MAPINFO: ~37 MB of retained heap per ten
+    // busy realm minutes in the proxy hot-path bench (2026-09-12). Sweep on the
+    // server tick, which arrives several times a second while in a world.
+    proxy.hookPacket('NEWTICK', () => this.cleanupIfDue());
+  }
+
+  private cleanupIfDue(): void {
+    const now = Date.now();
+    if (now - this.lastCleanupAt < ProjectileTracker.CLEANUP_INTERVAL_MS) return;
+    this.lastCleanupAt = now;
+    this.cleanup();
   }
 
   private onEnemyShoot(_client: ClientConnection, packet: Packet): void {
@@ -103,13 +119,19 @@ export class ProjectileTracker {
     }
   }
 
-  /** Remove expired bullets. Call periodically (e.g., each NEWTICK). */
+  /**
+   * Remove expired bullets. Runs from the NEWTICK hook (see attach). A bullet is
+   * kept for a grace period past its lifetime because the game client's
+   * PLAYERHIT for it (looked up via getBullet) reaches the proxy a network
+   * round trip after the hit happened.
+   */
+  private static readonly EXPIRY_GRACE_MS = 2000;
   cleanup(): void {
     const now = Date.now();
     for (const [key, bullet] of this.bullets) {
       const lifetime = bullet.projDef?.lifetimeMs ?? 10000;
       // Hard cap at 10 seconds even if game data says longer
-      const maxLife = Math.min(lifetime, 10000);
+      const maxLife = Math.min(lifetime, 10000) + ProjectileTracker.EXPIRY_GRACE_MS;
       if (now - bullet.spawnTime > maxLife) {
         this.bullets.delete(key);
       }
