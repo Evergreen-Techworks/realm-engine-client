@@ -14,39 +14,44 @@ const BAG_TYPES = new Set<number>([
   1708, 1709, 1710, 1722, 1723, 1724, 1725, 1726, 1727, 1728, 8239,
 ]);
 
-// Bag identity resolved from the game's own data/objects.xml, and the tier names
-// match internal/src/features/loot/BagLooter.cpp (kBagTypes) 1:1. The previous
-// table was misaligned across the Boost range — 1725 is "Loot Bag 4 Boost" (a
-// BLUE bag) but was labelled 'white', which is why the farmer announced
-// "Collecting white bag" on a blue bag. 1726/1710/1283 were wrong too.
+// Bag identity is the game's own data: the name is objects.xml's `id`, and the
+// colour is the bag's sprite (its lofiObj4 texture index, sampled from
+// mapObjects.png). Items drop in the bag whose number is their <BagType>, so
+// "Loot Bag N" holds BagType N: 3 eggs, 4 T10-T12 gear and runes, 5 stat and
+// life/mana potions, 6 untiered gear, 7 keys and skins, 8 chests, 9 T13-T14 gear.
 //
-// Six in-game bag colours squeeze into five LootRarity buckets, so cyan maps to
-// 'green' (as it always did here). RARITY_RANK therefore orders cyan below blue
-// and purple, which does not match the in-game rarity order — preserved as-is
-// rather than silently changing farmer bag priority.
+// Do not label bags by their number. "Loot Bag 5" is the DARK BLUE potion bag,
+// not a white bag; it was labelled 'white' from the first version of this table,
+// so the farmer's white-bag rule took every item out of every potion bag.
+//
+// Ten bag colours share five LootRarity buckets. 'white' is the farmer's
+// collect-everything bucket, so it holds the rare white, gold, orange and red
+// bags. The two blue bags share 'blue'. The egg basket stays 'green', which
+// RARITY_RANK orders below blue and purple; that is not the in-game order, and
+// it is kept so farmer bag priority does not silently change.
 const BAG_RARITY: Readonly<Record<number, LootRarity>> = {
   1280: 'common',  // Loot Bag 0        — brown
   1281: 'common',  // (alt brown; not in objects.xml, kept)
-  1283: 'purple',  // Soulbound Loot Bag
+  1283: 'purple',  // Soulbound Loot Bag — purple
   1286: 'common',  // Loot Bag 1        — pink
   1287: 'purple',  // Loot Bag 2        — purple
-  1288: 'green',   // Loot Bag 3        — cyan
-  1289: 'blue',    // Loot Bag 4        — blue
-  1291: 'white',   // Loot Bag 5        — white
-  1292: 'white',   // Loot Bag 6
-  1294: 'white',   // Loot Bag 7
-  1295: 'white',   // Loot Bag 8
-  1296: 'white',   // Loot Bag 6 Boost
-  1708: 'white',   // Loot Bag 9
+  1288: 'green',   // Loot Bag 3        — egg basket
+  1289: 'blue',    // Loot Bag 4        — light blue
+  1291: 'blue',    // Loot Bag 5        — dark blue, potions (was 'white')
+  1292: 'white',   // Loot Bag 6        — white
+  1294: 'white',   // Loot Bag 7        — gold
+  1295: 'white',   // Loot Bag 8        — orange
+  1296: 'white',   // Loot Bag 6 Boost  — white
+  1708: 'white',   // Loot Bag 9        — red
   1709: 'common',  // Loot Bag 0 Boost  — brown
   1710: 'common',  // Loot Bag 1 Boost  — pink
   1722: 'purple',  // Loot Bag 2 Boost  — purple
-  1723: 'green',   // Loot Bag 3 Boost  — cyan
-  1724: 'white',   // Loot Bag 7 Boost
-  1725: 'blue',    // Loot Bag 4 Boost  — blue  (was 'white')
-  1726: 'white',   // Loot Bag 5 Boost  — white (was 'purple')
-  1727: 'white',   // Loot Bag 8 Boost
-  1728: 'white',   // Loot Bag 9 Boost
+  1723: 'green',   // Loot Bag 3 Boost  — egg basket
+  1724: 'white',   // Loot Bag 7 Boost  — gold
+  1725: 'blue',    // Loot Bag 4 Boost  — light blue
+  1726: 'blue',    // Loot Bag 5 Boost  — dark blue, potions (was 'white')
+  1727: 'white',   // Loot Bag 8 Boost  — orange
+  1728: 'white',   // Loot Bag 9 Boost  — red
   8239: 'common',  // Guill Potion Bag
 };
 
@@ -65,13 +70,17 @@ const STAT_POTION_IDS = new Set<number>([
 ]);
 
 type PotStat = 'attack' | 'defense' | 'speed' | 'dexterity' | 'vitality' | 'wisdom' | 'maxHitPoints' | 'maxMagicPoints';
+// Each potion's stat is its <Activate stat="..."> in objects.xml. The base
+// potions are 2591 Attack, 2592 Defense, 2593 Speed, 2612 Vitality, 2613 Wisdom
+// and 2636 Dexterity; five of those six were once mapped to the wrong stat.
+// plugins/auto-loot/constants.ts (STAT_POT_ITEM_TO_PERMANENT) must agree.
 const POT_STAT = new Map<number, PotStat>([
-  [2593, 'attack'], [5465, 'attack'], [9064, 'attack'],
-  [2591, 'defense'], [5466, 'defense'], [9065, 'defense'],
-  [2592, 'speed'], [5467, 'speed'], [9066, 'speed'],
+  [2591, 'attack'], [5465, 'attack'], [9064, 'attack'],
+  [2592, 'defense'], [5466, 'defense'], [9065, 'defense'],
+  [2593, 'speed'], [5467, 'speed'], [9066, 'speed'],
   [2636, 'dexterity'], [5470, 'dexterity'], [9069, 'dexterity'],
-  [2613, 'vitality'], [5468, 'vitality'], [9067, 'vitality'],
-  [2612, 'wisdom'], [5469, 'wisdom'], [9068, 'wisdom'],
+  [2612, 'vitality'], [5468, 'vitality'], [9067, 'vitality'],
+  [2613, 'wisdom'], [5469, 'wisdom'], [9068, 'wisdom'],
   [2793, 'maxHitPoints'], [5471, 'maxHitPoints'], [9070, 'maxHitPoints'],
   [2794, 'maxMagicPoints'], [5472, 'maxMagicPoints'], [9071, 'maxMagicPoints'],
 ]);
