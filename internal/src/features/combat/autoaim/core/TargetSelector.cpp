@@ -2,6 +2,7 @@
 
 #include "features/combat/autoaim/core/TargetSelector.h"
 #include "features/combat/autoaim/core/AimMath.h"
+#include "features/combat/autoaim/core/LockPolicy.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
 #include "gui/tabs/TestTAB.h"
 
@@ -84,12 +85,13 @@ Result Select(const Config& cfg,
     const std::vector<EnemyTracker::Entry>& snap = EnemyTracker::GetSnapshot();
 
     // ── Locked mode: bypass all tier logic ──────────────────────────────────
+    // The wall / breakable filters do not apply to an explicit lock, and a locked
+    // enemy that must not be shot holds rather than switching (LockPolicy.h).
     if (cfg.mode == Mode::Locked && cfg.lockedEnemyId >= 0) {
         for (const EnemyTracker::Entry& e : snap) {
             if (e.id != cfg.lockedEnemyId) continue;
-            if (cfg.ignoreWalls && !e.hasHealthBar) break;
-            if (cfg.ignoreScenery && e.isScenery) break;
-            if (e.isInvulnerable && !cfg.shootInvulnerable) break;
+            const LockPolicy::Use use = LockPolicy::Decide(&e, cfg.shootInvulnerable);
+            if (use == LockPolicy::Use::Hold) return {};
 
             Result r;
             r.found   = true;
@@ -104,7 +106,7 @@ Result Select(const Config& cfg,
             else { r.aimX = e.x; r.aimY = e.y; }
             return r;
         }
-        // Lock target gone/invalid — fall through to normal selection
+        // Lock target not in the snapshot — fall through to normal selection
     }
 
     // ── Reference point and range ────────────────────────────────────────────

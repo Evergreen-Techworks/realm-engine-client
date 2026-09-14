@@ -4,9 +4,11 @@
 #include <cstdint>
 #include <vector>
 
-// Shared, render-thread-only enemy snapshot. Call Tick() (self-throttled to
-// ~125 Hz) then consume via GetSnapshot / Enumerate. Velocity fields (vx, vy)
-// are tiles/ms, blended from MoVelocity + chord estimation.
+// Enemy snapshot shared by the render thread (AutoAim, KillAura) and the
+// game-update thread (uDodge, the enemy lock). Call Tick() (self-throttled to
+// ~125 Hz) then consume via GetSnapshot / Enumerate ON THE SAME THREAD: each
+// thread reads its own consistent copy, refreshed by its own Tick(). Velocity
+// fields (vx, vy) are tiles/ms, blended from MoVelocity + chord estimation.
 namespace EnemyTracker {
 
 struct Entry {
@@ -27,7 +29,8 @@ struct Entry {
 // cheap no-ops.
 void Tick();
 
-// All entries from the last Tick (no filtering).
+// All entries as of this thread's last Tick (no filtering). The reference, and
+// pointers into it, stay valid until this thread calls Tick() again.
 const std::vector<Entry>& GetSnapshot();
 
 using Callback = void(*)(const Entry&, void* user);
@@ -37,6 +40,28 @@ void Enumerate(Callback cb, void* user);
 // More reliable than ProjectileTracking::GetLocalPlayerObjectId() which
 // depends on WorldTAB having fired at least once.
 int32_t GetLocalPlayerObjectId();
+
+// Diagnostics: why one object id is or is not in the snapshot. Set a watched id
+// (0 = none); every build then records the verdict for it. `reason` is
+// EnemyClassify::Name — "kept" when it is in the snapshot. Any thread.
+struct WatchVerdict {
+    int32_t     id       = 0;       // the watched id this verdict describes
+    bool        inWorld  = false;   // present in the world dictionary on that build
+    const char* reason   = "not-in-world";
+    int32_t     objType  = 0, hp = 0, maxHp = 0;
+    float       x        = 0.f, y = 0.f;
+    void*       objProps = nullptr; // ObjectProperties, for the type name (read under SEH)
+};
+void SetWatchedId(int32_t id);
+WatchVerdict GetWatchVerdict();
+
+// Object types the client's game data marks as hidden helpers (invisible texture,
+// no animation, and no MaxHitPoints or Size <= 1 — GameDataLoader isHiddenHelper).
+// The snapshot drops them, as Enemies.getAll does. The texture file is not held in
+// ObjectProperties, so native cannot derive this itself. Feature command
+// "enemyHiddenHelperTypes": decimal or 0x types separated by commas; "+..."
+// appends, anything else replaces, "" clears. Any thread.
+void SetHiddenHelperTypes(const char* message);
 
 // Resolve the LIVE world position of ANY object by its dict key (object id) —
 // including remote PLAYERS, which the enemy snapshot filters out. Walks the world

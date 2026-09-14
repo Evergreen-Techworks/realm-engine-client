@@ -37,5 +37,15 @@ inline void QueryPerformanceCounter(LARGE_INTEGER* p) {
         ], check=True)
         subprocess.run([str(binary)], check=True)
 
+# Enemy snapshot rules, the render/game-thread snapshot hand-off and the lock policy.
+with tempfile.TemporaryDirectory(prefix="enemy-tracker-tests-") as directory:
+    binary = Path(directory) / "enemy_tracker_tests"
+    subprocess.run([
+        os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-pthread",
+        "-I", str(internal / "src"), str(internal / "tests/enemy_tracker_tests.cpp"),
+        "-o", str(binary),
+    ], check=True)
+    subprocess.run([str(binary)], check=True)
+
 # End-to-end pathing scenarios against the production planner (tests/scenario).
 subprocess.run(["python3", str(internal / "tests/scenario/run_scenarios.py"), "--check"], check=True)

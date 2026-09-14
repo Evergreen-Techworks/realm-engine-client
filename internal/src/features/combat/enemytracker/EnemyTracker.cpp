@@ -1,6 +1,8 @@
 #include "pch-il2cpp.h"
 
 #include "EnemyTracker.h"
+#include "EnemyClassify.h"
+#include "SnapshotHandoff.h"
 #include "GameState.h"
 #include "RuntimeOffsets.h"
 #include "core/runtime/MemRead.h"
@@ -8,9 +10,12 @@
 #include "game/objects/GameObjects.h"
 #include "features/combat/autoaim/core/AimMath.h"
 #include "ProjectileTracking.h"
+#include "DbgFileLog.h"
 
 #include <Windows.h>
 #include <atomic>
+#include <memory>
+#include <mutex>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -20,20 +25,8 @@
 
 namespace {
 
-// ── Object type lists ────────────────────────────────────────────────────────
-// Non-enemy entity types to reject outright, and whitelisted types that bypass
-// the maxHp==200 decoy heuristic. Quest/fallback tiering lives in TargetSelector.
-static constexpr int32_t kIgnoredTypes[]     = { 28491 };
-static constexpr int32_t kWhitelistedTypes[] = { 31104 };
-
-static bool IsIgnoredType(int32_t t) {
-    for (int32_t v : kIgnoredTypes) if (v == t) return true;
-    return false;
-}
-static bool IsWhitelistedType(int32_t t) {
-    for (int32_t v : kWhitelistedTypes) if (v == t) return true;
-    return false;
-}
+// Which objects are kept, and why one is dropped, lives in EnemyClassify.h (host
+// tested). Quest/fallback tiering lives in TargetSelector.
 
 // ── Velocity tracking ────────────────────────────────────────────────────────
 struct VelEntry {
@@ -42,6 +35,7 @@ struct VelEntry {
     float     vx = 0.f, vy = 0.f;
 };
 
+// Builder-owned: touched only while s_buildMutex is held (see Tick).
 static std::unordered_map<int32_t, VelEntry> s_velMap;
 static ULONGLONG s_pruneAt = 0;
 
@@ -130,6 +124,7 @@ struct CandidateOut {
     void*   ptr;
     void*   projectiles;       // ObjectProperties.Projectiles (ProjectileProperties[]), may be null
     uintptr_t projectileCount;
+    void*   objProps;          // ObjectProperties (diagnostics read the type name from it)
 };
 
 // Longest reach (tiles) among a type's projectile definitions — the same distance
@@ -162,25 +157,40 @@ static float SehProjectileReachTiles(void* projectiles, uintptr_t count)
     } __except (EXCEPTION_EXECUTE_HANDLER) { return 0.f; }
 }
 
-// Returns true if the dict entry describes a targetable enemy.
-// Soft properties (invulnerable, hasHealthBar) are always populated so callers
-// can apply their own targeting policies.
-static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t localKlass, CandidateOut& out)
+// Returns true if the dict entry describes an enemy the snapshot keeps; `why`
+// says which rule dropped it otherwise (EnemyClassify.h). Soft properties
+// (invulnerable, hasHealthBar, scenery) are always populated so callers can apply
+// their own targeting policies. `allFacts` (diagnostics, one watched id) reads
+// type, HP and position even for a non-enemy so the verdict can report them;
+// `out` then carries those fields whatever the verdict.
+static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t localKlass,
+                             CandidateOut& out, EnemyClassify::Reject& why, bool allFacts,
+                             uint32_t maxHpElemOffset, const std::vector<int32_t>* hiddenTypes)
 {
+    why = EnemyClassify::Reject::Unreadable;
     __try {
-        if (!entity || entity == local)
+        if (!entity || entity == local) {
+            why = EnemyClassify::Reject::NotEnemy;
             return false;
-        if (*reinterpret_cast<uint64_t*>(entity) == localKlass)  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        }
+        if (*reinterpret_cast<uint64_t*>(entity) == localKlass) {  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+            why = EnemyClassify::Reject::NotEnemy;   // another player (same class as the local one)
             return false;
+        }
 
         void* objProps = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(entity) + RuntimeOffsets::ObjProps);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         if (!Mem::AddrOk(objProps))
             return false;
         uint8_t* op  = reinterpret_cast<uint8_t*>(objProps);
         uint8_t* ent = reinterpret_cast<uint8_t*>(entity);
+        out.objProps = objProps;
 
-        if (!*reinterpret_cast<uint8_t*>(op + RuntimeOffsets::OP_IsEnemy))  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        EnemyClassify::Facts f;
+        f.isEnemy = *reinterpret_cast<uint8_t*>(op + RuntimeOffsets::OP_IsEnemy) != 0;  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        if (!f.isEnemy && !allFacts) {
+            why = EnemyClassify::Reject::NotEnemy;
             return false;
+        }
 
         // noHealthBar (walls/destructibles) — stored as metadata, not hard-rejected
         const uint8_t noHB = *reinterpret_cast<uint8_t*>(op + RuntimeOffsets::OP_NoHealthBar);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
@@ -196,26 +206,23 @@ static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t loc
         void* invPtr = *reinterpret_cast<void**>(op + RuntimeOffsets::OP_InvincibleElem);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         bool isInvuln = invPtr && Mem::AddrOk(invPtr);
 
-        const int32_t hp    = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::HP);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
-        const int32_t maxHp = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::MaxHP);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
-        if (hp <= 0 || maxHp <= 0 || hp > maxHp)
-            return false;
+        f.hp      = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::HP);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        f.maxHp   = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::MaxHP);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        f.objType = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::ObjType);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        f.x       = *reinterpret_cast<float*>(ent + RuntimeOffsets::PosX);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        f.y       = *reinterpret_cast<float*>(ent + RuntimeOffsets::PosY);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
+        out.objType = f.objType;
+        out.hp      = f.hp;
+        out.maxHp   = f.maxHp;
+        out.x       = f.x;
+        out.y       = f.y;
+        if (maxHpElemOffset != 0)
+            f.authoredMaxHp = *reinterpret_cast<void**>(op + maxHpElemOffset) != nullptr;  // raw-access-ok: shared SEH; ObjectProperties.MaxHitPointsElement (name-resolved)
+        f.hiddenHelper = hiddenTypes && EnemyClassify::IsListed(*hiddenTypes, f.objType);
 
-        const int32_t objType = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::ObjType);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
-        if (!IsWhitelistedType(objType)) {
-            // maxHp == 200 is the DECOY heuristic. Decoys carry a health bar;
-            // walls/destructibles do not (noHB above, deliberately kept as
-            // metadata rather than a hard reject). Without the !noHB guard this
-            // also silently swallowed every breakable wall that happens to sit
-            // at exactly 200 max HP — those walls then never reached the
-            // snapshot, so udodge's blocker set and auto-break could not see
-            // them at all. Real enemies (health bar present) are unaffected, so
-            // AutoAim's target pool is unchanged.
-            if (maxHp == 200 && !noHB)
-                return false;
-            if (IsIgnoredType(objType))
-                return false;
-        }
+        why = EnemyClassify::Classify(f);
+        if (why != EnemyClassify::Reject::None)
+            return false;
 
         // Runtime stasis/invincible is likewise a soft targetability property.
         // Dropping it here made the entity disappear from uDodge's blocker and
@@ -225,17 +232,7 @@ static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t loc
         if (condOk && (cond0 | cond1) && RuntimeOffsets::MapObjectConditionsMakeUntargetable(cond0, cond1))
             isInvuln = true;
 
-        const float ex2 = *reinterpret_cast<float*>(ent + RuntimeOffsets::PosX);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
-        const float ey2 = *reinterpret_cast<float*>(ent + RuntimeOffsets::PosY);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
-        if (!std::isfinite(ex2) || !std::isfinite(ey2) || (ex2 == 0.f && ey2 == 0.f))
-            return false;
-
         out.id            = id;
-        out.objType       = objType;
-        out.hp            = hp;
-        out.maxHp         = maxHp;
-        out.x             = ex2;
-        out.y             = ey2;
         out.isInvulnerable = isInvuln;
         out.hasHealthBar  = (noHB == 0);
         out.isScenery     = isStatic && projectileCount == 0;
@@ -243,31 +240,61 @@ static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t loc
         out.projectiles   = projectiles;
         out.projectileCount = projectileCount;
         return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        why = EnemyClassify::Reject::Unreadable;
+        return false;
+    }
 }
 
 // ── Frame state ──────────────────────────────────────────────────────────────
-static std::vector<EnemyTracker::Entry> s_snapshot;
+// Two threads tick the tracker: the render thread (dPresent → AutoAim) and the
+// game-update thread (uDodge sensors, the enemy lock). One of them builds at a
+// time (s_buildMutex) and publishes; each thread reads its own consistent copy.
+// s_snapshot is that per-thread copy: it changes only inside this thread's Tick,
+// so GetSnapshot() references and pointers into it last until the next Tick on
+// the same thread — exactly the lifetime they had before.
+static std::mutex                            s_buildMutex;   // builder-owned state below
+static std::vector<EnemyTracker::Entry>      s_building;
+static SnapshotHandoff<EnemyTracker::Entry>  s_handoff;
+static thread_local std::vector<EnemyTracker::Entry> s_snapshot;
+static thread_local uint64_t                 s_snapshotGen = 0;
 // Projectile reach per object type. ObjectProperties are shared per type and
-// immutable, so one read per type per session is exact.
+// immutable, so one read per type per session is exact. Builder-owned.
 static std::unordered_map<int32_t, float> s_reachByType;
 static std::atomic<int32_t>  s_localPlayerObjectId{ 0 };
-static ULONGLONG             s_lastTickMs = 0;
+static std::atomic<ULONGLONG> s_lastTickMs{ 0 };
 
-} // namespace
+// ObjectProperties.MaxHitPointsElement, resolved by its real (unobfuscated) name
+// from the first ObjectProperties the build meets. ObjectProperties has no
+// subclasses in 86ad651b, so one offset covers every object. 0 = unresolved: every
+// enemy then counts as having authored HP (nothing is dropped as DefaultHp).
+static std::atomic<uint32_t> s_maxHpElemOffset{ 0 };
+static std::atomic<bool>     s_maxHpElemTried{ false };
 
-namespace EnemyTracker {
-
-void Tick()
+static uint32_t SehResolveFieldOffset(void* object, const char* fieldName)
 {
-    // Self-throttle: dedupes the aim path and EnumerateLiveEnemies callers within
-    // a frame, and bounds the world-dict walk to ~125 Hz. On a throttled call the
-    // previous snapshot (≤8 ms old) is kept rather than cleared.
-    const ULONGLONG now = GetTickCount64();
-    if (now - s_lastTickMs < 8ULL) return;
-    s_lastTickMs = now;
+    __try {
+        Il2CppClass* klass = *reinterpret_cast<Il2CppClass**>(object);  // raw-access-ok: one-time object header read under SEH
+        if (!Mem::AddrOk(klass)) return 0;
+        FieldInfo* field = il2cpp_class_get_field_from_name(klass, fieldName);
+        return field ? static_cast<uint32_t>(il2cpp_field_get_offset(field)) : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
 
-    s_snapshot.clear();
+// Hidden-helper object types supplied by the client (SetHiddenHelperTypes). The
+// builder takes a reference at the start of each build.
+static std::mutex                                    s_hiddenMutex;
+static std::shared_ptr<const std::vector<int32_t>>   s_hiddenTypes;
+
+// Diagnostics: the verdict for one watched object id, refreshed by every build.
+static std::atomic<int32_t>  s_watchedId{ 0 };
+static std::mutex            s_watchMutex;
+static EnemyTracker::WatchVerdict s_watchVerdict;
+
+// Rebuilds s_building from the world dictionary. Caller holds s_buildMutex.
+static void BuildLocked(ULONGLONG now, EnemyTracker::WatchVerdict& watch)
+{
+    s_building.clear();
 
     void* local = GameState::GetLocalPtr();
     if (!local) return;
@@ -283,7 +310,15 @@ void Tick()
     void* allDict = Mem::ReadPtr(wm, RuntimeOffsets::WM_AllDict);
     if (!Mem::AddrOk(allDict)) return;
 
-    s_snapshot.reserve(256);
+    s_building.reserve(256);
+
+    std::shared_ptr<const std::vector<int32_t>> hidden;
+    {
+        std::lock_guard<std::mutex> lock(s_hiddenMutex);
+        hidden = s_hiddenTypes;
+    }
+    const std::vector<int32_t>* hiddenTypes = (hidden && !hidden->empty()) ? hidden.get() : nullptr;
+    uint32_t maxHpElemOffset = s_maxHpElemOffset.load(std::memory_order_relaxed);
 
     // Walk the world's Dictionary<int, entity>. WalkDict skips free/tombstone
     // slots (hashCode < 0) — the same slots the candidate check already discarded
@@ -293,13 +328,35 @@ void Tick()
         if (entity == local)
             s_localPlayerObjectId.store(key, std::memory_order_relaxed);
 
+        const bool watched = watch.id != 0 && key == watch.id;
         CandidateOut cand{};
-        if (!SehReadCandidate(entity, key, local, localKlass, cand))
+        EnemyClassify::Reject why = EnemyClassify::Reject::Unreadable;
+        const bool kept = SehReadCandidate(entity, key, local, localKlass, cand, why, watched,
+                                           maxHpElemOffset, hiddenTypes);
+        if (!s_maxHpElemTried.load(std::memory_order_relaxed) && Mem::AddrOk(cand.objProps)) {
+            s_maxHpElemTried.store(true, std::memory_order_relaxed);
+            maxHpElemOffset = SehResolveFieldOffset(cand.objProps, "MaxHitPointsElement");
+            s_maxHpElemOffset.store(maxHpElemOffset, std::memory_order_relaxed);
+            if (maxHpElemOffset == 0)
+                DbgFileLogWrite("[EnemyTracker] ObjectProperties.MaxHitPointsElement did not resolve; "
+                                "objects with no MaxHitPoints are kept at the default 200 HP");
+        }
+        if (watched) {
+            watch.inWorld  = true;
+            watch.reason   = EnemyClassify::Name(why);
+            watch.objType  = cand.objType;
+            watch.hp       = cand.hp;
+            watch.maxHp    = cand.maxHp;
+            watch.x        = cand.x;
+            watch.y        = cand.y;
+            watch.objProps = cand.objProps;
+        }
+        if (!kept)
             return;
 
         UpdateVelocity(cand.id, cand.x, cand.y, now, cand.ptr);
 
-        Entry e{};
+        EnemyTracker::Entry e{};
         e.id             = cand.id;
         e.objType        = cand.objType;
         e.x              = cand.x;
@@ -324,7 +381,7 @@ void Tick()
             e.vx = it->second.vx;
             e.vy = it->second.vy;
         }
-        s_snapshot.push_back(e);
+        s_building.push_back(e);
     });
 
     // Prune stale velocity entries every 5 seconds
@@ -337,12 +394,60 @@ void Tick()
     }
 }
 
+} // namespace
+
+namespace EnemyTracker {
+
+void Tick()
+{
+    // Self-throttle: dedupes the aim path and EnumerateLiveEnemies callers within
+    // a frame, and bounds the world-dict walk to ~125 Hz across BOTH threads. A
+    // throttled call, or one that finds the other thread mid-build, still brings
+    // this thread's copy up to the latest published snapshot.
+    const ULONGLONG now = GetTickCount64();
+    if (now - s_lastTickMs.load(std::memory_order_relaxed) >= 8ULL && s_buildMutex.try_lock()) {
+        std::lock_guard<std::mutex> build(s_buildMutex, std::adopt_lock);
+        if (now - s_lastTickMs.load(std::memory_order_relaxed) >= 8ULL) {
+            s_lastTickMs.store(now, std::memory_order_relaxed);
+            WatchVerdict watch{};
+            watch.id = s_watchedId.load(std::memory_order_relaxed);
+            BuildLocked(now, watch);
+            s_handoff.Publish(s_building);
+            std::lock_guard<std::mutex> lock(s_watchMutex);
+            s_watchVerdict = watch;
+        }
+    }
+    s_handoff.Refresh(s_snapshot, s_snapshotGen);
+}
+
 const std::vector<Entry>& GetSnapshot() { return s_snapshot; }
 
 void Enumerate(Callback cb, void* user)
 {
     if (!cb) return;
     for (const Entry& e : s_snapshot) cb(e, user);
+}
+
+void SetWatchedId(int32_t id)
+{
+    s_watchedId.store(id > 0 ? id : 0, std::memory_order_relaxed);
+}
+
+WatchVerdict GetWatchVerdict()
+{
+    std::lock_guard<std::mutex> lock(s_watchMutex);
+    return s_watchVerdict;
+}
+
+void SetHiddenHelperTypes(const char* message)
+{
+    std::lock_guard<std::mutex> lock(s_hiddenMutex);
+    std::vector<int32_t> next = s_hiddenTypes ? *s_hiddenTypes : std::vector<int32_t>{};
+    if (!EnemyClassify::ApplyTypeListMessage(message, next)) {
+        DbgFileLogWrite("[EnemyTracker] enemyHiddenHelperTypes rejected (a token is not an object type); list unchanged");
+        return;
+    }
+    s_hiddenTypes = std::make_shared<const std::vector<int32_t>>(std::move(next));
 }
 
 int32_t GetLocalPlayerObjectId()

@@ -18,6 +18,7 @@
 #include "features/combat/autoaim/modes/AutoFire.h"
 #include "features/combat/autoaim/modes/AutoBreakWalls.h"
 #include "features/combat/autoaim/shoot/ProjNoclip.h"
+#include "features/combat/enemytracker/EnemyTracker.h"
 #include "PlayerCollider.h"
 #include "FpsSetter.h"
 #include "AutoNexus.h"
@@ -123,6 +124,7 @@ namespace {
                 const int32_t id = f.Int();
                 AutoAim::SetLockTarget(id > 0 ? id : -1);
             }),
+            FH_TEXT("enemyHiddenHelperTypes", EnemyTracker::SetHiddenHelperTypes),
             FH("autoFireHotkey",       AutoFire::SetHotkeyVk(ResolveHotkeyVkInternal(f.value))),
             FH_BOOL ("autoBreakWallsEnabled",    AutoBreakWalls::SetEnabled),
             FH_FLOAT("autoBreakWallsProbeTiles", AutoBreakWalls::SetProbeTiles),
