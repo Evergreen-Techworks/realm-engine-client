@@ -64,6 +64,7 @@ export const DLL_FEATURE_KEYS = [
   'cameraAngleActive', 'cameraAngleValue', 'cameraCentered', 'cameraCenteringActive',
   'cameraZoomActive', 'cameraZoomValue', 'clientClassType', 'clientDefense',
   'clientSpeed', 'colliderEnabled', 'colliderMultiplier', 'dodgeHitScale',
+  'enemyHiddenHelperTypes',
   'entranceOverrideEnabled', 'entranceOverrideId',
   'followEntityActive', 'followEntityName', 'internalUnloadDll',
   'killauraEnabled', 'killauraMode',
