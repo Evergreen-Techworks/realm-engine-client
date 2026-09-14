@@ -784,23 +784,30 @@ struct Failure { Why why; int index; uint64_t live; };
 // check resets it first.
 struct CheckRecord {
     int      count;                              // rows holding readiness back
-    uint64_t signature;                          // FNV-1a over every one of them, listed or not
+    uint64_t signature;                          // FNV-1a over every row held or left to its
+                                                 // lookup, listed or not: the failing set
     Failure  listed[kListedFailures];
     int      unloaded;                           // method rows left to their lookups
     int      unloadedListed[kListedUnloaded];
 
     void Reset() { count = 0; signature = 14695981039346656037ULL; unloaded = 0; }
+    void Mix(uint64_t part)
+    {
+        for (int shift = 0; shift < 64; shift += 8)
+            signature = (signature ^ ((part >> shift) & 0xFFu)) * 1099511628211ULL;
+    }
     void Hold(Why why, int index, uint64_t live)
     {
-        const uint64_t parts[3] = { static_cast<uint64_t>(why), static_cast<uint64_t>(index), live };
-        for (uint64_t part : parts)
-            for (int shift = 0; shift < 64; shift += 8)
-                signature = (signature ^ ((part >> shift) & 0xFFu)) * 1099511628211ULL;
+        Mix(static_cast<uint64_t>(why));
+        Mix(static_cast<uint64_t>(index));
+        Mix(live);
         if (count < kListedFailures) listed[count] = { why, index, live };
         ++count;
     }
     void LeaveToLookup(int index)
     {
+        Mix(0xFFu);  // not a Why: a row left to its lookup
+        Mix(static_cast<uint64_t>(index));
         if (unloaded < kListedUnloaded) unloadedListed[unloaded] = index;
         ++unloaded;
     }
@@ -842,10 +849,16 @@ static const MethodInfo* FindDeclaredMethod(Il2CppClass* klass, const char* name
 // its owner's name. Only BindingsReady() calls it, on a build with generated bindings.
 //
 // il2cpp_class_for_each reports initialised classes only, and some owners never
-// initialise in a session (DeviceIdHolder and UnityApiResultsHolder on 86ad651b). With
-// BoundMethodFromName installed, every lookup that does reach such a class re-proves the
-// row's address, so a method row whose owner is not loaded is left to that lookup instead
-// of holding the gate. Without the redirection nothing re-proves it, and the row holds.
+// initialise in a session (DeviceIdHolder and UnityApiResultsHolder on 86ad651b). A short
+// name can also name a second class that does initialise: on 86ad651b the loaded "Time" is
+// UnityEngine.InputForUI.InputManagerProvider.Time, which declares no get_deltaTime, while
+// UnityEngine.Time may never initialise. So with BoundMethodFromName installed, a loaded
+// class of the owner's name is the row's owner only if it declares the method's name and
+// arity; if one does at another address, the method moved and the row holds. A row with no
+// such class is left to its lookup instead of holding the gate: the build-time gate proved
+// the method exists in this pinned build, and every lookup that reaches a class without it
+// is refused. Without the redirection nothing refuses those lookups, and any class of the
+// owner's name that fails to prove the row holds it.
 //
 // The check does not stop at the first failing row: t_check records every row that holds,
 // for the failure log.
@@ -899,20 +912,21 @@ bool ReadyForActivation()
     for (const auto& row : BuildBindings::methods) {
         if (!row.owner[0]) continue;
         const int index = static_cast<int>(&row - BuildBindings::methods);
-        bool loaded = false, matched = false;
+        bool owned = false, matched = false;
         const MethodInfo* declared = nullptr;
         for (const auto& entry : byName) {
             if (strcmp(entry.first, row.targetOwner) != 0) continue;
-            loaded = true;
             const MethodInfo* method = il2cpp_class_get_method_from_name(entry.second, row.source, row.args);
             if (method && reinterpret_cast<uintptr_t>(method->methodPointer) == base + row.rva) { matched = true; break; }
-            if (!declared) declared = method ? method : FindDeclaredMethod(entry.second, row.target, row.args);
+            const MethodInfo* here = method ? method : FindDeclaredMethod(entry.second, row.target, row.args);
+            if (here || !authenticated) owned = true;
+            if (!declared) declared = here;
         }
         if (matched) continue;
-        if (!loaded && authenticated) { record.LeaveToLookup(index); continue; }
+        if (!owned && authenticated) { record.LeaveToLookup(index); continue; }
         ok = false;
         const uintptr_t pointer = declared ? reinterpret_cast<uintptr_t>(declared->methodPointer) : 0;
-        record.Hold(!loaded ? Why::MethodNotLoaded : !declared ? Why::MethodNotDeclared : Why::MethodMoved,
+        record.Hold(!owned ? Why::MethodNotLoaded : !declared ? Why::MethodNotDeclared : Why::MethodMoved,
             index, pointer >= base ? pointer - base : 0);
     }
     return ok;
@@ -1011,7 +1025,7 @@ static void LogBindingFailures(const CheckRecord& record)
             Append(text, sizeof(text), used, clause);
         }
         if (record.unloaded > 0) {
-            Append(owners, sizeof(owners), ownersUsed, " (not holding: method rows whose class is not loaded, proved when they are looked up: ");
+            Append(owners, sizeof(owners), ownersUsed, " (not holding: method rows no loaded class declares, proved when they are looked up: ");
             for (int n = 0; n < record.unloaded && n < kListedUnloaded; ++n) {
                 const auto& row = BuildBindings::methods[record.unloadedListed[n]];
                 snprintf(clause, sizeof(clause), "%smethod.%s.%s/%d", n ? ", " : "", row.owner, row.source, row.args);
@@ -1042,12 +1056,14 @@ static constexpr int       kBackoffAfterFailures = 5;
 // thread (BootGate, the Test tab). The latch only ever goes from false to true, and a
 // compare-exchange on the timestamp lets exactly one thread run each due check. No check
 // runs until the table has settled, since none could pass. A held session is re-checked
-// every second at first, then every five seconds after kBackoffAfterFailures failures.
+// every second at first, then every five seconds after kBackoffAfterFailures failing checks
+// with the same failing set; a set that changes starts the count again.
 bool BindingsReady()
 {
     static std::atomic<bool> s_ready{ false };
     static std::atomic<ULONGLONG> s_lastCheck{ 0 };
     static std::atomic<int> s_failedChecks{ 0 };
+    static std::atomic<uint64_t> s_failingSet{ 0 };
     if (s_ready) return true;
     if (!BuildBindings::fields[0].owner[0] && !BuildBindings::methods[0].owner[0]) {
         s_ready = true;
@@ -1062,11 +1078,14 @@ bool BindingsReady()
     if (last != 0 && now - last < interval) return false;
     if (!s_lastCheck.compare_exchange_strong(last, now)) return s_ready;
     if (ReadyForActivation()) {
+        s_failedChecks.store(0);
         if (!s_ready.exchange(true))
             DbgFileLogWrite("[RuntimeOffsets] Generated bindings verified against the live process.");
         return true;
     }
-    s_failedChecks.fetch_add(1);
+    // Only the thread that claimed this check writes the count and the set.
+    if (s_failingSet.exchange(t_check.signature) != t_check.signature) s_failedChecks.store(1);
+    else s_failedChecks.fetch_add(1);
     LogBindingFailures(t_check);
     return s_ready;
 }
