@@ -145,6 +145,10 @@ namespace {
 void ApplyDodgeModeWithEnter(DodgeMode nextMode)
 {
     static DodgeMode s_prevDodgeMode = DodgeMode::Off;
+    // FeatureRuntime re-applies a refused mode every frame, so the refusal is traced once for
+    // each requested mode and cause, not once per retry.
+    static int  s_heldMode = -1;
+    static bool s_heldForBindings = false;
     const bool enabling = nextMode != DodgeMode::Off && s_prevDodgeMode == DodgeMode::Off;
     (void)enabling;
 
@@ -155,12 +159,22 @@ void ApplyDodgeModeWithEnter(DodgeMode nextMode)
     // engine untouched until offsets recover; the per-frame dispatch is gated the
     // same way (DangerPlanner), so nothing runs, and this re-applies once healed.
     if (BootGate::Degraded()) {
-        static int s_gn = 0;
-        if ((s_gn++ % 60) == 0)
-            DBG_FILE_LOG("[DodgeSwap] ApplyDodgeModeWithEnter gated — BootGate degraded "
-                         "(stale offsets after game patch); dodge engines untouched until recovery");
+        const bool bindings = !RuntimeOffsets::BindingsReady();
+        if (static_cast<int>(nextMode) != s_heldMode || bindings != s_heldForBindings) {
+            s_heldMode = static_cast<int>(nextMode);
+            s_heldForBindings = bindings;
+            if (bindings)
+                DBG_FILE_LOG("[DodgeSwap] ApplyDodgeModeWithEnter nextMode=" << s_heldMode
+                             << " held — bindings not verified; applied once they verify "
+                                "(the native trace log names the failing rows)");
+            else
+                DBG_FILE_LOG("[DodgeSwap] ApplyDodgeModeWithEnter nextMode=" << s_heldMode
+                             << " gated — BootGate degraded (stale offsets after game patch); "
+                                "dodge engines untouched until recovery");
+        }
         return;
     }
+    s_heldMode = -1;
 
     // XDodge and Rollout both run from Detour_AppEngineUpdate; only one is
     // enabled at a time (mutual exclusivity enforced here).
@@ -1331,6 +1345,11 @@ void TestTAB::Render()
         if (nFallback > 0 || nSuspect > 0)
             ImGui::TextColored(ImVec4(1.f, 0.45f, 0.2f, 1.f),
                 "STALE OFFSETS after this patch — update RuntimeOffsets (names/values).");
+        // BootGate holds every gated feature (and all dodge dispatch, via Degraded) until the
+        // generated bindings verify; the native trace log names the failing rows.
+        if (!RuntimeOffsets::BindingsReady())
+            ImGui::TextColored(ImVec4(1.f, 0.35f, 0.35f, 1.f),
+                "Bindings not verified — features held (the native trace log says why).");
 
         static bool s_showAllOffsets = false;
         ImGui::Checkbox("Show all (not just problems)##offhealth", &s_showAllOffsets);

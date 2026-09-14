@@ -1,4 +1,5 @@
 #include "pch-il2cpp.h"
+#include "BuildBindings.h"
 #include <shellapi.h>
 #include <cstdio>
 #include <cstring>
@@ -321,7 +322,7 @@ namespace Resolver {
 	Il2CppClass* GetClass(const char* namespaze, const char* name)
 	{
 		struct Ctx { const char* ns; const char* name; Il2CppClass* result; };
-		Ctx ctx{ namespaze, name, nullptr };
+		Ctx ctx{ namespaze, BuildBindings::ClassName(name), nullptr };
 		il2cpp_class_for_each([](Il2CppClass* klass, void* ud) {
 			auto* c = static_cast<Ctx*>(ud);
 			if (c->result) return;
@@ -341,7 +342,7 @@ namespace Resolver {
 	{
 		if (!className || !className[0]) return nullptr;
 		struct Ctx { const char* name; Il2CppClass* result; };
-		Ctx ctx{ className, nullptr };
+		Ctx ctx{ BuildBindings::ClassName(className), nullptr };
 		il2cpp_class_for_each([](Il2CppClass* klass, void* ud) {
 			auto* c = static_cast<Ctx*>(ud);
 			if (c->result) return;

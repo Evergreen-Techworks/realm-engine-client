@@ -63,12 +63,19 @@ namespace {
         static int s_lastMode = INT32_MIN;
         static float s_lastHorizonMs = -1.f;
         int dodgeMode = FeatureState::GetAutoDodgeMode();
-        if (dodgeMode != s_lastMode) {
+        const bool changed = dodgeMode != s_lastMode;
+        if (changed) {
             DBG_FILE_LOG("[DodgeSwap] IPC autoDodgeMode changed " << s_lastMode << " -> " << dodgeMode
                 << " (this is the raw index the dashboard sent; 4=ZDodge 5=RePP)");
             s_lastMode = dodgeMode;
-            TestTAB::SetDodgeModeWithEnter(static_cast<TestTAB::DodgeMode>(dodgeMode));
         }
+        // ApplyDodgeModeWithEnter stores nothing while BootGate is degraded -- stale offsets,
+        // or generated bindings not yet verified, which is every packaged build's first
+        // moments. The dashboard sends a mode once, so a mode that arrives in that window is
+        // applied again each frame until it takes. FeatureState clamps it to a valid
+        // DodgeMode, so once applied the two agree and this stops.
+        if (changed || static_cast<int>(TestTAB::GetDodgeMode()) != dodgeMode)
+            TestTAB::SetDodgeModeWithEnter(static_cast<TestTAB::DodgeMode>(dodgeMode));
         if (dodgeMode != static_cast<int>(TestTAB::DodgeMode::Off)) DangerPlanner::TryInstall();
         float horizonMs = FeatureState::GetAutoDodgeHorizonMs();
         if (horizonMs != s_lastHorizonMs) { s_lastHorizonMs = horizonMs; TestTAB::SetDodgeLookaheadMs(horizonMs); }
