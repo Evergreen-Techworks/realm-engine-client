@@ -132,10 +132,23 @@ export function register(ctx: PluginContext) {
     return result;
   }
 
-  function sendUseAbility(client: ClientConnection, usePos: { x: number; y: number }, itemType: number): void {
+  /**
+   * USEITEM's `time` is the game client's int32 connection time. The proxy only
+   * learns it from the client's own time-bearing packets (first MOVE/PONG/
+   * PLAYERSHOOT); until then `client.time` is plain epoch ms, which is out of
+   * int32 range, so PacketFactory refuses to serialize and the cast is dropped
+   * ("Failed to serialize USEITEM ... Received 1_789_259_156_430", once per map
+   * entry in the 2026-09-12 session). Report no time rather than a wrong one.
+   */
+  function connectionGameTime(client: ClientConnection): number | null {
+    const time = Math.trunc(Number(client.time));
+    return Number.isFinite(time) && time >= -0x80000000 && time <= 0x7fffffff ? time : null;
+  }
+
+  function sendUseAbility(client: ClientConnection, usePos: { x: number; y: number }, itemType: number, time: number): void {
     const pkt = ctx.createPacket('USEITEM');
     pkt.data = {
-      time: Math.trunc(client.time ?? 0),
+      time,
       slotObject: { objectId: client.objectId, slotId: ABILITY_SLOT, objectType: itemType },
       itemUsePos: { x: usePos.x, y: usePos.y },
       useType: 1,
@@ -228,10 +241,14 @@ export function register(ctx: PluginContext) {
       }
       if (isTarget) usePos = { x: enemy.x, y: enemy.y };
     }
+    // Checked before the cooldown is armed: the first MOVE of a new map lands
+    // one tick later, and the cast should go out then rather than a cooldown later.
+    const gameTime = connectionGameTime(client);
+    if (gameTime === null) { diagnose(client, 'waiting for the client game time (first MOVE of this map)'); return; }
     // Back off even if the transport throws, preventing retries every tick.
     nextAllowedAt.set(client, now + (isSelf ? selfIntervalMs : targetIntervalMs));
     try {
-      sendUseAbility(client, usePos, itemType);
+      sendUseAbility(client, usePos, itemType, gameTime);
       diagnose(client, `cast ${itemType} at (${usePos.x}, ${usePos.y}); MP ${mana}/${maxMana}; cost ${ability.cost ?? 'unknown'}`);
     } catch (err) {
       diagnose(client, `send failed: ${(err as Error).message}`);

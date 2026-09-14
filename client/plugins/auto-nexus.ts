@@ -12,6 +12,24 @@ const SAFE_ZONE_MAPS = new Set([
   'Pet Yard', 'Pet Yard 2', 'Pet Yard 3', 'Pet Yard 4', 'Pet Yard 5',
 ].map(name => name.toLowerCase()));
 
+// ── Burst guard ──────────────────────────────────────────────────────────────
+// A fixed threshold only helps if some server health update lands between the
+// threshold and zero. In the 2026-09-12 session all three deaths had their last
+// confirmed HP just ABOVE the threshold (75/775 at 9%, 43/435 at 9%, 21/147 at
+// 10%) and the next damage killed before another update arrived. The burst guard
+// raises the escape point to the largest HP loss the server has CONFIRMED within
+// one reaction window recently: if that much can land again before we can react,
+// the current HP is not safe. It uses server HP only — no forecasts, client hit
+// reports, defense reads or held packets.
+/** Damage that can land before an escape can take effect: one server tick plus a round trip. */
+const BURST_WINDOW_MS = 400;
+/** How long an observed burst keeps the escape point raised. */
+const BURST_MEMORY_MS = 6000;
+/** The next burst can be larger than the largest one seen. */
+const BURST_MARGIN = 1.25;
+/** Never raise the escape point above this share of max HP. */
+const BURST_GUARD_MAX_PCT = 50;
+
 interface NexusState {
   hp: number | null;
   maxHp: number;
@@ -19,6 +37,10 @@ interface NexusState {
   safe: boolean;
   escaped: boolean;
   retry: ReturnType<typeof setInterval> | null;
+  /** Confirmed HP values from the last BURST_WINDOW_MS, oldest first. */
+  samples: { at: number; hp: number; maxHp: number }[];
+  /** Confirmed HP losses within one BURST_WINDOW_MS, from the last BURST_MEMORY_MS. */
+  bursts: { at: number; loss: number }[];
 }
 
 export function register(ctx: PluginContext) {
@@ -28,12 +50,23 @@ export function register(ctx: PluginContext) {
   let showNotification = true;
   let retryCount = 4;
   let retryMs = 400;
+  let burstGuard = true;
   let states = new WeakMap<ClientConnection, NexusState>();
   const timers = new Set<ReturnType<typeof setInterval>>();
 
   ctx.registerSetting('ForceAutoNexusHealth', {
     label: 'Nexus Health', type: 'range', value: thresholdPct, min: 0, max: 100, step: 1,
-  }, (v: number) => { if (Number.isFinite(v)) thresholdPct = Math.max(0, Math.min(100, v)); });
+  }, (v: number) => {
+    if (!Number.isFinite(v)) return;
+    const next = Math.max(0, Math.min(100, v));
+    // Logged because the startup line shows the code default before the saved
+    // profile applies; without this the log cannot say which threshold was live.
+    if (next !== thresholdPct) ctx.log(`Nexus threshold set to ${next}% HP (was ${thresholdPct}%)`);
+    thresholdPct = next;
+  });
+  ctx.registerSetting('BurstGuard', {
+    label: 'Burst guard (nexus earlier after big confirmed hits)', type: 'boolean', value: true,
+  }, (v: boolean) => { burstGuard = v === true; });
   ctx.registerSetting('ShowChatMessageOnNexus', {
     label: 'Show Chat Message on Nexus', advanced: true, type: 'boolean', value: true,
   }, (v: boolean) => { showNotification = v === true; });
@@ -70,7 +103,8 @@ export function register(ctx: PluginContext) {
     let state = states.get(client);
     if (!state) {
       state = { hp: null, maxHp: 0, healthAt: null, safe: SAFE_ZONE_MAPS.has(
-        String(client.playerData?.mapName ?? '').trim().toLowerCase()), escaped: false, retry: null };
+        String(client.playerData?.mapName ?? '').trim().toLowerCase()), escaped: false, retry: null,
+        samples: [], bursts: [] };
       states.set(client, state);
     }
     return state;
@@ -81,6 +115,7 @@ export function register(ctx: PluginContext) {
   function reset(client: ClientConnection, safe: boolean): void {
     const state = stateFor(client); stopRetry(state);
     state.hp = null; state.maxHp = 0; state.healthAt = null; state.safe = safe; state.escaped = false;
+    state.samples = []; state.bursts = [];
   }
   ctx.on('clientDisconnected', client => { stopRetry(stateFor(client)); states.delete(client); });
   ctx.hookPacket('MAPINFO', (client, packet) => {
@@ -118,9 +153,32 @@ export function register(ctx: PluginContext) {
     }, retryMs);
     timers.add(state.retry);
   }
+  /** Record a newly confirmed HP value and any loss it completes within one reaction window. */
+  function noteConfirmedHp(state: NexusState, now: number): void {
+    if (state.hp === null || state.maxHp <= 0) return;
+    // A max-HP change (gear, death, character) makes earlier values incomparable.
+    state.samples = state.samples.filter(s => now - s.at <= BURST_WINDOW_MS && s.maxHp === state.maxHp);
+    const peak = state.samples.reduce((best, s) => Math.max(best, s.hp), -Infinity);
+    if (peak > state.hp) state.bursts.push({ at: now, loss: peak - state.hp });
+    state.samples.push({ at: now, hp: state.hp, maxHp: state.maxHp });
+    state.bursts = state.bursts.filter(b => now - b.at <= BURST_MEMORY_MS);
+  }
+  /** HP at or below which to escape now; `guarded` when the burst guard, not the threshold, set it. */
+  function escapePoint(state: NexusState, now: number): { hp: number; burst: number; guarded: boolean } {
+    const threshold = state.maxHp * thresholdPct / 100;
+    const burst = state.bursts.reduce((best, b) => now - b.at <= BURST_MEMORY_MS ? Math.max(best, b.loss) : best, 0);
+    // A threshold of 0 is a deliberate "only at zero"; the guard does not override it.
+    if (!burstGuard || thresholdPct <= 0) return { hp: threshold, burst, guarded: false };
+    const guarded = Math.min(burst * BURST_MARGIN, state.maxHp * BURST_GUARD_MAX_PCT / 100);
+    return guarded > threshold ? { hp: guarded, burst, guarded: true } : { hp: threshold, burst, guarded: false };
+  }
   function check(client: ClientConnection, state: NexusState, reason: string): void {
     if (!ctx.enabled || state.safe || state.escaped || state.hp === null || state.maxHp <= 0) return;
-    if (state.hp <= state.maxHp * thresholdPct / 100) escape(client, state, reason);
+    const point = escapePoint(state, Date.now());
+    if (state.hp > point.hp) return;
+    escape(client, state, point.guarded
+      ? `${reason}; burst guard: ${point.burst} HP lost within ${BURST_WINDOW_MS}ms in the last ${BURST_MEMORY_MS / 1000}s, escaping at <=${Math.round(point.hp)} HP`
+      : reason);
   }
   function syncMaxHp(client: ClientConnection, state: NexusState): void {
     const max = client.playerData.effectiveMaxHealth;
@@ -135,6 +193,7 @@ export function register(ctx: PluginContext) {
     if (hpStat && typeof hpStat.value === 'number' && Number.isFinite(hpStat.value)) {
       state.hp = Math.max(0, hpStat.value);
       state.healthAt = Date.now();
+      noteConfirmedHp(state, state.healthAt);
     } else if (state.hp === null && Number.isFinite(client.playerData.health) && client.playerData.health > 0) {
       // Hot reload can begin between full HP updates. Seed once from the last
       // server HP; delta ticks without HP must not undo confirmed DAMAGE.
@@ -162,15 +221,20 @@ export function register(ctx: PluginContext) {
       state.hp = Math.max(0, state.hp - damage);
     }
     state.healthAt = Date.now();
+    noteConfirmedHp(state, state.healthAt);
     check(client, state, 'server-confirmed damage');
   });
   ctx.hookPacket('DEATH', (client, packet) => {
     if (!packet.isDefined) return;
     const state = stateFor(client);
-    const age = state.healthAt === null ? 'unknown' : `${Date.now() - state.healthAt}ms`;
+    const now = Date.now();
+    const age = state.healthAt === null ? 'unknown' : `${now - state.healthAt}ms`;
     const killer = String(packet.data.killedBy ?? 'unknown').replace(/[\r\n]/g, ' ').slice(0,120);
+    const point = state.maxHp > 0 ? escapePoint(state, now) : { hp: 0, burst: 0, guarded: false };
     ctx.log(`DEATH diagnostic — killer=${killer}; confirmed HP=${state.hp ?? 'unknown'}/${state.maxHp}`
-      + `; health evidence age=${age}; threshold=${thresholdPct}%; enabled=${ctx.enabled}`
+      + `; health evidence age=${age}; threshold=${thresholdPct}%`
+      + `; burstGuard=${burstGuard ? `on (escape point ${Math.round(point.hp)} HP, largest recent burst ${point.burst})` : 'off'}`
+      + `; enabled=${ctx.enabled}`
       + `; safe=${state.safe}; escapeRequested=${state.escaped}; mode=confirmed-health`);
     stopRetry(state); // death is final; repeated ESCAPE cannot recover the character
   });
@@ -186,12 +250,12 @@ export function register(ctx: PluginContext) {
       thresholdPct = value;
       ctx.updateSetting('ForceAutoNexusHealth', value);
     }
-    ctx.sendNotification(client, 'AutoNexus', `Confirmed-health mode; nexus at ${thresholdPct}% HP`);
+    ctx.sendNotification(client, 'AutoNexus', `Confirmed-health mode; nexus at ${thresholdPct}% HP; burst guard ${burstGuard ? 'on' : 'off'}`);
   });
   ctx.hookCommand('reset', (client) => {
     const state = stateFor(client);
     ctx.sendNotification(client, 'AutoNexus', `Confirmed HP ${state.hp ?? 'unknown'}/${state.maxHp}; no prediction ledger to reset`);
   });
   ctx.hookCommand('nexus', (client) => escape(client, stateFor(client), '/nexus command'));
-  ctx.log(`Loaded — confirmed-health mode; nexus at ${thresholdPct}% HP; prediction disabled`);
+  ctx.log(`Loaded — confirmed-health mode; default nexus at ${thresholdPct}% HP until the saved profile applies; burst guard default on; prediction disabled`);
 }
