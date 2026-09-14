@@ -17,7 +17,7 @@
 // whose swept box overlaps the player's swept path, and runs precise per-sample
 // CCD only on those. The input with the largest time-to-first-collision wins;
 // intent (the shared external goal) breaks ties. The committed heading is
-// issued through DangerPlanner::NativeMoveTo (speed-clamped, server-acked) —
+// issued through DangerPlanner::NativeMoveTo (not speed-clamped by the game; steps are sized by the caller) —
 // the same single move chokepoint XDodge uses.
 //
 // Shares the goal/lock/follow plumbing and toggle

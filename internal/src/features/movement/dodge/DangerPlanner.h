@@ -27,7 +27,7 @@ void TryInstall();
 void Uninstall();
 
 // Authoritative move entry point — routes through the game's native
-// FKALGHJIADI::DGLCONCOIBO (speed-clamped, collision-checked, packet-
+// FKALGHJIADI::DGLCONCOIBO (NOT speed-clamped, collision-checked, packet-
 // emitting). USE THIS for every movement write in the project. Raw
 // writes to +0x3C/+0x40/+0x68/+0x6C bypass ACTk's rigidbody sync and
 // cause server snap-backs. Returns false if the native function isn't

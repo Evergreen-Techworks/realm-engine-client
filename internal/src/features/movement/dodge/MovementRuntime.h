@@ -5,9 +5,11 @@ namespace DodgeRuntime {
 bool  EnsureResolved();
 float GetDeltaTime();
 float GetMoveSpeedMul(void* player);
-// Move budget in tiles/sec from the game's own CalcMoveSpeed
-// (FKALGHJIADI::GCFKGLKAPND, name-stable across builds).
-// Returns a negative value when unavailable; zero is valid and must not fall back.
+// The player's effective move speed in tiles/sec, per the game's own rules
+// (MovementSpeed.h EffectiveTilesPerSec): SPD curve, Slowed / Paralyzed / Stasis /
+// Petrified, the square's speed (GCFKGLKAPND), capped by the game's move-speed
+// getter (GAFGPNKFMOJ). The game's MoveTo does not clamp distance, so every native
+// step must be sized from this. Never negative; zero means the player cannot move.
 float GetTilesPerSec(void* player);
 bool  CallMoveTo(void* player, float x, float y);
 void  Reset();

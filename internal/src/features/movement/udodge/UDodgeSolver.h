@@ -7,7 +7,7 @@
 // OUTSIDE every bullet's server hit region (safety is a HARD constraint,
 // including the player half-extent via Core::PointSafety) and is best by a
 // smart-direction objective, then hands that target back so UDodge::Tick can
-// drive the player there through the game's own speed-clamped MoveTo.
+// drive the player there through the game's MoveTo, which does not clamp distance (the step is sized here).
 //
 // Pure data + math over the plain-data DangerMap and the Env probes already in
 // MapInput. No IL2CPP, no globals, no worker thread.

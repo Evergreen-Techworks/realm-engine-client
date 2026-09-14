@@ -1347,9 +1347,11 @@ void Tick(void* player, float px, float py, float dt)
         const Vec2 to = Sub(g_solve.target, in.player);
         const float d = Len(to);
         const Vec2 dir = d > 1e-4f ? Mul(to, 1.f / d) : Vec2{};
-        // Per-frame step, clamped to the player's speed; MoveTo clamps again
-        // internally. Converges onto the target by the tick boundary without
-        // ever exceeding the per-tick budget.
+        // Per-frame step, clamped to the player's speed. The game's MoveTo does
+        // NOT clamp again (LKHPPBEGNOM::DGLCONCOIBO sets the position outright), so
+        // in.speed must be the speed the game allows — Slowed and the square's
+        // speed included (DodgeRuntime::GetTilesPerSec). Converges onto the target
+        // by the tick boundary without ever exceeding the per-tick budget.
         float reach = std::min(d, in.speed * frameMs);
         if (frameMove.budgeted) reach = std::min(reach, frameMove.tiles);
         moveTarget = Add(in.player, Mul(dir, reach));

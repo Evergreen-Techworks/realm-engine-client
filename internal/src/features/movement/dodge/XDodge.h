@@ -6,8 +6,8 @@
 // ALGORITHM: Every kRebuildFrames game ticks, snapshot projectiles, build a
 // 25×25×13 spacetime danger grid (0.25 tile cells, 3-tile radius, 13 time
 // slices at planStepMs intervals), run BFS through (gx, gy, t) states, then
-// NativeMoveTo the first-step cell every game tick.  Server-authorized speed
-// clamp — no raw position writes, no server snap-backs.
+// NativeMoveTo the first-step cell every game tick. The game's MoveTo does not
+// clamp distance, so the step is sized from the player's speed — no raw position writes.
 //
 // DodgeMode::XDodge = 1
 namespace XDodge {

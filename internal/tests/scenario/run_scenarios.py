@@ -23,6 +23,7 @@ SCENARIOS = [
     "e_corridor1_nowalk", "e_corridor1_fullocc", "e_corridor2_fullocc",
     "f_damaging_row", "g_fullocc_gap", "h_learned_keepout", "j_hidden_blocker",
     "i_tilelist_revisit", "i_tilelist_frontier",
+    "k_slowed_midwalk", "k_paralyzed_midwalk", "k_water_midpath", "k_dodge_in_water",
 ]
 
 def main():
@@ -84,6 +85,10 @@ def main():
                     print(json.dumps(row), flush=True)
                 if not row["success"] and name not in KNOWN_LIMITATIONS:
                     failed.append(name)
+                # The game's MoveTo does not clamp distance: a step longer than the
+                # game's own speed allows is what the server sees, in every scenario.
+                elif row.get("overspeed_moves", 0) > 0:
+                    failed.append(name + " (overspeed)")
         if args.check:
             if failed:
                 print("Pathing scenarios FAILED: " + ", ".join(failed))

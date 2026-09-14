@@ -31,6 +31,7 @@
 #include "UDodgeEnemyHazards.h"
 #include "UDodgeTimedPlanner.h"
 #include "MovementRuntime.h"
+#include "features/movement/dodge/MovementSpeed.h"
 #include "DangerPlanner.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
@@ -88,6 +89,8 @@ struct World {
     int      nextBulletId = 1;
     float px = 0, py = 0;
     float tps = 6.0f;                             // base tiles/s (SPD ~35)
+    bool  slowed = false;                         // Slowed condition: the game pins MIN_MOVE_SPEED
+    bool  paralyzed = false;                      // Paralyzed / Stasis / Petrified: no movement at all
     int32_t lockId = 0;
     bool  walkActive = false;
     float walkX = 0, walkY = 0;
@@ -178,6 +181,15 @@ float TruthSpeedMul(const World& w, float x, float y)
     const Ground* g = w.GroundAt(FloorI(x), FloorI(y));
     return (g && g->speed > 0.f) ? g->speed : 1.f;
 }
+// The game's own move speed (86ad651b FKALGHJIADI::GAFGPNKFMOJ): Slowed pins
+// MIN_MOVE_SPEED (4 tiles/s) before the SPD curve, then the square's speed applies.
+float TruthTilesPerSec(const World& w, float x, float y)
+{
+    if (w.paralyzed) return 0.f;
+    return (w.slowed ? 4.f : w.tps) * TruthSpeedMul(w, x, y);
+}
+// Server SPD that yields a base tiles/s on the game's curve (4 + 5.6 * SPD / 75).
+int TruthSpd(const World& w) { return static_cast<int>(std::lround((w.tps - 4.f) / 5.6f * 75.f)); }
 
 // One refused axis snaps to the half-tile border it was crossing (Flash
 // modifyStep), so a player can settle onto a FullOccupy corridor's centre line.
@@ -188,7 +200,7 @@ float SnapAxis(float from, float to)
     return (border >= lo && border <= hi) ? border : from;
 }
 
-struct MoveStats { uint32_t calls = 0, refused = 0; double refusedTiles = 0; };
+struct MoveStats { uint32_t calls = 0, refused = 0, overspeed = 0; double refusedTiles = 0, maxStepRatio = 0; };
 MoveStats g_move;
 
 Vec2 TruthMove(const World& w, Vec2 from, Vec2 to)
@@ -366,12 +378,17 @@ bool  CallMoveTo(void*, float x, float y)
 {
     H::World& w = *H::g_world;
     const Vec2 from{ w.px, w.py };
-    Vec2 to{ x, y };
-    // The game's own speed clamp for this frame (tile speed included).
-    const float maxStep = w.tps * H::TruthSpeedMul(w, w.px, w.py) / 60.f * 1.001f;
-    const Vec2 d = Sub(to, from);
-    const float len = Len(d);
-    if (len > maxStep) to = Add(from, Mul(d, maxStep / len));
+    const Vec2 to{ x, y };
+    // The game's MoveTo does NOT clamp distance (86ad651b LKHPPBEGNOM::DGLCONCOIBO:
+    // square lookup, position set, tile/collision update, return true). Whatever
+    // step the dodge commands is the step the server sees, so every commanded step
+    // is measured against what the game's own speed allows this frame.
+    const float allowed = H::TruthTilesPerSec(w, w.px, w.py) / 60.f;
+    const float len = Len(Sub(to, from));
+    if (len > allowed * 1.02f + 1e-4f) ++H::g_move.overspeed;
+    if (len > 1e-4f)
+        H::g_move.maxStepRatio = std::max(H::g_move.maxStepRatio,
+            allowed > 1e-6f ? static_cast<double>(len / allowed) : 1e9);
     const Vec2 got = H::TruthMove(w, from, to);
     ++H::g_move.calls;
     const float wanted = Len(Sub(to, from)), achieved = Len(Sub(got, from));
@@ -465,8 +482,18 @@ void  CopyBoxBlocked(float originX, float originY, int side, float cellTiles,
 namespace TestTAB {
 void ReadDodgePlayerStats(int32_t& hp, int32_t& maxHp, float& spd, float& tps)
 {
-    hp = 1000; maxHp = 1000; spd = 35.f;
-    tps = H::g_world->tps * H::TruthSpeedMul(*H::g_world, H::g_world->px, H::g_world->py);
+    // Line-for-line MovementRuntime GetTilesPerSec, with the game's values supplied
+    // by the modelled world: the server SPD stat, CalcMoveSpeed's square speed and
+    // the live condition words. The game's own getter is not modelled (-1), so the
+    // native model alone has to keep every step inside the game's speed.
+    const H::World& w = *H::g_world;
+    hp = 1000; maxHp = 1000; spd = static_cast<float>(H::TruthSpd(w));
+    DodgeRuntime::SpeedSample s{};
+    s.clientSpd = H::TruthSpd(w);
+    s.tileMultiplier = H::TruthSpeedMul(w, w.px, w.py);
+    s.conditionsKnown = true;
+    s.cond0 = (w.slowed ? DodgeRuntime::kCondSlowed : 0u) | (w.paralyzed ? DodgeRuntime::kCondParalyzed : 0u);
+    tps = DodgeRuntime::EffectiveTilesPerSec(s);
 }
 #ifdef HARNESS_SHARED_OCCUPANCY
 bool IsWalkPositionBlocked(float cx, float cy)
@@ -787,10 +814,12 @@ void Emit(const Result& r)
     const double cycleAvg = g_worker.cycles ? g_worker.cycleMsSum / g_worker.cycles : 0;
     std::printf("{\"scenario\":\"%s\",\"success\":%s,\"time_s\":%.2f,\"path_tiles\":%.1f,\"final_dist\":%.2f,"
                 "\"stuck_s\":%.1f,\"hits\":%u,\"in_range_frac\":%.2f,\"refused_moves\":%u,"
+                "\"overspeed_moves\":%u,\"max_step_ratio\":%.3f,"
                 "\"tick_ms_avg\":%.3f,\"tick_ms_max\":%.3f,\"nav_plans\":%u,\"nav_ms_avg\":%.3f,\"nav_ms_max\":%.3f,"
                 "\"dodge_ms_avg\":%.3f,\"dodge_ms_max\":%.3f,\"cycle_ms_avg\":%.3f,\"cycle_ms_max\":%.3f}\n",
                 r.name.c_str(), r.success ? "true" : "false", r.timeS, r.pathTiles, r.finalDist, r.stuckS, r.hits,
-                r.inRangeFrac, g_move.refused, tickAvg, g_tick.max, g_worker.navRuns, navAvg, g_worker.navMsMax,
+                r.inRangeFrac, g_move.refused, g_move.overspeed, std::min(g_move.maxStepRatio, 999.0),
+                tickAvg, g_tick.max, g_worker.navRuns, navAvg, g_worker.navMsMax,
                 dodgeAvg, g_worker.dodgeMsMax, cycleAvg, g_worker.cycleMsMax);
     std::fflush(stdout);
 }
@@ -976,6 +1005,77 @@ void ScenarioHiddenBlocker(const char* name)
     Emit(Run(name, w, Goal::WalkTo, { 16.5f, 0.5f }, 60));
 }
 
+// (k) movement speed the game allows. The game's MoveTo does not clamp, so these
+// pass only when every commanded step fits the game's own speed for that frame
+// (overspeed_moves == 0, enforced for every scenario by run_scenarios.py --check).
+//
+// k_slowed_midwalk: Slowed lands mid-walk and lifts again. SPD ~75 base, so the
+// SPD curve alone would command 2.4x what the game allows while Slowed.
+void ScenarioSlowedMidWalk(const char* name)
+{
+    World w; Floor(w);
+    w.tps = 9.6f;
+    w.px = 0.5f; w.py = 0.5f;
+    w.script = [](World& ww) {
+        const double t = (g_nowMs - 100000.0) / 1000.0;
+        ww.slowed = t >= 0.5 && t < 3.0;
+    };
+    Result r = Run(name, w, Goal::WalkTo, { 24.5f, 0.5f }, 30);
+    r.success = r.success && g_move.overspeed == 0;
+    Emit(r);
+}
+
+// k_paralyzed_midwalk: Paralyzed for a second mid-walk; the game moves nobody then.
+void ScenarioParalyzedMidWalk(const char* name)
+{
+    World w; Floor(w);
+    w.px = 0.5f; w.py = 0.5f;
+    w.script = [](World& ww) {
+        const double t = (g_nowMs - 100000.0) / 1000.0;
+        ww.paralyzed = t >= 0.5 && t < 1.5;
+    };
+    Result r = Run(name, w, Goal::WalkTo, { 16.5f, 0.5f }, 30);
+    r.success = r.success && g_move.overspeed == 0;
+    Emit(r);
+}
+
+// k_water_midpath: a band of shallow water across the whole route.
+void ScenarioWaterMidPath(const char* name)
+{
+    World w; Floor(w);
+    w.tps = 9.6f;
+    w.Fill(8, -40, 12, 40, kShallowWater);
+    w.px = 0.5f; w.py = 0.5f;
+    Result r = Run(name, w, Goal::WalkTo, { 20.5f, 0.5f }, 30);
+    r.success = r.success && g_move.overspeed == 0;
+    Emit(r);
+}
+
+// k_dodge_in_water: the player wades a shallow pool while a turret sweeps shots
+// across the ford. Dodging must be planned at wading speed.
+void ScenarioDodgeInWater(const char* name)
+{
+    World w; Floor(w);
+    w.tps = 9.6f;
+    w.Fill(-3, -6, 14, 6, kShallowWater);
+    w.px = 0.5f; w.py = 0.5f;
+    double next = 100400.0;
+    int k = 0;
+    w.script = [=](World& ww) mutable {
+        if (g_nowMs < next) return;
+        next += 700.0;
+        // Shots from the north crossing the ford line, walking along it.
+        const float x = 2.5f + static_cast<float>((k++ * 3) % 10);
+        ww.Fire(x, -9.5f, kTwoPi / 4.f, 7.f, 2600.f, 0.4f, 950);
+    };
+    Enemy turret; turret.id = 950; turret.type = 0x0d52; turret.x = 6.5f; turret.y = -9.5f;
+    turret.hp = turret.maxHp = 5000;
+    w.enemies.push_back(turret);
+    Result r = Run(name, w, Goal::WalkTo, { 12.5f, 0.5f }, 30);
+    r.success = r.success && g_move.overspeed == 0;
+    Emit(r);
+}
+
 // (i) long session: the streamed-tile list exceeds 65,536 and the player walks
 // where the list is OLDEST (revisit) or NEWEST (frontier). Replicates DoRefresh's
 // selection, assuming the list is append-on-stream.
@@ -1109,6 +1209,10 @@ int main(int argc, char** argv)
     if (want("g_fullocc_gap"))      H::ScenarioFullOccupyGap("g_fullocc_gap");
     if (want("h_learned_keepout"))  H::ScenarioLearnedKeepout("h_learned_keepout");
     if (want("j_hidden_blocker"))   H::ScenarioHiddenBlocker("j_hidden_blocker");
+    if (want("k_slowed_midwalk"))   H::ScenarioSlowedMidWalk("k_slowed_midwalk");
+    if (want("k_paralyzed_midwalk"))H::ScenarioParalyzedMidWalk("k_paralyzed_midwalk");
+    if (want("k_water_midpath"))    H::ScenarioWaterMidPath("k_water_midpath");
+    if (want("k_dodge_in_water"))   H::ScenarioDodgeInWater("k_dodge_in_water");
     if (scanMode != 0) {
         H::g_tileScanMode = scanMode;
         if (want("i_tilelist_revisit"))  H::ScenarioTileList("i_tilelist_revisit", true);
