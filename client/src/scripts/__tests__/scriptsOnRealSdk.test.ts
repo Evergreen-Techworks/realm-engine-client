@@ -90,7 +90,7 @@ const running = { scripts: [] as Array<{ onStop(): void }>, plugins: [] as Plugi
 function wire(name: string, data: Record<string, unknown>): Packet {
   const p = factory.createByName(name);
   Object.assign(p.data, data);
-  const back = factory.createFromBytes(factory.serialize(p));
+  const back = factory.createFromBytes(factory.serialize(p), p.direction as 'client' | 'server');
   if (!back.isDefined || back.name !== name) throw new Error(`${name} did not survive the wire`);
   return back;
 }
@@ -175,14 +175,14 @@ function session(map: string, allowPlayerTeleport = false) {
   const sent: Packet[] = [];
   Object.assign(conn as any, {
     serverSendCipher: { cipher() {} },
-    serverSocket: { destroyed: false, write: (b: Buffer) => { sent.push(factory.createFromBytes(Buffer.from(b))); return true; } },
+    serverSocket: { destroyed: false, write: (b: Buffer) => { sent.push(factory.createFromBytes(Buffer.from(b), 'client')); return true; } },
   });
   clientRef.current = conn;
   let tickId = 0;
   const s = {
     conn, sent,
     server: (name: string, data: Record<string, unknown>) => proxy.fireServerPacket(conn, wire(name, data)),
-    frame: (hex: string) => proxy.fireServerPacket(conn, factory.createFromBytes(Buffer.from(hex, 'hex'))),
+    frame: (hex: string) => proxy.fireServerPacket(conn, factory.createFromBytes(Buffer.from(hex, 'hex'), 'server')),
     update: (tiles: unknown[], newObjs: unknown[], drops: number[] = []) =>
       s.server('UPDATE', { position: { x: 0, y: 0 }, levelType: 0, tiles, newObjs, drops }),
     newTick: (statuses: unknown[]) =>

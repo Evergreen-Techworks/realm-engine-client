@@ -22,6 +22,8 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { packetEntries } from './lib/packet-keys.mjs';
+
 const CLIENT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const upstream = process.argv[2];
@@ -58,15 +60,19 @@ const upstreamEnum = loadUpstreamEnum(TYPE_PATH);
 
 const defs = JSON.parse(readFileSync(join(CLIENT_ROOT, 'data/packet-definitions.json'), 'utf-8'));
 
-// Canonical id -> Layer B name, across both sections.
+// Canonical id -> Layer B name, across both sections. At an id with a packet in
+// each direction the incoming (server) packet names the id, as in PACKET_MAP.
 const canonicalById = new Map();
-for (const [id, packet] of Object.entries(defs.packets)) {
+const canonicalNames = new Set(Object.keys(defs.protocolOrphanNames));
+for (const { id, packet } of packetEntries(defs.packets)) {
   if (packet.protocolName in defs.protocolOrphanNames) continue; // orphans carry no id
-  canonicalById.set(Number(id), packet.protocolName);
+  canonicalNames.add(packet.protocolName);
+  if (!canonicalById.has(id) || packet.direction === 'server') canonicalById.set(id, packet.protocolName);
 }
-for (const [id, packet] of Object.entries(defs.protocolOnlyPackets)) canonicalById.set(Number(id), packet.name);
-
-const canonicalNames = new Set([...canonicalById.values(), ...Object.keys(defs.protocolOrphanNames)]);
+for (const [id, packet] of Object.entries(defs.protocolOnlyPackets)) {
+  canonicalById.set(Number(id), packet.name);
+  canonicalNames.add(packet.name);
+}
 
 // --- 1. ids upstream has that canonical does not --------------------------
 const missingIds = [...upstreamMap.keys()].filter((id) => !canonicalById.has(id)).sort((a, b) => a - b);

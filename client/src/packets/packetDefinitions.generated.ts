@@ -1965,8 +1965,9 @@ const packetDefinitions: DefsFile = {
     },
     "171": {
       "name": "CLAIMCHESTREWARD",
-      "direction": "server",
-      "fields": []
+      "direction": "client",
+      "fields": [],
+      "note": "C→S: game 86ad651b has id 171 only as an outgoing message (ClaimChestReward), as does realmlib (outgoing/claim-chest-reward-packet.ts). Was labelled server."
     },
     "172": {
       "name": "CHESTREWARDRESULT",
@@ -2039,8 +2040,9 @@ const packetDefinitions: DefsFile = {
     },
     "185": {
       "name": "UPGRADEENCHANTER",
-      "direction": "client",
-      "fields": []
+      "direction": "server",
+      "fields": [],
+      "note": "S→C: game 86ad651b has id 185 only as an incoming message (UpgradeEnchanter), as does realmlib (incoming/upgrade-enchanter-packet.ts). Was labelled client."
     },
     "187": {
       "name": "UPGRADEENCHANTMENT",
@@ -2222,7 +2224,17 @@ const packetDefinitions: DefsFile = {
       ],
       "note": "EK PartyList; activity/privacy are bytes (PartyActivity, PartyPrivacy enums)."
     },
-    "215": {
+    "218": {
+      "name": "FORRECONNECT",
+      "direction": "server",
+      "fields": []
+    },
+    "222": {
+      "name": "LOADINGSCREEN",
+      "direction": "server",
+      "fields": []
+    },
+    "client:215": {
       "name": "PARTYJOINREQUEST",
       "direction": "client",
       "fields": [
@@ -2232,12 +2244,51 @@ const packetDefinitions: DefsFile = {
         },
         {
           "name": "unknownByte",
+          "type": "byte",
+          "optional": true
+        }
+      ],
+      "note": "C→S. Game 86ad651b's serializer (PartyJoinRequest) writes partyId only; realmlib has seen a trailing PartyResponse byte on this packet, and the party bridge sends one (0), so the byte is optional. Id 215 S→C is PARTYJOINRESULT."
+    },
+    "server:215": {
+      "name": "PARTYJOINRESULT",
+      "direction": "server",
+      "fields": [
+        {
+          "name": "partyId",
+          "type": "uint32"
+        },
+        {
+          "name": "state",
           "type": "byte"
         }
       ],
-      "note": "C→S: client requests to join a party (partyId + byte; matches EK PartyJoinRequest)."
+      "note": "S→C at the id of C→S PARTYJOINREQUEST. Game 86ad651b's deserializer (a class also named PartyJoinRequest) reads uint32 + PartyResponse enum; realmlib calls it PartyJoinResult and reads the enum as a byte, as here."
     },
-    "217": {
+    "client:217": {
+      "name": "PARTYJOINRESPONSE",
+      "direction": "client",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "classId",
+          "type": "uint16"
+        },
+        {
+          "name": "skinId",
+          "type": "uint16"
+        },
+        {
+          "name": "state",
+          "type": "byte"
+        }
+      ],
+      "note": "C→S at the id of S→C PARTYJOINREQUESTRESPONSE. Game 86ad651b's serializer (PartyJoinRequestResponse) writes string, uint16, uint16, byte; realmlib exports it as PartyJoinResponsePacket."
+    },
+    "server:217": {
       "name": "PARTYJOINREQUESTRESPONSE",
       "direction": "server",
       "fields": [
@@ -2257,17 +2308,8 @@ const packetDefinitions: DefsFile = {
           "name": "state",
           "type": "byte"
         }
-      ]
-    },
-    "218": {
-      "name": "FORRECONNECT",
-      "direction": "server",
-      "fields": []
-    },
-    "222": {
-      "name": "LOADINGSCREEN",
-      "direction": "server",
-      "fields": []
+      ],
+      "note": "S→C. Game 86ad651b names it PartyRequestResponse: string, uint16, uint16, PartyResponse enum (read as a byte). Id 217 C→S is PARTYJOINRESPONSE."
     }
   },
   "dataObjects": {

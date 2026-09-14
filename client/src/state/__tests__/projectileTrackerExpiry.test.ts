@@ -15,7 +15,7 @@ const client = {} as any;
 function packet(name: string, data: Record<string, unknown>) {
   const p = factory.createByName(name);
   Object.assign(p.data, data);
-  return factory.createFromBytes(factory.serialize(p));
+  return factory.createFromBytes(factory.serialize(p), p.direction as 'client' | 'server');
 }
 const shot = (bulletId: number, numShots = 1) => packet('ENEMYSHOOT', {
   bulletId, ownerId: 77, bulletType: 0, position: { x: 1, y: 2 }, angle: 0, damage: 50, numShots, angleInc: 0.1,

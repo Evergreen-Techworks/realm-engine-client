@@ -62,6 +62,7 @@ import type {
   ScriptPanelOutboundMessage,
 } from '../../scripts/bridge/BridgeDeps.js';
 import { getVaultStore } from '../../scripts/bridge/inventory/VaultStore.js';
+import { parsePacketKey } from '../../packets/PacketFactory.js';
 import packetDefinitions from '../../packets/packetDefinitions.generated.js';
 import packetLabNameOnly from '../../packets/packetLabNameOnly.generated.js';
 import packetStatus from '../../packets/packetStatus.generated.js';
@@ -1180,13 +1181,14 @@ export class DevServer {
         const defs = packetDefinitions as { packets: Record<string, { name: string; direction: string; fields: any[] }>; dataObjects?: Record<string, any> };
         const nameOnlyDefs: { packets?: Array<{ name: string; direction: string; id?: number }> } = packetLabNameOnly;
         const statusMap: Record<string, string> = packetStatus;
-        const packets: LabPacket[] = Object.entries(defs.packets || {}).map(([idStr, def]) => ({
-          key: `id:${idStr}`,
-          id: parseInt(idStr, 10),
+        // Keys are "<id>", or "client:<id>" / "server:<id>" at an id with a packet each way.
+        const packets: LabPacket[] = Object.entries(defs.packets || {}).map(([key, def]) => ({
+          key: `id:${key}`,
+          id: parsePacketKey(key)?.id ?? null,
           name: def.name,
           direction: def.direction,
           fields: def.fields || [],
-          status: statusMap[idStr] === 'needsWork' ? 'needsWork' : 'working',
+          status: statusMap[key] === 'needsWork' ? 'needsWork' : 'working',
         }));
         for (const p of nameOnlyDefs.packets || []) {
           packets.push({

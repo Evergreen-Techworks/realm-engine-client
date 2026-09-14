@@ -35,14 +35,36 @@ export interface StatTypesFile {
   statNames?: Record<string, string>;
 }
 
+export type PacketDirection = 'client' | 'server';
+
+const PACKET_KEY = /^(?:(client|server):)?(0|[1-9][0-9]{0,2})$/;
+
+/**
+ * Parse a key of `packets` in packet-definitions.json: "<id>" for the only packet
+ * at an id, "client:<id>" / "server:<id>" where an id carries a different packet
+ * in each direction (215 and 217 on game 86ad651b). `direction` is the key's
+ * qualifier, null for a plain key; the result is null for a malformed key.
+ * scripts/lib/packet-keys.mjs is the build scripts' copy of this grammar.
+ */
+export function parsePacketKey(key: string): { id: number; direction: PacketDirection | null } | null {
+  const match = typeof key === 'string' ? PACKET_KEY.exec(key) : null;
+  if (!match) return null;
+  const id = Number(match[2]);
+  if (id > 255) return null;
+  return { id, direction: (match[1] as PacketDirection | undefined) ?? null };
+}
+
 /**
  * Data-driven packet factory.
  * Creates Packet instances from raw bytes using JSON definitions.
  * Unknown packets pass through as raw bytes (never crash).
+ *
+ * Definitions are keyed by (direction, id): RotMG reuses some ids with a different
+ * packet each way, so a frame can only be decoded once its direction is known.
  */
 export class PacketFactory {
-  private definitions = new Map<number, PacketDef>();
-  private nameToId = new Map<string, number>();
+  private definitions: Record<PacketDirection, Map<number, PacketDef>> = { client: new Map(), server: new Map() };
+  private nameToPacket = new Map<string, { id: number; def: PacketDef }>();
   private dataObjects = new Map<string, DataObjectDef>();
   private stringStatIds = new Set<number>();
 
@@ -54,11 +76,27 @@ export class PacketFactory {
       ? JSON.parse(readFileSync(statTypesSource, 'utf8'))
       : statTypesSource;
 
-    // Load packet definitions
-    for (const [idStr, def] of Object.entries(defs.packets)) {
-      const id = parseInt(idStr, 10);
-      this.definitions.set(id, def);
-      this.nameToId.set(def.name, id);
+    // Load packet definitions. Anything that would make a lookup ambiguous is a
+    // broken definitions file (scripts/check-packet-drift.mjs guards the shipped one).
+    for (const [key, def] of Object.entries(defs.packets)) {
+      const parsed = parsePacketKey(key);
+      if (!parsed) throw new Error(`packet definitions: malformed packet key "${key}"`);
+      if (def.direction !== 'client' && def.direction !== 'server') {
+        throw new Error(`packet definitions: "${key}" (${def.name}) has direction ${JSON.stringify(def.direction)}`);
+      }
+      if (parsed.direction && parsed.direction !== def.direction) {
+        throw new Error(`packet definitions: key "${key}" says ${parsed.direction}, but ${def.name} is ${def.direction}`);
+      }
+      const byId = this.definitions[def.direction];
+      const existing = byId.get(parsed.id);
+      if (existing) {
+        throw new Error(`packet definitions: two ${def.direction} packets at id ${parsed.id} (${existing.name}, ${def.name})`);
+      }
+      if (this.nameToPacket.has(def.name)) {
+        throw new Error(`packet definitions: packet name ${def.name} is used twice`);
+      }
+      byId.set(parsed.id, def);
+      this.nameToPacket.set(def.name, { id: parsed.id, def });
     }
 
     // Load data object schemas
@@ -71,13 +109,20 @@ export class PacketFactory {
       this.stringStatIds.add(id);
     }
 
-    Logger.log('PacketFactory', `Loaded ${this.definitions.size} packet definitions, ${this.dataObjects.size} data objects`);
+    Logger.log('PacketFactory', `Loaded ${this.nameToPacket.size} packet definitions, ${this.dataObjects.size} data objects`);
   }
 
-  /** Create a Packet from raw decrypted bytes (full packet including header). */
-  createFromBytes(rawBytes: Buffer): Packet {
+  /**
+   * Create a Packet from raw decrypted bytes (full packet including header).
+   * `direction` is the way the frame travelled: 'client' for client->server,
+   * 'server' for server->client.
+   */
+  createFromBytes(rawBytes: Buffer, direction: PacketDirection): Packet {
+    if (direction !== 'client' && direction !== 'server') {
+      throw new TypeError(`createFromBytes needs the frame's direction ('client' or 'server'), got ${JSON.stringify(direction)}`);
+    }
     const id = rawBytes[4]; // byte 5 is the packet ID
-    const def = this.definitions.get(id);
+    const def = this.definitions[direction].get(id);
 
     if (!def) {
       // Unknown packet — pass through as raw bytes
@@ -114,24 +159,25 @@ export class PacketFactory {
 
   /** Create an empty Packet by name (for sending). */
   createByName(name: string): Packet {
-    const id = this.nameToId.get(name);
-    if (id === undefined) {
+    const entry = this.nameToPacket.get(name);
+    if (entry === undefined) {
       throw new Error(`Unknown packet name: ${name}`);
     }
-    const def = this.definitions.get(id)!;
-    const pkt = createPacket(id, name, def.direction);
+    const pkt = createPacket(entry.id, name, entry.def.direction);
     pkt.isDefined = true;
     return pkt;
   }
 
-  /** Serialize a Packet back to raw bytes (with header). */
+  /** Serialize a Packet back to raw bytes (with header), with the layout of its own direction. */
   serialize(packet: Packet): Buffer {
     if (!packet.isDefined) {
       // Unknown packet — return raw bytes as-is
       return packet.rawBytes;
     }
 
-    const def = this.definitions.get(packet.id);
+    const def = packet.direction === 'client' || packet.direction === 'server'
+      ? this.definitions[packet.direction].get(packet.id)
+      : undefined;
     if (!def) {
       return packet.rawBytes;
     }
@@ -159,14 +205,14 @@ export class PacketFactory {
     return buf;
   }
 
-  /** Get packet name for an ID. */
-  getPacketName(id: number): string {
-    return this.definitions.get(id)?.name ?? `UNKNOWN_${id}`;
+  /** Get the name of the packet at an ID travelling in `direction`. */
+  getPacketName(id: number, direction: PacketDirection): string {
+    return this.definitions[direction]?.get(id)?.name ?? `UNKNOWN_${id}`;
   }
 
   /** Get packet ID for a name. */
   getPacketId(name: string): number | undefined {
-    return this.nameToId.get(name);
+    return this.nameToPacket.get(name)?.id;
   }
 
   // ─── Field Reading ──────────────────────────────────────────────

@@ -12,6 +12,11 @@ import { invertPacketMap } from '../packet-map.js';
 // `protocolOnlyPackets`; `PacketType` members with no id live in
 // `protocolOrphanNames`.
 //
+// An id can carry a different packet in each direction. PACKET_MAP (id -> name)
+// then holds the incoming packet, because numeric lookups name the frames a game
+// client receives (PacketIO.onData), and OUTGOING_AT_SHARED_IDS holds the outgoing
+// one; BIDIR_PACKET_MAP maps both names to the id. Upstream realmlib's rule too.
+//
 // A handful of packet names differ between REC's historical naming and realmlib's.
 // The map entry uses REC's name (so downstream string comparisons keep working);
 // realmlib's name is exported as an alias below so imports from either world resolve.
@@ -185,7 +190,7 @@ export const PACKET_MAP: PacketMap = {
   "210": "INCOMING_PARTY_MEMBER_INFO",
   "212": "PARTY_MEMBER_ADDED",
   "214": "PARTY_LIST_MESSAGE",
-  "215": "PARTY_JOIN_REQUEST",
+  "215": "PARTY_JOIN_RESULT",
   "217": "PARTY_REQUEST_RESPONSE",
   "218": "FOR_RECONNECT",
   "219": "REDEEM_VOUCHER",
@@ -201,7 +206,14 @@ export const PACKET_MAP: PacketMap = {
   "1000": "IP_ADDRESS",
 };
 
-export const BIDIR_PACKET_MAP: PacketMap = invertPacketMap(PACKET_MAP);
+/** Outgoing packets at ids whose PACKET_MAP entry is the incoming packet. */
+export const OUTGOING_AT_SHARED_IDS: PacketMap = {
+  "215": "PARTY_JOIN_REQUEST",
+  "217": "PARTY_JOIN_REQUEST_RESPONSE",
+};
+
+// Numeric lookups resolve to the incoming packet; every name resolves to its id.
+export const BIDIR_PACKET_MAP: PacketMap = { ...invertPacketMap(OUTGOING_AT_SHARED_IDS), ...invertPacketMap(PACKET_MAP) };
 
 export enum PacketType {
   ACCEPTTRADE = "ACCEPTTRADE",
@@ -317,6 +329,8 @@ export enum PacketType {
   PARTY_ACTION_RESULT = "PARTY_ACTION_RESULT",
   PARTY_INVITE_RESPONSE = "PARTY_INVITE_RESPONSE",
   PARTY_JOIN_REQUEST = "PARTY_JOIN_REQUEST",
+  PARTY_JOIN_REQUEST_RESPONSE = "PARTY_JOIN_REQUEST_RESPONSE",
+  PARTY_JOIN_RESULT = "PARTY_JOIN_RESULT",
   PARTY_LIST_MESSAGE = "PARTY_LIST_MESSAGE",
   PARTY_MEMBER_ADDED = "PARTY_MEMBER_ADDED",
   PARTY_REQUEST_RESPONSE = "PARTY_REQUEST_RESPONSE",
@@ -448,7 +462,7 @@ export const PACKET_DIRECTION: Record<PacketType, "Incoming" | "Outgoing"> = {
   CLAIM_ACCOUNT_LEVEL_REWARD_RESULT: "Incoming",  // verified against realmlib incoming/outgoing dir
   CLAIM_BATTLE_PASS: "Outgoing",
   CLAIM_BP_MILESTONE_RESULT: "Incoming",
-  CLAIM_CHEST_REWARD: "Incoming",
+  CLAIM_CHEST_REWARD: "Outgoing",
   CLAIM_DAILY_ITEM: "Incoming",  // verified against realmlib incoming/outgoing dir (was Outgoing heuristic)
   CLAIM_LOGIN_REWARD_MSG: "Outgoing",
   CLAIM_MISSION: "Outgoing",
@@ -527,7 +541,9 @@ export const PACKET_DIRECTION: Record<PacketType, "Incoming" | "Outgoing"> = {
   PARTY_ACTION: "Outgoing",
   PARTY_ACTION_RESULT: "Incoming",
   PARTY_INVITE_RESPONSE: "Outgoing",
-  PARTY_JOIN_REQUEST: "Incoming",
+  PARTY_JOIN_REQUEST: "Outgoing",
+  PARTY_JOIN_REQUEST_RESPONSE: "Outgoing",
+  PARTY_JOIN_RESULT: "Incoming",
   PARTY_LIST_MESSAGE: "Incoming",
   PARTY_MEMBER_ADDED: "Incoming",
   PARTY_REQUEST_RESPONSE: "Incoming",
@@ -598,7 +614,7 @@ export const PACKET_DIRECTION: Record<PacketType, "Incoming" | "Outgoing"> = {
   UNLOCK_INFORMATION: "Incoming",
   UPDATE: "Incoming",
   UPDATEACK: "Outgoing",
-  UPGRADE_ENCHANTER: "Outgoing",
+  UPGRADE_ENCHANTER: "Incoming",
   UPGRADE_ENCHANTMENT: "Outgoing",
   USEITEM: "Outgoing",
   USEPORTAL: "Outgoing",

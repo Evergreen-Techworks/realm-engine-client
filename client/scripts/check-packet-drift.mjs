@@ -11,9 +11,16 @@
 //   3. No id appears in both `packets` and `protocolOnlyPackets`.
 //   4. `protocolName` values are unique and collide with no protocol-only name
 //      or orphan name.
-//   5. Layer A `name` values are unique (a duplicate would make
-//      PacketFactory.nameToId silently drop one).
+//   5. Layer A `name` values are unique (PacketFactory refuses to load a
+//      duplicate: createByName could not tell the two apart).
 //   6. Every `protocolAliases` key is an orphan name; every value is in PACKET_MAP.
+//   7. `packets` keys are canonical (scripts/lib/packet-keys.mjs): "<id>" for an
+//      id with one packet, "client:<id>" + "server:<id>" for an id with a packet
+//      in each direction, a qualifier that matches `direction`, no two packets at
+//      one (direction, id), qualified keys in (id, direction) order.
+//   8. The file is exactly JSON.stringify(parsed, null, 2) + '\n'. The packet-ID
+//      sync rewrites it that way, and it is what keeps qualified keys after the
+//      plain ones (JSON.parse enumerates integer-like keys first).
 //
 // Run: node scripts/check-packet-drift.mjs   (also `npm run check:packets`)
 
@@ -22,8 +29,11 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { packetKeyProblems, parsePacketKey } from './lib/packet-keys.mjs';
+
 const CLIENT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const defs = JSON.parse(fs.readFileSync(path.join(CLIENT_ROOT, 'data/packet-definitions.json'), 'utf8'));
+const canonicalText = fs.readFileSync(path.join(CLIENT_ROOT, 'data/packet-definitions.json'), 'utf8');
+const defs = JSON.parse(canonicalText);
 
 const failures = [];
 const fail = (invariant, detail) => failures.push({ invariant, detail });
@@ -48,7 +58,8 @@ if (missing.length) {
 }
 
 // --- 3. no id in both packets and protocolOnlyPackets ----------------------
-const bothIds = Object.keys(defs.protocolOnlyPackets).filter((id) => id in defs.packets);
+const packetIds = new Set(Object.keys(defs.packets).map((key) => parsePacketKey(key)?.id).filter((id) => id !== undefined));
+const bothIds = Object.keys(defs.protocolOnlyPackets).filter((id) => packetIds.has(Number(id)));
 if (bothIds.length) {
   fail('3 (packets / protocolOnlyPackets are disjoint)', `ids in both: ${bothIds.join(', ')}`);
 }
@@ -89,7 +100,7 @@ if (bothIds.length) {
     else seen.set(p.name, id);
   }
   if (dupes.length) {
-    fail('5 (Layer A names are unique)', `${dupes.join('; ')} — PacketFactory.nameToId would silently drop one`);
+    fail('5 (Layer A names are unique)', `${dupes.join('; ')} — PacketFactory refuses to load a duplicate name`);
   }
 }
 
@@ -109,6 +120,21 @@ if (bothIds.length) {
   if (problems.length) fail('6 (aliases resolve)', problems.join('; '));
 }
 
+// --- 7. packet keys are canonical -------------------------------------------
+{
+  const problems = packetKeyProblems(defs.packets);
+  if (problems.length) fail('7 (packet keys are canonical)', problems.join('\n'));
+}
+
+// --- 8. canonical formatting ------------------------------------------------
+if (`${JSON.stringify(defs, null, 2)}\n` !== canonicalText) {
+  fail(
+    '8 (canonical formatting)',
+    'packet-definitions.json is not JSON.stringify(_, null, 2) + "\\n" of itself: re-indent it, and keep ' +
+      '"client:<id>" / "server:<id>" keys after every plain "<id>" key.',
+  );
+}
+
 // --- report ----------------------------------------------------------------
 if (failures.length) {
   console.error('[check-packet-drift] FAILED\n');
@@ -126,8 +152,11 @@ const divergences = Object.entries(defs.packets)
   .filter(([, p]) => p.protocolDirection)
   .map(([id, p]) => `${id} ${p.name}=${p.direction}/${p.protocolName}=${p.protocolDirection}`);
 
+const directional = Object.keys(defs.packets).filter((key) => key.startsWith('client:')).map((key) => parsePacketKey(key).id);
+
 console.log(
-  `[check-packet-drift] OK — ${Object.keys(defs.packets).length} shared packets, ` +
+  `[check-packet-drift] OK — ${Object.keys(defs.packets).length} shared packets ` +
+    `(ids with a packet in each direction: ${directional.join(', ') || 'none'}), ` +
     `${Object.keys(defs.protocolOnlyPackets).length} protocol-only, ` +
     `${Object.keys(defs.protocolOrphanNames).length} orphan names, ` +
     `${Object.keys(defs.protocolAliases).length} aliases, ` +

@@ -170,12 +170,16 @@ The two stacks genuinely disagree in three places. These are recorded as
 **data** in the canonical file and change neither stack's behaviour. Each
 needs a human decision; do not "fix" one in passing.
 
-- **D1 — six ids disagree about direction.** Layer A's `direction` vs
-  Layer B's `PACKET_DIRECTION`: ids **17, 53, 80, 204, 207, 215**. The
+- **D1 — five ids disagree about direction.** Layer A's `direction` vs
+  Layer B's `PACKET_DIRECTION`: ids **17, 53, 80, 204, 207**. The
   disagreement is encoded as `protocolDirection` on those packets, and
   `npm run check:packets` prints the register on every run. Layer B looks
   better-evidenced for at least 17, 80 and 207, but changing Layer A's
-  `direction` changes proxy behaviour.
+  `direction` changes proxy behaviour: `PacketFactory` looks definitions up
+  by (direction, id), so a frame travelling the other way than its label
+  passes through as `UNKNOWN_<id>` and its hooks stop firing. (Id 215 left
+  this register when it was split into its two real packets; see
+  `client/data/README.md`, "Packet keys".)
 - **D2 — `SHOOTACK` is two different things.** Layer A defines id **100**
   as `SHOOTACK` (one field, `time: int32`); Layer B has no id 100, and its
   `SHOOT_ACK` is id **121** with two fields (`time: int32`, `ack: int16`),

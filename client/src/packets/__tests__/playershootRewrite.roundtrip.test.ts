@@ -33,7 +33,7 @@ describe('PLAYERSHOOT projectilePosition rewrite', () => {
 
   it('serializes and re-parses to the same bytes (baseline)', () => {
     const bytes = buildPlayerShoot();
-    const parsed = factory.createFromBytes(bytes);
+    const parsed = factory.createFromBytes(bytes, 'client');
     expect(parsed.name).toBe('PLAYERSHOOT');
     expect(parsed.isDefined).toBe(true);
     const reserialized = factory.serialize(parsed);
@@ -42,7 +42,7 @@ describe('PLAYERSHOOT projectilePosition rewrite', () => {
 
   it('changes ONLY the projectilePosition bytes when rewritten', () => {
     const original = buildPlayerShoot();
-    const parsed = factory.createFromBytes(original);
+    const parsed = factory.createFromBytes(original, 'client');
 
     parsed.data.projectilePosition = { x: 111.5, y: 222.25 };
     parsed.modified = true;
@@ -63,7 +63,7 @@ describe('PLAYERSHOOT projectilePosition rewrite', () => {
     expect(differing[differing.length - 1] - differing[0]).toBeLessThanOrEqual(7);
 
     // And every other field must survive intact.
-    const back = factory.createFromBytes(rewritten);
+    const back = factory.createFromBytes(rewritten, 'client');
     expect(back.data.time).toBe(123456);
     expect(back.data.shotId).toBe(4242);
     expect(back.data.containerType).toBe(1234);
@@ -87,7 +87,7 @@ describe('PLAYERSHOOT projectilePosition rewrite', () => {
 
     /** Byte indices that differ from `original` after applying `mutate`. */
     function diffAfter(original: Buffer, mutate: (p: any) => void): number[] {
-      const parsed = factory.createFromBytes(original);
+      const parsed = factory.createFromBytes(original, 'client');
       mutate(parsed);
       parsed.modified = true;
       const rewritten = factory.serialize(parsed);
@@ -130,12 +130,12 @@ describe('PLAYERSHOOT projectilePosition rewrite', () => {
 
     it('re-parses with both positions spoofed and every other field intact', () => {
       const original = buildPlayerShoot();
-      const parsed = factory.createFromBytes(original);
+      const parsed = factory.createFromBytes(original, 'client');
       parsed.data.projectilePosition = { ...ORIGIN };
       parsed.data.playerPosition = { ...ORIGIN };
       parsed.modified = true;
 
-      const back = factory.createFromBytes(factory.serialize(parsed));
+      const back = factory.createFromBytes(factory.serialize(parsed), 'client');
       expect(back.name).toBe('PLAYERSHOOT');
       expect(back.isDefined).toBe(true);
       expect(back.data.time).toBe(123456);

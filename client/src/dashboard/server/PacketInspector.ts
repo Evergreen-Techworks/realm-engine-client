@@ -154,7 +154,7 @@ export class PacketInspector {
       data._unknownBodyHex = bodyHex.hex;
       if (bodyHex.truncated) data._unknownBodyHexTruncated = true;
       data._unknownNote =
-        'No entry for this packet ID in data/packet-definitions.json — body hex is the payload after the 5-byte header.';
+        'No entry for this packet ID in this direction in data/packet-definitions.json — body hex is the payload after the 5-byte header.';
       return data;
     }
 
