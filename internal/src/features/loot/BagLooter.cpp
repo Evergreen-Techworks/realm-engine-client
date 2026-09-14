@@ -11,47 +11,49 @@
 
 namespace {
 
-// Loot-bag object types from the game's Objects.xml (Multitool reference).
-// Boost variants of each tier sit alongside the canonical type so an
-// enabled tier picks up both.
+// Loot-bag object types, verified against the 86ad651b objects.xml: every
+// Class=Container "Loot Bag" object and its Boost variant. The colour is the
+// bag's lofiObj4 sprite sampled from mapObjects.png (0xd0-0xd9 base, 0xe0-0xe9
+// Boost); Loot Bag 6 is the only white one (its MinimapIcon is 0xFFFFFF), and
+// Loot Bag 5 is the dark-blue potion bag (potions carry <BagType>5).
 struct BagTypeEntry {
     int32_t            type;
     BagLooter::BagTier tier;
 };
 constexpr BagTypeEntry kBagTypes[] = {
-    // Brown
-    { 0x0500, BagLooter::Brown     },
+    { 0x0500, BagLooter::Brown     },   // Loot Bag 0
     { 0x06ad, BagLooter::Brown     },   // Loot Bag 0 Boost
-    // Pink
-    { 0x0506, BagLooter::Pink      },
+    { 0x0506, BagLooter::Pink      },   // Loot Bag 1
     { 0x06ae, BagLooter::Pink      },   // Loot Bag 1 Boost
-    // Purple
-    { 0x0507, BagLooter::Purple    },
+    { 0x0507, BagLooter::Purple    },   // Loot Bag 2
     { 0x06ba, BagLooter::Purple    },   // Loot Bag 2 Boost
-    // Cyan
-    { 0x0508, BagLooter::Cyan      },
-    { 0x06bb, BagLooter::Cyan      },   // Loot Bag 3 Boost
-    // Blue
-    { 0x0509, BagLooter::Blue      },
-    { 0x06bd, BagLooter::Blue      },   // Loot Bag 4 Boost
-    // White (UT-tier — community calls Loot Bag 5 Boost the "white bag").
-    { 0x06be, BagLooter::White     },   // Loot Bag 5 Boost
-    { 0x0510, BagLooter::White     },   // Loot Bag 6 Boost (Eternal-tier, treat as white)
-    { 0x06bc, BagLooter::White     },   // Loot Bag 7 Boost
-    { 0x050f, BagLooter::White     },   // Loot Bag 8 (rare event drop)
-    { 0x06bf, BagLooter::White     },   // Loot Bag 8 Boost
-    { 0x06ac, BagLooter::White     },   // Loot Bag 9
-    { 0x06c0, BagLooter::White     },   // Loot Bag 9 Boost
-    // Soulbound
-    { 0x0503, BagLooter::Soulbound },
+    { 0x0508, BagLooter::Egg       },   // Loot Bag 3 (egg basket)
+    { 0x06bb, BagLooter::Egg       },   // Loot Bag 3 Boost
+    { 0x0509, BagLooter::LightBlue },   // Loot Bag 4
+    { 0x06bd, BagLooter::LightBlue },   // Loot Bag 4 Boost
+    { 0x050b, BagLooter::DarkBlue  },   // Loot Bag 5 (potions)
+    { 0x06be, BagLooter::DarkBlue  },   // Loot Bag 5 Boost
+    { 0x050c, BagLooter::White     },   // Loot Bag 6
+    { 0x0510, BagLooter::White     },   // Loot Bag 6 Boost
+    { 0x050e, BagLooter::Gold      },   // Loot Bag 7
+    { 0x06bc, BagLooter::Gold      },   // Loot Bag 7 Boost
+    { 0x050f, BagLooter::Orange    },   // Loot Bag 8
+    { 0x06bf, BagLooter::Orange    },   // Loot Bag 8 Boost
+    { 0x06ac, BagLooter::Red       },   // Loot Bag 9
+    { 0x06c0, BagLooter::Red       },   // Loot Bag 9 Boost
+    { 0x0503, BagLooter::Soulbound },   // Soulbound Loot Bag
 };
 
 constexpr int kBagTypeCount = sizeof(kBagTypes) / sizeof(kBagTypes[0]);
 
 std::atomic<bool>  s_enabled       { false };
+// Defaults keep every bag walked before still walked: the old Cyan tier was the egg
+// basket, old Blue the light-blue bag, and old White held the dark-blue, white,
+// gold, orange and red Boost bags. Brown, pink and purple stay off.
 std::atomic<bool>  s_tierEnabled[BagLooter::TierCount_] = {
-    {false}, {false}, {false}, {true},   // Cyan default on
-    {true},  {true},  {true}              // Blue, White, Soulbound default on
+    {false}, {false}, {false},           // Brown, Pink, Purple
+    {true},  {true},  {true},  {true},   // Egg, LightBlue, DarkBlue, White
+    {true},  {true},  {true},  {true}    // Gold, Orange, Red, Soulbound
 };
 std::atomic<float> s_maxWalkDist   { 12.f };
 
@@ -165,9 +167,8 @@ void Tick()
         if (distSq > maxDistSq) continue;
         ++seenInRange;
 
-        // Tier priority: higher tier wins ties; closer wins within tier.
-        // Bias the per-tier rank by 4 tiles² per tier so a Blue bag at
-        // 4 tiles beats a Brown bag at 1 tile.
+        // Tier priority: a later tier wins ties; closer wins within a tier.
+        // Each tier step is worth 16 tiles² of squared distance.
         const float rankSq = distSq - static_cast<float>(tier) * 16.f;
         if (rankSq < bestSq) {
             bestSq   = rankSq;

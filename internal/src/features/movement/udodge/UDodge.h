@@ -32,8 +32,10 @@ struct SafetyState {
 SafetyState GetSafetyState();
 
 // Nav wedge signal (plan 89). Published from the walk-to stuck detector inside
-// Tick(): `wedged` latches true when the nav goal has seen no progress for
-// >1.5 s and clears on the next real progress step or when walk-to ends. Written
+// Tick(): `wedged` is true on a frame where the follower is `blocked` (its next
+// route step is not clear — set immediately, no delay) or `stalled` (under 0.25
+// tiles of progress for 500 ms, Navigation::Progress), and false again once
+// neither holds, or when walk-to ends. A locked-target approach never sets it. Written
 // on the game thread at the end of each Tick, read by auto-break-walls on the
 // render thread — a plain atomic snapshot, consumed as a hint (never a lock).
 struct NavWedge {
