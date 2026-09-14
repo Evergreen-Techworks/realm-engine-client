@@ -204,6 +204,17 @@ export class StateManager {
   private static readonly TELEPORT_WAIT_MAX_MS = 600000;
   // Land just past the boundary rather than exactly on it.
   private static readonly TELEPORT_WAIT_MARGIN_MS = 250;
+  // Hold after an ACCEPTED teleport. The server refuses a second teleport for a
+  // while and says so only if we try, so without this the farmer spent one
+  // TELEPORT per trip learning it. Evidence, realm-engine-proxy.log 2026-09-12..14:
+  // seven refusals ({"k":"s.teleport_cooldown","t":{"amount":"3"|"4"|"6",}}),
+  // each answering a script TELEPORT sent no sooner than the farmer's 5 s retry
+  // after the previous one. 5 s + the largest stated remainder (6 s) is 11 s;
+  // 12 s covers it with rounding. The exact server value is unconfirmed; a
+  // refusal still overrides this with the wait it states. The "after server
+  // change" wait (48 s on 2026-09-10, 36 s two seconds after a realm entry on
+  // 2026-09-14) is not derivable as one number, so it stays refusal-driven.
+  private static readonly TELEPORT_ACCEPTED_COOLDOWN_MS = 12000;
 
   /**
    * Open the reply window for a TELEPORT on its way to the server.
@@ -298,6 +309,8 @@ export class StateManager {
     const now = Date.now();
     if (client.pendingTeleportSentAt > 0 && (now - client.pendingTeleportSentAt) <= 5000) {
       client.lastTeleportGotoAt = now;
+      client.teleportBlockedUntil = Math.max(client.teleportBlockedUntil,
+        now + StateManager.TELEPORT_ACCEPTED_COOLDOWN_MS);
       client.pendingTeleportSentAt = 0;
       client.pendingTeleportTargetObjectId = null;
     } else if (client.pendingTeleportSentAt > 0 && (now - client.pendingTeleportSentAt) > 5000) {

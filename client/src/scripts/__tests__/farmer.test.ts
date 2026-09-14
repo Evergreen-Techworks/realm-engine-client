@@ -430,7 +430,7 @@ it('expires a missing encounter with no replacement quest and reacquires a vulne
 describe('bosses protected by their adds', () => {
   // objects.xml: 0x55B0 "New Actual Lich" (DisplayId Lich), 0x55B1 "New Phylactery Bearer"
   // (DisplayId Phylactery Bearer), 0x55B2 "New Haunted Spirit" (DisplayId Haunted Spirit).
-  // The SDK reports DisplayId as enemy.name.
+  // BOSS_ADD_RULES match objectType; names are only for readability.
   const lichFight = () => {
     vi.useFakeTimers(); vi.setSystemTime(10000);
     const f = fixture();
@@ -462,7 +462,7 @@ describe('bosses protected by their adds', () => {
     const plain = fixture();
     plain.setEnemies([plain.quest, { ...bearer, objectId: 13, position: { x: 7, y: 0 } }]);
     plain.farmer.onLoop();
-    expect(plain.farmer.lockId).toBe(10); // "Boss" has no listed dependents and has not healed
+    expect(plain.farmer.lockId).toBe(10); // "Boss" has no BOSS_ADD_RULES entry
   });
 
   it('applies the same order when the Lich is fought outside a quest encounter', () => {
@@ -475,7 +475,9 @@ describe('bosses protected by their adds', () => {
     expect(f.farmer.lockId).toBe(11);
   });
 
-  it('learns a healing boss from its HP rising and clears the enemies beside it first', () => {
+  it('does not make the enemies beside a healing boss a priority', () => {
+    // The old heal rule turned every enemy within 12 tiles of any enemy whose HP rose into
+    // a priority target for 8 s, so a self-regenerating boss sent the farmer after mobs.
     vi.useFakeTimers(); vi.setSystemTime(10000);
     const f = fixture();
     Object.assign(f.quest, { hp: 500, maxHp: 1000 });
@@ -483,20 +485,144 @@ describe('bosses protected by their adds', () => {
     f.setEnemies([f.quest, minion]); f.farmer.onLoop();
     expect(f.farmer.lockId).toBe(10);
     f.quest.hp = 620; vi.setSystemTime(10100); f.farmer.onLoop(); // healed: max HP unchanged
-    expect(f.farmer.lockId).toBe(20);
-    f.setEnemies([f.quest]); vi.setSystemTime(10200); f.farmer.onLoop();
+    expect(f.farmer.lockId).toBe(10);
+    f.quest.hp = 700; vi.setSystemTime(10200); f.farmer.onLoop();
     expect(f.farmer.lockId).toBe(10);
   });
 
-  it('does not treat HP scaling (max HP rising too) or a first HP reading as a heal', () => {
+  it('only counts a listed add close to its own boss, and never locks one past the lock release radius', () => {
+    const { f, bearer, spirit } = lichFight();          // the Lich stands at (6, 0)
+    bearer.position = { x: -3, y: 0 };                  // 9 tiles from the Lich: not guarding it
+    f.setEnemies([f.quest, bearer]);
+    expect(f.farmer.updateTarget(10).objectId).toBe(10);
+    spirit.position = { x: 13, y: 0 };                  // beside the Lich, but 13 tiles from the player
+    f.setEnemies([f.quest, spirit]);
+    expect(f.farmer.updateTarget(10).objectId).toBe(10);
+  });
+
+  it("prioritises a boss's adds only while that boss is the target", () => {
+    const { f, bearer } = lichFight();
+    const other = { objectId: 30, objectType: 0x1234, name: 'Other Boss', position: { x: 5, y: 1 },
+      hp: 5000, maxHp: 5000, isTargetable: true };
+    f.setEnemies([f.quest, bearer, other]);
+    expect(f.farmer.updateTarget(30).objectId).toBe(30);
+  });
+
+  // objects.xml: 0x0928 "Ghost King" / 0x5598 "New Ghost King" (300000 HP first form) and
+  // 0x092d "Actual Ghost King" / 0x559A "New Actual Ghost King" (DisplayId Ghost King);
+  // its adds 0x092a-0x092c / 0x559B-0x559D Small, Medium and Large Ghost.
+  const ghostKingFight = () => {
     vi.useFakeTimers(); vi.setSystemTime(10000);
     const f = fixture();
-    Object.assign(f.quest, { hp: 0, maxHp: 1000 });
-    const minion = { objectId: 20, name: 'Minion', position: { x: 7, y: 1 }, hp: 50, maxHp: 50, isTargetable: true };
-    f.setEnemies([f.quest, minion]); f.farmer.observeHeals([f.quest, minion], 10000);
-    Object.assign(f.quest, { hp: 1000 }); f.farmer.onLoop();
+    Object.assign(f.quest, { name: 'Ghost King', objectType: 0x5598, hp: 300000, maxHp: 300000 });
+    const small = { objectId: 21, objectType: 0x559B, name: 'Small Ghost', position: { x: 5, y: 2 },
+      hp: 1000, maxHp: 1000, isTargetable: true };
+    const large = { objectId: 22, objectType: 0x559D, name: 'Large Ghost', position: { x: 7, y: -2 },
+      hp: 8000, maxHp: 8000, isTargetable: true };
+    return { f, small, large };
+  };
+
+  it('kills the Ghost King adds first, nearest first, then returns to the Ghost King', () => {
+    const { f, small, large } = ghostKingFight();
+    f.setEnemies([f.quest, large, small]); f.farmer.onLoop();
+    expect(f.farmer.lockId).toBe(21);
+    f.setEnemies([f.quest, large]); vi.setSystemTime(10100); f.farmer.onLoop();
+    expect(f.farmer.lockId).toBe(22);
+    f.setEnemies([f.quest]); vi.setSystemTime(10200); f.farmer.onLoop();
     expect(f.farmer.lockId).toBe(10);
-    Object.assign(f.quest, { hp: 1500, maxHp: 1500 }); vi.setSystemTime(10100); f.farmer.onLoop();
-    expect(f.farmer.lockId).toBe(10);
+    expect(f.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(true);
   });
+
+  it('is not distracted by adds that belong to a different boss', () => {
+    const lich = lichFight();
+    const ghost = { objectId: 21, objectType: 0x559B, name: 'Small Ghost', position: { x: 5, y: 1 },
+      hp: 1000, maxHp: 1000, isTargetable: true };
+    lich.f.setEnemies([lich.f.quest, ghost]); lich.f.farmer.onLoop();
+    expect(lich.f.farmer.lockId).toBe(10);
+    const king = ghostKingFight();
+    king.f.setEnemies([king.f.quest, { ...lich.bearer, position: { x: 5, y: 1 } }]); king.f.farmer.onLoop();
+    expect(king.f.farmer.lockId).toBe(10);
+  });
+
+});
+
+it('releases a dead event boss when only untargetable objects remain beside it', () => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const f = fixture(); f.sdk.self.getLevel = () => 20;
+  const boss = { ...f.quest, objectId: 40, isEventBoss: true };
+  const next = { ...boss, objectId: 41, position: { x: 200, y: 0 } };
+  const objects = [boss, next];
+  f.sdk.world.objects.getAll = () => objects;
+  f.sdk.world.objects.getById = (id: number) => objects.find(o => o.objectId === id);
+  f.setEnemies([boss]); f.farmer.onLoop();
+  expect(f.farmer.eventArrived).toBe(true);
+  boss.hp = 0;
+  const helper = { ...f.quest, objectId: 51, name: 'Invulnerable helper', position: { x: 6, y: 1 }, isTargetable: false };
+  f.setEnemies([boss, helper]); vi.setSystemTime(11000); f.farmer.onLoop();
+  vi.setSystemTime(21500); f.farmer.onLoop();
+  expect(f.farmer.finishedEvents.has(40)).toBe(true);
+  expect(f.farmer.eventGoal.objectId).toBe(41);
+});
+
+it('caps how long living adds can hold the farmer at a dead event boss', () => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const f = fixture(); f.sdk.self.getLevel = () => 20;
+  const boss = { ...f.quest, objectId: 40, isEventBoss: true };
+  const next = { ...boss, objectId: 41, position: { x: 200, y: 0 } };
+  const objects = [boss, next];
+  f.sdk.world.objects.getAll = () => objects;
+  f.sdk.world.objects.getById = (id: number) => objects.find(o => o.objectId === id);
+  f.setEnemies([boss]); f.farmer.onLoop();
+  boss.hp = 0;
+  const add = { ...f.quest, objectId: 50, position: { x: 6, y: -1 } };
+  f.setEnemies([boss, add]); vi.setSystemTime(11000); f.farmer.onLoop();
+  vi.setSystemTime(45000); f.farmer.onLoop();
+  expect(f.farmer.eventGoal.objectId).toBe(40);        // adds still alive: stay
+  vi.setSystemTime(71500); f.farmer.onLoop();
+  expect(f.farmer.finishedEvents.has(40)).toBe(true);  // but not forever
+  expect(f.farmer.eventGoal.objectId).toBe(41);
+});
+
+it('gives up on an event boss that never becomes targetable after bounded encounter attempts', () => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const f = fixture(); f.sdk.self.getLevel = () => 20;
+  f.sdk.world.tiles = { getAll: () => [] };
+  const marker = { objectId: 40, isEventBoss: true, name: 'Hidden boss', position: { x: 6, y: 0 }, hp: 5000, maxHp: 5000 };
+  const next = { ...marker, objectId: 41, name: 'Next boss', position: { x: 200, y: 0 } };
+  const objects = [marker, next];
+  f.sdk.world.objects.getAll = () => objects;
+  f.sdk.world.objects.getById = (id: number) => objects.find(o => o.objectId === id);
+  f.setEnemies([]);                                    // the event object never appears among enemies
+  for (let t = 10000; t <= 75000; t += 1000) { vi.setSystemTime(t); f.farmer.onLoop(); }
+  expect(f.farmer.finishedEvents.has(40)).toBe(true);
+  expect(f.farmer.eventGoal.objectId).toBe(41);
+});
+
+it('re-picks a far committed quest once the server names another quest and the old one is out of view', () => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const f = fixture(); f.quest.position.x = 100;
+  let serverQuest = 10; let visible: any[] = [f.quest];
+  const other = { ...f.quest, objectId: 11, name: 'Other', position: { x: -60, y: 0 } };
+  f.sdk.world.objects.getById = (id: number) => visible.find(o => o.objectId === id) ?? null;
+  f.sdk.world.objects.getQuestObject = () => visible.find(o => o.objectId === serverQuest) ?? null;
+  f.sdk.world.objects.getQuestTargetId = () => serverQuest;
+  f.sdk.walking.canTeleport = () => false;
+  f.farmer.onLoop();
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(f.quest.position);
+  visible = []; vi.setSystemTime(70000); f.farmer.onLoop();
+  expect(f.farmer.questGoal.objectId).toBe(10);         // out of view, but the server still names it
+  serverQuest = 11; visible = [other]; vi.setSystemTime(71000); f.farmer.onLoop();
+  expect(f.farmer.questGoal.objectId).toBe(10);         // short grace for a flip
+  vi.setSystemTime(74500); f.farmer.onLoop();
+  expect(f.farmer.questGoal.objectId).toBe(11);
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(other.position);
+});
+
+it('prefers a targetable enemy over a bigger locked one that can no longer be damaged', () => {
+  const f = fixture();
+  const shielded = { objectId: 30, name: 'Shielded', position: { x: 3, y: 0 }, hp: 50000, maxHp: 50000, isTargetable: false };
+  const mob = { objectId: 31, name: 'Mob', position: { x: 4, y: 0 }, hp: 100, maxHp: 100, isTargetable: true };
+  f.farmer.lockId = 30;
+  f.setEnemies([shielded, mob]);
+  expect(f.farmer.updateTarget(0).objectId).toBe(31);
 });

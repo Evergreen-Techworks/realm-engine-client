@@ -31,6 +31,7 @@ const SERVER_STATED_WAIT_MS = 48_000;
 const MARGIN_MS = 250;
 const FALLBACK_MS = 10_000;
 const REPLY_WINDOW_MS = 1_500;
+const ACCEPTED_COOLDOWN_MS = 12_000;
 
 const factory = new PacketFactory(PACKET_DEFINITIONS as any, STAT_TYPES as any);
 const fromHex = (hex: string): Packet => factory.createFromBytes(Buffer.from(hex, 'hex'));
@@ -188,8 +189,9 @@ describe('only TELEPORT_ERROR answers a teleport', () => {
     vi.setSystemTime(CAPTURE_TELEPORT_AT + 80);
     proxy.fireServerPacket(conn, wire('GOTO', { objectId: 4242, position: { x: 10, y: 20 }, unknown: 0 }));
 
-    expect(conn.teleportBlockedUntil).toBe(0);
     expect(conn.lastTeleportGotoAt).toBe(CAPTURE_TELEPORT_AT + 80);
+    // Accepted, so the server's post-teleport cooldown applies, not a refusal's wait.
+    expect(conn.teleportBlockedUntil).toBe(CAPTURE_TELEPORT_AT + 80 + ACCEPTED_COOLDOWN_MS);
   });
 });
 
@@ -233,5 +235,28 @@ describe('teleport refusal (script-sent TELEPORT, the farmer path)', () => {
     expect(Walking.teleportCooldownRemainingMs()).toBe(0);
     expect(teleport()).toBe(true);
     expect(sentToServer).toHaveLength(2);
+  });
+});
+
+// After an ACCEPTED teleport the server refuses the next one for several seconds:
+// realm-engine-proxy.log shows the farmer's next TELEPORT (5 s later) refused with
+// {"k":"s.teleport_cooldown","t":{"amount":"3".."6"}} seven times. Nothing held it locally.
+describe('teleport accepted (script-sent TELEPORT)', () => {
+  it('holds the next teleport locally for the post-teleport cooldown instead of sending it', () => {
+    const s = session();
+    s.conn.playerData.ownerObjectId = 4242;
+    BridgeWalking.install({ clientRef: { current: s.conn }, proxy: s.proxy, stateManager: s.state,
+      worldState: { getAllPlayersRawStatsForDashboard: () => [] } } as unknown as BridgeDeps, {} as MovementController);
+    vi.setSystemTime(1_000_000);
+    expect(Walking.teleportToBeacon(77)).toBe(true);
+    vi.setSystemTime(1_000_080);
+    s.proxy.fireServerPacket(s.conn, wire('GOTO', { objectId: 4242, position: { x: 10, y: 20 }, unknown: 0 }));
+    expect(Walking.teleportCooldownRemainingMs()).toBe(ACCEPTED_COOLDOWN_MS);
+    vi.setSystemTime(1_000_080 + 5_000);
+    expect(Walking.teleportToBeacon(78)).toBe(false);
+    expect(s.sentToServer).toHaveLength(1);
+    vi.setSystemTime(1_000_080 + ACCEPTED_COOLDOWN_MS);
+    expect(Walking.teleportToBeacon(78)).toBe(true);
+    expect(s.sentToServer).toHaveLength(2);
   });
 });
