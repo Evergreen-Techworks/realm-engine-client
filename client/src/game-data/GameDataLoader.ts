@@ -72,6 +72,15 @@ export interface ObjectDef {
   occupySquare: boolean; // true if object has <OccupySquare> (blocks pathfinding)
   protectFromGroundDamage: boolean;
   isEnemy: boolean;     // true if object has <Enemy> tag
+  /** `<Invincible/>`: the object cannot be damaged (1401 of 5167 enemy types in objects.xml). */
+  invincible: boolean;
+  /**
+   * Drawn with nothing but the `invisible` texture, no alternate visual
+   * (AltTexture/Animation/Presentation/RemoteTexture), and no body to hit: no
+   * `<MaxHitPoints>` or `<Size>` 0–1. Spawners, triggers, controllers. Invisible
+   * bosses drawn another way, or with HP and a body, are deliberately not flagged.
+   */
+  hiddenHelper: boolean;
   isPet: boolean;
   isPlayer: boolean;
   isContainer: boolean;
@@ -134,6 +143,27 @@ function parsePlayerClassStatMaxes(
     hpRegen: readXmlStatMaxField(obj.HpRegen),
     mpRegen: readXmlStatMaxField(obj.MpRegen),
   };
+}
+
+/** Every `File` under the object's own texture nodes (Texture, AnimatedTexture, RandomTexture). */
+function collectTextureFiles(node: unknown, out: string[] = []): string[] {
+  if (node == null) return out;
+  if (Array.isArray(node)) { for (const item of node) collectTextureFiles(item, out); return out; }
+  if (typeof node !== 'object') return out;
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    if (key === 'File' && typeof value === 'string') out.push(value.trim());
+    else if (typeof value === 'object') collectTextureFiles(value, out);
+  }
+  return out;
+}
+
+function isHiddenHelper(obj: Record<string, any>): boolean {
+  const files = collectTextureFiles([obj.Texture, obj.AnimatedTexture, obj.RandomTexture]);
+  if (!files.every((file) => file.toLowerCase() === 'invisible')) return false;
+  if (obj.AltTexture !== undefined || obj.Animation !== undefined
+    || obj.Presentation !== undefined || obj.RemoteTexture !== undefined) return false;
+  const size = obj.Size === undefined ? 100 : Number(obj.Size);
+  return obj.MaxHitPoints === undefined || (Number.isFinite(size) && size <= 1);
 }
 
 function readFirstTextureFile(
@@ -428,6 +458,8 @@ export class GameDataLoader {
         occupySquare: obj.OccupySquare !== undefined,
         protectFromGroundDamage: obj.ProtectFromGroundDamage !== undefined,
         isEnemy: obj.Enemy !== undefined,
+        invincible: obj.Invincible !== undefined,
+        hiddenHelper: isHiddenHelper(obj),
         isPet: obj.Pet !== undefined,
         isPlayer: obj.Player !== undefined,
         isContainer: obj.Container !== undefined,

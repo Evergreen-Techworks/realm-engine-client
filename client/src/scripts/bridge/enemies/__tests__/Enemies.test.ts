@@ -70,3 +70,28 @@ it('retains stationary bosses across delta ticks, clears invulnerability, and re
   vi.setSystemTime(24000); expect(world.isSnapshotFresh(3000)).toBe(false);
   world.clear(); expect(world.isSnapshotFresh(3000)).toBe(false);
 });
+
+it('never offers an objects.xml <Invincible/> enemy as a target, drops hidden helpers, and reads protective conditions', () => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const defs: Record<number, any> = {
+    1: { id: 'Ghost Lanturn On', invincible: true, hiddenHelper: false },   // 0x0e36: <Invincible/>
+    2: { id: 'Hook Helper', invincible: false, hiddenHelper: true },        // 0x2018: invisible, Size 0
+    3: { id: 'Mob', invincible: false, hiddenHelper: false },
+    4: { id: 'New Ghost King', invincible: false, hiddenHelper: false },
+  };
+  const row = (objectId: number, effects = 0) => ({ objectId, objectType: objectId, lastUpdate: 10000,
+    pos: { x: objectId, y: 0 }, stats: { [StatType.HP]: 100, [StatType.Effects]: effects } });
+  const rows = [row(1), row(2), row(3), row(4, 1 << ConditionEffect.Invincible)];
+  BridgeEnemies.install({ clientRef: { current: { connected: true, playerData: { pos: { x: 0, y: 0 } } } },
+    worldState: { getEntity: (id: number) => rows.find(r => r.objectId === id), getEnemiesMatching: () => rows },
+    gameData: { getObjectCategory: () => 'Enemy', getObject: (t: number) => defs[t], isBoss: () => false },
+  } as unknown as BridgeDeps);
+  expect(Enemies.getAll().map(e => e.objectId)).toEqual([1, 3, 4]);
+  expect(Enemies.getById(1)).toMatchObject({ isTargetable: false, isInvulnerable: true });
+  expect(Enemies.getById(3)?.isTargetable).toBe(true);
+  expect(Enemies.getById(4)?.isTargetable).toBe(false);
+  rows[3].stats[StatType.Effects] = 1 << ConditionEffect.Stasis;
+  expect(Enemies.getById(4)?.isTargetable).toBe(false);
+  rows[3].stats[StatType.Effects] = 0;
+  expect(Enemies.getById(4)?.isTargetable).toBe(true);
+});

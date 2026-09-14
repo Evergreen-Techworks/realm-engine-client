@@ -35,7 +35,11 @@ export class BridgeEnemies {
       // Hidden entities can remain in the wire snapshot with positive HP.
       // Do not acquire or indefinitely retain an invisible helper/phase.
       if (hasEffect(effects0, effects1, ConditionEffect.Invisible)) return null;
-      const invulnerable = hasEffect(effects0, effects1, ConditionEffect.Invulnerable)
+      // objects.xml helpers with no body to hit (invisible spawners, triggers): never an enemy.
+      if (def?.hiddenHelper) return null;
+      // <Invincible/> in objects.xml is permanent; the conditions below are the server's live state.
+      const invulnerable = def?.invincible === true
+        || hasEffect(effects0, effects1, ConditionEffect.Invulnerable)
         || hasEffect(effects0, effects1, ConditionEffect.Invincible)
         || hasEffect(effects0, effects1, ConditionEffect.Stasis);
       return {

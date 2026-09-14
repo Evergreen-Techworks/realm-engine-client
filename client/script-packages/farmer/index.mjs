@@ -34,24 +34,45 @@ const BEACON_MOVED_TILES = 8;     // moved at least this far ⇒ the teleport re
 const BEACON_NAME_OK = /^(teleport|active|actual active|captured)\s+beacon\b|\bbeacon(?:\s*\([^)]*\))?$/i;
 const BEACON_NAME_BAD = /guardian|inactive|decoy|anchor|patrol/i;
 // ── Bosses protected by their adds ───────────────────────────────────────────
-// Some bosses are healed while their adds live, so damage spent on the boss is
-// wasted until the adds die. objects.xml cannot express that: the heal is server
-// behaviour, and none of these objects carries a Spawn/Protect/Heal tag. So the
-// known cases are listed here, keyed by DisplayId (what the SDK reports as
-// enemy.name). DisplayId survived DECA re-adding the Lich under new type ids.
-// Adds are listed in kill order. The list is the full rule for a listed boss.
-// Any other boss becomes protected only after it is seen healing (observeHeals).
-const BOSS_DEPENDENTS = new Map([
-  // Realm Lich: 0x091b "Lich", 0x091c "Actual Lich" and 0x55B0 "New Actual Lich"
-  // (DisplayId Lich). Its adds are Phylactery Bearer (0x091d; 0x55B1 "New Phylactery
-  // Bearer") and Haunted Spirit (0x091e; 0x55B2 "New Haunted Spirit"). Which add
-  // heals is unconfirmed, so the Bearer goes first by name and both die before the Lich.
-  ['lich', ['phylactery bearer', 'haunted spirit']],
-]);
-const DEPENDENT_RADIUS = 12;     // an add this close to its boss is treated as protecting it
-const HEAL_MEMORY_MS = 8000;     // a boss seen healing keeps the enemies beside it as priority this long
-
-const nameKey = (value) => String(value ?? '').trim().toLowerCase();
+// Some bosses cannot usefully be damaged while their adds live: the Lich is healed
+// by them, the Ghost King's 300000-HP first form only gives way once its ghosts are
+// dead (user report 2026-09-14: "you need to kill the additional mobs before killing
+// boss"). objects.xml cannot express either; it is server behaviour. So each known
+// boss is one entry here, keyed by object TYPE (verified against RE_ASSETS/data/
+// objects.xml for game 86ad651b, old and "New" ids both), never by name, so an
+// unrelated object sharing a name cannot be pulled in. `adds` lists tiers in kill
+// order; enemies within a tier go nearest first. A boss with no entry is fought
+// directly. Whatever the protection mechanism, a boss the server marks Invulnerable,
+// Invincible or in Stasis is already untargetable, and its adds are cleared by
+// handleBossAdds without an entry.
+const BOSS_ADD_RULES = [
+  { // 0x091b "Lich" (DisplayId none), 0x091c "Actual Lich", 0x55B0 "New Actual Lich" (DisplayId Lich).
+    // Which add heals is unconfirmed, so the Bearer goes first and both die before the Lich.
+    name: 'Lich', bosses: [0x091b, 0x091c, 0x55B0],
+    adds: [[0x091d, 0x55B1] /* Phylactery Bearer */, [0x091e, 0x55B2] /* Haunted Spirit */],
+  },
+  { // 0x0928 "Ghost King" / 0x5598 "New Ghost King" (300000 HP first form), 0x092d "Actual Ghost
+    // King" / 0x559A "New Actual Ghost King" (5000 HP), DisplayId Ghost King. Its adds are the
+    // type block authored with it: Small/Medium/Large Ghost (1000/4000/8000 HP). Ghost Master
+    // (0x0929 / 0x5599, 100000 HP, 1 XP) is left out: nothing shows it must die, and its HP is
+    // that of a controller, not an add. Unconfirmed in game.
+    name: 'Ghost King', bosses: [0x0928, 0x092d, 0x5598, 0x559A],
+    adds: [[0x092a, 0x092b, 0x092c, 0x559B, 0x559C, 0x559D] /* Small, Medium, Large Ghost */],
+  },
+];
+// An add this close to its own boss protects it. Tight on purpose: the earlier 12 tiles plus
+// "any enemy beside a healing boss" sent the farmer after mobs that had nothing to do with it.
+const DEPENDENT_RADIUS = 8;
+// An arrived event whose boss is dead or gone may hold the farmer for adds and loot, but
+// never longer than this (an untargetable object beside the corpse used to pin it forever).
+const EVENT_HOLD_MAX_MS = 60000;
+// An encounter with nothing targetable, neither boss nor add, ends after this long...
+const ENCOUNTER_WAIT_MS = 30000;
+// ...and after this many such endings, with the boss never once targetable, it is skipped.
+const ENCOUNTER_MAX_ATTEMPTS = 2;
+// Beyond visibility a committed quest is kept while the server still names it
+// (QUESTOBJECTID). Without that signal, it is kept this long unseen before re-picking.
+const QUEST_UNSEEN_COMMIT_MS = 60000;
 
 export default class Farmer {
   constructor() {
@@ -89,8 +110,8 @@ export default class Farmer {
     this.beaconPending = null;       // attempt awaiting verification
     this.beaconRetryAfter = new Map();
     this.beaconListedFor = '';       // map whose beacon candidates we already logged
-    this.enemyHp = new Map();        // objectId -> { hp, maxHp } from the previous loop
-    this.healedAt = new Map();       // objectId -> when its HP last rose at an unchanged max HP
+    this.eventHoldSince = null;      // when an arrived event's boss was first seen dead or gone
+    this.encounterGiveUps = new Map(); // boss objectId -> encounters that ended with nothing targetable
   }
 
   setFiring(enabled) {
@@ -166,8 +187,8 @@ export default class Farmer {
     this.lastBeaconAt = 0;
     this.beaconPending = null;
     this.beaconRetryAfter.clear();
-    this.enemyHp = new Map();
-    this.healedAt = new Map();
+    this.eventHoldSince = null;
+    this.encounterGiveUps = new Map();
     // A destination is scoped to the map that created it. Drop the old Realm
     // quest/loot route before Nexus installs its forward-search corridor.
     RealmEngine.dodge.clearWaypoint();
@@ -176,36 +197,20 @@ export default class Farmer {
     this.setFiring(false);
   }
 
-  // A boss whose HP rises while its max HP stays put was healed. Max HP rising too
-  // is HP scaling (players joining), and a first non-zero reading is not a rise.
-  observeHeals(enemies, now) {
-    const seen = new Map();
-    for (const e of enemies) {
-      const prev = this.enemyHp.get(e.objectId);
-      if (prev && prev.hp > 0 && e.hp > prev.hp && e.maxHp === prev.maxHp) this.healedAt.set(e.objectId, now);
-      seen.set(e.objectId, { hp: e.hp, maxHp: e.maxHp });
-    }
-    for (const id of this.healedAt.keys()) if (!seen.has(id)) this.healedAt.delete(id);
-    this.enemyHp = seen;
-  }
-
-  // Living, targetable enemies that must die before damage on `boss` sticks, best
-  // first. For a listed boss these are its listed adds within DEPENDENT_RADIUS. For any
-  // boss seen healing in the last HEAL_MEMORY_MS they are every other enemy that close.
-  // Empty otherwise, so a boss with no adds is fought as before.
-  bossGuards(boss, enemies, now) {
-    if (!boss?.position) return [];
-    const near = enemies.filter((e) => e.objectId !== boss.objectId && e.hp > 0 && e.isTargetable
-      && Math.hypot(e.position.x - boss.position.x, e.position.y - boss.position.y) <= DEPENDENT_RADIUS);
-    const listed = BOSS_DEPENDENTS.get(nameKey(boss.name));
-    const rank = (e) => (listed ? listed.indexOf(nameKey(e.name)) : -1);
-    let guards = listed ? near.filter((e) => rank(e) >= 0) : [];
-    if (!guards.length && now - (this.healedAt.get(boss.objectId) ?? -Infinity) <= HEAL_MEMORY_MS) guards = near;
+  // Targetable adds of `boss` that must die first, best first: only the add types of
+  // that boss's BOSS_ADD_RULES entry, within DEPENDENT_RADIUS of it. Empty for a boss
+  // with no entry.
+  bossGuards(boss, enemies) {
+    const rule = boss?.position ? BOSS_ADD_RULES.find((r) => r.bosses.includes(boss.objectType)) : null;
+    if (!rule) return [];
+    const tier = (e) => rule.adds.findIndex((types) => types.includes(e.objectType));
     const px = RealmEngine.self.getX();
     const py = RealmEngine.self.getY();
-    return guards.sort((a, b) => rank(a) - rank(b)
-      || Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
-      || Math.hypot(a.position.x - px, a.position.y - py) - Math.hypot(b.position.x - px, b.position.y - py));
+    return enemies.filter((e) => e.objectId !== boss.objectId && e.hp > 0 && e.isTargetable && tier(e) >= 0
+        && Math.hypot(e.position.x - boss.position.x, e.position.y - boss.position.y) <= DEPENDENT_RADIUS)
+      .sort((a, b) => tier(a) - tier(b)
+        || Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
+        || Math.hypot(a.position.x - px, a.position.y - py) - Math.hypot(b.position.x - px, b.position.y - py));
   }
 
   updateTarget(preferredId = 0, enabled = true) {
@@ -216,13 +221,18 @@ export default class Farmer {
       .filter((e) => e.hp > 0 && (e.isTargetable || e.objectId === this.lockId)
         && Math.hypot(e.position.x - px, e.position.y - py)
           <= (e.objectId === this.lockId ? TARGET_RELEASE_RADIUS : TARGET_RADIUS))
-      .sort((a, b) => Number(b.objectId === preferredId) - Number(a.objectId === preferredId)
+      // Something we can damage beats a bigger thing we cannot, even the preferred or locked one.
+      .sort((a, b) => Number(b.isTargetable) - Number(a.isTargetable)
+        || Number(b.objectId === preferredId) - Number(a.objectId === preferredId)
         || Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
         || b.maxHp - a.maxHp || b.hp - a.hp
         || Math.hypot(a.position.x - px, a.position.y - py)
           - Math.hypot(b.position.x - px, b.position.y - py));
-    // The best pick may be protected: its adds die first, even just past our own radius.
-    const target = this.bossGuards(eligible[0], all, Date.now())[0] ?? eligible[0] ?? null;
+    // The pick may be a boss protected by its own adds: those die first, but only ones we
+    // can hold a lock on from here. Anything farther is walked to by the encounter, not locked.
+    const guard = this.bossGuards(eligible[0], all)
+      .find((e) => Math.hypot(e.position.x - px, e.position.y - py) <= TARGET_RELEASE_RADIUS);
+    const target = guard ?? eligible[0] ?? null;
     if (!target) {
       this.setFiring(false);
       if (this.lockId) {
@@ -283,8 +293,10 @@ export default class Farmer {
     if (!this.bossEncounter && quest) {
       const boss = enemies.find(e => e.objectId === quest.objectId && e.hp > 0);
       const anchor = boss ?? (quest.isEventBoss ? quest : null);
-      if (anchor && RealmEngine.self.distanceTo(anchor.position) <= 12)
-        this.bossEncounter = { objectId: anchor.objectId, position: { ...anchor.position }, name: anchor.name };
+      if (anchor && RealmEngine.self.distanceTo(anchor.position) <= 12
+        && (this.encounterGiveUps.get(anchor.objectId) ?? 0) < ENCOUNTER_MAX_ATTEMPTS)
+        this.bossEncounter = { objectId: anchor.objectId, position: { ...anchor.position }, name: anchor.name,
+          everTargetable: false, waitingSince: null };
     }
     if (!this.bossEncounter) return false;
     const boss = enemies.find(e => e.objectId === this.bossEncounter.objectId);
@@ -295,23 +307,35 @@ export default class Farmer {
         this.handleBossAdds(enemies, this.bossEncounter, this.bossEncounter.name, 'boss defeated; watching for loot or next phase');
         return true;
       }
-      this.bossEncounter = null; this.bossMissingAt = null; this.updateTarget(0, false); return false;
+      this.endBossEncounter(false); return false;
     }
-    if (boss) { this.bossEncounter.position = { ...boss.position }; this.bossMissingAt = null; }
-    else {
+    if (boss) {
+      this.bossEncounter.position = { ...boss.position }; this.bossMissingAt = null;
+      if (boss.isTargetable) this.bossEncounter.everTargetable = true;
+    } else {
       if (this.bossMissingAt === null) this.bossMissingAt = now;
       const changedQuest = quest && quest.objectId !== this.bossEncounter.objectId;
       if (changedQuest || now - this.bossMissingAt >= (quest?.isEventBoss ? 30000 : QUEST_MISSING_GRACE_MS)) {
-        this.bossEncounter = null; this.bossMissingAt = null; this.updateTarget(0, false); return false;
+        this.endBossEncounter(!changedQuest); return false;
       }
     }
     if (!boss || !boss.isTargetable) {
+      // Nothing on the boss to damage. Targetable adds keep the wait useful; with none,
+      // a present-but-untargetable boss is waited on for ENCOUNTER_WAIT_MS at most.
+      const center = this.bossEncounter.position;
+      const addAlive = enemies.some((e) => e.objectId !== this.bossEncounter.objectId && e.hp > 0 && e.isTargetable
+        && Math.hypot(e.position.x - center.x, e.position.y - center.y) <= 12);
+      if (addAlive) this.bossEncounter.waitingSince = null;
+      else if (this.bossEncounter.waitingSince === null) this.bossEncounter.waitingSince = now;
+      else if (boss && now - this.bossEncounter.waitingSince >= ENCOUNTER_WAIT_MS) {
+        this.endBossEncounter(true); return false;
+      }
       this.handleBossAdds(enemies, this.bossEncounter, this.bossEncounter.name,
         boss ? 'waiting for adds or vulnerable boss' : 'waiting for encounter visibility');
       return true;
     }
-    // A vulnerable boss can still be healed by its adds; clear those first.
-    const guards = this.bossGuards(boss, enemies, now);
+    // A vulnerable boss can still be protected by its adds; clear those first.
+    const guards = this.bossGuards(boss, enemies);
     if (guards.length) {
       this.handleBossAdds(enemies, this.bossEncounter, this.bossEncounter.name, 'waiting for adds', guards);
       return true;
@@ -331,6 +355,34 @@ export default class Farmer {
     return true;
   }
 
+  // End the current boss encounter. One that timed out without its boss ever being
+  // targetable is a failed attempt; after ENCOUNTER_MAX_ATTEMPTS that boss is no longer
+  // engaged, and an event goal for it is finished so the next event is chosen instead
+  // of re-creating the same empty encounter every 30 seconds.
+  endBossEncounter(failedAttempt) {
+    const encounter = this.bossEncounter;
+    this.bossEncounter = null; this.bossMissingAt = null; this.updateTarget(0, false);
+    if (!failedAttempt || !encounter || encounter.everTargetable) return;
+    const attempts = (this.encounterGiveUps.get(encounter.objectId) ?? 0) + 1;
+    this.encounterGiveUps.set(encounter.objectId, attempts);
+    if (attempts < ENCOUNTER_MAX_ATTEMPTS) return;
+    RealmEngine.log.info(`Realm Farmer: giving up on ${encounter.name} — nothing targetable in ${attempts} attempts.`);
+    if (this.eventGoal?.objectId === encounter.objectId) {
+      this.finishedEvents.add(encounter.objectId);
+      this.eventGoal = null; this.eventArrived = false; this.eventMissingAt = null; this.eventHoldSince = null;
+    }
+  }
+
+  // A boss encounter whose boss is not known to be dead. User decision 2026-09-14:
+  // while one is on, only white bags interrupt; everything else waits for the kill or
+  // for the encounter to end, and the boss lock is kept.
+  bossFightActive() {
+    const encounter = this.bossEncounter;
+    if (!encounter || RealmEngine.world.objects.isDead?.(encounter.objectId)) return false;
+    const boss = RealmEngine.enemies.getAll().find((e) => e.objectId === encounter.objectId);
+    return !(boss && boss.hp <= 0 && boss.maxHp > 0);
+  }
+
   bagIsUseful(bag) {
     return (bag.rarity === 'white' && bag.items.length > 0)
       || bag.items.some((item) =>
@@ -340,11 +392,11 @@ export default class Farmer {
         || RealmEngine.loot.isEquipmentUpgrade(item.objectType));
   }
 
-  chooseLootBag() {
+  chooseLootBag(whiteOnly = false) {
     const px = RealmEngine.self.getX();
     const py = RealmEngine.self.getY();
     return RealmEngine.loot.getNearbyBags(LOOT_RADIUS)
-      .filter((bag) => this.bagIsUseful(bag))
+      .filter((bag) => this.bagIsUseful(bag) && (!whiteOnly || bag.rarity === 'white'))
       .sort((a, b) => Number(b.rarity === 'white') - Number(a.rarity === 'white')
         || Number(b.items.some((item) => RealmEngine.loot.isUT(item.objectType) || RealmEngine.loot.isST(item.objectType)))
           - Number(a.items.some((item) => RealmEngine.loot.isUT(item.objectType) || RealmEngine.loot.isST(item.objectType)))
@@ -375,13 +427,16 @@ export default class Farmer {
     return false;
   }
 
-  handleLoot(now) {
-    if (this.useInventoryUpgradesAndPots(now)) return true;
+  // `whiteOnly`: a boss fight is on. Only a white bag may take movement; other bags and
+  // inventory upgrades wait and are picked up again once it is over.
+  handleLoot(now, whiteOnly = false) {
+    if (!whiteOnly && this.useInventoryUpgradesAndPots(now)) return true;
     let bag = this.lootBagId
-      ? RealmEngine.loot.getBags().find((b) => b.objectId === this.lootBagId && this.bagIsUseful(b))
+      ? RealmEngine.loot.getBags().find((b) => b.objectId === this.lootBagId && this.bagIsUseful(b)
+        && (!whiteOnly || b.rarity === 'white'))
       : null;
     if (!bag) {
-      bag = this.chooseLootBag();
+      bag = this.chooseLootBag(whiteOnly);
       this.lootBagId = bag?.objectId ?? 0;
       this.lootArrivedAt = 0;
     }
@@ -653,7 +708,7 @@ export default class Farmer {
       const live = RealmEngine.world.objects.getById(this.eventGoal.objectId);
       const dead = RealmEngine.world.objects.isDead?.(this.eventGoal.objectId)
         || (live && live.hp <= 0 && live.maxHp > 0);
-      if (live && !dead) { this.eventGoal = live; this.eventMissingAt = null; }
+      if (live && !dead) { this.eventGoal = live; this.eventMissingAt = null; this.eventHoldSince = null; }
       else if (dead || this.eventArrived || distance <= 12) {
         // One object can be just a phase/controller. Stay local if the event
         // replaces it, rather than treating that object's death as travel permission.
@@ -663,23 +718,29 @@ export default class Farmer {
           && Math.hypot(o.position.x-this.eventGoal.position.x, o.position.y-this.eventGoal.position.y) <= 20);
         if (replacement) {
           this.finishedEvents.add(this.eventGoal.objectId);
-          this.eventGoal = replacement; this.eventMissingAt = null; this.bossEncounter = null;
+          this.eventGoal = replacement; this.eventMissingAt = null; this.eventHoldSince = null; this.bossEncounter = null;
           this.updateTarget(0, false); RealmEngine.dodge.clearWaypoint();
           RealmEngine.log.info(`Realm Farmer: continuing nearby event phase — ${replacement.name}`);
           return this.eventGoal;
         }
+        // Only an add we can still damage justifies staying: an invulnerable or hidden
+        // object beside the corpse used to pin the farmer here indefinitely. Even then,
+        // not past EVENT_HOLD_MAX_MS.
         const addsAlive = this.eventArrived && RealmEngine.enemies.getAll().some(e =>
-          e.objectId !== this.eventGoal.objectId && e.hp > 0
+          e.objectId !== this.eventGoal.objectId && e.hp > 0 && e.isTargetable
           && Math.hypot(e.position.x-this.eventGoal.position.x, e.position.y-this.eventGoal.position.y) <= 12);
-        if (addsAlive) this.eventMissingAt = null;
+        if (this.eventArrived && this.eventHoldSince === null) this.eventHoldSince = now;
+        const overHold = this.eventHoldSince !== null && now - this.eventHoldSince >= EVENT_HOLD_MAX_MS;
+        if (addsAlive && !overHold) this.eventMissingAt = null;
         else if (this.eventMissingAt === null) this.eventMissingAt = now;
         // A remote kill can switch immediately. After arrival, allow time for
         // phase swaps and delayed bag spawns; handleLoot still runs every loop.
         const waitMs = this.eventArrived ? (dead ? 10000 : 30000) : (dead ? 0 : 30000);
-        if (!addsAlive && this.eventMissingAt !== null && now - this.eventMissingAt >= waitMs) {
+        if (overHold || (!addsAlive && this.eventMissingAt !== null && now - this.eventMissingAt >= waitMs)) {
           RealmEngine.log.info(`Realm Farmer: event ended — ${this.eventGoal.name}; selecting another boss.`);
           this.finishedEvents.add(this.eventGoal.objectId);
-          this.eventGoal = null; this.eventArrived = false; this.eventMissingAt = null; this.bossEncounter = null;
+          this.eventGoal = null; this.eventArrived = false; this.eventMissingAt = null; this.eventHoldSince = null;
+          this.bossEncounter = null;
           this.updateTarget(0, false); RealmEngine.dodge.clearWaypoint();
         }
       } else this.eventMissingAt = null;
@@ -689,6 +750,7 @@ export default class Farmer {
         && !RealmEngine.world.objects.isDead?.(o.objectId))
         .sort((a,b) => RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position))[0] ?? null;
       if (this.eventGoal) {
+        this.eventHoldSince = null;
         this.eventArrived = RealmEngine.self.distanceTo(this.eventGoal.position) <= 12;
         this.searchBeaconGoal = null;
         RealmEngine.log.info(`Realm Farmer: purple/white boss selected — ${this.eventGoal.name}`);
@@ -723,43 +785,45 @@ export default class Farmer {
   }
 
   getQuestGoal(now) {
-    // Commit to the selected quest COORDINATE while travelling. Realm quest ids
-    // and tracked entities can change as visibility/nearest-region changes; that
-    // is not evidence the original boss disappeared. Only reconsider once the
-    // target is close enough that the local snapshot would definitely hold it.
+    // Commit to the selected quest while travelling. Realm quest ids and tracked
+    // entities can change as visibility/nearest-region changes, so an object merely
+    // leaving the snapshot is not evidence the boss disappeared.
     if (this.questGoal && (RealmEngine.world.objects.isDead?.(this.questGoal.objectId)
       || (this.questGoal.hp <= 0 && this.questGoal.maxHp > 0))) {
       this.questGoal = null; this.questMissingAt = 0;
     }
     if (this.questGoal) {
       const distance = RealmEngine.self.distanceTo(this.questGoal.position);
-      // BEYOND VISIBILITY: the object is legitimately missing from the snapshot out
-      // here, so its absence proves nothing. Hold the committed coordinate and do
-      // not even look — this is the commitment the comment above describes.
-      if (distance > QUEST_VISIBLE_RANGE) {
-        this.questMissingAt = 0;
-        return this.questGoal;
-      }
-
-      // WITHIN VISIBILITY: the object SHOULD be in the snapshot, so follow its live
-      // position while it exists and treat a sustained absence as the kill it is.
-      //
-      // This gate used to be QUEST_AREA_ARRIVE (4 tiles), which is the bug: a quest
-      // mob is normally killed from WEAPON RANGE, 5-8 tiles out (updateTarget above
-      // engages out to TARGET_RADIUS = 8), which is farther than 4. So on the kill
-      // that actually mattered the liveness check never ran, and the script stayed
-      // committed to a corpse's coordinate — walking to a dead target and only
-      // releasing it after arriving inside 4 tiles and burning the grace. Widening
-      // the gate to visibility range costs nothing (absence inside it is always
-      // meaningful) and leaves the long-range travel commitment untouched.
+      // Follow the live object, and its live position, whenever it is tracked.
       const live = RealmEngine.world.objects.getById(this.questGoal.objectId);
       if (live) {
         this.questGoal = live;
         this.questMissingAt = 0;
         return live;
       }
-      if (!this.questMissingAt) this.questMissingAt = now;
-      if (now - this.questMissingAt < QUEST_MISSING_GRACE_MS) return this.questGoal;
+      if (distance > QUEST_VISIBLE_RANGE) {
+        // BEYOND VISIBILITY its absence proves nothing, so the protocol decides: the
+        // server names the current quest (QUESTOBJECTID). While that is still ours,
+        // keep the commitment however long the walk. Once it names another quest (or
+        // none) the coordinate is stale: after a short grace for a flip, re-pick.
+        // Without that signal, re-pick after QUEST_UNSEEN_COMMIT_MS rather than
+        // walking to a dead boss's last coordinate indefinitely.
+        const serverQuestId = RealmEngine.world.objects.getQuestTargetId?.();
+        const known = typeof serverQuestId === 'number';
+        if (known && serverQuestId === this.questGoal.objectId) {
+          this.questMissingAt = 0;
+          return this.questGoal;
+        }
+        if (!this.questMissingAt) this.questMissingAt = now;
+        if (now - this.questMissingAt < (known ? QUEST_MISSING_GRACE_MS : QUEST_UNSEEN_COMMIT_MS)) return this.questGoal;
+      } else {
+        // WITHIN VISIBILITY the object SHOULD be in the snapshot, so a sustained
+        // absence is the kill it looks like. (The gate used to be QUEST_AREA_ARRIVE,
+        // 4 tiles, but quest mobs die from weapon range, 5-8 tiles out, so the
+        // liveness check never ran on the kill that mattered.)
+        if (!this.questMissingAt) this.questMissingAt = now;
+        if (now - this.questMissingAt < QUEST_MISSING_GRACE_MS) return this.questGoal;
+      }
       this.questGoal = null;
       this.questMissingAt = 0;
     }
@@ -831,8 +895,6 @@ export default class Farmer {
       this.handleNexus(now);
       return LOOP_MS;
     }
-    // Every loop, whatever owns movement, so a heal is seen even during a loot detour.
-    this.observeHeals(RealmEngine.enemies.getAll(), now);
 
     // A useful bag takes movement ownership before combat. Do not clear and
     // recreate its waypoint by running target selection during the detour.
@@ -843,7 +905,8 @@ export default class Farmer {
       this.beaconPending = null;
     }
     if (this.beaconPending) return LOOP_MS;
-    if (this.handleLoot(now)) {
+    // During a live boss fight only a white bag may take over (bossFightActive).
+    if (this.handleLoot(now, this.bossFightActive())) {
       this.updateTarget(0, false);
       return LOOP_MS;
     }
