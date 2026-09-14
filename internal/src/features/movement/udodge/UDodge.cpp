@@ -143,6 +143,62 @@ void ClearNavAvoid()
     g_lastCmdValid = false;
 }
 
+// ── Stuck dump (field diagnostics; OFF unless RE_ASSETS/diag-timing.flag) ────
+// One line per stall-or-blocked re-plan, at most one per 2 s: where the player is,
+// where the route was steering, what the tile map says around them, and what the
+// game did with our last step. It is the evidence for "the planner and the game
+// disagree here" that the offline scenario harness cannot collect from a live map.
+// Legend for the 11x11 map (1 tile per cell, player at the centre, north = -y row
+// first): '.' open, '#' wall, 'f' FullOccupy half-tile rule at the centre, '~' sink,
+// '!' damaging, ' ' unstreamed, 'a' a remembered stuck square.
+void DiagStuckDump(const char* why, Vec2 player, Vec2 goal, Vec2 navStep, bool lockApproach,
+                   const MapInput& in, const DangerMap& map, int avoidCount, const Vec2* avoid)
+{
+    static ULONGLONG s_lastMs = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (s_lastMs != 0 && now - s_lastMs < 2000ULL) return;
+    s_lastMs = now;
+
+    constexpr int R = 5, S = 2 * R + 1;
+    unsigned char cells[S * S];
+    const Vec2 centre{ std::floor(player.x) + 0.5f, std::floor(player.y) + 0.5f };
+    WorldTAB::CopyBoxBlocked(centre.x - static_cast<float>(R), centre.y - static_cast<float>(R), S, 1.f,
+                             kUOccPlayerHalfEdge, /*foldHazard=*/true, cells);
+    char grid[S * (S + 1) + 1];
+    int g = 0;
+    for (int y = 0; y < S; ++y) {
+        for (int x = 0; x < S; ++x) {
+            const unsigned char f = cells[y * S + x];
+            char ch = '.';
+            if (f & 0x8) ch = ' ';
+            else if (f & 0x1) ch = '#';
+            else if (f & 0x10) ch = 'f';
+            else if (f & 0x2) ch = '!';
+            else if (f & 0x4) ch = '~';
+            const Vec2 cw{ centre.x + static_cast<float>(x - R), centre.y + static_cast<float>(y - R) };
+            for (int a = 0; a < avoidCount; ++a)
+                if (std::fabs(cw.x - avoid[a].x) < 0.5f && std::fabs(cw.y - avoid[a].y) < 0.5f) ch = 'a';
+            if (x == R && y == R) ch = '@';
+            grid[g++] = ch;
+        }
+        grid[g++] = '|';
+    }
+    grid[g] = '\0';
+    int activeZones = 0, nearEnemies = 0;
+    for (int i = 0; i < map.zoneCount; ++i)
+        if (map.zones[i].active && Len(Sub(map.zones[i].pos, player)) < map.zones[i].radius + 3.f) ++activeZones;
+    for (int i = 0; i < map.enemyCount; ++i)
+        if (Len(Sub(map.enemies[i].pos, player)) < 3.f) ++nearEnemies;
+    DiagTiming::Logf("[Diag/Stuck] %s at (%.3f,%.3f) goal=(%.2f,%.2f)%s step=(%.2f,%.2f) route=%d wpts=%d partial=%d"
+        " hazardRoute=%d refused=%d avoid=%d safeWalk=%d liveOccupy(player)=%d liveOccupy(step)=%d"
+        " nearZones=%d nearEnemies=%d map=%s",
+        why, player.x, player.y, goal.x, goal.y, lockApproach ? " (lock approach)" : "",
+        navStep.x, navStep.y, g_navCache.valid ? 1 : 0, g_navCache.n, g_navCache.partial ? 1 : 0,
+        g_navCache.crossesHazard ? 1 : 0, g_refusedFrames, avoidCount, in.settings.safeWalk ? 1 : 0,
+        CanOccupyAt(in, player) ? 1 : 0, CanOccupyAt(in, navStep) ? 1 : 0,
+        activeZones, nearEnemies, grid);
+}
+
 // Locked target beyond engagement range: approached through the walk-to route
 // pipeline toward its engagement disk (see Tick). The goal is frozen while the
 // target stays within a tile of it, so a moving boss does not invalidate every
@@ -793,6 +849,7 @@ void Tick(void* player, float px, float py, float dt)
             walkActive = true;
             lockApproach = true;
             navGoalRadius = std::max(0.5f, lg.engagementRange - kLockApproachInsetTiles);
+            if (diagOn) ++DiagTiming::Game().lockApproachFrames;
         } else {
             g_lockApproachGoalValid = false;
         }
@@ -869,11 +926,18 @@ void Tick(void* player, float px, float py, float dt)
                 }
                 DBG_FILE_LOG("[UDodge] stuck: game refused the route step; avoiding squares around ("
                              << centre.x << "," << centre.y << ") for the next plans");
+                if (diagOn) ++DiagTiming::Game().navAvoids;
             }
         }
         if (diagOn) {
             if (blocked) ++DiagTiming::Game().navBlocked;
             if (stalled) ++DiagTiming::Game().navStalls;
+        }
+        if ((blocked || stalled) && diagOn) {
+            Vec2 avoid[kMaxNavAvoid];
+            const int avoidCount = ActiveNavAvoid(avoid, nowNav);
+            DiagStuckDump(blocked ? "blocked" : "stalled", in.player, wg, navStep, lockApproach,
+                          in, g_map, avoidCount, avoid);
         }
         if (blocked || stalled) {
             navReplan = true;
@@ -1153,6 +1217,7 @@ void Tick(void* player, float px, float py, float dt)
             for (int i = 0; i < g_navCache.n; ++i) g_navCache.wpts[i] = g_route.navWpts[i];
             g_navCache.partial = g_route.navPartial;
             g_navCache.crossesHazard = g_route.navCrossesHazard;
+            if (diagOn && g_route.navCrossesHazard) ++DiagTiming::Game().hazardRoutes;
         } else if (acceptFresh && g_route.navPops > 0 &&
                    g_route.navWptCount < 2 && !g_route.navArrived) {
             // No reachable route is not permission to drive at the raw goal.
