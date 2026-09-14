@@ -33,10 +33,17 @@ namespace RuntimeOffsets {
     bool ReadyForActivation();
 
     // BootGate's per-frame view of the same answer: latched once true, and re-checked
-    // at most once a second while false, so an unverified build costs one class
-    // enumeration per second instead of one per frame. Always true on a build with no
-    // generated bindings, which is every developer build.
+    // while false at most once a second, then once every five seconds after five failing
+    // checks, so an unverified build costs one class enumeration per check instead of one
+    // per frame. Always true on a build with no generated bindings, which is every
+    // developer build.
     bool BindingsReady();
+
+    // init_il2cpp reports here whether it installed BoundMethodFromName, the method lookup
+    // that answers a bound method only at this build's address. With it, readiness leaves
+    // a method row whose owner class is not loaded to that lookup.
+    void SetMethodLookupAuthenticated(bool installed);
+    bool MethodLookupAuthenticated();
 
     // True once the 5 s give-up timeout has fired.
     bool HasGivenUp();

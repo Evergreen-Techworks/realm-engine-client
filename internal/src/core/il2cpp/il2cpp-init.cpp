@@ -9,6 +9,7 @@
       #include "xorstr.h"
       #include "DbgFileLog.h"
       #include "../runtime/BuildBindings.h"
+      #include "../runtime/RuntimeOffsets.h"
 
       // IL2CPP API function pointer definitions (storage)
       #define DO_API(r, n, p) r (*n) p
@@ -79,7 +80,12 @@
       #include "il2cpp-api-functions.h"
       #undef DO_API
       originalMethodFromName = il2cpp_class_get_method_from_name;
-      if (originalMethodFromName && il2cpp_class_get_name && il2cpp_class_get_methods && il2cpp_method_get_name && il2cpp_method_get_param_count) il2cpp_class_get_method_from_name = BoundMethodFromName;
+      if (originalMethodFromName && il2cpp_class_get_name && il2cpp_class_get_methods && il2cpp_method_get_name && il2cpp_method_get_param_count) {
+          il2cpp_class_get_method_from_name = BoundMethodFromName;
+          // Every bound method lookup now re-proves its address, so readiness can leave a
+          // method row whose owner class never initialises to that lookup.
+          RuntimeOffsets::SetMethodLookupAuthenticated(true);
+      }
       originalClassFromName = il2cpp_class_from_name;
       originalFieldFromName = il2cpp_class_get_field_from_name;
       if (originalClassFromName) il2cpp_class_from_name = BoundClassFromName;

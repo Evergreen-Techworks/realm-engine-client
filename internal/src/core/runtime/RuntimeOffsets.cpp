@@ -650,8 +650,9 @@ static constexpr int kFIEntryCount =
 //     mark its entries done (accepting fallbacks) so we stop scanning metadata
 //     every frame for a name that BeeByte has likely renamed.
 
-static bool      s_allDone             = false;
-static bool      s_giveUpFired         = false;
+// Atomic: EnsureAll and its readers run on the render thread and the game-update thread.
+static std::atomic<bool> s_allDone{ false };
+static std::atomic<bool> s_giveUpFired{ false };
 static char      s_unresolvedClassNames[512] = {};
 static ULONGLONG s_firstCallTick       = 0;
 static constexpr ULONGLONG kGiveUpMs   = 5000ULL;
@@ -756,76 +757,56 @@ static bool BoundMethodLive(const BuildBindings::MethodBinding& row)
     return ctx.found;
 }
 
-// True once every table entry resolved and every generated binding -- field
-// offset and method RVA -- matches the live process. The pipeline's activation
-// gate waits on this; a developer build never calls it.
-bool ReadyForActivation()
-{
-    for (int i = 0; i < kEntryCount; ++i)
-        if ((s_entryState[i] != OffsetState::ResolvedMatch && s_entryState[i] != OffsetState::ResolvedShifted) ||
-            !BuildBindings::Field(s_entries[i].className, s_entries[i].tryNames[0], s_entries[i].key)) return false;
-    for (int i = 0; i < kFIEntryCount; ++i)
-        if (!*s_fieldInfoEntries[i].out) return false;
-    // One enumeration for the whole check. Resolver::FindClassLoose walks every
-    // loaded class, so a per-row lookup would walk them once per bound row -- 177
-    // times per call on 86ad651b -- on the frame path, while the answer is still false.
-    std::vector<std::pair<const char*, Il2CppClass*>> byName;
-    il2cpp_class_for_each([](Il2CppClass* klass, void* ud) {
-        static_cast<std::vector<std::pair<const char*, Il2CppClass*>>*>(ud)
-            ->emplace_back(il2cpp_class_get_name(klass), klass);
-    }, &byName);
-    for (const auto& row : BuildBindings::fields) {
-        if (!row.owner[0]) continue;
-        bool matched = false;
-        for (const auto& entry : byName) {
-            if (strcmp(entry.first, row.targetOwner) != 0) continue;
-            FieldInfo* field = FindExactFieldOnHierarchy(entry.second, row.target);
-            if (field && static_cast<uint32_t>(il2cpp_field_get_offset(field)) == row.offset) { matched = true; break; }
-        }
-        if (!matched) return false;
-    }
-    const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"GameAssembly.dll"));
-    for (const auto& row : BuildBindings::methods) {
-        if (!row.owner[0]) continue;
-        bool matched = false;
-        for (const auto& entry : byName) {
-            if (strcmp(entry.first, row.targetOwner) != 0) continue;
-            const MethodInfo* method = il2cpp_class_get_method_from_name(entry.second, row.source, row.args);
-            if (method && reinterpret_cast<uintptr_t>(method->methodPointer) == base + row.rva) { matched = true; break; }
-        }
-        if (!matched) return false;
-    }
-    return true;
-}
+// ── Method lookup authentication ──────────────────────────────────────────
+// init_il2cpp reports whether it installed BoundMethodFromName, which answers a bound
+// method lookup only with the declared method at this build's address.
+static std::atomic<bool> s_methodLookupAuthenticated{ false };
+void SetMethodLookupAuthenticated(bool installed) { s_methodLookupAuthenticated.store(installed); }
+bool MethodLookupAuthenticated() { return s_methodLookupAuthenticated.load(); }
 
 namespace {
 
 constexpr int kListedFailures = 20;
+constexpr int kListedUnloaded = 8;
 
-// The failing rows of one check, as log clauses. Every clause feeds the signature, so a
-// change beyond the listed twenty still counts as a change of the failing set.
-struct FailureList {
-    char     text[4096] = {};
-    size_t   used = 0;
-    int      count = 0;
-    uint64_t signature = 14695981039346656037ULL;  // FNV-1a
+// Why one row holds readiness back.
+enum class Why : uint8_t {
+    EntryNoBinding, EntrySuspect, EntrySanityCheck, EntryNotDeclared, EntryGaveUp, EntryPending,
+    FieldInfoUnresolved, FieldNotLoaded, FieldNotDeclared, FieldMoved,
+    MethodNotLoaded, MethodNotDeclared, MethodMoved,
+};
 
-    void Add(const char* format, ...)
+struct Failure { Why why; int index; uint64_t live; };
+
+// What one ReadyForActivation() call found, kept per calling thread so the failure log is
+// written from the check's own findings instead of a second pass over the loaded classes.
+// Plain data with no constructor, so the thread_local needs no dynamic initialisation; the
+// check resets it first.
+struct CheckRecord {
+    int      count;                              // rows holding readiness back
+    uint64_t signature;                          // FNV-1a over every one of them, listed or not
+    Failure  listed[kListedFailures];
+    int      unloaded;                           // method rows left to their lookups
+    int      unloadedListed[kListedUnloaded];
+
+    void Reset() { count = 0; signature = 14695981039346656037ULL; unloaded = 0; }
+    void Hold(Why why, int index, uint64_t live)
     {
-        char clause[256];
-        va_list args;
-        va_start(args, format);
-        vsnprintf(clause, sizeof(clause), format, args);
-        va_end(args);
-        for (const unsigned char* c = reinterpret_cast<const unsigned char*>(clause); ; ++c) {
-            signature = (signature ^ *c) * 1099511628211ULL;
-            if (!*c) break;
-        }
-        if (count++ >= kListedFailures || used + 1 >= sizeof(text)) return;
-        const int n = snprintf(text + used, sizeof(text) - used, "%s%s", count > 1 ? "; " : "", clause);
-        if (n > 0) used = (used + static_cast<size_t>(n) < sizeof(text)) ? used + static_cast<size_t>(n) : sizeof(text) - 1;
+        const uint64_t parts[3] = { static_cast<uint64_t>(why), static_cast<uint64_t>(index), live };
+        for (uint64_t part : parts)
+            for (int shift = 0; shift < 64; shift += 8)
+                signature = (signature ^ ((part >> shift) & 0xFFu)) * 1099511628211ULL;
+        if (count < kListedFailures) listed[count] = { why, index, live };
+        ++count;
+    }
+    void LeaveToLookup(int index)
+    {
+        if (unloaded < kListedUnloaded) unloadedListed[unloaded] = index;
+        ++unloaded;
     }
 };
+
+thread_local CheckRecord t_check;
 
 } // namespace
 
@@ -833,6 +814,15 @@ static bool EntryUnverified(int i)
 {
     return (s_entryState[i] != OffsetState::ResolvedMatch && s_entryState[i] != OffsetState::ResolvedShifted) ||
            !BuildBindings::Field(s_entries[i].className, s_entries[i].tryNames[0], s_entries[i].key);
+}
+
+// A binding row whose table entry already holds readiness is named once, by the entry.
+static bool NamedByUnverifiedEntry(const char* entry)
+{
+    if (!entry) return false;
+    for (int i = 0; i < kEntryCount; ++i)
+        if (s_entries[i].key && strcmp(s_entries[i].key, entry) == 0) return EntryUnverified(i);
+    return false;
 }
 
 // A declared method by its exact name and arity, wherever it now lives: the installed
@@ -847,41 +837,39 @@ static const MethodInfo* FindDeclaredMethod(Il2CppClass* klass, const char* name
     return nullptr;
 }
 
-// Why ReadyForActivation() is false. It reads what that check reads -- the entry states,
-// the FieldInfo pointers, and every generated field and method row against the live
-// classes -- but names every failing row instead of stopping at the first. A binding row
-// whose table entry already failed is named once, by the entry.
-static void DescribeBindingFailures(FailureList& list)
+// True once every table entry resolved and every generated binding matches the live
+// process: each field row's offset, and each method row's address on a loaded class of
+// its owner's name. Only BindingsReady() calls it, on a build with generated bindings.
+//
+// il2cpp_class_for_each reports initialised classes only, and some owners never
+// initialise in a session (DeviceIdHolder and UnityApiResultsHolder on 86ad651b). With
+// BoundMethodFromName installed, every lookup that does reach such a class re-proves the
+// row's address, so a method row whose owner is not loaded is left to that lookup instead
+// of holding the gate. Without the redirection nothing re-proves it, and the row holds.
+//
+// The check does not stop at the first failing row: t_check records every row that holds,
+// for the failure log.
+bool ReadyForActivation()
 {
+    CheckRecord& record = t_check;
+    record.Reset();
+    bool ok = true;
     for (int i = 0; i < kEntryCount; ++i) {
         if (!EntryUnverified(i)) continue;
-        const Entry& e = s_entries[i];
-        const char* key = e.key ? e.key : "?";
-        const auto* binding = BuildBindings::Field(e.className, e.tryNames[0], e.key);
-        if (!binding) { list.Add("field.%s has no generated binding", key); continue; }
-        switch (s_entryState[i]) {
-        case OffsetState::Suspect:
-            if (s_entryDisagreed[i])
-                list.Add("field.%s %s::%s bound offset 0x%X, live 0x%X", key, binding->targetOwner, binding->target,
-                    binding->offset, s_entryLiveOffset[i]);
-            else
-                list.Add("field.%s %s::%s failed a live sanity check", key, binding->targetOwner, binding->target);
-            break;
-        case OffsetState::FallbackFieldName:
-            list.Add("field.%s %s::%s not declared (bound offset 0x%X)", key, binding->targetOwner, binding->target, binding->offset);
-            break;
-        case OffsetState::FallbackGaveUp:
-            list.Add("field.%s class %s not loaded before the give-up", key, binding->targetOwner);
-            break;
-        default:
-            list.Add("field.%s not resolved yet", key);
-            break;
-        }
+        ok = false;
+        const OffsetState state = s_entryState[i];
+        Why why = Why::EntryPending;
+        if (!BuildBindings::Field(s_entries[i].className, s_entries[i].tryNames[0], s_entries[i].key)) why = Why::EntryNoBinding;
+        else if (state == OffsetState::Suspect) why = s_entryDisagreed[i] ? Why::EntrySuspect : Why::EntrySanityCheck;
+        else if (state == OffsetState::FallbackFieldName) why = Why::EntryNotDeclared;
+        else if (state == OffsetState::FallbackGaveUp) why = Why::EntryGaveUp;
+        record.Hold(why, i, why == Why::EntrySuspect ? s_entryLiveOffset[i] : 0);
     }
     for (int i = 0; i < kFIEntryCount; ++i)
-        if (!*s_fieldInfoEntries[i].out)
-            list.Add("FieldInfo %s::%s not resolved", s_fieldInfoEntries[i].className, s_fieldInfoEntries[i].fieldName);
-
+        if (!*s_fieldInfoEntries[i].out) { ok = false; record.Hold(Why::FieldInfoUnresolved, i, 0); }
+    // One enumeration for the whole check. Resolver::FindClassLoose walks every
+    // loaded class, so a per-row lookup would walk them once per bound row -- 177
+    // times per call on 86ad651b -- on the frame path, while the answer is still false.
     std::vector<std::pair<const char*, Il2CppClass*>> byName;
     il2cpp_class_for_each([](Il2CppClass* klass, void* ud) {
         static_cast<std::vector<std::pair<const char*, Il2CppClass*>>*>(ud)
@@ -889,10 +877,6 @@ static void DescribeBindingFailures(FailureList& list)
     }, &byName);
     for (const auto& row : BuildBindings::fields) {
         if (!row.owner[0]) continue;
-        bool named = false;
-        for (int i = 0; row.entry && i < kEntryCount && !named; ++i)
-            named = s_entries[i].key && strcmp(s_entries[i].key, row.entry) == 0 && EntryUnverified(i);
-        if (named) continue;
         bool loaded = false, declared = false, matched = false;
         uint32_t live = 0;
         for (const auto& entry : byName) {
@@ -905,65 +889,150 @@ static void DescribeBindingFailures(FailureList& list)
             if (!declared) { declared = true; live = offset; }
         }
         if (matched) continue;
-        const char* key = row.entry ? row.entry : row.source;
-        if (!loaded) list.Add("field.%s class %s not loaded", key, row.targetOwner);
-        else if (!declared) list.Add("field.%s %s::%s not declared", key, row.targetOwner, row.target);
-        else list.Add("field.%s %s::%s bound offset 0x%X, live 0x%X", key, row.targetOwner, row.target, row.offset, live);
+        ok = false;
+        if (!NamedByUnverifiedEntry(row.entry))
+            record.Hold(!loaded ? Why::FieldNotLoaded : !declared ? Why::FieldNotDeclared : Why::FieldMoved,
+                static_cast<int>(&row - BuildBindings::fields), live);
     }
     const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"GameAssembly.dll"));
+    const bool authenticated = MethodLookupAuthenticated();
     for (const auto& row : BuildBindings::methods) {
         if (!row.owner[0]) continue;
-        bool loaded = false, declared = false, matched = false;
-        uintptr_t live = 0;
+        const int index = static_cast<int>(&row - BuildBindings::methods);
+        bool loaded = false, matched = false;
+        const MethodInfo* declared = nullptr;
         for (const auto& entry : byName) {
             if (strcmp(entry.first, row.targetOwner) != 0) continue;
             loaded = true;
             const MethodInfo* method = il2cpp_class_get_method_from_name(entry.second, row.source, row.args);
             if (method && reinterpret_cast<uintptr_t>(method->methodPointer) == base + row.rva) { matched = true; break; }
-            if (!method) method = FindDeclaredMethod(entry.second, row.target, row.args);
-            if (method && !declared) {
-                declared = true;
-                const uintptr_t pointer = reinterpret_cast<uintptr_t>(method->methodPointer);
-                live = pointer >= base ? pointer - base : 0;
-            }
+            if (!declared) declared = method ? method : FindDeclaredMethod(entry.second, row.target, row.args);
         }
         if (matched) continue;
-        if (!loaded)
-            list.Add("method.%s.%s/%d class %s not loaded", row.owner, row.source, row.args, row.targetOwner);
-        else if (!declared)
-            list.Add("method.%s.%s/%d %s::%s not declared", row.owner, row.source, row.args, row.targetOwner, row.target);
+        if (!loaded && authenticated) { record.LeaveToLookup(index); continue; }
+        ok = false;
+        const uintptr_t pointer = declared ? reinterpret_cast<uintptr_t>(declared->methodPointer) : 0;
+        record.Hold(!loaded ? Why::MethodNotLoaded : !declared ? Why::MethodNotDeclared : Why::MethodMoved,
+            index, pointer >= base ? pointer - base : 0);
+    }
+    return ok;
+}
+
+// One clause of the failure log, from the row the check recorded.
+static void DescribeFailure(const Failure& failure, char* clause, size_t size)
+{
+    const int i = failure.index;
+    switch (failure.why) {
+    case Why::EntryNoBinding:
+    case Why::EntrySuspect:
+    case Why::EntrySanityCheck:
+    case Why::EntryNotDeclared:
+    case Why::EntryGaveUp:
+    case Why::EntryPending: {
+        const Entry& e = s_entries[i];
+        const char* key = e.key ? e.key : "?";
+        const auto* binding = BuildBindings::Field(e.className, e.tryNames[0], e.key);
+        if (!binding || failure.why == Why::EntryNoBinding) { snprintf(clause, size, "field.%s has no generated binding", key); break; }
+        if (failure.why == Why::EntrySuspect)
+            snprintf(clause, size, "field.%s %s::%s bound offset 0x%X, live 0x%X", key, binding->targetOwner, binding->target,
+                binding->offset, static_cast<uint32_t>(failure.live));
+        else if (failure.why == Why::EntrySanityCheck)
+            snprintf(clause, size, "field.%s %s::%s failed a live sanity check", key, binding->targetOwner, binding->target);
+        else if (failure.why == Why::EntryNotDeclared)
+            snprintf(clause, size, "field.%s %s::%s not declared (bound offset 0x%X)", key, binding->targetOwner, binding->target, binding->offset);
+        else if (failure.why == Why::EntryGaveUp)
+            snprintf(clause, size, "field.%s class %s not loaded before the give-up", key, binding->targetOwner);
         else
-            list.Add("method.%s.%s/%d %s::%s bound rva 0x%llX, live 0x%llX", row.owner, row.source, row.args,
-                row.targetOwner, row.target, static_cast<unsigned long long>(row.rva), static_cast<unsigned long long>(live));
+            snprintf(clause, size, "field.%s not resolved yet", key);
+        break;
+    }
+    case Why::FieldInfoUnresolved:
+        snprintf(clause, size, "FieldInfo %s::%s not resolved", s_fieldInfoEntries[i].className, s_fieldInfoEntries[i].fieldName);
+        break;
+    case Why::FieldNotLoaded:
+    case Why::FieldNotDeclared:
+    case Why::FieldMoved: {
+        const auto& row = BuildBindings::fields[i];
+        const char* key = row.entry ? row.entry : row.source;
+        if (failure.why == Why::FieldNotLoaded) snprintf(clause, size, "field.%s class %s not loaded", key, row.targetOwner);
+        else if (failure.why == Why::FieldNotDeclared) snprintf(clause, size, "field.%s %s::%s not declared", key, row.targetOwner, row.target);
+        else snprintf(clause, size, "field.%s %s::%s bound offset 0x%X, live 0x%X", key, row.targetOwner, row.target, row.offset,
+            static_cast<uint32_t>(failure.live));
+        break;
+    }
+    case Why::MethodNotLoaded:
+    case Why::MethodNotDeclared:
+    case Why::MethodMoved: {
+        const auto& row = BuildBindings::methods[i];
+        if (failure.why == Why::MethodNotLoaded)
+            snprintf(clause, size, "method.%s.%s/%d class %s not loaded", row.owner, row.source, row.args, row.targetOwner);
+        else if (failure.why == Why::MethodNotDeclared)
+            snprintf(clause, size, "method.%s.%s/%d %s::%s not declared", row.owner, row.source, row.args, row.targetOwner, row.target);
+        else
+            snprintf(clause, size, "method.%s.%s/%d %s::%s bound rva 0x%llX, live 0x%llX", row.owner, row.source, row.args,
+                row.targetOwner, row.target, static_cast<unsigned long long>(row.rva), static_cast<unsigned long long>(failure.live));
+        break;
+    }
     }
 }
 
-// One ungated line the first time verification fails, and again whenever the failing
-// set changes: a Release build otherwise holds its features without saying why. Nothing
-// is written while the table is still resolving -- lazy-loading classes are not failures
-// yet. Only a thread that just ran a failing check calls this; one that finds another
-// thread already writing skips, and the next check logs whatever that one did not.
-static void LogBindingFailures()
+static void Append(char* text, size_t size, size_t& used, const char* piece)
+{
+    if (used + 1 >= size) return;
+    const int n = snprintf(text + used, size - used, "%s", piece);
+    if (n > 0) used = (used + static_cast<size_t>(n) < size) ? used + static_cast<size_t>(n) : size - 1;
+}
+
+// One ungated line the first time verification fails, and again whenever the set of rows
+// holding it changes: a Release build otherwise holds its features without saying why. It
+// is formatted from the failing check's record, and only when that set changed. Method
+// rows left to their lookups are named too, as not holding, so a held session stays
+// diagnosable. A thread that finds another thread writing skips; the next check logs.
+static void LogBindingFailures(const CheckRecord& record)
 {
     static std::atomic<bool> s_busy{ false };
-    if (!s_allDone || s_busy.exchange(true)) return;
-    static FailureList s_list;
+    if (record.count == 0 || s_busy.exchange(true)) return;
     static bool s_logged = false;
     static uint64_t s_signature = 0;
-    static char s_line[4400];
-    s_list = FailureList{};
-    DescribeBindingFailures(s_list);
-    if (s_list.count > 0 && (!s_logged || s_list.signature != s_signature)) {
+    if (!s_logged || record.signature != s_signature) {
         s_logged = true;
-        s_signature = s_list.signature;
-        char more[32] = "";
-        if (s_list.count > kListedFailures) snprintf(more, sizeof(more), "; and %d more", s_list.count - kListedFailures);
-        snprintf(s_line, sizeof(s_line), "[RuntimeOffsets] Bindings not verified, gated features held. %d failing: %s%s",
-            s_list.count, s_list.text, more);
-        DbgFileLogWrite(s_line);
+        s_signature = record.signature;
+        static char text[4096], owners[1024], line[5400];
+        size_t used = 0, ownersUsed = 0;
+        text[0] = owners[0] = '\0';
+        char clause[256];
+        for (int n = 0; n < record.count && n < kListedFailures; ++n) {
+            if (n) Append(text, sizeof(text), used, "; ");
+            DescribeFailure(record.listed[n], clause, sizeof(clause));
+            Append(text, sizeof(text), used, clause);
+        }
+        if (record.count > kListedFailures) {
+            snprintf(clause, sizeof(clause), "; and %d more", record.count - kListedFailures);
+            Append(text, sizeof(text), used, clause);
+        }
+        if (record.unloaded > 0) {
+            Append(owners, sizeof(owners), ownersUsed, " (not holding: method rows whose class is not loaded, proved when they are looked up: ");
+            for (int n = 0; n < record.unloaded && n < kListedUnloaded; ++n) {
+                const auto& row = BuildBindings::methods[record.unloadedListed[n]];
+                snprintf(clause, sizeof(clause), "%smethod.%s.%s/%d", n ? ", " : "", row.owner, row.source, row.args);
+                Append(owners, sizeof(owners), ownersUsed, clause);
+            }
+            if (record.unloaded > kListedUnloaded) {
+                snprintf(clause, sizeof(clause), ", and %d more", record.unloaded - kListedUnloaded);
+                Append(owners, sizeof(owners), ownersUsed, clause);
+            }
+            Append(owners, sizeof(owners), ownersUsed, ")");
+        }
+        snprintf(line, sizeof(line), "[RuntimeOffsets] Bindings not verified, gated features held. %d failing: %s%s",
+            record.count, text, owners);
+        DbgFileLogWrite(line);
     }
     s_busy.store(false);
 }
+
+static constexpr ULONGLONG kCheckIntervalMs      = 1000ULL;
+static constexpr ULONGLONG kBackoffIntervalMs    = 5000ULL;
+static constexpr int       kBackoffAfterFailures = 5;
 
 // Latched, throttled readiness for the frame path. A build with no generated
 // bindings has nothing to verify, so it is ready immediately and every developer
@@ -971,28 +1040,34 @@ static void LogBindingFailures()
 //
 // Called from the game-update thread (dodge dispatch, feature installs) and the render
 // thread (BootGate, the Test tab). The latch only ever goes from false to true, and a
-// compare-exchange on the timestamp lets exactly one thread run each second's check.
+// compare-exchange on the timestamp lets exactly one thread run each due check. No check
+// runs until the table has settled, since none could pass. A held session is re-checked
+// every second at first, then every five seconds after kBackoffAfterFailures failures.
 bool BindingsReady()
 {
     static std::atomic<bool> s_ready{ false };
     static std::atomic<ULONGLONG> s_lastCheck{ 0 };
+    static std::atomic<int> s_failedChecks{ 0 };
     if (s_ready) return true;
     if (!BuildBindings::fields[0].owner[0] && !BuildBindings::methods[0].owner[0]) {
         s_ready = true;
         return true;
     }
+    if (!s_allDone) return false;
     // The timestamp is read before the clock, so `now` never precedes it and the
     // unsigned difference cannot wrap.
     ULONGLONG last = s_lastCheck.load();
     const ULONGLONG now = GetTickCount64();
-    if (last != 0 && now - last < 1000ULL) return false;
+    const ULONGLONG interval = s_failedChecks.load() >= kBackoffAfterFailures ? kBackoffIntervalMs : kCheckIntervalMs;
+    if (last != 0 && now - last < interval) return false;
     if (!s_lastCheck.compare_exchange_strong(last, now)) return s_ready;
     if (ReadyForActivation()) {
         if (!s_ready.exchange(true))
             DbgFileLogWrite("[RuntimeOffsets] Generated bindings verified against the live process.");
         return true;
     }
-    LogBindingFailures();
+    s_failedChecks.fetch_add(1);
+    LogBindingFailures(t_check);
     return s_ready;
 }
 
@@ -1067,6 +1142,14 @@ void EnsureAll()
         Fhoh_DestY  = Fhoh_DestX  + 4;
         return;
     }
+
+    // EnsureAll is called from the render thread (dPresent, BootGate::Tick) and the game-
+    // update thread (AoeTracking::EnsureInstalled). One thread resolves the table at a time;
+    // a caller arriving meanwhile returns and uses the table as it stands, so the give-up is
+    // checked, set and logged exactly once.
+    static std::atomic_flag s_resolving;  // clear: C++20 value-initialises atomic_flag
+    if (s_resolving.test_and_set()) return;
+    struct ReleaseResolving { ~ReleaseResolving() { s_resolving.clear(); } } releaseResolving;
 
     if (!s_fallbackSnapped) {
         s_fallbackSnapped = true;

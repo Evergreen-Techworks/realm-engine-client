@@ -164,7 +164,10 @@ bool FeatureAllowed(const char* feature) {
     if (s_state != State::Ready) return false;
     // A packaged build carries bindings proved against one game build. Until they
     // verify against this process, no gated feature installs -- but the DLL, its GUI
-    // and the boot loop all keep running, so the state is visible and recoverable.
+    // and the boot loop all keep running, and the Test tab and the native trace log say
+    // why. Readiness is re-checked while false, so a row that comes to match opens the
+    // gate; a table that gave up cannot, because give-up is terminal and nothing calls
+    // RequestRecheck.
     if (!RuntimeOffsets::BindingsReady()) return false;
     for (int i = 0; i < kFeatureCount; ++i) {
         if (std::strcmp(kFeatures[i].feature, feature) != 0) continue;
