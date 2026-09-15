@@ -60,6 +60,7 @@
 #include <random>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 using namespace UDodge;
@@ -1064,6 +1065,73 @@ void ScenarioCorridor(const char* name, int width, bool fullOccupyWalls)
     Emit(Run(name, w, Goal::WalkTo, { 12.5f, 15.5f }, 60));
 }
 
+void ScenarioConnectedRooms(const char* name, int width, bool fullOccupyWalls, bool reverse,
+                            bool progressive = false)
+{
+    World world;
+    for (int tileY = -2; tileY <= 58; ++tileY) {
+        for (int tileX = -2; tileX <= 62; ++tileX) {
+            const bool firstRoom = tileX >= 0 && tileX <= 23 && tileY >= 0 && tileY <= 23;
+            const bool secondRoom = tileX >= 36 && tileX <= 59 && tileY >= 32 && tileY <= 55;
+            const bool horizontalHall = tileX >= 24 && tileX < 35 + width && tileY >= 21 && tileY < 21 + width;
+            const bool verticalHall = tileX >= 35 && tileX < 35 + width && tileY >= 21 && tileY <= 35;
+            world.SetGround(tileX, tileY, kFloor);
+            if (!(firstRoom || secondRoom || horizontalHall || verticalHall)) {
+                if (fullOccupyWalls) world.PutObj(tileX, tileY, true);
+                else world.SetGround(tileX, tileY, kNoWalkWall);
+            }
+        }
+    }
+    const Vec2 first{ 1.31f, 1.69f };
+    const Vec2 second{ 58.25f, 53.61f };
+    const Vec2 start = reverse ? second : first;
+    const Vec2 goal = reverse ? first : second;
+    world.px = start.x;
+    world.py = start.y;
+    if (progressive) {
+        world.streamOrder.clear();
+        world.script = [seen = std::unordered_set<uint32_t>{}](World& current) mutable {
+            const int centerX = FloorI(current.px);
+            const int centerY = FloorI(current.py);
+            for (int tileY = centerY - 10; tileY <= centerY + 10; ++tileY)
+                for (int tileX = centerX - 10; tileX <= centerX + 10; ++tileX) {
+                    const uint32_t key = Key(tileX, tileY);
+                    if (current.tiles.count(key) && seen.insert(key).second)
+                        current.streamOrder.push_back(key);
+                }
+        };
+        world.script(world);
+    }
+    Result result = Run(name, world, Goal::WalkTo, goal, 40);
+    result.success = result.success && result.hits == 0 && result.stuckS == 0 &&
+                     g_move.refused == 0 && g_move.overspeed == 0;
+    Emit(result);
+}
+
+void ScenarioRemoteDoorway(const char* name, bool reverse)
+{
+    World world;
+    for (int tileY = -2; tileY <= 415; ++tileY) {
+        for (int tileX = -2; tileX <= 415; ++tileX) {
+            const bool firstRoom = tileX >= 0 && tileX <= 199 && tileY >= 0 && tileY <= 199;
+            const bool secondRoom = tileX >= 213 && tileX <= 412 && tileY >= 210 && tileY <= 409;
+            const bool horizontalHall = tileX >= 200 && tileX <= 212 && tileY >= 1 && tileY <= 2;
+            const bool verticalHall = tileX >= 211 && tileX <= 212 && tileY >= 1 && tileY <= 212;
+            world.SetGround(tileX, tileY,
+                firstRoom || secondRoom || horizontalHall || verticalHall ? kFloor : kNoWalkWall);
+        }
+    }
+    const Vec2 first{ 100.31f, 100.69f };
+    const Vec2 second{ 313.25f, 310.61f };
+    const Vec2 start = reverse ? second : first;
+    world.px = start.x;
+    world.py = start.y;
+    Result result = Run(name, world, Goal::WalkTo, reverse ? first : second, 120);
+    result.success = result.success && result.hits == 0 && result.stuckS == 0 &&
+                     g_move.refused == 0 && g_move.overspeed == 0;
+    Emit(result);
+}
+
 // (f) a damaging row across a 3-wide corridor (safe-walk on, only way through)
 void ScenarioDamagingRow(const char* name)
 {
@@ -1571,6 +1639,18 @@ int main(int argc, char** argv)
     if (want("e_corridor1_nowalk")) H::ScenarioCorridor("e_corridor1_nowalk", 1, false);
     if (want("e_corridor1_fullocc"))H::ScenarioCorridor("e_corridor1_fullocc", 1, true);
     if (want("e_corridor2_fullocc"))H::ScenarioCorridor("e_corridor2_fullocc", 2, true);
+    if (want("n_rooms1_nowalk_forward")) H::ScenarioConnectedRooms("n_rooms1_nowalk_forward", 1, false, false);
+    if (want("n_rooms1_nowalk_reverse")) H::ScenarioConnectedRooms("n_rooms1_nowalk_reverse", 1, false, true);
+    if (want("n_rooms2_nowalk_forward")) H::ScenarioConnectedRooms("n_rooms2_nowalk_forward", 2, false, false);
+    if (want("n_rooms2_nowalk_reverse")) H::ScenarioConnectedRooms("n_rooms2_nowalk_reverse", 2, false, true);
+    if (want("n_rooms1_fullocc_forward")) H::ScenarioConnectedRooms("n_rooms1_fullocc_forward", 1, true, false);
+    if (want("n_rooms1_fullocc_reverse")) H::ScenarioConnectedRooms("n_rooms1_fullocc_reverse", 1, true, true);
+    if (want("n_rooms2_fullocc_forward")) H::ScenarioConnectedRooms("n_rooms2_fullocc_forward", 2, true, false);
+    if (want("n_rooms2_fullocc_reverse")) H::ScenarioConnectedRooms("n_rooms2_fullocc_reverse", 2, true, true);
+    if (want("n_rooms_reveal_forward")) H::ScenarioConnectedRooms("n_rooms_reveal_forward", 1, false, false, true);
+    if (want("n_rooms_reveal_reverse")) H::ScenarioConnectedRooms("n_rooms_reveal_reverse", 1, false, true, true);
+    if (want("n_rooms_remote_forward")) H::ScenarioRemoteDoorway("n_rooms_remote_forward", false);
+    if (want("n_rooms_remote_reverse")) H::ScenarioRemoteDoorway("n_rooms_remote_reverse", true);
     if (want("f_damaging_row"))     H::ScenarioDamagingRow("f_damaging_row");
     if (want("g_fullocc_gap"))      H::ScenarioFullOccupyGap("g_fullocc_gap");
     if (want("h_learned_keepout"))  H::ScenarioLearnedKeepout("h_learned_keepout");
