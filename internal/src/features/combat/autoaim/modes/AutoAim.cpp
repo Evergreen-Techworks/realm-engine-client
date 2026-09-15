@@ -112,9 +112,8 @@ static void DiagLockEngagement(const TargetSelector::Config& cfg, const TargetSe
     if (want == 0) { s_lastId = 0; s_lastReason[0] = '\0'; return; }
 
     const EnemyTracker::WatchVerdict verdict = EnemyTracker::GetWatchVerdict();
-    const EnemyTracker::Entry* entry = nullptr;
-    for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot())
-        if (e.id == want) { entry = &e; break; }
+    const EnemyTracker::LockInfo lock = EnemyTracker::GetLock(want);
+    const EnemyTracker::Entry* entry = lock.entry;
 
     const char* reason = "engaged";
     if (!(result.found && result.enemyId == want)) {
@@ -122,7 +121,7 @@ static void DiagLockEngagement(const TargetSelector::Config& cfg, const TargetSe
             if (verdict.id != want) return;   // no build has looked for this id yet
             reason = verdict.reason;
         }
-        else if (LockPolicy::Decide(entry, cfg.shootInvulnerable) == LockPolicy::Use::Hold)
+        else if (LockPolicy::Decide(lock, cfg.shootInvulnerable) == LockPolicy::Use::Hold)
             reason = "hold:invulnerable";
         else
             reason = "aim:not-selected";
@@ -273,6 +272,10 @@ void SetLockTarget(int32_t enemyId) {
 // the hook state keeps exactly one owner.
 void SetKillAuraAimOverride(bool active, float x, float y, int32_t enemyId) {
     AimHooks::SetKillAuraOverride(active, x, y, enemyId);
+}
+
+float ShotAngleTo(float px, float py, float tx, float ty) {
+    return AimHooks::ShotAngleTo(px, py, tx, ty);
 }
 
 void SetShootInvulnerable(bool on)   { s_shootInvulnerable.store(on, std::memory_order_relaxed); }

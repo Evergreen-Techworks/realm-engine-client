@@ -1,12 +1,105 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { PluginContext } from '../../../plugins/api.js';
 import { register } from '../../../plugins/auto-ability.js';
+import { inventory } from '@realmengine/sdk';
+import { install as installInventory } from '../../scripts/bridge/inventory/index.js';
 import { pauseAutomaticAbility, automaticAbilityPaused } from '../../bridge/AutomaticAbilityPause.js';
 import { GameWorldState } from '../../state/GameWorldState.js';
 import { PlayerData } from '../../state/PlayerData.js';
 import { StatType } from '../../constants/StatType.js';
 import type { Proxy } from '../../proxy/Proxy.js';
+import { abilityCooldownMs } from '../AbilityMana.js';
 afterEach(() => { vi.useRealTimers(); });
+it.each(['automatic', 'script'])('retains item cooldown after an ambiguous %s write failure', source => {
+  const f = fixture(); f.settings.get('targetMaxStaleMs')!.set(0);
+  f.setXml('<Object><MpCost>1</MpCost><Cooldown>5</Cooldown></Object>');
+  installInventory({ clientRef: { current: f.client }, gameData: f.ctx.gameData,
+    proxy: { hookPacket: vi.fn(), packetFactory: { createByName: f.ctx.createPacket } } } as any);
+  f.client.sendToServer.mockImplementationOnce(() => { throw new Error('ambiguous write'); });
+  if (source === 'script') inventory.useItem(1); else f.tick();
+  vi.setSystemTime(13000); f.tick(); inventory.useItem(1);
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+  vi.setSystemTime(15100); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
+});
+it('preserves longest XML cooldown, margin, and rejects any invalid entry', () => {
+  expect(abilityCooldownMs('<Object><Cooldown>1</Cooldown><Ability><Cooldown>5.5</Cooldown></Ability></Object>')).toBe(5600);
+  expect(abilityCooldownMs('<Object><Cooldown>1</Cooldown><Cooldown>bad</Cooldown></Object>')).toBeNull();
+  expect(abilityCooldownMs('<Object/>')).toBe(550);
+});
+it('shares per-item cooldown across script, swapped auto casts, and revisits', () => {
+  const f = fixture(); f.settings.get('targetMaxStaleMs')!.set(0);
+  f.ctx.gameData!.getRawObjectXml = (type = 321) => `<Object><MpCost>1</MpCost><Cooldown>${type === 321 ? 5 : 1}</Cooldown></Object>`;
+  installInventory({ clientRef: { current: f.client }, gameData: f.ctx.gameData,
+    proxy: { hookPacket: vi.fn(), packetFactory: { createByName: f.ctx.createPacket } } } as any);
+  inventory.useItem(1);
+  f.pd.inventory[1] = 322;
+  vi.setSystemTime(11000); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
+  f.pd.inventory[1] = 321;
+  vi.setSystemTime(13000); f.tick(); inventory.useItem(1);
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
+  vi.setSystemTime(15000); f.tick(); inventory.useItem(1);
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
+  vi.setSystemTime(15100); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(3);
+});
+it('shares the XML cooldown after a human cast', () => {
+  const f = fixture(); f.settings.get('targetMaxStaleMs')!.set(0);
+  f.setXml('<Object><MpCost>1</MpCost><Cooldown>5</Cooldown></Object>');
+  f.hooks.get('USEITEM')!(f.client, { data: { slotObject: { objectId: 1, slotId: 1, objectType: 321 }, useType: 1 } });
+  vi.setSystemTime(13000); f.tick();
+  expect(f.client.sendToServer).not.toHaveBeenCalled();
+  vi.setSystemTime(15000); f.tick();
+  expect(f.client.sendToServer).not.toHaveBeenCalled();
+  vi.setSystemTime(15100); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+});
+it('shares the XML cooldown after a script cast', () => {
+  const f = fixture(); f.settings.get('targetMaxStaleMs')!.set(0);
+  f.setXml('<Object><MpCost>1</MpCost><Cooldown>5</Cooldown></Object>');
+  installInventory({ clientRef: { current: f.client }, gameData: f.ctx.gameData,
+    proxy: { hookPacket: vi.fn(), packetFactory: { createByName: f.ctx.createPacket } } } as any);
+  inventory.useItem(1); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+  vi.setSystemTime(13000); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+  vi.setSystemTime(15000); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+  vi.setSystemTime(15100); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
+});
+it('does not reuse spent mana before authoritative replenishment', () => {
+  const f = fixture(); f.settings.get('mpReservePct')!.set(0);
+  f.settings.get('targetMaxStaleMs')!.set(0); f.pd.mana = 20;
+  f.tick(); vi.setSystemTime(13000); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+  expect(f.pd.mana).toBe(20);
+  f.pd.parseStat(StatType.MP, 0); f.tick();
+  f.pd.parseStat(StatType.MP, 19); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+  f.pd.parseStat(StatType.MP, 20); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
+});
+it('honors item XML cooldown even when the configured interval is shorter', () => {
+  const f = fixture(); f.settings.get('targetMaxStaleMs')!.set(0);
+  f.setXml('<Object><MpCost>1</MpCost><Cooldown>5</Cooldown></Object>');
+  f.tick(); vi.setSystemTime(12000); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+  vi.setSystemTime(15000); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+  vi.setSystemTime(15100); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
+});
+it.each(['Quiet', 'Silenced'] as const)('refuses ability while %s despite positive MP', (effect) => {
+  const f = fixture(); vi.spyOn(f.pd, 'hasConditionEffect').mockImplementation((name) => name === effect);
+  f.tick(); expect(f.client.sendToServer).not.toHaveBeenCalled();
+});
+it('does not treat bag slot one as the player ability', () => {
+  const f = fixture();
+  f.hooks.get('USEITEM')!(f.client, { data: { slotObject: { objectId: 20, slotId: 1 }, useType: 1 } });
+  f.tick(); expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+});
 it('honors renewable connection-scoped script pauses and automatically expires them', () => {
   const f = fixture();
   pauseAutomaticAbility(f.client, 1000); f.tick();
@@ -92,7 +185,7 @@ it('allows optional self-casts without targets while aimed classes still need ta
 it('keeps cooldowns, manual-use pause and safe-zone pause', () => {
   const f = fixture(); f.tick(); f.tick();
   expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
-  f.hooks.get('USEITEM')!(f.client, { data: { slotObject: { slotId: 1 } } });
+  f.hooks.get('USEITEM')!(f.client, { data: { slotObject: { slotId: 1, objectId: 1 } } });
   vi.setSystemTime(12000); f.tick(); expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
   vi.setSystemTime(13100); f.enemy(); f.tick(); expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
   f.hooks.get('MAPINFO')!(f.client, { data: { name: 'Nexus' } });

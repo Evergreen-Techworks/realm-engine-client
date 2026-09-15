@@ -2,6 +2,7 @@
 // Do NOT edit by hand — edit wsMessageTypes.ts and re-run the generator.
 // Loaded as a classic <script> before app.js so app.js can read window.WS_MSG.
 window.WS_MSG = Object.freeze({
+  STARTUP_STATUS: "startupStatus",
   ALL_PLAYERS_RAW_STATS: "allPlayersRawStats",
   CLIENT_LIST: "clientList",
   CONFIG: "config",

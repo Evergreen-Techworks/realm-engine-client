@@ -69,6 +69,7 @@ export const DLL_FEATURE_KEYS = [
   'followEntityActive', 'followEntityName', 'internalUnloadDll',
   'killauraEnabled', 'killauraMode',
   'killauraRangeTiles', 'killauraStandoffTiles',
+  'navCollisionRule',
   'petSkinOverrideEnabled', 'petSkinOverrideId', 'pjdodgeDebugOverlay',
   'pjdodgeHitScale', 'pjdodgeHorizonMs', 'pjdodgeLeadMs', 'pjdodgeLockFollow',
   'pjdodgePredictionAccuracy', 'pjdodgeSafeWalk', 'pjdodgeSpeedScale', 'playerColliderSceneReset',

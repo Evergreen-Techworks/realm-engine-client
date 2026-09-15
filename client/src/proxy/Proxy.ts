@@ -31,6 +31,11 @@ export class Proxy extends EventEmitter {
 
   private listener: net.Server | null = null;
   private states = new Map<string, State>();
+  private reconnectGenerations = new Map<string, number>();
+
+  authorizeReconnect(client: ClientConnection): void {
+    if (client.connected && client.state) this.reconnectGenerations.set(client.state.guid, client.admission.generation);
+  }
 
   // Hook registries
   private packetHooks = new Map<string, PacketHandler[]>();   // packetName -> handlers
@@ -81,9 +86,14 @@ export class Proxy extends EventEmitter {
 
     if (guid !== 'n/a' && this.states.has(guid)) {
       const lastState = this.states.get(guid)!;
+      const generation = this.reconnectGenerations.get(guid);
+      this.reconnectGenerations.delete(guid);
+      this.states.delete(guid);
+      if (generation === undefined || generation !== lastState.client.admission.generation) return newState;
       newState.conTargetAddress = lastState.conTargetAddress;
       newState.conTargetPort = lastState.conTargetPort;
-      newState.conRealKey = lastState.conRealKey;
+      newState.conRealKey = Buffer.from(lastState.conRealKey);
+      lastState.conRealKey = Buffer.alloc(0);
       newState.pendingKeyRestore = true;
       newState.copyStoreFrom(lastState);
       Logger.debug('reconnect', 'State', `Restored from previous — address: ${lastState.conTargetAddress}, port: ${lastState.conTargetPort}, keyLen: ${lastState.conRealKey.length}`);

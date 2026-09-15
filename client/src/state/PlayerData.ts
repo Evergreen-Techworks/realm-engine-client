@@ -1,5 +1,7 @@
 import { ConditionEffect, type ConditionEffectName } from '../constants/ConditionEffect.js';
 import { StatType } from '../constants/StatType.js';
+import { observeAbilityMana } from '../util/AbilityMana.js';
+import { observeItemQuantity } from '../util/ItemUseReservations.js';
 
 function toStatInt(value: number | string): number {
   const n = typeof value === 'number' ? value : Number(value);
@@ -210,7 +212,10 @@ export class PlayerData {
       case StatType.MaxHP: this.maxHealth = value as number; break;
       case StatType.HP: this.health = value as number; break;
       case StatType.MaxMP: this.maxMana = value as number; break;
-      case StatType.MP: this.mana = value as number; break;
+      case StatType.MP:
+        this.mana = value as number;
+        observeAbilityMana(this, this.mana);
+        break;
       case StatType.Attack: this.attack = value as number; break;
       case StatType.Defense: this.defense = value as number; break;
       case StatType.Speed: this.speed = value as number; break;
@@ -278,6 +283,17 @@ export class PlayerData {
           this.backpack[id - 131] = value as number;
         }
         break;
+    }
+    if (id >= StatType.Inventory0 && id <= StatType.Inventory11)
+      observeItemQuantity(this, id - StatType.Inventory0, Number(value), Number(value) > 0 ? 1 : 0);
+    else if (id >= 131 && id <= 146)
+      observeItemQuantity(this, 12 + id - 131, Number(value), Number(value) > 0 ? 1 : 0);
+    else {
+      const quickSlot = ([StatType.QuickSlot0, StatType.QuickSlot1, StatType.QuickSlot2] as number[]).indexOf(id);
+      if (quickSlot >= 0) {
+        const slot = this.quickSlots[quickSlot];
+        observeItemQuantity(this, 1000000 + quickSlot, slot.itemType, slot.quantity);
+      }
     }
   }
 

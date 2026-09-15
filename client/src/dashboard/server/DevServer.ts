@@ -14,6 +14,8 @@ import { PacketInspector, type CapturedPacket } from './PacketInspector.js';
 import { PacketLab } from './PacketLab.js';
 import { GameUpdater, type GameUpdateStatus } from './GameUpdater.js';
 import type { PluginManager } from '../../plugins/PluginManager.js';
+import type { PluginLoadReport } from '../../plugins/PluginManager.js';
+import type { MetadataStatus } from '../../startup/metadataEnrichment.js';
 import type { Proxy } from '../../proxy/Proxy.js';
 import type { GameWorldState } from '../../state/GameWorldState.js';
 import type { GameDataLoader } from '../../game-data/GameDataLoader.js';
@@ -36,6 +38,7 @@ import {
 } from './AccountService.js';
 import { GameLauncher } from './GameLauncher.js';
 import { BUNDLED_PLUGIN_DEFAULTS_FILE, PluginConfigService } from './PluginConfigService.js';
+import { DASHBOARD_BIND_HOST, isDashboardRequest } from './loopbackGuard.js';
 
 // ── Debug logging ─────────────────────────────────────────────────────────────
 // Gated behind the 'accounts' debug channel (see util/DebugManager.ts). OFF by
@@ -299,6 +302,22 @@ const MIME_TYPES: Record<string, string> = {
  * Serves the packet inspector UI on localhost:3000.
  */
 export class DevServer {
+  private startupStopped = false;
+  private startupStatus: { metadata: MetadataStatus; plugins: PluginLoadReport | null } = {
+    metadata: { state: 'loading', failed: [] }, plugins: null,
+  };
+
+  setStartupStatus(status: { metadata: MetadataStatus; plugins: PluginLoadReport | null }): void {
+    if (this.startupStopped) return;
+    this.startupStatus = {
+      metadata: { ...status.metadata, failed: [...status.metadata.failed] },
+      plugins: status.plugins ? { loaded: [...status.plugins.loaded], failed: [...status.plugins.failed] } : null,
+    };
+    const message = JSON.stringify({ type: WS_MSG.STARTUP_STATUS, ...this.startupStatus });
+    for (const client of this.wss.clients) {
+      if (client.readyState === WebSocket.OPEN) client.send(message);
+    }
+  }
   private httpServer: http.Server;
   private wss: WebSocketServer;
   private inspector: PacketInspector;
@@ -572,11 +591,25 @@ export class DevServer {
       Logger.warn('DevServer', `Failed to load servers.json: ${(err as Error).message}`);
     }
 
-    // HTTP server for static files
-    this.httpServer = http.createServer((req, res) => this.handleHttp(req, res));
+    // HTTP server for static files. Every route and the WebSocket upgrade answer
+    // only the dashboard's own loopback requests (loopbackGuard.ts).
+    this.httpServer = http.createServer((req, res) => {
+      if (!isDashboardRequest(req, this.boundPort())) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Forbidden');
+        return;
+      }
+      this.handleHttp(req, res);
+    });
 
     // WebSocket server for real-time packet streaming
-    this.wss = new WebSocketServer({ server: this.httpServer });
+    this.wss = new WebSocketServer({
+      server: this.httpServer,
+      verifyClient: (info, done) => {
+        if (isDashboardRequest(info.req, this.boundPort())) done(true);
+        else done(false, 403, 'Forbidden');
+      },
+    });
     this.wss.on('connection', (ws) => this.handleWsConnection(ws));
 
     // Subscribe to dashboard-only plugin logs
@@ -1037,7 +1070,8 @@ export class DevServer {
       }
       process.exit(1);
     });
-    this.httpServer.listen(port, () => {
+    this.httpServer.listen(port, DASHBOARD_BIND_HOST, () => {
+      Logger.log('Startup', `launch=${process.env.REALM_ENGINE_LAUNCH_ID ?? process.pid} process=proxy stage=dashboard-ready elapsedMs=${performance.now().toFixed(1)}`);
       Logger.log('DevServer', `Dashboard available at http://localhost:${port}`);
       void this.applyExaltTuneOnProxyStartMaybe().finally(() => {
         syncExaltTuneWatchdogFromDisk();
@@ -1048,6 +1082,12 @@ export class DevServer {
         });
       });
     });
+  }
+
+  /** The port actually listened on (start() may be given 0); -1 before listening. */
+  private boundPort(): number {
+    const address = this.httpServer.address();
+    return address && typeof address === 'object' ? address.port : -1;
   }
 
   trimProxyMemorySmart(opts: TrimProxySmartOptions): void {
@@ -1081,6 +1121,7 @@ export class DevServer {
   }
 
   stop(): void {
+    this.startupStopped = true;
     stopSmartTrimScheduler();
     stopExaltTuneWatchdog();
     this.playerDataIntervalStop?.();
@@ -2545,6 +2586,8 @@ export class DevServer {
   }
 
   private handleWsConnection(ws: WebSocket): void {
+    if (this.startupStopped) return;
+    ws.send(JSON.stringify({ type: WS_MSG.STARTUP_STATUS, ...this.startupStatus }));
     Logger.log('DevServer', 'Dashboard client connected');
 
     // Send current plugin state

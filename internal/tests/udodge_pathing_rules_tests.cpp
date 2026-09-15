@@ -47,6 +47,30 @@ bool LiveWalls(float x, float y)
 {
     return !TO::BoxBlocked([](int tx, int ty) { return FlagsAt(tx, ty); }, x, y);
 }
+
+// navCollisionRule=game fixtures. A NoWalk diagonal pinch: wall squares (8, y <= 0) and
+// (9, y >= 1) touch only at the corner (9,1), on open ground covering every window the
+// searches read.
+void BuildNoWalkPinch()
+{
+    g_flags.clear(); g_full.clear();
+    Open(-6, -15, 24, 15);
+    for (int y = -15; y <= 15; ++y) {
+        if (y <= 0) g_flags[TO::SquareKey(8, y)] |= TO::kTileBlocked;
+        if (y >= 1) g_flags[TO::SquareKey(9, y)] |= TO::kTileBlocked;
+    }
+}
+// What FillOccGrid copies for the game rule: squares (sx0.., sy0..) as a whole-tile,
+// halfEdge-0 raster at square centres.
+void CopySquares(int sx0, int sy0, uint8_t* out)
+{
+    TO::NearFullOccupyMask none;
+    none.Clear();
+    for (int y = 0; y < kUOccSquareSide; ++y)
+        for (int x = 0; x < kUOccSquareSide; ++x)
+            out[y * kUOccSquareSide + x] = TO::RasterCell([](int tx, int ty) { return FlagsAt(tx, ty); }, none,
+                                                          sx0 + x + 0.5f, sy0 + y + 0.5f, 0.f, true);
+}
 } // namespace
 
 int main()
@@ -181,6 +205,143 @@ int main()
     EnemyHazards::Append(snap.map, 0x1234, 100, { 8, 0 }, { 0, 0 }, 4.5f);
     Path::Compute(snap, plan);
     Check(!plan.navFound || plan.navPartial, "with no way round, the route does not cross the keep-out");
+
+    // ── navCollisionRule=game: the worker's segment test ─────────────────────────
+    {
+        BuildNoWalkPinch();
+        static uint8_t squares[kUOccSquareCells];
+        const int sx0 = 9 - kUOccSquareRad, sy0 = 0 - kUOccSquareRad;
+        CopySquares(sx0, sy0, squares);
+        MapInput worker{};
+        worker.env.rule = Movement::Collision::Rule::Game;
+        worker.env.squares = squares;
+        worker.env.squareX0 = sx0; worker.env.squareY0 = sy0; worker.env.squareSide = kUOccSquareSide;
+        worker.settings.safeWalk = false;
+        Check(OccupancyPathClear(worker, { 8.5f, 1.5f }, { 9.5f, 0.5f }),
+              "game rule: the worker's sweep walks a NoWalk corner pinch (no sample on the lattice point)");
+        Check(!OccupancyPathClear(worker, { 8.5f, 1.5f }, { 9.5f, 1.5f }),
+              "game rule: the worker's sweep still refuses the wall beside it");
+        Check(Navigation::PaddedPathClear(worker, { 8.5f, 1.5f }, { 9.5f, 0.5f }),
+              "game rule: navigation adds no padding to the pinch");
+        // Damaging ground keeps its rule: the worker raster's hazard bit, under safe-walk.
+        static uint8_t occ[kUPathMaxCells];
+        const Vec2 occCenter{ 9.25f, 1.25f };
+        occ[kUPathMaxRadCells * kUPathMaxSide + kUPathMaxRadCells - 10] = 0x2;   // the cell at (4.25, 1.25)
+        worker.env.occFlags = occ; worker.env.occCenter = occCenter; worker.env.occSide = kUPathMaxSide;
+        worker.env.occRadius = kUPathMaxRadCells; worker.env.occCellTiles = kUPathCellTiles;
+        worker.settings.safeWalk = true;
+        Check(!OccupancyPathClear(worker, { 2.25f, 1.25f }, { 6.25f, 1.25f }),
+              "game rule: safe-walk still refuses damaging ground on the way");
+        worker.settings.safeWalk = false;
+        Check(OccupancyPathClear(worker, { 2.25f, 1.25f }, { 6.25f, 1.25f }),
+              "game rule: without safe-walk the same move is clear");
+    }
+
+    // ── navCollisionRule=game: both searches over the pinch ─────────────────────
+    {
+        using Movement::Collision::Rule;
+        BuildNoWalkPinch();
+        static uint8_t squares[kUOccSquareCells];
+        const int sx0 = 9 - kUOccSquareRad, sy0 = 0 - kUOccSquareRad;
+        CopySquares(sx0, sy0, squares);
+        const auto flagsAt = [](int tx, int ty) { return FlagsAt(tx, ty); };
+
+        // The walk-to A*: whole-tile cells at square centres (FillNavGrid under the game
+        // rule), goal east of the pinch.
+        static Path::PlannerSnapshot nav{};
+        static Path::PlanResult navPlan{};
+        const auto navThroughPinch = [&](Rule rule) {
+            nav = Path::PlannerSnapshot{};
+            nav.collisionRule = rule;
+            nav.navActive = true; nav.moveBudget = 1.2f; nav.speed = 0.006f;
+            nav.player = { 6.5f, 2.5f };
+            nav.navGrid.center = { 6.5f, 2.5f };
+            nav.navGoal = { 12.5f, -2.5f };
+            TO::NearFullOccupyMask none; none.Clear();
+            for (int gy = 0; gy < kUNavSide; ++gy)
+                for (int gx = 0; gx < kUNavSide; ++gx) {
+                    uint8_t c = TO::RasterCell(flagsAt, none, 6.5f + (gx - kUNavRadCells), 2.5f + (gy - kUNavRadCells), 0.f, false);
+                    if (c & TO::kCellVoid) c |= TO::kCellWall;   // FillNavGrid folds void into wall
+                    nav.navGrid.flags[gy * kUNavSide + gx] = c;
+                }
+            Path::Compute(nav, navPlan);
+            return navPlan.navFound && !navPlan.navPartial;
+        };
+        Check(navThroughPinch(Rule::Game), "game rule: the walk-to A* routes through a NoWalk corner pinch");
+        Check(!navThroughPinch(Rule::Legacy), "legacy rule: the walk-to A* refuses the corner cut");
+
+        // The dodge Dijkstra. Its cells are half a tile apart, so a diagonal crosses the
+        // corner exactly when the cell centres sit a quarter tile off the square lines
+        // (grid centre 9.25, 1.25). A locked target beyond the pinch: the route takes
+        // the corner under the game rule and cannot under legacy.
+        static Path::PlannerSnapshot dodge{};
+        static Path::PlanResult route{};
+        const auto dodgeFor = [&](Rule rule, Vec2 player, Vec2 center, Vec2 lock, float range) {
+            dodge = Path::PlannerSnapshot{};
+            dodge.collisionRule = rule;
+            dodge.player = player;
+            dodge.grid.center = center;
+            dodge.speed = 0.006f; dodge.moveBudget = 1.2f;
+            dodge.hasLock = true; dodge.lockPos = lock;
+            dodge.weaponRangeTiles = range; dodge.innerStandoffTiles = 0.f;
+            TO::NearFullOccupyMask none; none.Clear();
+            for (int gy = 0; gy < kUPathMaxSide; ++gy)
+                for (int gx = 0; gx < kUPathMaxSide; ++gx) {
+                    const float cx = center.x + (gx - kUPathMaxRadCells) * kUPathCellTiles;
+                    const float cy = center.y + (gy - kUPathMaxRadCells) * kUPathCellTiles;
+                    dodge.grid.flags[gy * kUPathMaxSide + gx] = TO::RasterCell(flagsAt, none, cx, cy, TO::kPlayerHalfEdge, true);
+                }
+            dodge.grid.squareX0 = sx0; dodge.grid.squareY0 = sy0;
+            std::copy(squares, squares + kUOccSquareCells, dodge.grid.squares);
+            Path::Compute(dodge, route);
+        };
+        dodgeFor(Rule::Game, { 6.75f, 2.75f }, { 9.25f, 1.25f }, { 12.75f, -2.75f }, 1.f);
+        Check(route.found && !route.outOfRange && route.goalPos.x > 9.f,
+              "game rule: the dodge route crosses a NoWalk corner pinch to reach its target");
+        dodgeFor(Rule::Legacy, { 6.75f, 2.75f }, { 9.25f, 1.25f }, { 12.75f, -2.75f }, 1.f);
+        Check(!(route.found && !route.outOfRange && route.goalPos.x > 9.f),
+              "legacy rule: the dodge route cannot cross it");
+
+        // A cell 0.1 from a wall stands under the game rule (no box). The only in-range
+        // cell of a target standing there is that cell.
+        dodgeFor(Rule::Game, { 7.25f, -3.5f }, { 7.9f, -3.5f }, { 7.9f, -3.5f }, 0.05f);
+        Check(route.found && !route.outOfRange && std::fabs(route.goalPos.x - 7.9f) < 0.01f,
+              "game rule: a dodge goal 0.1 tiles from a NoWalk wall is reachable");
+        dodgeFor(Rule::Legacy, { 7.25f, -3.5f }, { 7.9f, -3.5f }, { 7.9f, -3.5f }, 0.05f);
+        Check(!(route.found && !route.outOfRange && std::fabs(route.goalPos.x - 7.9f) < 0.01f),
+              "legacy rule: the player box keeps it out of reach");
+    }
+
+    // ── Dodge route time: every edge at its own ground speed ─────────────────────
+    // A locked target 8 tiles down a one-cell corridor: the dodge route walks to the
+    // near edge of its engagement ring. The player stands on dry ground; the corridor
+    // is half-speed water. The arrival time must be priced at the ground the route
+    // crosses, not at the speed where the player stands.
+    {
+        static Path::PlannerSnapshot dodge{};
+        static Path::PlanResult route{};
+        const auto arrivalAcross = [&](float corridorXmlSpeed) {
+            dodge = Path::PlannerSnapshot{};
+            dodge.player = { 0.25f, 0.25f };
+            dodge.grid.center = dodge.player;
+            dodge.speed = 0.006f; dodge.baseSpeed = 0.006f; dodge.moveBudget = 1.2f;
+            dodge.hasLock = true; dodge.lockPos = { 8.25f, 0.25f };
+            dodge.weaponRangeTiles = 2.f; dodge.innerStandoffTiles = 1.f;
+            for (int gy = 0; gy < kUPathMaxSide; ++gy)
+                for (int gx = 0; gx < kUPathMaxSide; ++gx)
+                    dodge.grid.flags[gy * kUPathMaxSide + gx] =
+                        (gy == kUPathMaxRadCells && gx >= kUPathMaxRadCells) ? 0 : 0x1;
+            dodge.grid.squareX0 = -kUOccSquareRad; dodge.grid.squareY0 = -kUOccSquareRad;
+            for (int tx = 1; tx <= 12; ++tx)   // squares (1..12, 0); the player's (0, 0) stays dry
+                dodge.grid.squareSpeed[kUOccSquareRad * kUOccSquareSide + kUOccSquareRad + tx] = corridorXmlSpeed;
+            Path::Compute(dodge, route);
+            return route.found ? route.goalArriveMs : -1.f;
+        };
+        const float dry = arrivalAcross(0.f);
+        const float wading = arrivalAcross(0.5f);
+        Check(dry > 0.f && wading > 1.8f * dry && wading < 2.1f * dry,
+              "a dodge route across half-speed water is timed at the water's speed");
+    }
 
     std::printf("Pathing rules tests: %d checks, 0 failures\n", g_checks);
     return 0;

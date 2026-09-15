@@ -9,13 +9,10 @@
 // Tick).  Each variable is pre-initialised to its fallback value; EnsureAll()
 // overwrites it the first time the class is found in IL2CPP metadata.
 //
-// ACTK anti-tamper model (runtime = dump + shift):
-//   KJMONHENJEN base fields           — no shift  (0x00)
-//   LKHPPBEGNOM own fields >= 0x1B8d  — +0x50
-//   FKALGHJIADI own fields            — +0x50
-//   HJMBOMEHGDJ / BGAIOPJMHLO /
-//     CMFPKCJHKKB / ObjectProperties /
-//     ProjectileProperties            — no shift  (il2cpp returns live value)
+// No field is shifted. IL2CPP's generated code reads and writes every instance field at the offset
+// its metadata records (measured on GameAssembly 86ad651b, 2026-09-14). The old "ACTK +0x50" model
+// came from rows that named the wrong field: LKHPPBEGNOM keeps two Int32 trios 0x50 apart, so
+// KJNHLADHEMH + 0x50 happened to be HP. The binding gate now refuses any adjustment.
 //
 // IL2CPP container layouts (List, Dictionary, Array, String) are .NET runtime
 // invariants — they are NOT game-specific and are intentionally NOT here.
@@ -103,9 +100,10 @@ namespace RuntimeOffsets {
     // ── Cached FieldInfo pointers ─────────────────────────────────────────────
     // Non-null once EnsureAll() has seen the owning class in IL2CPP metadata.
     // Use with ReadField<T> below instead of raw pointer arithmetic.
-    extern FieldInfo* FI_HP;            // KJNHLADHEMH — current HP (LKHPPBEGNOM)
-    extern FieldInfo* FI_MaxHP;         // NCBIICBDGAG — max HP    (LKHPPBEGNOM)
-    extern FieldInfo* FI_Defense;       // HODJPKFINKF — defense   (LKHPPBEGNOM)
+    // FI_HP is a misnomer kept for SkinChanger: KJNHLADHEMH is stat 25's field (Player_Stat25), not HP.
+    extern FieldInfo* FI_HP;            // KJNHLADHEMH — stat 25 / skin override (LKHPPBEGNOM)
+    extern FieldInfo* FI_MaxHP;         // OADOHPKBPJB — max HP    (LKHPPBEGNOM)
+    extern FieldInfo* FI_Defense;       // NCBIICBDGAG — defense   (LKHPPBEGNOM)
     extern FieldInfo* FI_CurMP;         // FMHMGKEPIDN — current MP (float, FKALGHJIADI)
     extern FieldInfo* FI_MaxMP;         // NEDCKPIIIPN — max MP     (FKALGHJIADI)
     // PPBLNMIMIFP — bool abilityReady (FKALGHJIADI dump 0x515 / runtime 0x565):
@@ -146,21 +144,21 @@ namespace RuntimeOffsets {
     extern uint32_t KJ_TileRef;     // EOKJOGFPLOA   fallback 0x58  (BGAIOPJMHLO* current tile)
     extern uint32_t KJ_DictObjectId;// FDNHINDAEHK   fallback 0xC0  (dict-key object id; NOT ObjId/HHPOJBFICAH)
 
-    // ── LKHPPBEGNOM own fields (+0x50 ACTK) ─────────────────────────────────
-    extern uint32_t HP;         // KJNHLADHEMH   current HP, fallback 0x20C
-    extern uint32_t MaxHP;     // NCBIICBDGAG   max HP, fallback 0x208
-    extern uint32_t Defense;    // HODJPKFINKF   fallback 0x210
-    extern uint32_t PlayerIGN;  // DPGEBOCBKEF   fallback 0x178  (below ACTK point, no shift)
+    // ── LKHPPBEGNOM own fields ──────────────────────────────────────────────
+    extern uint32_t HP;         // ABCPKBGJPEP   current HP (stat 1), fallback 0x20C
+    extern uint32_t MaxHP;     // OADOHPKBPJB   max HP (stat 0), fallback 0x208
+    extern uint32_t Defense;    // NCBIICBDGAG   total defense (stat 21), fallback 0x1B8
+    extern uint32_t Player_Stat25; // KJNHLADHEMH stat 25's field (SkinChanger's skin override), fallback 0x1BC
+    extern uint32_t PlayerIGN;  // DPGEBOCBKEF   fallback 0x178
     // MapObject (LKHPPBEGNOM) Int32[3] — first two elements = 64-bit status bitmask.
-    // NOT ACTK-shifted: the game's own condition checks and constructor use the
-    // metadata offset (see the table row in RuntimeOffsets.cpp).
+    // The game's own condition checks and constructor use the metadata offset.
     extern uint32_t MoConditions; // COHCKAPOLCA   fallback 0x250
     // ECGPFJKCCAN — Vector2 velocity stored on LKHPPBEGNOM (and all PMMFLLAIPGN/enemy subclasses).
     // vx = *(entity + MoVelocity), vy = *(entity + MoVelocity + 4).
     // Fallback 0 = not yet resolved; AutoAim will fall back to position-history velocity.
     extern uint32_t MoVelocity;   // ECGPFJKCCAN   fallback 0
-    extern uint32_t MoObjectProps; // KKENJFFDMPO   fallback 0x1C8 (runtime metadata, no ACTK shift)
-    extern uint32_t PlayerCollisionProps; // GGBCADDBAPN fallback 0x2F0 (not ACTK-shifted)
+    extern uint32_t MoObjectProps; // KKENJFFDMPO   fallback 0x1C8
+    extern uint32_t PlayerCollisionProps; // GGBCADDBAPN fallback 0x2F0
 
     // ── ConditionEffects — bitmask values matching DIA4A SDK.h / Flash client layout ─────────────
     // COHCKAPOLCA UInt32[2] encodes a 64-bit bitmask split across 31-bit words.
@@ -244,43 +242,33 @@ namespace RuntimeOffsets {
     // Confirmed from Flash client: condition_ applies to all GameObjects incl. enemies.
     bool MapObjectConditionsMakeUntargetable(uint32_t word0, uint32_t word1);
 
-    // ── FKALGHJIADI own fields (+0x50 ACTK) ─────────────────────────────────
-    extern uint32_t Tex1;             // HCMECDPHEMC   fallback 0x4C4
-    extern uint32_t Tex2;             // HKPOMIBEGPK   fallback 0x538
-    extern uint32_t CurMP;            // FMHMGKEPIDN   fallback 0x54C
-    extern uint32_t MaxMP;            // NEDCKPIIIPN   fallback 0x548
-    // DAGEMHFLJLK — bool groundDamageImmune (dump 0x458 / runtime 0x4A8).
-    // Kept for potential use (e.g. skip nexus on ground tile damage); NOT ability cooldown.
+    // ── Player fields (textures on LKHPPBEGNOM; the rest FKALGHJIADI) ───────
+    extern uint32_t Tex1;             // BAEKCAIIKNO   texture 1 (stat 32), LKHPPBEGNOM, fallback 0x25C
+    extern uint32_t Tex2;             // PLABGIEFNBH   texture 2 (stat 33), LKHPPBEGNOM, fallback 0x260
+    extern uint32_t CurMP;            // FMHMGKEPIDN   current MP (stat 4, Single), fallback 0x564
+    extern uint32_t MaxMP;            // NEDCKPIIIPN   max MP (stat 3), fallback 0x560
+    // DAGEMHFLJLK / BINDBHJLPMG / PPBLNMIMIFP — bools named groundDamageImmune, invincible and
+    // abilityReady by old tooling. Bound at their metadata offsets; the meanings are not proven.
     extern uint32_t GroundDmgImmune;
-    // BINDBHJLPMG — bool invincible (dump 0x459 / runtime 0x4A9).
-    // Short-duration hit invulnerability set by OnNewTick. NOT the same as COHCKAPOLCA bit 23.
     extern uint32_t LocalInvincible;
-    // PPBLNMIMIFP — bool abilityReady (dump 0x515 / runtime 0x565).
-    // True when the ability can fire this tick (server-driven).
     extern uint32_t AbilityReady;
-    // CGCMALPMMJL — bool moving (dump 0x448 / runtime 0x498).
+    // CGCMALPMMJL — a bool the game sets and clears; "moving" is not proven (see RuntimeOffsets.cpp).
     extern uint32_t Player_Moving;
-    // BHJFNEAHAOE — float moveDirX (dump 0x478 / runtime 0x4C8).
+    // World velocity, LKHPPBEGNOM.ECGPFJKCCAN (tiles per ms): the player tick writes its rotated input
+    // there. MoveDirY = MoveDirX + 4, derived in EnsureAll. A direction, not a unit vector.
     extern uint32_t Player_MoveDirX;
-    // GDNEBFDDDKM — float moveDirY (dump 0x47C / runtime 0x4CC).
     extern uint32_t Player_MoveDirY;
-    // BHJFNEAHAOE — float SPD stat (same dump field 0x478; read without ACTK shift → runtime 0x478).
-    // PlayerTAB and TestTAB both use runtime 0x478 for the speed formula (4 + 5.6 * spd/75).
+    // BHJFNEAHAOE — float SPD stat (stat 22), read by the game's speed getter, fallback 0x480.
     extern uint32_t Player_Spd;
 
-    // ── Player diagnostic stats (FKALGHJIADI, no ACTK shift for stat reads) ──
-    // These offsets are used by PlayerTAB for display; they resolve against
-    // FKALGHJIADI via il2cpp_field_get_offset WITHOUT adding the ACTK shift.
-    // Some share BeeByte field names with movement-system entries above (which
-    // DO apply kActk); the two sets coexist because they serve different
-    // purposes (stat display vs movement direction).
+    // ── Player diagnostic stats (FKALGHJIADI), used by PlayerTAB for display ──
     extern uint32_t PlayerGuildName;  // NFJGJKLPLBA   fallback 0x470  (Il2CppString* — GUILD name;
                                       // verified 2026-08-19 via builds.him.is: InvitedToGuild {name, guildName}
                                       // packet's 2nd string is NFJGJKLPLBA. Player IGN is PlayerIGN (0x178).
     extern uint32_t PlayerClassNum;   // KABPJBJPGCM   fallback 0x4B0  (int32)
-    extern uint32_t PlayerGuildRank;  // GBANOMPLGBH   fallback 0x4AC  (int32)
+    extern uint32_t PlayerGuildRank;  // MPEPBMGKGHL   fallback 0x530  (int32, stat 63)
     extern uint32_t PlayerAtk;        // HCMECDPHEMC   fallback 0x474  (int32)
-    extern uint32_t PlayerDex;        // GDNEBFDDDKM   fallback 0x47C  (int32)
+    extern uint32_t PlayerDex;        // GDNEBFDDDKM   fallback 0x47C  (Single on 86ad651b, stat 28)
     extern uint32_t PlayerVit;        // CGFPEPCKKOK   fallback 0x480  (int32)
     extern uint32_t PlayerWis;        // HDCDGHKGLDI   fallback 0x484  (int32)
     extern uint32_t PlayerCondInt;    // MPJGAPJBBBF   fallback 0x514  (int32, single-int condition)
@@ -420,10 +408,10 @@ namespace RuntimeOffsets {
     extern uint32_t VH_SpriteShader;  // "spriteShader"  fallback 0x60
     extern uint32_t VH_DestroyEntity; // "destroyEntity" fallback 0x88
 
-    // ── LKHPPBEGNOM continued — facing angle (+0x50 ACTK) ────────────────────
-    // ECHAFMAAKMD — float facingAngle (dump 0x1DC + ACTK 0x50 → runtime 0x22C).
-    // Written by SendShotPacketDetour to override the server-authoritative aim direction.
-    extern uint32_t Player_FacingAngle;  // "ECHAFMAAKMD"  fallback 0x22C
+    // ── LKHPPBEGNOM continued — attack angle ────────────────────────────────
+    // IHEFJFFIJOL — Single the game's shoot routine stores its angle in; the sprite faces it.
+    // Written by SendShotPacketDetour to match the redirected shot.
+    extern uint32_t Player_FacingAngle;  // "IHEFJFFIJOL"  fallback 0x184
 
     // ── GJJCEFJMNMK throwable entity (all parent ACTK shifts already baked into dump) ──
     // Fields live in the subclass region beyond LKHPPBEGNOM's shifted zone;

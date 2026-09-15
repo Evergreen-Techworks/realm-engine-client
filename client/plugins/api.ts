@@ -14,7 +14,8 @@
  * imports in their single consuming plugin, to avoid pulling one-off / native
  * modules into every plugin's graph): `native/rotmg-shared` (auto-aim, native
  * boundary), the `damage-sniffer/*` internals plus `util/rotmgAssetExtractor`
- * and `util/mapDisplayName` (damage-sniffer only), and
+ * and `util/mapDisplayName` (damage-sniffer only; the one exception is the pure
+ * `tomatoDamageWithDefense` formula, shared with auto-nexus below), and
  * `services/ServerListFetcher` + `config/BakedData` (server-switch only).
  */
 
@@ -44,4 +45,8 @@ export { getDllThreats, getDllGround, getDllThreatsAgeMs, getDllThreatsTruncated
 export { getDllAim, getDllAimAgeMs } from '../src/bridge/DllAimBus.js';
 
 export { tryInventoryAction } from '../src/util/InventoryActions.js';
+export { tomatoDamageWithDefense } from '../src/damage-sniffer/tomatoProjectileDamage.js';
+export { connectionGameTime } from '../src/util/connectionGameTime.js';
+export { observeAbilityMana, reserveAbilityMana, abilityCooldownMs, abilityCooldownReady, reserveAbilityCooldown } from '../src/util/AbilityMana.js';
+export { tryConsumePlayerItem, availablePlayerItemCount } from '../src/util/ItemUseReservations.js';
 export { automaticAbilityPaused } from '../src/bridge/AutomaticAbilityPause.js';

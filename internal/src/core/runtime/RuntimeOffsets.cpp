@@ -34,17 +34,26 @@ uint32_t KJ_Float3Pos    = 0x68;   // DGNPJNFGFPE — Unity.Mathematics.float3 w
 uint32_t KJ_TileRef      = 0x58;   // EOKJOGFPLOA — BGAIOPJMHLO* current tile
 uint32_t KJ_DictObjectId = 0xC0;   // FDNHINDAEHK — dict-key object id (NOT ObjId/HHPOJBFICAH)
 
-// KJNHLADHEMH = current HP, NCBIICBDGAG = max HP (order in struct; names were once swapped in tooling).
+// Stat fields, each proven on GameAssembly 86ad651b by the setter the server stat switch calls
+// (HJMBOMEHGDJ.NAMGODOEDBO): MaxHP (stat 0) OADOHPKBPJB 0x208, HP (stat 1) ABCPKBGJPEP 0x20C,
+// Defense (stat 21) NCBIICBDGAG 0x1B8 -- total defense; the game's base-defense getter subtracts the
+// gear bonus at FKALGHJIADI 0x500. No field of this class is shifted: the old "ACTK +0x50" rows bound
+// KJNHLADHEMH/NCBIICBDGAG/HODJPKFINKF + 0x50, which only happened to land on HP and MaxHP.
 uint32_t HP          = 0x20C;
 uint32_t MaxHP       = 0x208;
-uint32_t Defense     = 0x210;
+uint32_t Defense     = 0x1B8;
+// KJNHLADHEMH (0x1BC): the field stat 25's setter writes (LKHPPBEGNOM vtable slot 109); SkinChanger
+// writes its skin override here through FI_HP. Bound so FI_HP follows a Beebyte rename.
+uint32_t Player_Stat25 = 0x1BC;
 uint32_t PlayerIGN   = 0x178;
 // COHCKAPOLCA — Int32[3] conditions array, at its metadata offset (0x250 on 86ad651b).
 // Unlike HP/MaxHP/Defense it is NOT ACTK-shifted: the game's own IsSlowed / IsSpeedy
 // and LKHPPBEGNOM..ctor all read and write [this+0x250], while meta + 0x50 (0x2A0) is a
 // Single. The +0x50 shift here left every native condition read "no conditions".
 uint32_t MoConditions = 0x250;
-// ECGPFJKCCAN — Vector2 velocity. 0 = unresolved; AutoAim falls back to history.
+// ECGPFJKCCAN — Vector2 velocity at its metadata offset (0x278 on 86ad651b): KLGGGIKDGMC stores
+// (target - position) / duration there and GJFKGLJEGKO extrapolates position from it. The old
+// +0x50 row read 0x2C8, a List<Int32> pointer. 0 = unresolved; AutoAim falls back to history.
 uint32_t MoVelocity   = 0;
 // KKENJFFDMPO — LKHPPBEGNOM ObjectProperties alias. Runtime metadata resolves this at 0x1C8.
 uint32_t MoObjectProps = 0x1C8;
@@ -53,30 +62,35 @@ uint32_t MoObjectProps = 0x1C8;
 // runtime evidence shows this ObjectProperties pointer is not ACTK-shifted.
 uint32_t PlayerCollisionProps = 0x2F0;
 
-uint32_t Tex1              = 0x4C4;
-uint32_t Tex2              = 0x538;
-uint32_t CurMP             = 0x54C;
-uint32_t MaxMP             = 0x548;
-// DAGEMHFLJLK — groundDamageImmune bool (dump 0x458 / runtime 0x4A8). NOT ability cooldown.
-uint32_t GroundDmgImmune   = 0x4A8;
-// BINDBHJLPMG — invincible bool (dump 0x459 / runtime 0x4A9). Short-duration hit invulnerability.
-uint32_t LocalInvincible   = 0x4A9;
-// PPBLNMIMIFP — abilityReady bool (dump 0x515 / runtime 0x565). True when ability can fire.
-uint32_t AbilityReady      = 0x565;
-// CGCMALPMMJL — bool moving (dump 0x448 / runtime 0x498).
-uint32_t Player_Moving     = 0x498;
-// BHJFNEAHAOE — float moveDirX (dump 0x478 / runtime 0x4C8).
-uint32_t Player_MoveDirX   = 0x4C8;
-// GDNEBFDDDKM — float moveDirY (dump 0x47C / runtime 0x4CC).
-uint32_t Player_MoveDirY   = 0x4CC;
-// BHJFNEAHAOE — float SPD stat (dump 0x478 / runtime 0x478, no ACTK shift).
-// PlayerTAB and TestTAB read this without shift for the move-speed formula.
-uint32_t Player_Spd        = 0x478;
+// Textures live on LKHPPBEGNOM: stat 32's setter (vtable slot 131) and stat 33's (slot 111) pass
+// &BAEKCAIIKNO (0x25C) and &PLABGIEFNBH (0x260) to the texture loader.
+uint32_t Tex1              = 0x25C;
+uint32_t Tex2              = 0x260;
+// FMHMGKEPIDN (Single) and NEDCKPIIIPN: stat 4's and stat 3's setters write 0x564 and 0x560.
+uint32_t CurMP             = 0x564;
+uint32_t MaxMP             = 0x560;
+// DAGEMHFLJLK, BINDBHJLPMG, PPBLNMIMIFP: bound at their metadata offsets. The names' meanings
+// (groundDamageImmune, invincible, abilityReady) are not proven against the game's code; nothing
+// reads these offset variables today (LocalPlayer reads abilityReady through FI_AbilityReady).
+uint32_t GroundDmgImmune   = 0x460;
+uint32_t LocalInvincible   = 0x461;
+uint32_t AbilityReady      = 0x52D;
+// CGCMALPMMJL — a bool the game sets and clears (IFDHPIAHOIJ tests and resets it); "moving" is not
+// proven. The player keeps no moving flag or move direction as plain fields: the tick
+// (FKALGHJIADI.GJFKGLJEGKO) rotates its input and writes world velocity to ECGPFJKCCAN.
+uint32_t Player_Moving     = 0x450;
+// Player_MoveDirX/Y read that world velocity (LKHPPBEGNOM.ECGPFJKCCAN, tiles per ms; Y = X + 4).
+// The old rows bound SPD and DEX + 0x50, two Int32 fields read as floats.
+uint32_t Player_MoveDirX   = 0x278;
+uint32_t Player_MoveDirY   = 0x27C;
+// BHJFNEAHAOE — float SPD stat: stat 22's setter writes 0x480 and the game's speed getter
+// FKALGHJIADI.GAFGPNKFMOJ reads it (0x478 was CKNFIOBHECN, a bool).
+uint32_t Player_Spd        = 0x480;
 
 // ── Player diagnostic stats (no ACTK shift for stat reads) ─────────────
 uint32_t PlayerGuildName   = 0x470;  // NFJGJKLPLBA — Il2CppString* GUILD name (not IGN)
 uint32_t PlayerClassNum    = 0x4B0;  // KABPJBJPGCM — class number int32
-uint32_t PlayerGuildRank   = 0x4AC;  // GBANOMPLGBH — guild rank int32
+uint32_t PlayerGuildRank   = 0x530;  // MPEPBMGKGHL — stat 63's setter writes 0x530 (GBANOMPLGBH is a shot timer)
 uint32_t PlayerAtk         = 0x474;  // HCMECDPHEMC — ATK stat int32
 uint32_t PlayerDex         = 0x47C;  // GDNEBFDDDKM — DEX stat int32
 uint32_t PlayerVit         = 0x480;  // CGFPEPCKKOK — VIT stat int32
@@ -205,9 +219,12 @@ uint32_t CH_OffsetY               = 0x14;   // "offsetY" — custom hitbox Y off
 uint32_t VH_SpriteShader          = 0x60;   // "spriteShader" — SpriteShader on ViewHandler
 uint32_t VH_DestroyEntity         = 0x88;   // "destroyEntity" — authoritative entity pointer on ViewHandler
 
-// ── LKHPPBEGNOM facing angle (+0x50 ACTK) ────────────────────────────────
-// ECHAFMAAKMD — dump 0x1DC + kActk 0x50 = runtime 0x22C
-uint32_t Player_FacingAngle  = 0x22C;
+// ── LKHPPBEGNOM attack angle ─────────────────────────────────────────────
+// IHEFJFFIJOL (Single, 0x184): the game's shoot routine FKALGHJIADI.CDJLLHJOCNM stores its angle
+// argument here and LKHPPBEGNOM.LPGNNFPFAGD reads it to face the sprite. The old row bound
+// ECHAFMAAKMD (a Single the constructor sets to 1.0) + 0x50 = 0x22C, the high half of the
+// AnimatedTexture pointer at 0x228, and SendShotPacketDetour wrote a float into it.
+uint32_t Player_FacingAngle  = 0x184;
 
 // ── GJJCEFJMNMK throwable entity ─────────────────────────────────────────
 // BeeByte decoy names ("GuiCanvasSwitcher", "UpdateRadialValue") preserved
@@ -378,10 +395,13 @@ static void ResolveWorldPosLayout()
 //   className  — passed to Resolver::FindClassLoose
 //   tryNames   — candidate field names tried in order (up to 4)
 //   tryCount   — how many names to try
-//   actkShift  — added to il2cpp_field_get_offset result (0 or 0x50)
+//   actkShift  — added to il2cpp_field_get_offset result. Always 0: IL2CPP code addresses a field
+//                at its metadata offset, and the binding gate refuses any other value
 //   outPtr     — pointer to the uint32_t to update
 //   done       — set to true once class was found (even if field wasn't)
 
+// Not a table shift any more (see actkShift above): only TryReadMapObjectConditions' legacy probe
+// candidate still subtracts it.
 static constexpr uint32_t kActk = 0x50u;
 
 struct Entry {
@@ -410,44 +430,37 @@ static Entry s_entries[] = {
     { "KJMONHENJEN", { "EOKJOGFPLOA" },                              1, 0,     &KJ_TileRef,     false, "KJ_TileRef" },
     { "KJMONHENJEN", { "FDNHINDAEHK" },                              1, 0,     &KJ_DictObjectId,false, "KJ_DictObjectId" },
 
-    // ── LKHPPBEGNOM (+0x50 ACTK for own fields) ───────────────────────────
-    { "LKHPPBEGNOM", { "KJNHLADHEMH", "KJNHLADEMH" },               2, kActk, &HP,            false, "HP" },
-    { "LKHPPBEGNOM", { "NCBIICBDGAG" },                              1, kActk, &MaxHP,         false, "MaxHP" },
-    { "LKHPPBEGNOM", { "HODJPKFINKF" },                              1, kActk, &Defense,       false, "Defense" },
+    // ── LKHPPBEGNOM (no shift: every row names the field the game's code uses) ──
+    { "LKHPPBEGNOM", { "ABCPKBGJPEP" },                              1, 0,     &HP,            false, "HP" },
+    { "LKHPPBEGNOM", { "OADOHPKBPJB" },                              1, 0,     &MaxHP,         false, "MaxHP" },
+    { "LKHPPBEGNOM", { "NCBIICBDGAG" },                              1, 0,     &Defense,       false, "Defense" },
+    { "LKHPPBEGNOM", { "KJNHLADHEMH" },                              1, 0,     &Player_Stat25, false, "Player_Stat25" },
     { "LKHPPBEGNOM", { "DPGEBOCBKEF" },                              1, 0,     &PlayerIGN,     false, "PlayerIGN" },
-    // No ACTK shift: the game's compiled condition checks use the metadata offset.
+    // The game's compiled condition checks use the metadata offset.
     { "LKHPPBEGNOM", { "COHCKAPOLCA" },                           1, 0,     &MoConditions,  false, "MoConditions" },
-    { "LKHPPBEGNOM", { "ECGPFJKCCAN" },                           1, kActk, &MoVelocity,    false, "MoVelocity" },
+    { "LKHPPBEGNOM", { "ECGPFJKCCAN" },                           1, 0,     &MoVelocity,    false, "MoVelocity" },
+    { "LKHPPBEGNOM", { "ECGPFJKCCAN" },                           1, 0,     &Player_MoveDirX, false, "Player_MoveDirX" },
+    { "LKHPPBEGNOM", { "BAEKCAIIKNO" },                           1, 0,     &Tex1,          false, "Tex1" },
+    { "LKHPPBEGNOM", { "PLABGIEFNBH" },                           1, 0,     &Tex2,          false, "Tex2" },
     { "LKHPPBEGNOM", { "KKENJFFDMPO" },                           1, 0,     &MoObjectProps, false, "MoObjectProps" },
     { "LKHPPBEGNOM", { "GGBCADDBAPN" },                           1, 0,     &PlayerCollisionProps, false, "PlayerCollisionProps" },
 
-    // ── FKALGHJIADI (+0x50 ACTK for own fields) ───────────────────────────
-    { "FKALGHJIADI", { "HCMECDPHEMC" },                              1, kActk, &Tex1,          false, "Tex1" },
-    { "FKALGHJIADI", { "HKPOMIBEGPK" },                              1, kActk, &Tex2,          false, "Tex2" },
-    { "FKALGHJIADI", { "FMHMGKEPIDN" },                              1, kActk, &CurMP,              false, "CurMP" },
-    { "FKALGHJIADI", { "NEDCKPIIIPN" },                              1, kActk, &MaxMP,              false, "MaxMP" },
-    // DAGEMHFLJLK = groundDamageImmune (dump 0x458 / runtime 0x4A8)
-    // This doesn't seem to work. I do not believe this is labeled correctly.
-    { "FKALGHJIADI", { "DAGEMHFLJLK" },                              1, kActk, &GroundDmgImmune,    false, "GroundDmgImmune" },
-    // BINDBHJLPMG = invincible bool (dump 0x459 / runtime 0x4A9) — per FKALGHJIADI_mapped.txt
-    { "FKALGHJIADI", { "BINDBHJLPMG" },                              1, kActk, &LocalInvincible,    false, "LocalInvincible" },
-    // PPBLNMIMIFP = abilityReady bool (dump 0x515 / runtime 0x565) — the correct ability gate
-    { "FKALGHJIADI", { "PPBLNMIMIFP" },                              1, kActk, &AbilityReady,       false, "AbilityReady" },
-    // CGCMALPMMJL = bool moving (dump 0x448 / runtime 0x498)
-    { "FKALGHJIADI", { "CGCMALPMMJL" },                              1, kActk, &Player_Moving,      false, "Player_Moving" },
-    // BHJFNEAHAOE = float moveDirX (dump 0x478 / runtime 0x4C8)
-    { "FKALGHJIADI", { "BHJFNEAHAOE" },                              1, kActk, &Player_MoveDirX,    false, "Player_MoveDirX" },
-    // GDNEBFDDDKM = float moveDirY (dump 0x47C / runtime 0x4CC)
-    { "FKALGHJIADI", { "GDNEBFDDDKM" },                              1, kActk, &Player_MoveDirY,    false, "Player_MoveDirY" },
+    // ── FKALGHJIADI (no shift) ────────────────────────────────────────────
+    { "FKALGHJIADI", { "FMHMGKEPIDN" },                              1, 0,     &CurMP,              false, "CurMP" },
+    { "FKALGHJIADI", { "NEDCKPIIIPN" },                              1, 0,     &MaxMP,              false, "MaxMP" },
+    // Meaning not proven against the game's code (see the fallbacks above); no offset consumers.
+    { "FKALGHJIADI", { "DAGEMHFLJLK" },                              1, 0,     &GroundDmgImmune,    false, "GroundDmgImmune" },
+    { "FKALGHJIADI", { "BINDBHJLPMG" },                              1, 0,     &LocalInvincible,    false, "LocalInvincible" },
+    { "FKALGHJIADI", { "PPBLNMIMIFP" },                              1, 0,     &AbilityReady,       false, "AbilityReady" },
+    { "FKALGHJIADI", { "CGCMALPMMJL" },                              1, 0,     &Player_Moving,      false, "Player_Moving" },
+    { "FKALGHJIADI", { "BHJFNEAHAOE" },                              1, 0,     &Player_Spd,         false, "Player_Spd" },
 
-    // ── FKALGHJIADI player diagnostic stats (no ACTK shift) ──────────────
-    // These resolve the same fields as above but WITHOUT the kActk shift,
-    // producing the dump offset used by PlayerTAB for stat display. Some
-    // share BeeByte names with movement entries (e.g. HCMECDPHEMC = Tex1/ATK,
-    // BHJFNEAHAOE = MoveDirX/SPD, GDNEBFDDDKM = MoveDirY/DEX).
+    // ── FKALGHJIADI player diagnostic stats (no shift) ───────────────────
+    // The stat switch proves ATK 0x47C (stat 20), DEX 0x484 (stat 28, a Single), VIT 0x488 (26),
+    // WIS 0x48C (27), guild name 0x470 (62) and guild rank 0x530 (63).
     { "FKALGHJIADI", { "NFJGJKLPLBA" },                              1, 0,     &PlayerGuildName,    false, "PlayerGuildName" },
     { "FKALGHJIADI", { "KABPJBJPGCM" },                              1, 0,     &PlayerClassNum,     false, "PlayerClassNum" },
-    { "FKALGHJIADI", { "GBANOMPLGBH" },                              1, 0,     &PlayerGuildRank,    false, "PlayerGuildRank" },
+    { "FKALGHJIADI", { "MPEPBMGKGHL" },                              1, 0,     &PlayerGuildRank,    false, "PlayerGuildRank" },
     { "FKALGHJIADI", { "HCMECDPHEMC" },                              1, 0,     &PlayerAtk,          false, "PlayerAtk" },
     { "FKALGHJIADI", { "GDNEBFDDDKM" },                              1, 0,     &PlayerDex,          false, "PlayerDex" },
     { "FKALGHJIADI", { "CGFPEPCKKOK" },                              1, 0,     &PlayerVit,          false, "PlayerVit" },
@@ -582,9 +595,9 @@ static Entry s_entries[] = {
     { "ViewHandler", { "spriteShader" },                                          1, 0, &VH_SpriteShader,       false, "VH_SpriteShader" },
     { "ViewHandler", { "destroyEntity" },                                        1, 0, &VH_DestroyEntity,      false, "VH_DestroyEntity" },
 
-    // ── LKHPPBEGNOM facing angle (+0x50 ACTK) ────────────────────────────────
-    // ECHAFMAAKMD (dump 0x1DC + kActk = 0x22C runtime). Written by SendShotPacketDetour.
-    { "LKHPPBEGNOM", { "ECHAFMAAKMD" },                                           1, kActk, &Player_FacingAngle, false, "Player_FacingAngle" },
+    // ── LKHPPBEGNOM attack angle (no shift) ──────────────────────────────────
+    // IHEFJFFIJOL — the angle the game's shoot routine stores. Written by SendShotPacketDetour.
+    { "LKHPPBEGNOM", { "IHEFJFFIJOL" },                                           1, 0, &Player_FacingAngle, false, "Player_FacingAngle" },
 
     // ── GJJCEFJMNMK throwable entity (no extra shift — runtime offsets in dump) ──
     // "GuiCanvasSwitcher" and "IAJJLFBDJGE" are BeeByte field names for origin/dest Vector2.
@@ -624,8 +637,8 @@ struct FieldInfoEntry {
 
 static FieldInfoEntry s_fieldInfoEntries[] = {
     { "LKHPPBEGNOM", "KJNHLADHEMH", &FI_HP,                 false },
-    { "LKHPPBEGNOM", "NCBIICBDGAG", &FI_MaxHP,              false },
-    { "LKHPPBEGNOM", "HODJPKFINKF", &FI_Defense,            false },
+    { "LKHPPBEGNOM", "OADOHPKBPJB", &FI_MaxHP,              false },
+    { "LKHPPBEGNOM", "NCBIICBDGAG", &FI_Defense,            false },
     { "FKALGHJIADI", "FMHMGKEPIDN", &FI_CurMP,              false },
     { "FKALGHJIADI", "NEDCKPIIIPN", &FI_MaxMP,              false },
     // PPBLNMIMIFP = bool abilityReady (dump 0x515 / runtime 0x565)
@@ -1158,6 +1171,7 @@ void EnsureAll()
 
     if (s_allDone) {
         WriteVerificationReport();
+        Player_MoveDirY = Player_MoveDirX + 4;
         Gjj_OriginY = Gjj_OriginX + 4;
         Gjj_DestY   = Gjj_DestX   + 4;
         Fhoh_DestY  = Fhoh_DestX  + 4;
@@ -1330,6 +1344,7 @@ void EnsureAll()
     // il2cpp_field_get_offset gives us x; y is always x+4.
     // We re-derive every call so the Y is always consistent with the resolved X,
     // even before X has been resolved (fallback X + 4 == fallback Y).
+    Player_MoveDirY = Player_MoveDirX + 4;
     Gjj_OriginY = Gjj_OriginX + 4;
     Gjj_DestY   = Gjj_DestX   + 4;
     Fhoh_DestY  = Fhoh_DestX  + 4;

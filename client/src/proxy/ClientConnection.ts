@@ -7,9 +7,22 @@ import { State } from '../state/State.js';
 import { PlayerData } from '../state/PlayerData.js';
 import { Logger } from '../util/Logger.js';
 import type { Proxy } from './Proxy.js';
+import { initialAdmission, reduceAdmission, type AdmissionEvent } from './ConnectionAdmission.js';
+import { RecoveryCoordinator } from './RecoveryCoordinator.js';
 
 const CLIENT_KEY = '5a4d2016bc16dc64883194ffd9';
 const SERVER_KEY = 'c91d9eec420160730d825604e0';
+
+/** `name=value` for each parsed field, or the raw body when the packet did not parse. */
+function describeFields(packet: Packet, rawPacket: Buffer): string {
+  if (!packet.isDefined) {
+    return `UNPARSEABLE len=${rawPacket.length - 5} hex=${rawPacket.subarray(5, 69).toString('hex')}`;
+  }
+  const fields = Object.entries(packet.data).map(([name, value]) => `${name}=${value}`).join(' ');
+  return packet.unreadData.length > 0
+    ? `${fields} unread=${packet.unreadData.toString('hex')}`
+    : fields;
+}
 
 /**
  * Manages a single client session — both the client-side and server-side
@@ -32,6 +45,58 @@ export class ClientConnection {
   private pendingServerQueue: Buffer[] = []; // packets buffered during connect
 
   state!: State;
+  admission = initialAdmission();
+  readonly recovery: RecoveryCoordinator;
+  lastAttemptedPortalId: number | null = null;
+  private admissionMapReceived = false;
+
+  private beginAdmissionGeneration(): void {
+    this.updateAdmission({ type: 'begin', generation: this.recovery.beginGeneration() });
+    this.admissionMapReceived = false;
+    this.lastAttemptedPortalId = null;
+  }
+
+  updateAdmission(event: AdmissionEvent): void {
+    this.admission = reduceAdmission(this.admission, event);
+    if (event.generation === this.admission.generation && (event.type === 'portal-refused' || event.type === 'map-loaded')) this.lastAttemptedPortalId = null;
+  }
+
+  private observeAdmissionPacket(packet: Packet, isClient: boolean): void {
+    const generation = this.admission.generation;
+    if (isClient && packet.name === 'LOAD' && this.admission.phase === 'loaded') {
+      this.beginAdmissionGeneration();
+      this.admissionMapReceived = true;
+    }
+    if (isClient && packet.name === 'QUEUECANCEL') {
+      this.updateAdmission({ type: 'cancel', generation });
+      this.recovery.cancelEscape(generation);
+      this.cancelTransportRetry();
+    }
+    if (!isClient && packet.name === 'FAILURE') {
+      this.updateAdmission({ type: 'terminal', generation, reason: 'server-rejection-unknown' });
+      this.recovery.cancelEscape(generation);
+    }
+    if (isClient || !packet.isDefined) return;
+    if (packet.name === 'QUEUEMESSAGE') this.updateAdmission({ type: 'queue', generation, position: packet.data.curPos as number });
+    if (packet.name === 'MAPINFO' && !['terminal', 'cancelled', 'dead', 'disconnected'].includes(this.admission.phase)) {
+      this.beginAdmissionGeneration();
+      this.admissionMapReceived = true;
+    }
+    if (packet.name === 'CREATESUCCESS' && this.admissionMapReceived) this.updateAdmission({ type: 'map-loaded', generation: this.admission.generation });
+    if (packet.name === 'DEATH') {
+      this.updateAdmission({ type: 'death', generation });
+      this.recovery.cancelEscape(generation);
+      this.cancelTransportRetry();
+    }
+  }
+
+  private cancelTransportRetry(): void {
+    if (this._helloRetryTimer) clearTimeout(this._helloRetryTimer);
+    if (this._silentRetryTimer) clearTimeout(this._silentRetryTimer);
+    this._helloRetryTimer = null;
+    this._silentRetryTimer = null;
+    this._pendingHello = null;
+  }
   playerData = new PlayerData();
   lastUpdate = 0;
   previousTime = 0;
@@ -64,14 +129,39 @@ export class ClientConnection {
   private _helloRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private _helloRetryCount = 0;
   private _serverResponded = false;
-  private _helloIsRetrying = false;
   private static readonly HELLO_RETRY_MS  = 3000;
   private static readonly HELLO_MAX_RETRIES = 3;
+
+  // Silent-end retry state. A full server can end the connection before it sends
+  // a single packet: a reset, a clean close, or a FAILURE that Windows discards
+  // because the reset arrives first. The game hears nothing and hangs on the
+  // loading screen, so the proxy keeps the game's socket open, retries the same
+  // HELLO, and finally tells the game the server is full in the game's own words.
+  private _serverPacketReceived = false;
+  private _silentRetryCount = 0;
+  private _silentRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private _closeAfterFailureTimer: ReturnType<typeof setTimeout> | null = null;
+  static readonly SILENT_RETRY_MS = 5000;
+  static readonly SILENT_MAX_RETRIES = 3;
+  /** How long the game gets to close its side after the synthesized FAILURE. */
+  private static readonly CLOSE_AFTER_FAILURE_MS = 5000;
+  /**
+   * The server's own full-server rejection (errorId 0). The game answers it by
+   * retrying the same server about every 5 s, which is what it should do here.
+   */
+  static readonly FULL_SERVER_ERROR_ID = 0;
+  static readonly FULL_SERVER_MESSAGE = 'Can not add player due to connection amount limits';
 
   constructor(
     private proxy: Proxy,
     clientSocket: net.Socket,
   ) {
+    this.recovery = new RecoveryCoordinator({
+      isConnected: () => !this.closed && this.serverSocket !== null && !this.serverSocket.destroyed && !this.serverConnecting,
+      sendEscape: () => this.sendToServer(this.proxy.packetFactory.createByName('ESCAPE')),
+      schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+      cancel: timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
+    });
     this.clientSocket = clientSocket;
     this.clientSocket.setNoDelay(true);
     this.clientSocket.on('data', (data) => this.onClientData(data));
@@ -99,17 +189,26 @@ export class ClientConnection {
 
   /** Connect to the real game server. Called by ReconnectHandler after HELLO. */
   connectToServer(helloPacket: Packet): void {
+    if (this.closed) return;
+    this.beginAdmissionGeneration();
+    if (this._closeAfterFailureTimer) clearTimeout(this._closeAfterFailureTimer);
+    this._closeAfterFailureTimer = null;
+    // A HELLO from the game starts fresh; the proxy's own retries keep their counts.
+    this._helloRetryCount = 0;
+    this._silentRetryCount = 0;
+    this.openServerConnection(helloPacket);
+  }
+
+  /** Open a server connection and send `helloPacket` on it. Retries call this directly. */
+  private openServerConnection(helloPacket: Packet): void {
     // Cancel any pending retry timer
     if (this._helloRetryTimer) {
       clearTimeout(this._helloRetryTimer);
       this._helloRetryTimer = null;
     }
-
-    // Fresh connect resets the retry counter; retries preserve it
-    if (this._helloIsRetrying) {
-      this._helloIsRetrying = false;
-    } else {
-      this._helloRetryCount = 0;
+    if (this._silentRetryTimer) {
+      clearTimeout(this._silentRetryTimer);
+      this._silentRetryTimer = null;
     }
 
     // Close existing server socket without triggering dispose (remove listeners first)
@@ -127,21 +226,32 @@ export class ClientConnection {
 
     this._pendingHello = helloPacket;
     this._serverResponded = false;
+    this._serverPacketReceived = false;
     this.serverConnecting = true;
     this.pendingServerQueue = [];
 
-    this.serverSocket = new net.Socket();
-    this.serverSocket.setNoDelay(true);
+    const socket = new net.Socket();
+    this.serverSocket = socket;
+    socket.setNoDelay(true);
 
-    this.serverSocket.on('data', (data) => this.onServerData(data));
-    this.serverSocket.on('error', (err) => this.onError('server', err));
-    this.serverSocket.on('close', () => this.dispose());
+    socket.on('data', (data) => {
+      if (!this.closed && this.serverSocket === socket) this.onServerData(data);
+    });
+    socket.on('error', (err) => {
+      if (this.onServerEnded(socket, (err as NodeJS.ErrnoException).code ?? err.message)) return;
+      this.onError('server', err);
+    });
+    socket.on('close', () => {
+      if (this.onServerEnded(socket, 'close')) return;
+      this.dispose();
+    });
 
     const key = helloPacket.data.key;
     Logger.log('Client', `Connecting to ${this.state.conTargetAddress}:${this.state.conTargetPort}...`);
     Logger.debug('reconnect', 'Client', `HELLO key being sent (${Buffer.isBuffer(key) ? key.length : 0} bytes): ${Buffer.isBuffer(key) ? key.toString('hex').slice(0, 80) : typeof key}`);
 
     this.serverSocket.connect(this.state.conTargetPort, this.state.conTargetAddress, () => {
+      if (this.closed || this.serverSocket !== socket) return;
       this.serverConnectedAt = Date.now();
       Logger.log('Client', `Connected to ${this.state.conTargetAddress}:${this.state.conTargetPort}`);
       this.serverConnecting = false;
@@ -191,14 +301,90 @@ export class ClientConnection {
       }
 
       this._helloRetryCount++;
-      this._helloIsRetrying = true;
       Logger.log('Client', `HELLO unanswered — retry ${this._helloRetryCount}/${ClientConnection.HELLO_MAX_RETRIES}`);
-      this.connectToServer(this._pendingHello);
+      this.openServerConnection(this._pendingHello);
     }, ClientConnection.HELLO_RETRY_MS);
+  }
+
+  /**
+   * The server socket errored or closed. Returns true when this call handled it:
+   * the server ended the connection before sending one complete packet, so the
+   * game has heard nothing from it and the same HELLO can be sent again. Returns
+   * false for everything else (the server had answered, the game already left, no
+   * HELLO), which keeps the normal disconnect path.
+   */
+  private onServerEnded(socket: net.Socket, reason: string): boolean {
+    if (this.closed) return false;
+    // A socket this connection has already let go of: its events mean nothing now.
+    if (socket !== this.serverSocket) return true;
+    if (this._serverPacketReceived || !this._pendingHello) return false;
+
+    const target = `${this.state.conTargetAddress}:${this.state.conTargetPort}`;
+    socket.removeAllListeners();
+    socket.on('error', () => {});
+    socket.destroy();
+    this.serverSocket = null;
+    this.serverConnecting = false;
+    this.pendingServerQueue = [];
+    // The HELLO timer watches a socket that no longer exists; the retry below replaces it.
+    if (this._helloRetryTimer) {
+      clearTimeout(this._helloRetryTimer);
+      this._helloRetryTimer = null;
+    }
+    Logger.debug('proxy', 'Client', `[DIAG-silent-end] ${target} ended before its first packet (${reason})`);
+
+    if (this._silentRetryCount >= ClientConnection.SILENT_MAX_RETRIES) {
+      this.sendFullServerFailure(target);
+      return true;
+    }
+
+    this._silentRetryCount++;
+    this.updateAdmission({ type: 'transport-retry', generation: this.admission.generation, retryAt: Date.now() + ClientConnection.SILENT_RETRY_MS, reason: 'server-ended-before-answer' });
+    const attempt = this._silentRetryCount;
+    const max = ClientConnection.SILENT_MAX_RETRIES;
+    Logger.warn('Client', `server ${target} ended the connection before answering (attempt ${attempt}/${max})`);
+    this._silentRetryTimer = setTimeout(() => {
+      this._silentRetryTimer = null;
+      if (this.closed || !this._pendingHello) return;
+      Logger.log('Client', `Retrying ${target} with the game's HELLO (attempt ${attempt}/${max})`);
+      this.openServerConnection(this._pendingHello);
+    }, ClientConnection.SILENT_RETRY_MS);
+    return true;
+  }
+
+  /**
+   * Every retry ended silently: give the game the server's own full-server FAILURE
+   * so its built-in retry takes over, then close the game's socket gracefully. A
+   * reset here could make Windows discard the FAILURE before the game reads it.
+   */
+  private sendFullServerFailure(target: string): void {
+    this.updateAdmission({ type: 'terminal', generation: this.admission.generation, reason: 'unanswered-retries-exhausted', source: 'transport' });
+    this._pendingHello = null;
+    const packet = this.proxy.packetFactory.createByName('FAILURE');
+    packet.data.errorId = ClientConnection.FULL_SERVER_ERROR_ID;
+    packet.data.errorMessage = ClientConnection.FULL_SERVER_MESSAGE;
+    const bytes = this.proxy.packetFactory.serialize(packet);
+    if (bytes.length > 5) {
+      this.forwardRaw(bytes, true);
+      Logger.warn('Client', `server ${target} ended the connection before answering again; sent the game a synthesized full-server FAILURE (errorId ${ClientConnection.FULL_SERVER_ERROR_ID}, "${ClientConnection.FULL_SERVER_MESSAGE}") after ${ClientConnection.SILENT_MAX_RETRIES} silent attempts`);
+    } else {
+      Logger.error('Client', `server ${target} ended the connection before answering again, and the full-server FAILURE could not be built; closing the game connection`);
+    }
+    // The client socket's 'close' listener disposes once the game closes its side.
+    this.clientSocket.end();
+    this._closeAfterFailureTimer = setTimeout(() => {
+      this._closeAfterFailureTimer = null;
+      this.dispose();
+    }, ClientConnection.CLOSE_AFTER_FAILURE_MS);
   }
 
   /** Send a packet to the game client. */
   sendToClient(packet: Packet): void {
+    if (packet.name === 'RECONNECT' && this.connected) {
+      this.recovery.acceptReconnect(this.admission.generation);
+      this.cancelTransportRetry();
+      this.proxy.authorizeReconnect(this);
+    }
     this.send(packet, true);
   }
 
@@ -249,12 +435,22 @@ export class ClientConnection {
   /** Clean up both connections. */
   dispose(): void {
     if (this.closed) return;
+    this.recovery.dispose();
+    this.updateAdmission({ type: 'disconnect', generation: this.admission.generation });
     Logger.debug('proxy', 'Client', `[DIAG-dispose] called — stack: ${(new Error().stack ?? '').split('\n').slice(1, 5).join(' | ').trim()}`);
     this.closed = true;
 
     if (this._helloRetryTimer) {
       clearTimeout(this._helloRetryTimer);
       this._helloRetryTimer = null;
+    }
+    if (this._silentRetryTimer) {
+      clearTimeout(this._silentRetryTimer);
+      this._silentRetryTimer = null;
+    }
+    if (this._closeAfterFailureTimer) {
+      clearTimeout(this._closeAfterFailureTimer);
+      this._closeAfterFailureTimer = null;
     }
 
     this.proxy.fireClientDisconnected(this);
@@ -389,6 +585,10 @@ export class ClientConnection {
         if (isClient) this.clientAccum = nextAccum;
         else this.serverAccum = nextAccum;
 
+        // From here on the server has answered: ending the connection is a normal
+        // disconnect, never a silent end to retry.
+        if (!isClient) this._serverPacketReceived = true;
+
         // Decrypt the body (skip 5-byte header)
         cipher.cipher(rawPacket);
 
@@ -414,6 +614,13 @@ export class ClientConnection {
             Logger.warn('Client', `[DIAG-FAILURE] UNPARSEABLE len=${body.length} hex=${hex} ascii="${ascii}"`);
           }
         }
+
+        // The game's server queue (QUEUE_INFORMATION, defined as QUEUEMESSAGE).
+        if (!isClient && packet.name === 'QUEUEMESSAGE') {
+          Logger.log('Client', `QUEUE_INFORMATION ${describeFields(packet, rawPacket)}`);
+        }
+
+        this.observeAdmissionPacket(packet, isClient);
 
         // Fire hooks
         if (isClient) {
@@ -460,20 +667,8 @@ export class ClientConnection {
       return;
     }
 
-    // Server socket failed before HELLO was answered (e.g. ETIMEDOUT, ECONNREFUSED)
-    // Retry instead of giving up immediately
-    if (source === 'server' && !this._serverResponded && this._pendingHello) {
-      if (this._helloRetryCount < ClientConnection.HELLO_MAX_RETRIES) {
-        this._helloRetryCount++;
-        this._helloIsRetrying = true;
-        Logger.warn('Client', `Server error before HELLO response (${code ?? err.message}) — retry ${this._helloRetryCount}/${ClientConnection.HELLO_MAX_RETRIES}`);
-        this.connectToServer(this._pendingHello);
-        return;
-      }
-      Logger.warn('Client', `Server unreachable after ${ClientConnection.HELLO_MAX_RETRIES} retries (${code ?? err.message}) — giving up`);
-      this.dispose();
-      return;
-    }
+    // A server error before the server's first packet (ETIMEDOUT, ECONNREFUSED,
+    // a reset...) never reaches here: onServerEnded retries it.
 
     Logger.error('Client', `${source} socket error`, err);
     this.dispose();

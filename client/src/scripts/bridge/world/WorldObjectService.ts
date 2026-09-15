@@ -67,16 +67,23 @@ export class WorldObjectService {
     return name.replace(/\s+portal$/i, '').trim();
   }
 
-  private enterPortal(objectId: number): boolean {
+  private enterPortal(objectId: number, owner: BridgeDeps['clientRef']['current'], generation: number | undefined): boolean {
     const client = this.deps.clientRef.current;
     if (!client?.connected || !this.deps.worldState.getEntity(objectId)) return false;
+    if (client !== owner || client.admission?.generation !== generation) return false;
+    const admission = client.admission;
+    if (!admission || !['loaded', 'entry-refused'].includes(admission.phase)) return false;
+    if (admission.phase === 'entry-refused' && admission.portalId === objectId && (admission.retryAt ?? Infinity) > Date.now()) return false;
+    if (client.lastAttemptedPortalId !== null) return false;
     try {
       const packet = this.deps.proxy.packetFactory.createByName('USEPORTAL');
       packet.data.objectId = objectId;
       packet.modified = true;
+      client.lastAttemptedPortalId = objectId;
       client.sendToServer(packet);
       return true;
     } catch {
+      client.lastAttemptedPortalId = null;
       return false;
     }
   }
@@ -89,13 +96,20 @@ export class WorldObjectService {
     const destination = this.destinationOf(entity);
     const isRealm = destination.toLowerCase() === 'realm'
       || destination.toLowerCase() === 'random realm';
+    const owner = this.deps.clientRef.current;
+    const admission = owner?.admission;
+    const generation = admission?.generation;
+    const queued = admission?.phase === 'queued' || admission?.phase === 'admission-pending';
+    const refused = admission?.phase === 'entry-refused' && admission.portalId === entity.objectId && (admission.retryAt ?? Infinity) > Date.now();
     return {
       ...base,
       destination,
       isRealm,
       isOpen: playerCount < REALM_CAPACITY,
       playerCount,
-      enter: () => this.enterPortal(entity.objectId),
+      availability: queued ? 'queued' : refused ? 'full' : admission?.phase === 'loaded' || admission?.phase === 'entry-refused' ? 'available' : 'unknown',
+      retryAt: refused ? admission?.retryAt ?? undefined : undefined,
+      enter: () => this.enterPortal(entity.objectId, owner, generation),
     };
   }
 

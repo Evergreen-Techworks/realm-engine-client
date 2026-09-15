@@ -17,7 +17,12 @@ HERE = Path(__file__).resolve().parent
 # lets the player through a corner where two NoWalk / OccupySquare squares touch
 # diagonally. The DLL's occupancy keeps a 0.2285 box, the nav A* refuses corner
 # cuts and the follower pads its sweep, so today the route never takes that corner.
-KNOWN_LIMITATIONS = {"d_boss_open_dense", "d_boss_wall_dense", "m_pinch_nowalk"}
+# m_pinch_object: the same corner between two OccupySquare objects.
+# Under navCollisionRule=game the DLL uses the game's point rule, so both pinches pass.
+KNOWN_LIMITATIONS = {
+    "legacy": {"d_boss_open_dense", "d_boss_wall_dense", "m_pinch_nowalk", "m_pinch_object"},
+    "game":   {"d_boss_open_dense", "d_boss_wall_dense"},
+}
 
 SCENARIOS = [
     "a_lake_deep_speed", "a_lake_deep_plain", "a_lake_shallow", "a_river_deep_speed", "a_river_shallow",
@@ -28,8 +33,10 @@ SCENARIOS = [
     "f_damaging_row", "g_fullocc_gap", "h_learned_keepout", "j_hidden_blocker",
     "i_tilelist_revisit", "i_tilelist_frontier",
     "k_slowed_midwalk", "k_paralyzed_midwalk", "k_water_midpath", "k_dodge_in_water",
+    "k_speedy_walk", "k_slowed_water", "k_mixed_water_land",
     "l_walk_past_shotgun", "l_walk_past_bomber", "l_lock_boss_dies", "l_lock_boss_invuln",
-    "m_pinch_nowalk", "m_pinch_fulloccupy",
+    "m_pinch_nowalk", "m_pinch_fulloccupy", "m_pinch_object",
+    "z_moveto_no_clamp",
 ]
 
 def main():
@@ -40,6 +47,8 @@ def main():
     ap.add_argument("--binary-out", default="", help="also copy the built harness here")
     ap.add_argument("--check", action="store_true",
                     help="exit non-zero if any scenario outside KNOWN_LIMITATIONS fails")
+    ap.add_argument("--rule", choices=["legacy", "game", "both"], default="both",
+                    help="navCollisionRule to run under (a tree without nav/Collision.h runs legacy only)")
     ap.add_argument("--scan-mode", type=int, default=0,
                     help="tile list selection: 1 first 65536, 2 newest 65536 + window, 3 whole list windowed; 0 = detect")
     args = ap.parse_args()
@@ -80,30 +89,45 @@ def main():
         subprocess.run(cmd, check=True)
         if args.binary_out:
             shutil.copy(binary, args.binary_out)
+        has_rule = (src / "features/movement/nav/Collision.h").exists()
+        rules = ["legacy", "game"] if args.rule == "both" else [args.rule]
+        if not has_rule:
+            rules = ["legacy"]
         failed = []
-        for name in SCENARIOS:
-            if args.only and name != args.only:
-                continue
-            out = subprocess.run([str(binary), name, str(scan)], check=True,
-                                 capture_output=True, text=True).stdout.strip()
-            for line in out.splitlines():
-                row = json.loads(line)
-                row["tree"] = args.label
-                row["scan_mode"] = scan
-                if not args.check:
-                    print(json.dumps(row), flush=True)
-                if not row["success"] and name not in KNOWN_LIMITATIONS:
-                    failed.append(name)
-                # The game's MoveTo does not clamp distance: a step longer than the
-                # game's own speed allows is what the server sees, in every scenario.
-                elif row.get("overspeed_moves", 0) > 0:
-                    failed.append(name + " (overspeed)")
+        for rule in rules:
+            known = KNOWN_LIMITATIONS[rule]
+            for name in SCENARIOS:
+                if args.only and name != args.only:
+                    continue
+                out = subprocess.run([str(binary), name, str(scan), rule], check=True,
+                                     capture_output=True, text=True).stdout.strip()
+                if not out:
+                    failed.append(f"{name} [{rule}] (no result)")   # a listed scenario the harness does not run
+                for line in out.splitlines():
+                    row = json.loads(line)
+                    row["tree"] = args.label
+                    row["scan_mode"] = scan
+                    row["rule"] = rule
+                    if not args.check:
+                        print(json.dumps(row), flush=True)
+                    if not row["success"] and name not in known:
+                        failed.append(f"{name} [{rule}]")
+                    # The game's MoveTo does not clamp distance: a step longer than the
+                    # game's own speed allows is what the server sees, in every scenario.
+                    elif row.get("overspeed_moves", 0) > 0:
+                        failed.append(f"{name} [{rule}] (overspeed)")
+                    # Under the game rule the worker plans over a copy of the squares the
+                    # live check reads; any difference is a copy bug, in every scenario.
+                    elif row.get("square_mismatches", 0) > 0:
+                        failed.append(f"{name} [{rule}] (worker squares differ from the view)")
         if args.check:
             if failed:
                 print("Pathing scenarios FAILED: " + ", ".join(failed))
                 sys.exit(1)
-            print(f"Pathing scenarios passed ({len(SCENARIOS) - len(KNOWN_LIMITATIONS)} asserted, "
-                  f"{len(KNOWN_LIMITATIONS)} known limitations reported only)")
+            for rule in rules:
+                known = KNOWN_LIMITATIONS[rule]
+                print(f"Pathing scenarios passed under navCollisionRule={rule} "
+                      f"({len(SCENARIOS) - len(known)} asserted, {len(known)} known limitations reported only)")
 
 if __name__ == "__main__":
     main()

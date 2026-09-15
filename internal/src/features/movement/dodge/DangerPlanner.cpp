@@ -22,7 +22,9 @@
 #include "BootGate.h"
 #include "helpers.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
+#include "features/combat/autoaim/modes/AutoFire.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
+#include "features/combat/enemytracker/LockLiveness.h"
 #include "ChatToast.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
@@ -299,11 +301,6 @@ std::atomic<int>      s_autoLockMode{ 0 };
 std::atomic<int32_t>  s_autoLockTargetId{ 0 };
 std::atomic<uint64_t> s_autoLockReleaseUntilMs{ 0 };
 constexpr uint64_t    kAutoLockReleaseHoldMs = 600;
-// How long a resolved lock survives the target vanishing from EnemyTracker.
-// The game unloads distant entities, so walking away from a locked enemy looks
-// identical to it dying. Holding the last-known position briefly keeps dodge in
-// combat behaviour instead of dropping to plain navigation mid-fight.
-constexpr uint64_t    kLockGraceMs           = 4000;
 
 // Orbit direction for lock-follow. +1 = CCW, -1 = CW. Auto-flips when
 // the chosen direction has produced no angular progress for several
@@ -622,16 +619,13 @@ static void ResolveEnemyLock(float px, float py)
     const int32_t id = s_lockEnemyId.load(std::memory_order_relaxed);
     bool  found = false;
     float ex = 0.f, ey = 0.f;
+    EnemyTracker::Tick();   // self-throttled; GetLock reads this thread's snapshot
 
     if (id != 0) {
-        // Manual Shift+Click lock — always wins when set.
-        struct Ctx { int32_t want; bool found; float ex, ey; } c{ id, false, 0.f, 0.f };
-        AutoAim::EnumerateLiveEnemies(
-            [](float x, float y, int32_t eid, void* u) {
-                auto* k = static_cast<Ctx*>(u);
-                if (!k->found && eid == k->want) { k->found = true; k->ex = x; k->ey = y; }
-            }, &c);
-        found = c.found; ex = c.ex; ey = c.ey;
+        // Manual Shift+Click lock — always wins when set, while EnemyTracker says it
+        // is still a fight (LockLiveness.h; no grace).
+        const EnemyTracker::LockInfo lock = EnemyTracker::GetLock(id);
+        found = EnemyTracker::Engages(lock); ex = lock.x; ey = lock.y;
     } else {
         // No manual lock — try the auto-lock mode.
         const int      mode    = s_autoLockMode.load(std::memory_order_relaxed);
@@ -651,15 +645,9 @@ static void ResolveEnemyLock(float px, float py)
             // release pulse + start a short cooldown so the unlock is
             // visible before we re-acquire.
             if (lastId != 0) {
-                struct CtxT { int32_t want; bool found; float ex, ey; }
-                    ct{ lastId, false, 0.f, 0.f };
-                AutoAim::EnumerateLiveEnemies(
-                    [](float x, float y, int32_t eid, void* u) {
-                        auto* k = static_cast<CtxT*>(u);
-                        if (!k->found && eid == k->want) { k->found = true; k->ex = x; k->ey = y; }
-                    }, &ct);
-                if (ct.found) {
-                    found = true; ex = ct.ex; ey = ct.ey;
+                const EnemyTracker::LockInfo tracked = EnemyTracker::GetLock(lastId);
+                if (EnemyTracker::Engages(tracked)) {
+                    found = true; ex = tracked.x; ey = tracked.y;
                 } else {
                     // Target gone — start the release window.
                     s_autoLockTargetId.store(0, std::memory_order_relaxed);
@@ -707,36 +695,6 @@ static void ResolveEnemyLock(float px, float py)
             }
         }
         // not found (cooldown, no enemies, or off): fall through to release.
-    }
-
-    // ── Grace window ────────────────────────────────────────────────────────
-    // A locked enemy leaving the game's loaded range drops out of EnemyTracker,
-    // which used to release the lock on the very first miss. That stops
-    // publishing the stand-off goal, so dodge falls out of combat behaviour and
-    // into plain navigation — the failure the farmer hits whenever it strays.
-    // Hold the lock on the last-known position for a bounded window so we steer
-    // back to the fight; seeing the enemy again refreshes it.
-    //
-    // Only extends a lock that is still WANTED: an explicit unlock (manual id
-    // cleared, or auto-lock switched off) releases immediately as before. The
-    // accepted trade-off is that an enemy which died out of view holds a ghost
-    // stand-off until the window expires — indistinguishable from here.
-    {
-        static uint64_t s_lockLastSeenMs = 0;
-        const uint64_t  graceNow  = GetTickCount64();
-        const bool      lockWanted = s_lockEnemyId.load(std::memory_order_relaxed) != 0
-                                  || s_autoLockMode.load(std::memory_order_relaxed) != 0;
-        if (found) {
-            s_lockLastSeenMs = graceNow;
-        } else if (lockWanted && s_lockLastSeenMs != 0
-                   && s_lockLastResolved.load(std::memory_order_acquire)
-                   && (graceNow - s_lockLastSeenMs) < kLockGraceMs) {
-            ex    = s_lockLastEnemyX.load(std::memory_order_relaxed);
-            ey    = s_lockLastEnemyY.load(std::memory_order_relaxed);
-            found = true;
-        } else if (!found) {
-            s_lockLastSeenMs = 0;
-        }
     }
 
     if (!found) {
@@ -918,6 +876,9 @@ void __fastcall Detour_AppEngineUpdate(void* __this, void* method)
     const double t1 = diagOn ? DiagTiming::NowMs() : 0.0;
     DodgeTickGuarded();
     if (diagOn) DiagAfterUpdate(t0, t1, DiagTiming::NowMs());
+    // A script's auto-fire, on the thread the game shoots from (AutoFire.h). After
+    // the dodge body so the dodge timings above stay the dodge's own.
+    AutoFire::GameThreadTick();
 }
 
 } // namespace

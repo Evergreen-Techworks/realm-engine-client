@@ -26,6 +26,8 @@ inline bool PaddingPathClear(const MapInput& in, Vec2 from, Vec2 to)
 // the player box off walls and nothing more (see PaddingClearAt).
 inline bool PaddedPathClear(const MapInput& in, Vec2 from, Vec2 to)
 {
+    // The game has no player box, so under its rule there is no padding either.
+    if (UsesGameRule(in)) return OccupancyPathClear(in, from, to);
     if (!OccupancyPathClear(in, from, to)) return false;
     for (Vec2 offset : {Vec2{-kWallPadding,-kWallPadding}, Vec2{-kWallPadding,kWallPadding},
                         Vec2{kWallPadding,-kWallPadding}, Vec2{kWallPadding,kWallPadding}}) {

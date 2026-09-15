@@ -88,10 +88,11 @@ Result Select(const Config& cfg,
     // The wall / breakable filters do not apply to an explicit lock, and a locked
     // enemy that must not be shot holds rather than switching (LockPolicy.h).
     if (cfg.mode == Mode::Locked && cfg.lockedEnemyId >= 0) {
-        for (const EnemyTracker::Entry& e : snap) {
-            if (e.id != cfg.lockedEnemyId) continue;
-            const LockPolicy::Use use = LockPolicy::Decide(&e, cfg.shootInvulnerable);
-            if (use == LockPolicy::Use::Hold) return {};
+        const EnemyTracker::LockInfo lock = EnemyTracker::ResolveLock(snap, cfg.lockedEnemyId);
+        const LockPolicy::Use use = LockPolicy::Decide(lock, cfg.shootInvulnerable);
+        if (use == LockPolicy::Use::Hold) return {};
+        if (use == LockPolicy::Use::Aim) {
+            const EnemyTracker::Entry& e = *lock.entry;
 
             Result r;
             r.found   = true;
@@ -106,7 +107,7 @@ Result Select(const Config& cfg,
             else { r.aimX = e.x; r.aimY = e.y; }
             return r;
         }
-        // Lock target not in the snapshot — fall through to normal selection
+        // Lock gone (dead or not in the snapshot) — fall through to normal selection
     }
 
     // ── Reference point and range ────────────────────────────────────────────
@@ -120,7 +121,7 @@ Result Select(const Config& cfg,
         if (mx != 0.f || my != 0.f) { refX = mx; refY = my; }
     }
 
-    float maxRange = WeaponSelectionRange(weapon) + cfg.rangeLeadBias;
+    float maxRange = AutoAimSelectionRangeTiles(weapon, cfg.rangeLeadBias);
     if (useMouseRef && cfg.mouseBoundingEnabled && cfg.mouseBoundingRange > 0.f
         && cfg.mouseBoundingRange < maxRange)
         maxRange = cfg.mouseBoundingRange;
@@ -195,6 +196,11 @@ Result Select(const Config& cfg,
     else { r.aimX = winner->bestX; r.aimY = winner->bestY; }
 
     return r;
+}
+
+float AutoAimSelectionRangeTiles(const WeaponProfile& weapon, float rangeLeadBias)
+{
+    return WeaponSelectionRange(weapon) + rangeLeadBias;
 }
 
 Result SelectKillAura(bool atMouse, float rangeCapTiles,
