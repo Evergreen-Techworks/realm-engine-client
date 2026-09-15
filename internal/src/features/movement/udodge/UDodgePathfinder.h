@@ -123,6 +123,9 @@ struct PlannerSnapshot {
     bool     goalActive = false;   // a soft goal exists (tie-break only)
     Vec2     goalPos{};
     bool     goalWalkTo = false;
+    bool     groupActive = false;
+    Vec2     groupPos{};
+    int32_t  groupBossId = 0;
     bool     playerOnHazard = false;
     bool     hasLock = false;      // locked boss → gate goal cells to the weapon-range disk
     Vec2     lockPos{};

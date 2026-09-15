@@ -59,6 +59,8 @@
 namespace UDodge { namespace Solver {
 
 struct Goal {
+    bool groupActive = false;
+    Vec2 groupPos{};
     bool  active = false;   // a soft target exists (lock standoff or WASD intent)
     Vec2  pos{};            // world target we would like to progress toward
     bool  fromLock = false; // true = boss-lock orbit (may actively reposition to
