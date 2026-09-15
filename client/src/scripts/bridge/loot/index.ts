@@ -1,4 +1,5 @@
 import { tryInventoryAction } from '../../../util/InventoryActions.js';
+import { connectionGameTime } from '../../../util/connectionGameTime.js';
 import { loot } from '@realmengine/sdk';
 import type { LootBag, LootItem, LootRarity, PickupOptions } from '@realmengine/sdk';
 import type { BridgeDeps } from '../BridgeDeps.js';
@@ -535,9 +536,12 @@ export function install(deps: BridgeDeps): void {
     const pos = deps.worldState.getEntity(bag.objectId)?.pos;
     if (!pos || Math.hypot(pos.x - c.playerData.pos.x, pos.y - c.playerData.pos.y) > 1) return false;
 
+    // Unknown game time right after a map change: an epoch-ms USEITEM would never serialize.
+    const time = connectionGameTime(c);
+    if (time === null) return false;
     try {
       const pkt = deps.proxy.packetFactory.createByName('USEITEM');
-      pkt.data.time = Math.trunc(c.time);
+      pkt.data.time = time;
       pkt.data.slotObject = {
         objectId: bag.objectId,
         slotId: slotIndex,

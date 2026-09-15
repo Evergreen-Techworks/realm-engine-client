@@ -179,7 +179,7 @@ export function register(ctx: PluginContext) {
     let used = 0;
     for (const found of slots) {
       if (healed >= deficit) break;
-      sendUseItem(ctx, client, found.slotId, found.itemType);
+      if (!sendUseItem(ctx, client, found.slotId, found.itemType)) break;
       state.recentSends.push(now);
       const amount = amounts.get(found.itemType) ?? FALLBACK_POT_AMOUNT;
       inFlight.push({ amount, at: now });

@@ -14,6 +14,7 @@ import type { PlayerData } from '../../../state/PlayerData.js';
 import { depositToVault, withdrawFromVault } from './vaultTransfer.js';
 import { installVaultStoreHooks, getVaultStore } from './VaultStore.js';
 import { tryInventoryAction } from '../../../util/InventoryActions.js';
+import { connectionGameTime } from '../../../util/connectionGameTime.js';
 import { warnUnimplemented } from '../stubWarn.js';
 
 function playerData(deps: BridgeDeps): PlayerData | null {
@@ -164,9 +165,12 @@ export function install(deps: BridgeDeps): void {
     if (!c?.connected) return;
     const itemType = typeIdAtSlot(c.playerData, slotIndex);
     if (itemType <= 0) return;
+    // Unknown game time right after a map change: an epoch-ms USEITEM would never serialize.
+    const time = connectionGameTime(c);
+    if (time === null) return;
     try {
       const pkt = deps.proxy.packetFactory.createByName('USEITEM');
-      pkt.data.time = Math.trunc(c.time);
+      pkt.data.time = time;
       pkt.data.slotObject = { objectId: c.objectId, slotId: slotIndex, objectType: itemType };
       pkt.data.itemUsePos = { x: c.playerData.pos.x, y: c.playerData.pos.y };
       pkt.data.useType = 0;
