@@ -27,6 +27,7 @@ export const FULL_GAME_XML_SPECS: XmlFileSpec[] = [
 ];
 
 export interface EnsureRotmgMetadataXmlOptions {
+  signal?: AbortSignal;
   /** Overwrite even if the file already exists */
   force?: boolean;
   /** Also try objects.xml + tiles.xml */
@@ -46,8 +47,11 @@ function joinUrl(base: string, name: string): string {
 /** Keep low so app UI (Electron waits ~10s for :3000) is not blocked when mirrors are slow or missing files. */
 const FETCH_TIMEOUT_MS = 8_000;
 
-async function fetchBuffer(url: string): Promise<Buffer> {
+async function fetchBuffer(url: string, signal?: AbortSignal): Promise<Buffer> {
+  signal?.throwIfAborted();
   const controller = new AbortController();
+  const abort = () => controller.abort(signal?.reason);
+  signal?.addEventListener('abort', abort, { once: true });
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
@@ -62,6 +66,7 @@ async function fetchBuffer(url: string): Promise<Buffer> {
     return Buffer.from(ab);
   } finally {
     clearTimeout(timeout);
+    signal?.removeEventListener('abort', abort);
   }
 }
 
@@ -83,7 +88,9 @@ export async function downloadXmlSpec(
   bases: string[],
   force: boolean,
   log?: EnsureRotmgMetadataXmlOptions['log'],
+  signal?: AbortSignal,
 ): Promise<boolean> {
+  signal?.throwIfAborted();
   const dest = resolve(dataDir, spec.out);
   if (existsSync(dest) && !force) {
     log?.('info', `${spec.out} already present — skip`);
@@ -93,9 +100,11 @@ export async function downloadXmlSpec(
   const errors: string[] = [];
   for (const base of bases) {
     for (const name of spec.candidates) {
+      signal?.throwIfAborted();
       const url = joinUrl(base, name);
       try {
-        const buf = await fetchBuffer(url);
+        const buf = await fetchBuffer(url, signal);
+        signal?.throwIfAborted();
         if (buf.length < 64) {
           errors.push(`${url}: response too small (${buf.length} bytes)`);
           continue;
@@ -105,6 +114,7 @@ export async function downloadXmlSpec(
         log?.('info', `Downloaded ${spec.out} (${buf.length} bytes) <= ${url}`);
         return true;
       } catch (e) {
+        signal?.throwIfAborted();
         errors.push(`${url}: ${(e as Error).message}`);
       }
     }
@@ -126,7 +136,8 @@ export async function ensureRotmgMetadataXml(
   dataDir: string,
   options: EnsureRotmgMetadataXmlOptions = {},
 ): Promise<EnsureRotmgMetadataXmlResult> {
-  const { force = false, full = false, bases: basesOpt, log } = options;
+  const { force = false, full = false, bases: basesOpt, log, signal } = options;
+  signal?.throwIfAborted();
   const bases = resolveBases(basesOpt);
   mkdirSync(dataDir, { recursive: true });
 
@@ -139,7 +150,7 @@ export async function ensureRotmgMetadataXml(
       log?.('info', `${spec.out} already present — skip`);
       continue;
     }
-    await downloadXmlSpec(dataDir, spec, bases, force, log);
+    await downloadXmlSpec(dataDir, spec, bases, force, log, signal);
   }
 
   if (full) {
@@ -150,7 +161,7 @@ export async function ensureRotmgMetadataXml(
         log?.('info', `${spec.out} already present — skip`);
         continue;
       }
-      await downloadXmlSpec(dataDir, spec, bases, force, log);
+      await downloadXmlSpec(dataDir, spec, bases, force, log, signal);
     }
   }
 

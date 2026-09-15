@@ -65,6 +65,7 @@ import { attachHiddenHelperTypeSync } from './bridge/HiddenHelperTypes.js';
 import { Logger } from './util/Logger.js';
 import { ensureRotmgMetadataXml } from './util/ensureRotmgMetadataXml.js';
 import { startServices } from './startup/startServices.js';
+import { startMetadataEnrichment } from './startup/metadataEnrichment.js';
 import { getRealmengineDataDir } from './util/rotmgAssetExtractor.js';
 import { ensureSdkDeployed } from './util/ensureSdkDeployed.js';
 import { getBakedPacketDefinitions, getBakedServers, getBakedStatTypes } from './config/BakedData.js';
@@ -339,25 +340,39 @@ async function main() {
   // lock and auto-aim: sent now, on every DLL (re)connect, and on game-data reload.
   attachHiddenHelperTypeSync(gameData, internalBridge);
 
-  // 7. Mirror XML + plugin loading in parallel (metadata fetch can be slow if mirrors are down)
   const startupController = new AbortController();
-  const metadataResult = await ensureRotmgMetadataXml(gameDataDir, {
+  const shutdown = async () => {
+    if (startupController.signal.aborted) return;
+    startupController.abort();
+    Logger.log('Main', 'Shutting down...');
+    scriptHost?.stopAll();
+    internalBridge.stop();
+    setDllFeatureSender(null);
+    proxy.stop();
+    pluginManager.stopWatching();
+    await hooker.uninstall();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+
+  void startMetadataEnrichment({
+    signal: startupController.signal,
+    publish: status => {
+      if (status.state === 'unavailable') Logger.warn('Metadata', `Optional metadata unavailable: ${status.failed.join(', ')}`);
+    },
+    run: signal => ensureRotmgMetadataXml(gameDataDir, {
+      signal,
       log(level, message) {
         if (level === 'error') Logger.error('Metadata', message);
         else if (level === 'warn') Logger.warn('Metadata', message);
         else Logger.log('Metadata', message);
       },
-    });
-  if (!metadataResult.ok) {
-    Logger.warn(
-      'Main',
-      `Missing metadata XML (${metadataResult.failed.join(', ')}). Damage sniffer scaling/enchants may be incomplete. Set ROTMG_XML_BASE or run: npm run download-game-xml`,
-    );
-  }
+    }),
+  });
 
   // 8. Start proxy
 
-  Logger.log('Main', `Proxy ready on 127.0.0.1:${GAME_PORT}`);
   if (hookInstalled) {
     Logger.log('Main', `Game hook active - Exalt at ${hooker.gameDirectory}`);
   }
@@ -394,23 +409,6 @@ async function main() {
     devServer?.broadcastDllMessage(msg);
   });
 
-  // Graceful shutdown
-  const shutdown = async () => {
-    startupController.abort();
-    Logger.log('Main', 'Shutting down...');
-    scriptHost?.stopAll();
-    internalBridge.stop();
-    setDllFeatureSender(null);
-    // #region agent log
-    // #endregion
-    await hooker.uninstall();
-    proxy.stop();
-    pluginManager.stopWatching();
-    process.exit(0);
-  };
-
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
 }
 
 main().catch((err) => {
