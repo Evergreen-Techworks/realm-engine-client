@@ -7,6 +7,9 @@ import { State } from '../state/State.js';
 import { PlayerData } from '../state/PlayerData.js';
 import { Logger } from '../util/Logger.js';
 import type { Proxy } from './Proxy.js';
+import { initialAdmission, reduceAdmission, type AdmissionEvent } from './ConnectionAdmission.js';
+
+let admissionGeneration = 0;
 
 const CLIENT_KEY = '5a4d2016bc16dc64883194ffd9';
 const SERVER_KEY = 'c91d9eec420160730d825604e0';
@@ -43,6 +46,38 @@ export class ClientConnection {
   private pendingServerQueue: Buffer[] = []; // packets buffered during connect
 
   state!: State;
+  admission = initialAdmission();
+  lastAttemptedPortalId: number | null = null;
+  private admissionMapReceived = false;
+
+  updateAdmission(event: AdmissionEvent): void {
+    this.admission = reduceAdmission(this.admission, event);
+  }
+
+  private observeAdmissionPacket(packet: Packet, isClient: boolean): void {
+    const generation = this.admission.generation;
+    if (isClient && packet.name === 'QUEUECANCEL') {
+      this.updateAdmission({ type: 'cancel', generation });
+      this.cancelTransportRetry();
+    }
+    if (isClient || !packet.isDefined) return;
+    if (packet.name === 'QUEUEMESSAGE') this.updateAdmission({ type: 'queue', generation, position: packet.data.curPos as number });
+    if (packet.name === 'FAILURE') this.updateAdmission({ type: 'terminal', generation, reason: 'server-rejection-unknown' });
+    if (packet.name === 'MAPINFO') this.admissionMapReceived = true;
+    if (packet.name === 'CREATESUCCESS' && this.admissionMapReceived) this.updateAdmission({ type: 'map-loaded', generation });
+    if (packet.name === 'DEATH') {
+      this.updateAdmission({ type: 'death', generation });
+      this.cancelTransportRetry();
+    }
+  }
+
+  private cancelTransportRetry(): void {
+    if (this._helloRetryTimer) clearTimeout(this._helloRetryTimer);
+    if (this._silentRetryTimer) clearTimeout(this._silentRetryTimer);
+    this._helloRetryTimer = null;
+    this._silentRetryTimer = null;
+    this._pendingHello = null;
+  }
   playerData = new PlayerData();
   lastUpdate = 0;
   previousTime = 0;
@@ -129,6 +164,9 @@ export class ClientConnection {
 
   /** Connect to the real game server. Called by ReconnectHandler after HELLO. */
   connectToServer(helloPacket: Packet): void {
+    this.updateAdmission({ type: 'begin', generation: ++admissionGeneration });
+    this.admissionMapReceived = false;
+    this.lastAttemptedPortalId = null;
     // A HELLO from the game starts fresh; the proxy's own retries keep their counts.
     this._helloRetryCount = 0;
     this._silentRetryCount = 0;
@@ -272,6 +310,7 @@ export class ClientConnection {
     }
 
     this._silentRetryCount++;
+    this.updateAdmission({ type: 'transport-retry', generation: this.admission.generation, retryAt: Date.now() + ClientConnection.SILENT_RETRY_MS, reason: 'server-ended-before-answer' });
     const attempt = this._silentRetryCount;
     const max = ClientConnection.SILENT_MAX_RETRIES;
     Logger.warn('Client', `server ${target} ended the connection before answering (attempt ${attempt}/${max})`);
@@ -290,6 +329,7 @@ export class ClientConnection {
    * reset here could make Windows discard the FAILURE before the game reads it.
    */
   private sendFullServerFailure(target: string): void {
+    this.updateAdmission({ type: 'terminal', generation: this.admission.generation, reason: 'unanswered-retries-exhausted', source: 'transport' });
     this._pendingHello = null;
     const packet = this.proxy.packetFactory.createByName('FAILURE');
     packet.data.errorId = ClientConnection.FULL_SERVER_ERROR_ID;
@@ -361,6 +401,7 @@ export class ClientConnection {
   /** Clean up both connections. */
   dispose(): void {
     if (this.closed) return;
+    this.updateAdmission({ type: 'disconnect', generation: this.admission.generation });
     Logger.debug('proxy', 'Client', `[DIAG-dispose] called — stack: ${(new Error().stack ?? '').split('\n').slice(1, 5).join(' | ').trim()}`);
     this.closed = true;
 
@@ -543,6 +584,8 @@ export class ClientConnection {
         if (!isClient && packet.name === 'QUEUEMESSAGE') {
           Logger.log('Client', `QUEUE_INFORMATION ${describeFields(packet, rawPacket)}`);
         }
+
+        this.observeAdmissionPacket(packet, isClient);
 
         // Fire hooks
         if (isClient) {
