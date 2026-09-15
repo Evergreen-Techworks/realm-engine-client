@@ -1040,7 +1040,10 @@ void ScenarioBoss(const char* name, bool wall, int ringCount, double ringMs, boo
             for (int k = -1; k <= 1; ++k) ww.Fire(b.x, b.y, a + k * 0.15f, 8.f, 1200.f, 0.35f, b.id);
         }
     };
-    Emit(Run(name, w, Goal::Lock, {}, 40));
+    // Hits are asserted: in range for half the fight is worth nothing if it costs hits.
+    Result r = Run(name, w, Goal::Lock, {}, 40);
+    r.success = r.success && r.hits == 0;
+    Emit(r);
 }
 
 // (e) narrow corridors with an L bend
@@ -1096,12 +1099,22 @@ void ScenarioLearnedKeepout(const char* name)
     EnemyHazards::ClearLearned();
     EnemyHazards::ObserveBlast({ mob.x, mob.y }, 3.f, mob.type, &ref, 1, nullptr, 0);
 #endif
+    // The blast itself: whenever the player is inside its reach it lands at once.
+    double nextBlast = 0.0;
+    w.script = [=](World& ww) mutable {
+        if (g_nowMs < nextBlast) return;
+        const Enemy& e = ww.enemies[0];
+        if (Len(Sub({ ww.px, ww.py }, { e.x, e.y })) > 3.f + kGameHalf) return;
+        nextBlast = g_nowMs + 1000.0;
+        ++ww.extraHits;
+    };
     Result r = Run(name, w, Goal::WalkTo, { 20.5f, 0.5f }, 60);
 #ifdef HARNESS_TREE_BURST
     // The keep-out covers the corridor's whole width, so the walk goes round the
     // walls' far end (a detour exists) and never through the blast.
     r.success = r.success && w.watchMinDist >= EnemyHazards::KeepoutRadius(mob.type) - 0.05f;
 #endif
+    r.success = r.success && r.hits == 0;   // Run() adds the blasts (extraHits) to r.hits
     Emit(r);
 #ifdef HARNESS_TREE_POST70
     EnemyHazards::ClearLearned();
@@ -1377,6 +1390,22 @@ void ScenarioDiagonalPinch(const char* name, PinchWall kind)
     Emit(r);
 }
 
+// z_moveto_no_clamp: the modelled game MoveTo moves exactly as far as it is told,
+// however far that is (86ad651b LKHPPBEGNOM::DGLCONCOIBO has no distance clamp), and
+// counts the step as overspeed. The planner alone must keep every step in speed.
+void ScenarioMoveToNoClamp(const char* name)
+{
+    World w; Floor(w);
+    w.px = 0.5f; w.py = 0.5f;
+    g_world = &w;
+    g_move = MoveStats{};
+    const bool ok = DodgeRuntime::CallMoveTo(&w, 5.5f, 0.5f);
+    Result r; r.name = name;
+    r.success = ok && std::fabs(w.px - 5.5f) < 1e-3f && std::fabs(w.py - 0.5f) < 1e-3f && g_move.overspeed == 1;
+    g_move = MoveStats{};   // the deliberate overspeed step is this check's input, not a planner step
+    Emit(r);
+}
+
 // (i) long session: the streamed-tile list exceeds 65,536 and the player walks
 // where the list is OLDEST (revisit) or NEWEST (frontier). Replicates DoRefresh's
 // selection, assuming the list is append-on-stream.
@@ -1438,9 +1467,32 @@ void BenchRaster()
         sink += occ[i % kUPathMaxCells];
     }
     const double occMs = (NowMsHost() - t0) / kOcc;
-    std::printf("{\"scenario\":\"bench_raster\",\"view_entries\":%zu,\"rebuild_ms\":%.3f,"
-                "\"fill_nav_grid_ms\":%.3f,\"fill_occ_grid_ms\":%.4f}\n",
-                g_view.size(), rebuildMs, navMs, occMs);
+#ifdef HARNESS_NAV_FOUNDATION
+    // navCollisionRule=game: the whole-tile square window FillOccGrid adds per publish.
+    static unsigned char squares[kUOccSquareCells];
+    t0 = NowMsHost();
+    for (int i = 0; i < kOcc; ++i) {
+        WorldTAB::CopyBoxBlocked(-13.5f, -13.5f, kUOccSquareSide, 1.f, 0.f, true, squares);
+        sink += squares[i % kUOccSquareCells];
+    }
+    const double squaresMs = (NowMsHost() - t0) / kOcc;
+    // Every rule: the ground <Speed> copy FillOccGrid adds per publish.
+    static float speeds[kUOccSquareCells];
+    t0 = NowMsHost();
+    for (int i = 0; i < kOcc; ++i) {
+        WorldTAB::CopyTileSpeeds(-14, -14, kUOccSquareSide, speeds);
+        sink += static_cast<unsigned>(speeds[i % kUOccSquareCells]);
+    }
+    const double speedsMs = (NowMsHost() - t0) / kOcc;
+    const char* rule = Movement::Collision::RuleName(Movement::Collision::GetRule());
+#else
+    const double squaresMs = 0, speedsMs = 0;
+    const char* rule = "legacy";
+#endif
+    std::printf("{\"scenario\":\"bench_raster\",\"rule\":\"%s\",\"view_entries\":%zu,\"rebuild_ms\":%.3f,"
+                "\"fill_nav_grid_ms\":%.3f,\"fill_occ_grid_ms\":%.4f,\"fill_occ_squares_ms\":%.4f,"
+                "\"copy_tile_speeds_ms\":%.4f}\n",
+                rule, g_view.size(), rebuildMs, navMs, occMs, squaresMs, speedsMs);
 }
 void BenchNav()
 {
@@ -1458,8 +1510,17 @@ void BenchNav()
     snap.speed = 0.006f;
     snap.navActive = true;
     snap.navGrid.center = { 0.5f, 0.5f };
+#ifdef HARNESS_NAV_FOUNDATION
+    snap.collisionRule = Movement::Collision::GetRule();
+    const bool gameRule = snap.collisionRule == Movement::Collision::Rule::Game;
+    const char* rule = Movement::Collision::RuleName(snap.collisionRule);
+#else
+    const bool gameRule = false;
+    const char* rule = "legacy";
+#endif
+    // FillNavGrid: the player box plus padding (legacy), the bare square (game).
     WorldTAB::CopyBoxBlocked(0.5f - kUNavRadCells, 0.5f - kUNavRadCells, kUNavSide, kUNavCellTiles,
-                             kUOccPlayerHalfEdge + 0.15f, true, snap.navGrid.flags);
+                             gameRule ? 0.f : kUOccPlayerHalfEdge + 0.15f, true, snap.navGrid.flags);
     for (auto& f : snap.navGrid.flags) if (f & 0x8) f |= 0x1;
     static Path::PlanResult plan{};
     auto bench = [&](Vec2 goal, const char* label) {
@@ -1474,8 +1535,9 @@ void BenchNav()
             sum += ms; mx = std::max(mx, ms);
             pops = plan.navPops; found = plan.navFound; partial = plan.navPartial;
         }
-        std::printf("{\"scenario\":\"bench_nav_%s\",\"compute_ms_avg\":%.3f,\"compute_ms_max\":%.3f,"
-                    "\"pops\":%d,\"found\":%d,\"partial\":%d}\n", label, sum / kRuns, mx, pops, found, partial);
+        std::printf("{\"scenario\":\"bench_nav_%s\",\"rule\":\"%s\",\"compute_ms_avg\":%.3f,\"compute_ms_max\":%.3f,"
+                    "\"pops\":%d,\"found\":%d,\"partial\":%d}\n", label,
+                    rule, sum / kRuns, mx, pops, found, partial);
     };
     bench({ -60.5f, 30.5f }, "open60");
     bench({ 60.5f, 0.5f }, "hazard_ring");
@@ -1527,6 +1589,7 @@ int main(int argc, char** argv)
     if (want("m_pinch_nowalk"))     H::ScenarioDiagonalPinch("m_pinch_nowalk", H::PinchWall::NoWalk);
     if (want("m_pinch_fulloccupy")) H::ScenarioDiagonalPinch("m_pinch_fulloccupy", H::PinchWall::FullOccupy);
     if (want("m_pinch_object"))     H::ScenarioDiagonalPinch("m_pinch_object", H::PinchWall::OccupySquare);
+    if (want("z_moveto_no_clamp"))  H::ScenarioMoveToNoClamp("z_moveto_no_clamp");
     if (scanMode != 0) {
         H::g_tileScanMode = scanMode;
         if (want("i_tilelist_revisit"))  H::ScenarioTileList("i_tilelist_revisit", true);

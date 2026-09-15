@@ -36,6 +36,7 @@ SCENARIOS = [
     "k_speedy_walk", "k_slowed_water", "k_mixed_water_land",
     "l_walk_past_shotgun", "l_walk_past_bomber", "l_lock_boss_dies", "l_lock_boss_invuln",
     "m_pinch_nowalk", "m_pinch_fulloccupy", "m_pinch_object",
+    "z_moveto_no_clamp",
 ]
 
 def main():
@@ -100,6 +101,8 @@ def main():
                     continue
                 out = subprocess.run([str(binary), name, str(scan), rule], check=True,
                                      capture_output=True, text=True).stdout.strip()
+                if not out:
+                    failed.append(f"{name} [{rule}] (no result)")   # a listed scenario the harness does not run
                 for line in out.splitlines():
                     row = json.loads(line)
                     row["tree"] = args.label
