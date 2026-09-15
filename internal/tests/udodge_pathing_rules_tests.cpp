@@ -47,6 +47,30 @@ bool LiveWalls(float x, float y)
 {
     return !TO::BoxBlocked([](int tx, int ty) { return FlagsAt(tx, ty); }, x, y);
 }
+
+// navCollisionRule=game fixtures. A NoWalk diagonal pinch: wall squares (8, y <= 0) and
+// (9, y >= 1) touch only at the corner (9,1), on open ground covering every window the
+// searches read.
+void BuildNoWalkPinch()
+{
+    g_flags.clear(); g_full.clear();
+    Open(-6, -15, 24, 15);
+    for (int y = -15; y <= 15; ++y) {
+        if (y <= 0) g_flags[TO::SquareKey(8, y)] |= TO::kTileBlocked;
+        if (y >= 1) g_flags[TO::SquareKey(9, y)] |= TO::kTileBlocked;
+    }
+}
+// What FillOccGrid copies for the game rule: squares (sx0.., sy0..) as a whole-tile,
+// halfEdge-0 raster at square centres.
+void CopySquares(int sx0, int sy0, uint8_t* out)
+{
+    TO::NearFullOccupyMask none;
+    none.Clear();
+    for (int y = 0; y < kUOccSquareSide; ++y)
+        for (int x = 0; x < kUOccSquareSide; ++x)
+            out[y * kUOccSquareSide + x] = TO::RasterCell([](int tx, int ty) { return FlagsAt(tx, ty); }, none,
+                                                          sx0 + x + 0.5f, sy0 + y + 0.5f, 0.f, true);
+}
 } // namespace
 
 int main()
@@ -181,6 +205,37 @@ int main()
     EnemyHazards::Append(snap.map, 0x1234, 100, { 8, 0 }, { 0, 0 }, 4.5f);
     Path::Compute(snap, plan);
     Check(!plan.navFound || plan.navPartial, "with no way round, the route does not cross the keep-out");
+
+    // ── navCollisionRule=game: the worker's segment test ─────────────────────────
+    {
+        BuildNoWalkPinch();
+        static uint8_t squares[kUOccSquareCells];
+        const int sx0 = 9 - kUOccSquareRad, sy0 = 0 - kUOccSquareRad;
+        CopySquares(sx0, sy0, squares);
+        MapInput worker{};
+        worker.env.rule = Movement::Collision::Rule::Game;
+        worker.env.squares = squares;
+        worker.env.squareX0 = sx0; worker.env.squareY0 = sy0; worker.env.squareSide = kUOccSquareSide;
+        worker.settings.safeWalk = false;
+        Check(OccupancyPathClear(worker, { 8.5f, 1.5f }, { 9.5f, 0.5f }),
+              "game rule: the worker's sweep walks a NoWalk corner pinch (no sample on the lattice point)");
+        Check(!OccupancyPathClear(worker, { 8.5f, 1.5f }, { 9.5f, 1.5f }),
+              "game rule: the worker's sweep still refuses the wall beside it");
+        Check(Navigation::PaddedPathClear(worker, { 8.5f, 1.5f }, { 9.5f, 0.5f }),
+              "game rule: navigation adds no padding to the pinch");
+        // Damaging ground keeps its rule: the worker raster's hazard bit, under safe-walk.
+        static uint8_t occ[kUPathMaxCells];
+        const Vec2 occCenter{ 9.25f, 1.25f };
+        occ[kUPathMaxRadCells * kUPathMaxSide + kUPathMaxRadCells - 10] = 0x2;   // the cell at (4.25, 1.25)
+        worker.env.occFlags = occ; worker.env.occCenter = occCenter; worker.env.occSide = kUPathMaxSide;
+        worker.env.occRadius = kUPathMaxRadCells; worker.env.occCellTiles = kUPathCellTiles;
+        worker.settings.safeWalk = true;
+        Check(!OccupancyPathClear(worker, { 2.25f, 1.25f }, { 6.25f, 1.25f }),
+              "game rule: safe-walk still refuses damaging ground on the way");
+        worker.settings.safeWalk = false;
+        Check(OccupancyPathClear(worker, { 2.25f, 1.25f }, { 6.25f, 1.25f }),
+              "game rule: without safe-walk the same move is clear");
+    }
 
     std::printf("Pathing rules tests: %d checks, 0 failures\n", g_checks);
     return 0;
