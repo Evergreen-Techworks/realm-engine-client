@@ -28,6 +28,7 @@ enum : uint8_t {
     kTileFullOcc     = 0x04,   // FullOccupy object (drives the half-tile neighbour rule)
     kTileDamaging    = 0x08,   // damaging ground (or a spike object)
     kTileSink        = 0x10,   // sink / sinking ground (water): walkable, slow
+    kTileSpeedMod    = 0x20,   // the ground has a <Speed> other than 1 (WorldTAB s_tileSpeedMap holds it)
 };
 
 // Square key: (uint16 tx << 16) | uint16 ty — WorldTAB's BlockedKey encoding.
@@ -68,12 +69,14 @@ constexpr float kCentreLineTolerance = 0.01f;
 // Acidwater2") — so every one of them read as shallow, walkable water. Routes then
 // waded into water the game refuses to enter. Push keeps the old exemption, which
 // no current square uses.
-inline uint8_t GroundFlags(bool noWalk, bool push, float /*speed*/, bool sink, bool damaging)
+inline uint8_t GroundFlags(bool noWalk, bool push, float speed, bool sink, bool damaging)
 {
     uint8_t f = 0;
     if (noWalk && !push) f |= kTileBlocked;
     if (damaging)        f |= kTileDamaging;
     if (sink)            f |= kTileSink;
+    // 0 is "no <Speed> element". The bit lets a raster skip the speed map for plain ground.
+    if (std::isfinite(speed) && speed > 0.f && speed != 1.f) f |= kTileSpeedMod;
     return f;
 }
 
