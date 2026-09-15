@@ -1,50 +1,27 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import type { PluginContext } from '../../../plugins/api.js';
-import { StatType } from '../../constants/StatType.js';
-vi.mock('../../../plugins/api.js', async () => ({
-  StatType: (await import('../../constants/StatType.js')).StatType,
+vi.mock('../../../plugins/api.js', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   sendDllFeature: vi.fn(),
   getDllThreats: vi.fn(() => [{ fallbackDamage: 29000, tHitMs: 0 }]),
+  getDllThreatsAgeMs: vi.fn(() => 0),
   getDllGround: vi.fn(() => ({ damage: 9999 })),
 }));
-import { sendDllFeature, getDllThreats } from '../../../plugins/api.js';
-import { register } from '../../../plugins/auto-nexus.js';
+import { sendDllFeature, getDllGround } from '../../../plugins/api.js';
+import { fixture } from './helpers/autoNexusFixture.js';
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.clearAllMocks(); });
-function fixture() {
-  vi.useFakeTimers();
-  const hooks = new Map<string, (...args: any[]) => void>();
-  const settings = new Map<string, (...args: any[]) => void>();
-  const events = new Map<string, (...args: any[]) => void>();
-  const cleanup: (() => void)[] = [];
-  let onEnable = () => {};
-  const client: any = { connected: true, objectId: 1, sendToServer: vi.fn(),
-    playerData: { effectiveMaxHealth: 1000, health: 800, mapName: 'Realm' } };
-  const ctx = { enabled: true,
-    registerSetting: (name: string, _def: any, fn: any) => settings.set(name, fn),
-    onEnabledChange: (fn: any) => { onEnable = fn; },
-    registerCleanup: (fn: any) => cleanup.push(fn), on: (name: string, fn: any) => events.set(name, fn),
-    hookCommand: vi.fn(), updateSetting: vi.fn(), log: vi.fn(),
-    hookPacket: (name: string, fn: (...args: any[]) => void) => hooks.set(name, fn),
-    createPacket: (name: string) => ({ name }), sendNotification: vi.fn() };
-  register(ctx as unknown as PluginContext);
-  const emit = (name: string, data: any = {}) => {
-    const packet = { isDefined: true, data, send: true };
-    hooks.get(name)?.(client, packet); return packet;
-  };
-  const hp = (value: number) => emit('NEWTICK', { statuses: [{ objectId: 1, data: [{ id: StatType.HP, value }] }] });
-  return { client, ctx, settings, events, cleanup, emit, hp, disable: () => { ctx.enabled = false; onEnable(); } };
-}
-it('ignores all forecasts, guessed client hits and ground/AoE warnings, including legacy configuration', () => {
+it('ignores guessed client hits, ground/AoE warnings and damage-less forecasts, including legacy configuration', () => {
   const f = fixture(); f.hp(800);
   for (const name of ['PLAYERHIT','GROUNDDAMAGE','AOE','AOEACK','MOVE'])
     expect(f.emit(name, { damage: 29000, objectId: 2, bulletId: 3 }).send).toBe(true);
   vi.advanceTimersByTime(10000);
   expect(f.client.sendToServer).not.toHaveBeenCalled();
-  expect(getDllThreats).not.toHaveBeenCalled();
-  for (const key of ['PredictedAutoNexusHealth','PredictedAutoNexusTime','UnattributedMargin','HoldLethalPlayerHit'])
+  expect(getDllGround).not.toHaveBeenCalled();
+  for (const key of ['PredictedAutoNexusHealth','PredictedAutoNexusTime','PredictedUsesForceThreshold','IncludeGroundTicks',
+    'UnattributedMargin','HoldLethalPlayerHit','LethalHoldTime','LethalCushionHealth','DrawOverlay'])
     expect(f.settings.has(key)).toBe(false);
-  for (const key of ['autoNexusEnabled','autoNexusProjPredict','autoNexusTilePredict'])
+  for (const key of ['autoNexusTilePredict','autoNexusDebugDraw'])
     expect(sendDllFeature).toHaveBeenCalledWith(key, false);
+  expect(sendDllFeature).not.toHaveBeenCalledWith('autoNexusTilePredict', true);
 });
 it('uses the current server HP packet and preserves its delivery', () => {
   const f = fixture(); f.hp(800);
