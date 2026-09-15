@@ -236,7 +236,7 @@ export function register(ctx: PluginContext): void {
     state.lastClassType = classType;
     state.actual.clear();
     markAllPending(client);
-    if (classChanged) updateSkinOptions(classType);
+    if (classChanged && classType) updateSkinOptions(classType);
     flushNativeTransition();
   }
 

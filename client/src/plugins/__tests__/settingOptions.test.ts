@@ -27,6 +27,30 @@ describe('PluginContext.updateSettingOptions', () => {
     expect(context.resetSettingsToDefaults()).toEqual([]);
   });
 
+  it('does not notify when the replacement options equal the current ones', () => {
+    const context = new PluginContext({} as any, 'test-plugin', 'test-plugin.ts');
+    context.registerSetting('skin', {
+      label: 'Skin',
+      type: 'select',
+      value: '',
+      options: [{ label: 'Default', value: '' }],
+    });
+    const notify = vi.fn();
+    context.onSettingOptionsChanged = notify;
+    const withSkin = () => [
+      { label: 'Default', value: '' },
+      { label: 'Golden Knight', value: 'skin:1001', iconUrl: '/k.png', metadata: { objectType: 0x1001 } },
+    ];
+
+    expect(context.updateSettingOptions('skin', [{ label: 'Default', value: '' }])).toBe(true);
+    expect(notify).not.toHaveBeenCalled();
+    expect(context.updateSettingOptions('skin', withSkin())).toBe(true);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(context.updateSettingOptions('skin', withSkin())).toBe(true);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(context.getSettings()[0].options).toEqual(withSkin());
+  });
+
   it('rejects unknown and non-select settings without notifying', () => {
     const context = new PluginContext({} as any, 'test-plugin', 'test-plugin.ts');
     context.registerSetting('enabled', { label: 'Enabled', type: 'boolean', value: true });

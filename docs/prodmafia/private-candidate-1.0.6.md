@@ -2,9 +2,26 @@
 
 2026-09-15. This document preserves the requested desktop work and outstanding
 acceptance gates. It is not public-release approval or a claim that disconnects
-are eliminated. The executable source revision is
-`85f3cf0c056a88f246e19e0438c30ce8f499102b`; a later documentation-only PR revision
-does not change the source used by the private build.
+are eliminated. The private build references
+`85f3cf0c056a88f246e19e0438c30ce8f499102b` plus preserved Windows-local files;
+it is not byte-identical to that checkout. Its receipt records six differing
+paths and nineteen local-only build inputs. A subsequent PR carry preserves
+the existing UI fixes and WIP labels already present in the artifact, without
+changing or rebuilding that artifact.
+
+The artifact SHA-256 is
+`50c6ef11e0cdc7ab5bc6b6309009cef08ea69c3101655650403bc482275b65c3`;
+its receipt status is `candidate_requires_gameplay_test`.
+
+The historical UI change `8169f83` avoids identical select-option notifications
+and preserves the last real class list while a new connection reports class
+zero. Its two regression files are carried here, including the map-transition
+test present only in Windows at build time. Historical `7cbdf28` marks both
+Lost Halls farmer manifests WIP. The developer-local `sync-local.bat` path
+override is intentionally not copied into shared source. Remaining local-only
+inputs include generated headers, native/assets binaries, script READMEs and
+test artifacts; they are recorded in the build receipt, not represented as
+newly authored feature code.
 
 ## Included desktop requests
 
@@ -41,6 +58,12 @@ branch totals:
 - Earlier ProdMafia integration report records eight reversible regression
   mutations and the separate **523-test** integration baseline. The final
   candidate count above supersedes that total for this candidate.
+
+After carrying the preserved Windows UI behavior and WIP labels into the PR,
+both historical UI regressions first failed against the checkout, then passed
+with the carry. The full suite now passes **63 files / 577 tests**, with both
+TypeScript checks and diff checks passing. This tests the preservation commit;
+it does not claim the unchanged artifact was built from that later commit.
 
 Reproduction commands: from `client/`, `npm run build:sdk`, `npm test`,
 `npm run typecheck`, `npm run typecheck:tests`; from the repository root,
