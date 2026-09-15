@@ -18,6 +18,11 @@ import { sendDllFeature } from '../bridge/DllFeatureBus.js';
  */
 type PluginSource = 'bundled' | 'user';
 
+export interface PluginLoadReport {
+  loaded: string[];
+  failed: string[];
+}
+
 /**
  * Either context type exposes the same management surface used by
  * `PluginManager` (enabled flag, name, category, settings, cleanup, dashboard
@@ -352,22 +357,25 @@ export class PluginManager {
    * the same `PluginContext` — only the discovery filter and the resulting
    * `source` tag differ.
    */
-  async loadAll(): Promise<void> {
+  async loadAll(): Promise<PluginLoadReport> {
+    const report: PluginLoadReport = { loaded: [], failed: [] };
     if (!this.allowLocalDiskPlugins) {
       Logger.warn('PluginManager', 'Local disk plugins are disabled in this build mode.');
-      return;
+      return report;
     }
-    await this.loadFromDir(this.bundledPluginDir, 'bundled');
-    await this.loadFromDir(this.userPluginDir, 'user');
+    await this.loadFromDir(this.bundledPluginDir, 'bundled', report);
+    await this.loadFromDir(this.userPluginDir, 'user', report);
     Logger.log('PluginManager', `Loaded ${this.loadedPlugins.size} plugins`);
+    return report;
   }
 
-  private async loadFromDir(dir: string, source: PluginSource): Promise<void> {
+  private async loadFromDir(dir: string, source: PluginSource, report: PluginLoadReport): Promise<void> {
     if (!existsSync(dir)) {
       if (source === 'user') {
         Logger.log('PluginManager', `No user plugins directory yet: ${dir}`);
       } else {
         Logger.warn('PluginManager', `Bundled plugin directory not found: ${dir}`);
+        report.failed.push('bundled-directory');
       }
       return;
     }
@@ -383,7 +391,8 @@ export class PluginManager {
         return a.id.localeCompare(b.id);
       });
     for (const { id, entryPath } of entries) {
-      await this.loadPlugin(entryPath, source, id);
+      const loaded = await this.loadPlugin(entryPath, source, id);
+      (loaded ? report.loaded : report.failed).push(id);
     }
   }
 
@@ -451,7 +460,7 @@ export class PluginManager {
     source: PluginSource = 'bundled',
     idOverride?: string,
     hotReload = false,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const id = idOverride ?? stripPluginExt(basename(filePath));
 
     try {
@@ -491,7 +500,7 @@ export class PluginManager {
 
       if (typeof module.register !== 'function') {
         Logger.warn('PluginManager', `Plugin ${id} has no register() export, skipping`);
-        return;
+        return false;
       }
 
       const context: AnyPluginContext = source === 'user'
@@ -543,8 +552,10 @@ export class PluginManager {
       });
 
       Logger.debug('plugin-load', 'PluginManager', `Loaded ${source} plugin: ${context.name || id}`);
+      return true;
     } catch (err) {
       Logger.error('PluginManager', `Failed to load plugin ${id}`, err as Error);
+      return false;
     }
   }
 

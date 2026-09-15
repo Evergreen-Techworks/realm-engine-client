@@ -64,6 +64,7 @@ import { setDllFeatureSender } from './bridge/DllFeatureBus.js';
 import { attachHiddenHelperTypeSync } from './bridge/HiddenHelperTypes.js';
 import { Logger } from './util/Logger.js';
 import { ensureRotmgMetadataXml } from './util/ensureRotmgMetadataXml.js';
+import { startServices } from './startup/startServices.js';
 import { getRealmengineDataDir } from './util/rotmgAssetExtractor.js';
 import { ensureSdkDeployed } from './util/ensureSdkDeployed.js';
 import { getBakedPacketDefinitions, getBakedServers, getBakedStatTypes } from './config/BakedData.js';
@@ -339,22 +340,14 @@ async function main() {
   attachHiddenHelperTypeSync(gameData, internalBridge);
 
   // 7. Mirror XML + plugin loading in parallel (metadata fetch can be slow if mirrors are down)
-  const [metadataResult] = await Promise.all([
-    ensureRotmgMetadataXml(gameDataDir, {
+  const startupController = new AbortController();
+  const metadataResult = await ensureRotmgMetadataXml(gameDataDir, {
       log(level, message) {
         if (level === 'error') Logger.error('Metadata', message);
         else if (level === 'warn') Logger.warn('Metadata', message);
         else Logger.log('Metadata', message);
       },
-    }),
-    pluginManager.loadAll().then(() => {
-      devServer?.tryAutoLoadDefaultPluginConfig();
-      return pluginManager.startWatching();
-    }).then(() => {
-      // Broadcast plugin state to any dashboard clients that connected before plugins finished loading
-      devServer?.broadcastPluginState();
-    }),
-  ]);
+    });
   if (!metadataResult.ok) {
     Logger.warn(
       'Main',
@@ -363,7 +356,6 @@ async function main() {
   }
 
   // 8. Start proxy
-  proxy.start('127.0.0.1', GAME_PORT);
 
   Logger.log('Main', `Proxy ready on 127.0.0.1:${GAME_PORT}`);
   if (hookInstalled) {
@@ -385,7 +377,18 @@ async function main() {
   }
   // Start the pipe server — the injected DLL connects to us.
   // No reconnect hammering; server just listens until DLL injects.
-  internalBridge.listen();
+  await startServices({
+    signal: startupController.signal,
+    loadPlugins: () => pluginManager.loadAll(),
+    applyProfile: () => { devServer?.tryAutoLoadDefaultPluginConfig(); },
+    startWatching: () => pluginManager.startWatching(),
+    publish: report => {
+      if (report.failed.length) Logger.warn('Main', `Plugin initialization degraded: ${report.failed.join(', ')}`);
+      devServer?.broadcastPluginState();
+    },
+    startProxy: () => proxy.start('127.0.0.1', GAME_PORT),
+    startPipe: () => internalBridge.listen(),
+  });
   // Forward DLL state/player messages to any listeners
   internalBridge.on('message', (msg: any) => {
     devServer?.broadcastDllMessage(msg);
@@ -393,6 +396,7 @@ async function main() {
 
   // Graceful shutdown
   const shutdown = async () => {
+    startupController.abort();
     Logger.log('Main', 'Shutting down...');
     scriptHost?.stopAll();
     internalBridge.stop();
