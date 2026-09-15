@@ -175,7 +175,7 @@ export class ReconnectHandler {
   }
 
   private onReconnect(client: ClientConnection, packet: Packet): void {
-    if (!client.connected || ['cancelled', 'dead', 'terminal', 'disconnected'].includes(client.admission.phase)) return;
+    if (!client.connected) return;
     client.recovery.acceptReconnect(client.admission.generation);
     this.proxy.authorizeReconnect(client);
     // Log all parsed fields for debugging

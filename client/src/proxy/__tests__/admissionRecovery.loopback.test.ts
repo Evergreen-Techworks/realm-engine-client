@@ -248,6 +248,20 @@ afterEach(async () => {
 
 
 describe('admission and recovery loopback', () => {
+  it('preserves a real reconnect through the proxy after an unknown rejection', async () => {
+    const rejection = failure(1234, 'unknown-current-game-rejection');
+    const redirect = reconnect('127.0.0.2', 9999, 1, 123, Buffer.from([7]));
+    const srv = await server([answer(rejection, redirect)]);
+    const { port, clients } = await startProxy(srv.port);
+    const player = await game(port);
+    player.send(hello(-2, 0, Buffer.alloc(0)));
+    await until(() => player.frames.length === 2, 'both server frames');
+    expect(player.frames[0]).toEqual(rejection);
+    const decoded = factory.createFromBytes(player.frames[1], 'server');
+    expect(decoded.data.host).toBe('127.0.0.1');
+    expect(decoded.data.key).toEqual(Buffer.from(clients[0].state.guid));
+    expect(clients[0].state.conRealKey).toEqual(Buffer.from([7]));
+  });
   it('does not reuse a reconnect handoff after the originating character generation changes', async () => {
     const srv = await server([answer(ping(1))]);
     const { port, clients, proxy } = await startProxy(srv.port);
