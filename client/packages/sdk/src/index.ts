@@ -146,3 +146,4 @@ export {
     sequence,
     parallel,
 } from './treescript';
+export type { AdmissionPhase, ConnectionStatus } from './types/connection';

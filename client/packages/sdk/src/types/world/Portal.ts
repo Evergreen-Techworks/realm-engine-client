@@ -8,5 +8,7 @@ export interface Portal extends GameObject {
     isRealm: boolean;
     isOpen: boolean;
     playerCount: number;
+    availability?: 'available' | 'full' | 'queued' | 'unknown';
+    retryAt?: number;
     enter(): boolean;
 }

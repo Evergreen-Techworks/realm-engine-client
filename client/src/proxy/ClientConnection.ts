@@ -52,6 +52,7 @@ export class ClientConnection {
 
   updateAdmission(event: AdmissionEvent): void {
     this.admission = reduceAdmission(this.admission, event);
+    if (event.generation === this.admission.generation && (event.type === 'portal-refused' || event.type === 'map-loaded')) this.lastAttemptedPortalId = null;
   }
 
   private observeAdmissionPacket(packet: Packet, isClient: boolean): void {

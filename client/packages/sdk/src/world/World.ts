@@ -1,4 +1,10 @@
+import type { ConnectionStatus } from '../types/connection';
+
 export class World {
+    static getConnectionStatus(): ConnectionStatus | null {
+        throw new Error('Must be run inside RealmEngine client');
+    }
+
     /** Full server map dimensions; zero until MAPINFO arrives. */
     static getSize(): { width: number; height: number } {
         throw new Error('Must be run inside RealmEngine client');

@@ -1,4 +1,5 @@
-export type AdmissionPhase = 'idle' | 'connecting' | 'queued' | 'admission-pending' | 'loaded' | 'entry-refused' | 'terminal' | 'cancelled' | 'dead' | 'disconnected';
+import type { AdmissionPhase } from '@realmengine/sdk';
+export type { AdmissionPhase } from '@realmengine/sdk';
 export interface AdmissionSnapshot {
   generation: number;
   phase: AdmissionPhase;

@@ -9,6 +9,10 @@ function mapNameLower(deps: BridgeDeps): string {
 
 export class BridgeWorld {
   static install(deps: BridgeDeps): void {
+    World.getConnectionStatus = () => {
+      const state = deps.clientRef.current?.admission;
+      return state ? { generation: state.generation, phase: state.phase, queuePosition: state.queuePosition, retryAt: state.retryAt, reason: state.reason } : null;
+    };
     World.getSize = () => {
       const p = deps.clientRef.current?.playerData;
       return { width: p?.mapWidth ?? 0, height: p?.mapHeight ?? 0 };
