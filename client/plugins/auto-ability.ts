@@ -113,7 +113,7 @@ export function register(ctx: PluginContext) {
     lastDiagnosticAt.set(client, now);
     ctx.log(`Auto Ability: ${reason}`);
   }
-  const abilityMetadata = new Map<number, { xml: string | undefined; movement: boolean; cost: number | null; invalidCost: boolean; cooldownMs: number; shoots: boolean }>();
+  const abilityMetadata = new Map<number, { xml: string | undefined; movement: boolean; multiphase: boolean; cost: number | null; invalidCost: boolean; cooldownMs: number; shoots: boolean }>();
   function metadata(itemType: number) {
     const xml = ctx.gameData?.getRawObjectXml(itemType);
     const cached = abilityMetadata.get(itemType);
@@ -122,6 +122,7 @@ export function register(ctx: PluginContext) {
     const cost = rawCost === undefined ? null : Number(rawCost.trim());
     const cooldownMs = abilityCooldownMs(xml) ?? NaN;
     const result = { xml, movement: xml !== undefined && MOVEMENT_ACTIVATE_RE.test(xml), cost,
+      multiphase: /<(?:MultiPhase|MpEndCost)\b/.test(xml ?? ''),
       cooldownMs, shoots: /<Activate\b[^>]*>\s*Shoot\s*<\/Activate>/.test(xml ?? ''),
       invalidCost: xml === undefined || !Number.isFinite(cooldownMs) || cooldownMs < 0
         || (cost !== null && (!rawCost?.trim() || !Number.isFinite(cost) || cost < 0)) };
@@ -186,6 +187,7 @@ export function register(ctx: PluginContext) {
     if (itemType <= 0) { diagnose(client, 'no equipped ability'); return; }
     const ability = metadata(itemType);
     if (ability.movement) { diagnose(client, 'movement ability excluded'); return; }
+    if (ability.multiphase) { diagnose(client, 'multiphase ability requires manual use'); return; }
     if (ability.invalidCost) { diagnose(client, 'invalid ability MP cost in XML'); return; }
     if (pd.hasConditionEffect('Quiet') || pd.hasConditionEffect('Silenced')
       || (ability.shoots && pd.hasConditionEffect('Stunned'))) return;
