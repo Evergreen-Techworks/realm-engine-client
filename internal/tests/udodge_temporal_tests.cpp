@@ -13,6 +13,26 @@ static void Check(bool ok, const char* name)
 
 int main()
 {
+    static DangerMap oversized{};
+    oversized.laneCount = 1;
+    auto& oversizedLane = oversized.lanes[0];
+    oversizedLane.pointCount = oversizedLane.instantCount = 1;
+    oversizedLane.hitHalf = 4.f;
+    oversizedLane.points[0] = {};
+    MapInput oversizedInput{};
+    oversizedInput.map = &oversized;
+    const Vec2 insideLargeShot{3.f, 0.f};
+    Check(!Core::PointClear(oversizedInput, insideLargeShot), "large contact threshold blocks standing inside its outer edge");
+    Check(Core::PointClearance(oversizedInput, insideLargeShot) < 0.f, "large contact threshold has negative raw clearance");
+    Check(Core::PointSafety(oversizedInput, insideLargeShot) < 0.f, "large contact threshold blocks point safety");
+    Check(Core::SegmentSafety(oversizedInput, {3.f, -1.f}, {3.f, 1.f}) < 0.f, "large contact threshold blocks movement across its outer edge");
+    static Core::Temporal::Ctx oversizedContext;
+    Core::Temporal::Build(oversized, 1.f, 0.f, {}, 20.f, oversizedContext, 0.f);
+    Check(!Core::Temporal::PathClear(oversizedContext, insideLargeShot, 0.f, insideLargeShot), "large contact threshold survives temporal prediction");
+    Check(Core::PointClear(oversizedInput, {4.5f, 0.f}), "large contact threshold does not inflate beyond its boundary");
+    oversizedLane.hitHalf = 0.5f;
+    Check(Core::PointClear(oversizedInput, insideLargeShot), "ordinary contact threshold stays unchanged");
+
     static_assert(kMaxProjectiles >= 512, "dense volleys require the increased lane capacity");
     static DangerMap dense{};
     dense.laneCount = kMaxProjectiles;

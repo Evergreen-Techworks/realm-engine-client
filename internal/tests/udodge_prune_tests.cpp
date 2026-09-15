@@ -61,7 +61,7 @@ float PointSafety(const MapInput& in, Vec2 pos)
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
         if (L.instantCount <= 0) continue;
-        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + laneHalf;
+        const float half = std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * hitScale + laneHalf;
         best = std::min(best, LaneDistCheb(L, pos) - half);
     }
     for (int i = 0; i < in.map->zoneCount; ++i) {
@@ -81,7 +81,7 @@ float SegmentSafety(const MapInput& in, Vec2 a, Vec2 b)
         const LaneThreat& L = in.map->lanes[i];
         const int n = L.instantCount;
         if (n <= 0) continue;
-        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + laneHalf;
+        const float half = std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * hitScale + laneHalf;
         float dCheb;
         if (n == 1) {
             dCheb = MinChebOnSegment(L.points[0].x - a.x, L.points[0].y - a.y,
@@ -119,7 +119,7 @@ int main()
         for (int i = 0; i < map.laneCount; ++i) {
             LaneThreat& L = map.lanes[i];
             L = LaneThreat{};
-            L.hitHalf = 0.02f + u(rng) * 1.2f;
+            L.hitHalf = 0.02f + u(rng) * 12.f;
             L.pointCount = 1 + static_cast<int>(u(rng) * kMaxLanePoints);
             L.instantCount = static_cast<int>(u(rng) * (L.pointCount + 1));
             Vec2 p{ origin.x + (u(rng) - 0.5f) * 40.f, origin.y + (u(rng) - 0.5f) * 40.f };

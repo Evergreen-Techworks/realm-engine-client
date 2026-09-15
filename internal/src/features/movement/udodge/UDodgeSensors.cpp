@@ -325,7 +325,7 @@ void AppendPacketLanes(DangerMap& out, float playerX, float playerY, float laneC
         lane.bulletId = s.bullet;
         lane.attackerObjId = s.owner;
         lane.ownerObjId = static_cast<uint32_t>(s.owner);
-        lane.hitHalf = std::clamp(s.hitHalf, 0.05f, 2.5f);
+        lane.hitHalf = std::clamp(s.hitHalf, 0.05f, kUMaxProjectileHalf);
         lane.provisional = true;
         lane.remainingLifeMs = s.lifetimeMs > 0.f ? std::max(0.f, s.lifetimeMs - ageMs) : -1.f;
         lane.points[0] = live;
