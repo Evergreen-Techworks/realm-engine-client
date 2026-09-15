@@ -108,15 +108,32 @@ describe('farmer control ownership', () => {
     expect(f.farmer.lockId).toBe(10);
   });
 
-  it('collects a deferred bag once the boss dies', () => {
+  it.each(['packet', 'hp'])('collects a deferred bag after %s death evidence with no corpse in Enemies', (evidence) => {
     const f = bossFightWithBridgeLoot();
     const bag = bridgeBags.drop(LOOT_BAG_7, 22, { x: 2, y: 0 }, [2592]);
     f.farmer.onLoop();
     expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalledWith(bag.position);
-    f.sdk.world.objects.isDead = (id: number) => id === f.quest.objectId;
+    if (evidence === 'packet') f.sdk.world.objects.isDead = (id: number) => id === f.quest.objectId;
+    else f.quest.hp = 0;
     f.setEnemies([]);
     f.farmer.onLoop(); f.farmer.onLoop();
     expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(bag.position);
+  });
+
+  it('releases a remembered quest immediately when the current world snapshot confirms zero HP', () => {
+    const fixtureState = fixture();
+    fixtureState.sdk.world.tiles = { getAll: () => [] };
+    fixtureState.setEnemies([fixtureState.quest]); fixtureState.farmer.onLoop();
+    expect(fixtureState.farmer.lockId).toBe(10);
+    fixtureState.sdk.world.objects.getById = () => ({ ...fixtureState.quest, hp: 0 });
+    fixtureState.sdk.world.objects.getQuestObject = () => null;
+    fixtureState.setEnemies([]);
+    fixtureState.sdk.dodge.navigateToPosition.mockClear();
+    fixtureState.farmer.onLoop();
+    expect(fixtureState.farmer.questGoal).toBeNull();
+    expect(fixtureState.farmer.bossEncounter).toBeNull();
+    expect(fixtureState.farmer.lockId).toBe(0);
+    expect(fixtureState.sdk.dodge.navigateToPosition).not.toHaveBeenCalledWith(fixtureState.quest.position);
   });
 
   it('collects a deferred bag once the encounter ends without a kill', () => {
@@ -459,7 +476,7 @@ it('pins an arrived event through its death/loot window, even if displaced from 
   expect(f.sdk.walking.teleportToBeacon).toHaveBeenCalledWith(70);
 });
 
-it('continues a nearby replacement phase and stays while local adds remain alive', () => {
+it('continues a nearby replacement phase but releases its adds after confirmed death', () => {
   vi.useFakeTimers(); vi.setSystemTime(10000);
   const f = fixture(); f.sdk.self.getLevel = () => 20;
   const boss = { ...f.quest, objectId: 40, isEventBoss: true };
@@ -476,8 +493,8 @@ it('continues a nearby replacement phase and stays while local adds remain alive
   const add = { ...f.quest, objectId: 50, position: { x: 6, y: 0 } };
   f.setEnemies([phase, add]); vi.setSystemTime(13000); f.farmer.onLoop();
   vi.setSystemTime(45000); f.farmer.onLoop();
-  expect(f.farmer.eventGoal.objectId).toBe(42);
-  expect(f.sdk.dodge.lockEnemy).toHaveBeenLastCalledWith(50);
+  expect(f.farmer.eventGoal.objectId).toBe(41);
+  expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(50);
   expect(f.sdk.walking.teleportToBeacon).not.toHaveBeenCalled();
   f.farmer.resetMap('Other'); expect(f.farmer.eventArrived).toBe(false);
 });
@@ -640,7 +657,7 @@ it('releases a dead event boss when only untargetable objects remain beside it',
   expect(f.farmer.eventGoal.objectId).toBe(41);
 });
 
-it('caps how long living adds can hold the farmer at a dead event boss', () => {
+it('living adds cannot extend a confirmed kill past the loot window', () => {
   vi.useFakeTimers(); vi.setSystemTime(10000);
   const f = fixture(); f.sdk.self.getLevel = () => 20;
   const boss = { ...f.quest, objectId: 40, isEventBoss: true };
@@ -652,11 +669,35 @@ it('caps how long living adds can hold the farmer at a dead event boss', () => {
   boss.hp = 0;
   const add = { ...f.quest, objectId: 50, position: { x: 6, y: -1 } };
   f.setEnemies([boss, add]); vi.setSystemTime(11000); f.farmer.onLoop();
-  vi.setSystemTime(45000); f.farmer.onLoop();
-  expect(f.farmer.eventGoal.objectId).toBe(40);        // adds still alive: stay
-  vi.setSystemTime(71500); f.farmer.onLoop();
-  expect(f.farmer.finishedEvents.has(40)).toBe(true);  // but not forever
+  expect(f.farmer.lockId).toBe(0);
+  vi.setSystemTime(21500); f.farmer.onLoop();
+  expect(f.farmer.finishedEvents.has(40)).toBe(true);
   expect(f.farmer.eventGoal.objectId).toBe(41);
+});
+
+it.each(['packet', 'hp'])('releases a dead event combat lock immediately after %s evidence, even when displaced', (evidence) => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const fixtureState = fixture(); fixtureState.sdk.self.getLevel = () => 20;
+  const boss = { ...fixtureState.quest, objectId: 40, isEventBoss: true };
+  const next = { ...boss, objectId: 41, position: { x: 200, y: 0 } };
+  const objects = [boss, next];
+  fixtureState.sdk.world.objects.getAll = () => objects;
+  fixtureState.sdk.world.objects.getById = (objectId: number) => objects.find(object => object.objectId === objectId);
+  fixtureState.setEnemies([boss]); fixtureState.farmer.onLoop();
+  expect(fixtureState.farmer.lockId).toBe(40);
+  if (evidence === 'packet') fixtureState.sdk.world.objects.isDead = (objectId: number) => objectId === 40;
+  else boss.hp = 0;
+  fixtureState.setEnemies([{ ...fixtureState.quest, objectId: 50 }]);
+  fixtureState.sdk.self.getX = () => 30;
+  fixtureState.sdk.self.distanceTo = (position: any) => Math.hypot(position.x - 30, position.y);
+  fixtureState.sdk.dodge.navigateToPosition.mockClear();
+  vi.setSystemTime(11000); fixtureState.farmer.onLoop();
+  expect(fixtureState.farmer.lockId).toBe(0);
+  expect(fixtureState.farmer.bossEncounter).toBeNull();
+  expect(fixtureState.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+  expect(fixtureState.sdk.ui.status).toHaveBeenLastCalledWith('Boss: defeated — waiting for loot or next phase');
+  vi.setSystemTime(21500); fixtureState.farmer.onLoop();
+  expect(fixtureState.farmer.eventGoal.objectId).toBe(41);
 });
 
 it('gives up on an event boss that never becomes targetable after bounded encounter attempts', () => {

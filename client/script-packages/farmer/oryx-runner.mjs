@@ -150,7 +150,7 @@ export default class OryxRunner {
     }
     for (const [id, boss] of this.bosses) {
       if (this.dead.has(id)) continue;
-      const live = enemies.find(e => e.objectId === id);
+      const live = this.sdk.world.objects.getById(id) ?? enemies.find(e => e.objectId === id);
       if (this.sdk.world.objects.isDead?.(id) || (live && live.hp <= 0 && live.maxHp > 0)) {
         this.dead.add(id);
         if (this.encounter === id) this.encounter = null;

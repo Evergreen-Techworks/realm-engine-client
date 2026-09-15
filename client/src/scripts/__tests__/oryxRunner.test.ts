@@ -59,6 +59,22 @@ function floor(f: ReturnType<typeof fixture>, width: number, height: number) {
 }
 
 describe('Oryx progression', () => {
+  it.each(['packet', 'hp'])('ends combat after %s death evidence when the corpse leaves Enemies', (evidence) => {
+    const fixtureState = fixture("Oryx's Chamber");
+    const boss = enemy('Oryx the Mad God');
+    fixtureState.state.enemies = [boss]; fixtureState.state.objects = [boss];
+    fixtureState.runner.tick(0);
+    expect(fixtureState.farmer.lockId).toBe(10);
+    if (evidence === 'packet') fixtureState.state.dead.add(10);
+    else boss.hp = 0;
+    fixtureState.state.enemies = [enemy('Oryx Henchman', 20)];
+    fixtureState.runner.tick(500);
+    expect(fixtureState.runner.completedAt).toBe(500);
+    expect(fixtureState.runner.encounter).toBeNull();
+    expect(fixtureState.farmer.lockId).toBe(0);
+    expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(20);
+  });
+
   it('cancels pending completion when a boss reuses its id with restored HP', () => {
     const f = fixture("Oryx's Sanctuary"), boss = enemy('Oryx the Mad God 3');
     f.state.enemies = [boss]; f.runner.tick(0);
