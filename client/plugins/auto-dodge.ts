@@ -372,6 +372,11 @@ export function register(ctx: PluginContext) {
     type: 'select', value: 'legacy',
     options: [{ label: 'Legacy (box)', value: 'legacy' }, { label: 'Game (point rule)', value: 'game' }],
   }, (v: string) => sendDllFeature('navCollisionRule', v === 'game' ? 'game' : 'legacy'));
+  registerModeSetting('unified', 'navNavigator', {
+    label: '[UDodge] Map navigation (point travel; experimental)',
+    type: 'select', value: 'legacy',
+    options: [{ label: 'Legacy (local routes)', value: 'legacy' }, { label: 'D* Lite (persistent map)', value: 'dstar' }],
+  }, (value: string) => sendDllFeature('navNavigator', value === 'dstar' ? 'dstar' : 'legacy'));
 
   // Keep observing MOVE even outside Unified mode so switching modes starts
   // from the last position actually sent, never from an invented anchor.
@@ -621,6 +626,7 @@ export function register(ctx: PluginContext) {
                      'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     sendDllFeature('navCollisionRule', ctx.getSetting<string>('navCollisionRule') === 'game' ? 'game' : 'legacy');
+    sendDllFeature('navNavigator', ctx.getSetting<string>('navNavigator') === 'dstar' ? 'dstar' : 'legacy');
     updateMoveEnvelopeArming();
     // Re-apply the 60fps cap here too. The onEnabledChange / clientConnected
     // handlers were the only places setting targetFrameRate, so if the cap

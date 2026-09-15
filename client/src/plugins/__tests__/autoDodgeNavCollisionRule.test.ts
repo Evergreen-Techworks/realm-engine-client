@@ -54,4 +54,25 @@ describe('auto-dodge navCollisionRule', () => {
     events.get('clientConnected')!();
     expect(sent).toContainEqual(['navCollisionRule', 'game']);
   });
+  it('exposes opt-in persistent point routing without changing legacy defaults', () => {
+    const { configs, callbacks, sent } = load();
+    const setting = configs.get('navNavigator');
+    expect(setting).toBeDefined();
+    expect(setting.type).toBe('select');
+    expect(setting.value).toBe('legacy');
+    expect(setting.options.map((option: { value: string }) => option.value)).toEqual(['legacy', 'dstar']);
+    expect(setting.visibleWhen).toEqual({ key: 'dodgeMode', value: 'unified' });
+    callbacks.get('navNavigator')!('dstar');
+    expect(sent.at(-1)).toEqual(['navNavigator', 'dstar']);
+    callbacks.get('navNavigator')!('invalid');
+    expect(sent.at(-1)).toEqual(['navNavigator', 'legacy']);
+  });
+  it('resends the saved global routing opt-in on connection and leaves absent settings legacy', () => {
+    const optedIn = load({ navNavigator: 'dstar' });
+    optedIn.events.get('clientConnected')!();
+    expect(optedIn.sent).toContainEqual(['navNavigator', 'dstar']);
+    const defaults = load();
+    defaults.events.get('clientConnected')!();
+    expect(defaults.sent).toContainEqual(['navNavigator', 'legacy']);
+  });
 });
