@@ -65,7 +65,8 @@ import { attachHiddenHelperTypeSync } from './bridge/HiddenHelperTypes.js';
 import { Logger } from './util/Logger.js';
 import { ensureRotmgMetadataXml } from './util/ensureRotmgMetadataXml.js';
 import { startServices } from './startup/startServices.js';
-import { startMetadataEnrichment } from './startup/metadataEnrichment.js';
+import { startMetadataEnrichment, type MetadataStatus } from './startup/metadataEnrichment.js';
+import type { PluginLoadReport } from './plugins/PluginManager.js';
 import { getRealmengineDataDir } from './util/rotmgAssetExtractor.js';
 import { ensureSdkDeployed } from './util/ensureSdkDeployed.js';
 import { getBakedPacketDefinitions, getBakedServers, getBakedStatTypes } from './config/BakedData.js';
@@ -341,9 +342,20 @@ async function main() {
   attachHiddenHelperTypeSync(gameData, internalBridge);
 
   const startupController = new AbortController();
+  let metadataStatus: MetadataStatus = { state: 'loading', failed: [] };
+  let pluginReport: PluginLoadReport | null = null;
+  const publishStartup = () => {
+    if (!startupController.signal.aborted) devServer?.setStartupStatus({ metadata: metadataStatus, plugins: pluginReport });
+  };
+  const markReady = (stage: string) => {
+    if (!startupController.signal.aborted) Logger.log('Startup', `launch=${process.env.REALM_ENGINE_LAUNCH_ID ?? process.pid} process=proxy stage=${stage} elapsedMs=${performance.now().toFixed(1)}`);
+  };
+  proxy.once('listenStarted', () => markReady('proxy-listening'));
+  internalBridge.once('listening', () => markReady('pipe-listening'));
   const shutdown = async () => {
     if (startupController.signal.aborted) return;
     startupController.abort();
+    devServer?.stop();
     Logger.log('Main', 'Shutting down...');
     scriptHost?.stopAll();
     internalBridge.stop();
@@ -359,6 +371,8 @@ async function main() {
   void startMetadataEnrichment({
     signal: startupController.signal,
     publish: status => {
+      metadataStatus = status;
+      publishStartup();
       if (status.state === 'unavailable') Logger.warn('Metadata', `Optional metadata unavailable: ${status.failed.join(', ')}`);
     },
     run: signal => ensureRotmgMetadataXml(gameDataDir, {
@@ -398,6 +412,9 @@ async function main() {
     applyProfile: () => { devServer?.tryAutoLoadDefaultPluginConfig(); },
     startWatching: () => pluginManager.startWatching(),
     publish: report => {
+      pluginReport = report;
+      publishStartup();
+      markReady('plugin-profile-ready');
       if (report.failed.length) Logger.warn('Main', `Plugin initialization degraded: ${report.failed.join(', ')}`);
       devServer?.broadcastPluginState();
     },

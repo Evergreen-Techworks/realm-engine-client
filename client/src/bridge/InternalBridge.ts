@@ -115,6 +115,7 @@ export class InternalBridge extends EventEmitter {
     });
 
     server.listen(PIPE_PATH, () => {
+      this.emit('listening');
       Logger.log('InternalBridge', `Pipe server listening on ${PIPE_PATH} — waiting for DLL to connect.`);
     });
 
