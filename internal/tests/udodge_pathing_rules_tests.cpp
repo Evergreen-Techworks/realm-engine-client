@@ -237,6 +237,81 @@ int main()
               "game rule: without safe-walk the same move is clear");
     }
 
+    // ── navCollisionRule=game: both searches over the pinch ─────────────────────
+    {
+        using Movement::Collision::Rule;
+        BuildNoWalkPinch();
+        static uint8_t squares[kUOccSquareCells];
+        const int sx0 = 9 - kUOccSquareRad, sy0 = 0 - kUOccSquareRad;
+        CopySquares(sx0, sy0, squares);
+        const auto flagsAt = [](int tx, int ty) { return FlagsAt(tx, ty); };
+
+        // The walk-to A*: whole-tile cells at square centres (FillNavGrid under the game
+        // rule), goal east of the pinch.
+        static Path::PlannerSnapshot nav{};
+        static Path::PlanResult navPlan{};
+        const auto navThroughPinch = [&](Rule rule) {
+            nav = Path::PlannerSnapshot{};
+            nav.collisionRule = rule;
+            nav.navActive = true; nav.moveBudget = 1.2f; nav.speed = 0.006f;
+            nav.player = { 6.5f, 2.5f };
+            nav.navGrid.center = { 6.5f, 2.5f };
+            nav.navGoal = { 12.5f, -2.5f };
+            TO::NearFullOccupyMask none; none.Clear();
+            for (int gy = 0; gy < kUNavSide; ++gy)
+                for (int gx = 0; gx < kUNavSide; ++gx) {
+                    uint8_t c = TO::RasterCell(flagsAt, none, 6.5f + (gx - kUNavRadCells), 2.5f + (gy - kUNavRadCells), 0.f, false);
+                    if (c & TO::kCellVoid) c |= TO::kCellWall;   // FillNavGrid folds void into wall
+                    nav.navGrid.flags[gy * kUNavSide + gx] = c;
+                }
+            Path::Compute(nav, navPlan);
+            return navPlan.navFound && !navPlan.navPartial;
+        };
+        Check(navThroughPinch(Rule::Game), "game rule: the walk-to A* routes through a NoWalk corner pinch");
+        Check(!navThroughPinch(Rule::Legacy), "legacy rule: the walk-to A* refuses the corner cut");
+
+        // The dodge Dijkstra. Its cells are half a tile apart, so a diagonal crosses the
+        // corner exactly when the cell centres sit a quarter tile off the square lines
+        // (grid centre 9.25, 1.25). A locked target beyond the pinch: the route takes
+        // the corner under the game rule and cannot under legacy.
+        static Path::PlannerSnapshot dodge{};
+        static Path::PlanResult route{};
+        const auto dodgeFor = [&](Rule rule, Vec2 player, Vec2 center, Vec2 lock, float range) {
+            dodge = Path::PlannerSnapshot{};
+            dodge.collisionRule = rule;
+            dodge.player = player;
+            dodge.grid.center = center;
+            dodge.speed = 0.006f; dodge.moveBudget = 1.2f;
+            dodge.hasLock = true; dodge.lockPos = lock;
+            dodge.weaponRangeTiles = range; dodge.innerStandoffTiles = 0.f;
+            TO::NearFullOccupyMask none; none.Clear();
+            for (int gy = 0; gy < kUPathMaxSide; ++gy)
+                for (int gx = 0; gx < kUPathMaxSide; ++gx) {
+                    const float cx = center.x + (gx - kUPathMaxRadCells) * kUPathCellTiles;
+                    const float cy = center.y + (gy - kUPathMaxRadCells) * kUPathCellTiles;
+                    dodge.grid.flags[gy * kUPathMaxSide + gx] = TO::RasterCell(flagsAt, none, cx, cy, TO::kPlayerHalfEdge, true);
+                }
+            dodge.grid.squareX0 = sx0; dodge.grid.squareY0 = sy0;
+            std::copy(squares, squares + kUOccSquareCells, dodge.grid.squares);
+            Path::Compute(dodge, route);
+        };
+        dodgeFor(Rule::Game, { 6.75f, 2.75f }, { 9.25f, 1.25f }, { 12.75f, -2.75f }, 1.f);
+        Check(route.found && !route.outOfRange && route.goalPos.x > 9.f,
+              "game rule: the dodge route crosses a NoWalk corner pinch to reach its target");
+        dodgeFor(Rule::Legacy, { 6.75f, 2.75f }, { 9.25f, 1.25f }, { 12.75f, -2.75f }, 1.f);
+        Check(!(route.found && !route.outOfRange && route.goalPos.x > 9.f),
+              "legacy rule: the dodge route cannot cross it");
+
+        // A cell 0.1 from a wall stands under the game rule (no box). The only in-range
+        // cell of a target standing there is that cell.
+        dodgeFor(Rule::Game, { 7.25f, -3.5f }, { 7.9f, -3.5f }, { 7.9f, -3.5f }, 0.05f);
+        Check(route.found && !route.outOfRange && std::fabs(route.goalPos.x - 7.9f) < 0.01f,
+              "game rule: a dodge goal 0.1 tiles from a NoWalk wall is reachable");
+        dodgeFor(Rule::Legacy, { 7.25f, -3.5f }, { 7.9f, -3.5f }, { 7.9f, -3.5f }, 0.05f);
+        Check(!(route.found && !route.outOfRange && std::fabs(route.goalPos.x - 7.9f) < 0.01f),
+              "legacy rule: the player box keeps it out of reach");
+    }
+
     std::printf("Pathing rules tests: %d checks, 0 failures\n", g_checks);
     return 0;
 }
