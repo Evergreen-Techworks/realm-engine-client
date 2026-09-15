@@ -46,6 +46,7 @@ enum : uint8_t {
     kCellSink     = 0x04,   // the box overlaps sink ground
     kCellVoid     = 0x08,   // the box overlaps an unstreamed square
     kCellFullRing = 0x10,   // the centre breaks the FullOccupy half-tile rule (not a wall body)
+    kCellFullBody = 0x20,   // a square under the box holds a FullOccupy object (exact for halfEdge 0)
 };
 
 constexpr float kPlayerHalfEdge = 0.2285f;   // the game's collision half-edge
@@ -180,6 +181,7 @@ uint8_t RasterCell(const FlagsAt& flagsAt, const NearFullOccupyMask& nearFull,
     for (int tx = x0; tx <= x1; ++tx) {
         for (int ty = y0; ty <= y1; ++ty) {
             const uint8_t tf = flagsAt(tx, ty);
+            if (tf & kTileFullOcc) f |= kCellFullBody;
             // Missing streamed squares are map void/boundary, not open floor.
             if ((tf & kTileKnown) == 0) { f |= kCellVoid; continue; }
             if (tf & kTileBlocked) { f |= kCellWall; continue; }
