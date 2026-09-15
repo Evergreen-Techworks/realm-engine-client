@@ -9,6 +9,7 @@
 #include "UDodgeSensors.h"
 #include "UDodgeDebug.h"
 #include "UDodgeEnemyHazards.h"
+#include "features/movement/nav/Speed.h"
 
 #include "MovementRuntime.h"
 #include "DbgFileLog.h"
@@ -408,6 +409,9 @@ void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls, Movement::
     grid.center = player;
     grid.squareX0 = static_cast<int>(std::floor(player.x)) - kUOccSquareRad;
     grid.squareY0 = static_cast<int>(std::floor(player.y)) - kUOccSquareRad;
+    // Ground <Speed> of the squares around the window: the worker times each route
+    // edge at the speed of the ground it crosses (Movement::Speed).
+    WorldTAB::CopyTileSpeeds(grid.squareX0, grid.squareY0, kUOccSquareSide, grid.squareSpeed);
     if (rule == Movement::Collision::Rule::Game) {
         // The game's rule reads squares, not a box: one whole-tile, halfEdge-0 raster
         // at square centres around the window (Collision::RasterSquares).
@@ -735,7 +739,12 @@ void Tick(void* player, float px, float py, float dt)
     MapInput in{};
     in.player = { px, py };
 
-    in.speed = std::max(0.f, std::isfinite(tilesPerSec) ? tilesPerSec : 0.f) / 1000.f;
+    // Movement::Speed: the conditions-and-SPD base, and the speed on the player's own
+    // square for this frame's step (the square the game's move update reads).
+    const float ownSquareSpeed = WorldTAB::GetTileSpeed(static_cast<int>(std::floor(px)),
+                                                        static_cast<int>(std::floor(py)));
+    const float baseTilesPerSec = Movement::Speed::BaseTilesPerSec(tilesPerSec, ownSquareSpeed);
+    in.speed = Movement::Speed::TilesPerSec(baseTilesPerSec, ownSquareSpeed) / 1000.f;
     in.stepTiles = settings.stepTiles > 0.f
         ? settings.stepTiles
         : std::clamp(std::max(0.f, tilesPerSec) * kServerTickSec, 0.f, 3.0f);
@@ -1126,6 +1135,7 @@ void Tick(void* player, float px, float py, float dt)
         // from the real speed the moment the user sets the "Step distance" slider
         // or the auto clamp [0.4, 3.0] binds — it stays a step-LENGTH knob only.
         s_snap.speed            = in.speed;
+        s_snap.baseSpeed        = baseTilesPerSec / 1000.f;
         s_snap.settings         = settings;
         s_snap.goalActive       = goal.active;
         s_snap.goalPos          = goal.pos;

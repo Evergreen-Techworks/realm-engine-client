@@ -94,6 +94,7 @@ struct World {
     int      nextBulletId = 1;
     float px = 0, py = 0;
     float tps = 6.0f;                             // base tiles/s (SPD ~35)
+    bool  speedy = false;                         // Speedy condition: x1.5, confirmed by the game's getter
     bool  slowed = false;                         // Slowed condition: the game pins MIN_MOVE_SPEED
     bool  paralyzed = false;                      // Paralyzed / Stasis / Petrified: no movement at all
     uint32_t extraHits = 0;                       // damage the script dealt outside bullets (self blasts)
@@ -201,7 +202,7 @@ float TruthSpeedMul(const World& w, float x, float y)
 float TruthTilesPerSec(const World& w, float x, float y)
 {
     if (w.paralyzed) return 0.f;
-    return (w.slowed ? 4.f : w.tps) * TruthSpeedMul(w, x, y);
+    return (w.slowed ? 4.f : w.tps * (w.speedy ? 1.5f : 1.f)) * TruthSpeedMul(w, x, y);
 }
 // Server SPD that yields a base tiles/s on the game's curve (4 + 5.6 * SPD / 75).
 int TruthSpd(const World& w) { return static_cast<int>(std::lround((w.tps - 4.f) / 5.6f * 75.f)); }
@@ -249,6 +250,7 @@ Vec2 TruthMove(const World& w, Vec2 from, Vec2 to)
 // ── WorldTAB view (what the DLL believes) ───────────────────────────────────
 enum : uint8_t { kKnown = 0x01, kBlocked = 0x02, kFullOcc = 0x04, kDamaging = 0x08, kSink = 0x10 };
 std::unordered_map<uint32_t, uint8_t> g_view;
+std::unordered_map<uint32_t, float> g_viewSpeed;   // WorldTAB s_tileSpeedMap
 std::vector<uint32_t> g_fullOccKeys;   // WorldTAB s_fullOccKeys
 // 0 = every tile; 1 = first 65536 (pre-#70); 2 = newest 65536 + 128 window (#70);
 // 3 = every entry inside the 128 window, wherever it sits in the list (SquareCoordCache)
@@ -257,6 +259,7 @@ int g_tileScanMode = 0;
 void RebuildView(const World& w)
 {
     g_view.clear();
+    g_viewSpeed.clear();
     g_fullOccKeys.clear();
     const size_t cap = 65536;
     const size_t n = w.streamOrder.size();
@@ -272,6 +275,7 @@ void RebuildView(const World& w)
         const Ground& g = w.tiles.at(k);
         uint8_t& f = g_view[k];
         f |= kKnown;
+        if (g.speed != 0.f) g_viewSpeed[k] = g.speed;
 #ifdef HARNESS_SHARED_OCCUPANCY
         f |= Movement::TileOccupancy::GroundFlags(g.noWalk, g.push, g.speed, g.sink, g.damage > 0);
 #else
@@ -457,8 +461,21 @@ bool  IsTileBlocked(int tx, int ty) { return (H::ViewFlags(tx, ty) & H::kBlocked
 bool  IsTileFullOccupied(int tx, int ty) { return (H::ViewFlags(tx, ty) & H::kFullOcc) != 0; }
 bool  IsDamagingTile(int tx, int ty) { return (H::ViewFlags(tx, ty) & H::kDamaging) != 0; }
 bool  IsTileDamagingLive(int tx, int ty) { return IsDamagingTile(tx, ty); }
-float GetTileSpeed(int, int) { return 0.f; }
+float GetTileSpeed(int tx, int ty)
+{
+    auto it = H::g_viewSpeed.find(H::Key(tx, ty));
+    return it == H::g_viewSpeed.end() ? 0.f : it->second;
+}
 unsigned char GetTileFlags(int tx, int ty) { return H::ViewFlags(tx, ty); }
+#ifdef HARNESS_NAV_FOUNDATION
+void CopyTileSpeeds(int tx0, int ty0, int side, float* out)   // line-for-line WorldTAB::CopyTileSpeeds
+{
+    for (int y = 0; y < side; ++y)
+        for (int x = 0; x < side; ++x)
+            out[y * side + x] = (H::ViewFlags(tx0 + x, ty0 + y) & Movement::TileOccupancy::kTileSpeedMod)
+                ? GetTileSpeed(tx0 + x, ty0 + y) : 0.f;
+}
+#endif
 void  CopyBoxBlocked(float originX, float originY, int side, float cellTiles,
                      float playerHalfEdge, bool foldHazard, unsigned char* out)
 {
@@ -513,7 +530,11 @@ void ReadDodgePlayerStats(int32_t& hp, int32_t& maxHp, float& spd, float& tps)
     s.clientSpd = H::TruthSpd(w);
     s.tileMultiplier = H::TruthSpeedMul(w, w.px, w.py);
     s.conditionsKnown = true;
-    s.cond0 = (w.slowed ? DodgeRuntime::kCondSlowed : 0u) | (w.paralyzed ? DodgeRuntime::kCondParalyzed : 0u);
+    s.cond0 = (w.slowed ? DodgeRuntime::kCondSlowed : 0u) | (w.paralyzed ? DodgeRuntime::kCondParalyzed : 0u) |
+              (w.speedy ? DodgeRuntime::kCondSpeedy : 0u);
+    // The game's own getter (FKALGHJIADI::GAFGPNKFMOJ) is what confirms Speedy; model it
+    // for a Speedy world only, so every other scenario keeps the native model alone.
+    if (w.speedy) s.gameTilesPerMs = H::TruthTilesPerSec(w, w.px, w.py) / 1000.f;
     tps = DodgeRuntime::EffectiveTilesPerSec(s);
 }
 #ifdef HARNESS_SHARED_OCCUPANCY
@@ -670,6 +691,12 @@ uint32_t PublishSnapshot(const Path::PlannerSnapshot& snap)
     *s_local = snap;
     s_local->seq = ++s_seq;
 #ifdef HARNESS_NAV_FOUNDATION
+    // Every rule: the worker times route edges with the ground <Speed> the view holds.
+    for (int y = 0; y < kUOccSquareSide; ++y)
+        for (int x = 0; x < kUOccSquareSide; ++x)
+            if (snap.grid.squareSpeed[y * kUOccSquareSide + x] !=
+                WorldTAB::GetTileSpeed(snap.grid.squareX0 + x, snap.grid.squareY0 + y))
+                ++H::g_worker.squareMismatches;
     // Under the game rule the worker must read exactly the squares the live check reads:
     // every square of the dodge copy, and of the walk-to raster when a plan was asked for.
     if (snap.collisionRule == Movement::Collision::Rule::Game) {
@@ -1148,6 +1175,50 @@ void ScenarioDodgeInWater(const char* name)
     Emit(r);
 }
 
+// k_speedy_walk: Speedy for the whole walk, confirmed by the game's getter. Every step
+// must fit the game's x1.5 speed, and the walk must actually use it.
+void ScenarioSpeedyWalk(const char* name)
+{
+    World w; Floor(w);
+    w.tps = 6.f;
+    w.speedy = true;
+    w.px = 0.5f; w.py = 0.5f;
+    Result r = Run(name, w, Goal::WalkTo, { 24.5f, 0.5f }, 30);
+    // 24 tiles at 9 tiles/s is 2.67 s; 30% slack for the start and the arrival.
+    r.success = r.success && g_move.overspeed == 0 && r.timeS <= 24.0 / 9.0 * 1.3;
+    Emit(r);
+}
+
+// k_slowed_water: Slowed for the whole walk across a band of shallow water. The
+// game moves the player at 4 tiles/s x the water's 0.666 there; nothing faster.
+void ScenarioSlowedWater(const char* name)
+{
+    World w; Floor(w);
+    w.tps = 9.6f;
+    w.slowed = true;
+    w.Fill(8, -40, 12, 40, kShallowWater);
+    w.px = 0.5f; w.py = 0.5f;
+    Result r = Run(name, w, Goal::WalkTo, { 20.5f, 0.5f }, 30);
+    r.success = r.success && g_move.overspeed == 0;
+    Emit(r);
+}
+
+// k_mixed_water_land: a half-speed lake 24 tiles wide on the straight line, dry ground
+// round it. Wading is 8 dry + 24 x 2 = 56 tile-seconds (5.8 s at 9.6 tiles/s); round
+// the lake is about 37 tiles (3.9 s). The walk must take the dry route — arrive well
+// before a wade could — and no step may outrun the ground it is on.
+void ScenarioMixedWaterLand(const char* name)
+{
+    World w; Floor(w);
+    w.tps = 9.6f;
+    constexpr Ground kSlowWater{ false, true, false, 0.5f, 0 };
+    w.Fill(4, -4, 27, 4, kSlowWater);
+    w.px = 0.5f; w.py = 0.5f;
+    Result r = Run(name, w, Goal::WalkTo, { 32.5f, 0.5f }, 30);
+    r.success = r.success && g_move.overspeed == 0 && r.timeS <= 4.8;
+    Emit(r);
+}
+
 // (l) walking past enemies that punish closeness, and the locked target changing state.
 //
 // A shotgun mob: when the player comes within its reach it fires a tight five-shot
@@ -1432,6 +1503,9 @@ int main(int argc, char** argv)
     if (want("k_paralyzed_midwalk"))H::ScenarioParalyzedMidWalk("k_paralyzed_midwalk");
     if (want("k_water_midpath"))    H::ScenarioWaterMidPath("k_water_midpath");
     if (want("k_dodge_in_water"))   H::ScenarioDodgeInWater("k_dodge_in_water");
+    if (want("k_speedy_walk"))      H::ScenarioSpeedyWalk("k_speedy_walk");
+    if (want("k_slowed_water"))     H::ScenarioSlowedWater("k_slowed_water");
+    if (want("k_mixed_water_land")) H::ScenarioMixedWaterLand("k_mixed_water_land");
     if (want("l_walk_past_shotgun"))H::ScenarioWalkPastShotgun("l_walk_past_shotgun");
     if (want("l_walk_past_bomber")) H::ScenarioWalkPastBomber("l_walk_past_bomber");
     if (want("l_lock_boss_dies"))   H::ScenarioLockBossChange("l_lock_boss_dies", true);

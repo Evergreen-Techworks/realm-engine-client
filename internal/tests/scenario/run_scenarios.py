@@ -33,6 +33,7 @@ SCENARIOS = [
     "f_damaging_row", "g_fullocc_gap", "h_learned_keepout", "j_hidden_blocker",
     "i_tilelist_revisit", "i_tilelist_frontier",
     "k_slowed_midwalk", "k_paralyzed_midwalk", "k_water_midpath", "k_dodge_in_water",
+    "k_speedy_walk", "k_slowed_water", "k_mixed_water_land",
     "l_walk_past_shotgun", "l_walk_past_bomber", "l_lock_boss_dies", "l_lock_boss_invuln",
     "m_pinch_nowalk", "m_pinch_fulloccupy", "m_pinch_object",
 ]
