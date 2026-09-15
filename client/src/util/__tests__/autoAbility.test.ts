@@ -118,3 +118,54 @@ it('waits for the client game time instead of sending a USEITEM that cannot seri
   expect(f.client.sendToServer).toHaveBeenCalledWith(expect.objectContaining({ name: 'USEITEM',
     data: expect.objectContaining({ time: 5000 }) }));
 });
+it('does not re-send an ability before its objects.xml <Cooldown> elapses, even at 1 s ticks', () => {
+  // 115+ abilities have a <Cooldown> above the 1 s aimed interval; the server
+  // refuses (and can drop the connection over) a USEITEM inside that window.
+  const f = fixture(); f.setXml('<Object><MpCost>20</MpCost><Cooldown>5</Cooldown></Object>');
+  f.tick(); expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+  for (const t of [11000, 12000, 13000, 14000]) {
+    vi.setSystemTime(t); f.enemy(); f.tick();
+  }
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+  vi.setSystemTime(16000); f.enemy(); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
+});
+it('keeps today\'s interval for an ability without a <Cooldown>', () => {
+  const f = fixture();
+  f.tick();
+  vi.setSystemTime(11000); f.enemy(); f.tick();
+  vi.setSystemTime(12000); f.enemy(); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(3);
+});
+it('tracks the cooldown per ability item: a swapped-in item starts fresh, a swapped-back one still waits', () => {
+  const f = fixture();
+  const xmlByType: Record<number, string> = {
+    321: '<Object><MpCost>20</MpCost><Cooldown>5</Cooldown></Object>',
+    322: '<Object><MpCost>20</MpCost><Cooldown>5</Cooldown></Object>',
+  };
+  (f.ctx.gameData as any).getRawObjectXml = (type: number) => xmlByType[type];
+  f.tick(); expect(f.client.sendToServer).toHaveBeenCalledTimes(1);          // 321 at 10000
+  vi.setSystemTime(11000); f.pd.inventory[1] = 322; f.enemy(); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);                    // 322 is not blocked by 321
+  expect(f.client.sendToServer).toHaveBeenLastCalledWith(expect.objectContaining({
+    data: expect.objectContaining({ slotObject: { objectId: 1, slotId: 1, objectType: 322 } }) }));
+  vi.setSystemTime(12500); f.pd.inventory[1] = 321; f.enemy(); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);                    // 321 still cooling down
+  vi.setSystemTime(16000); f.enemy(); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(3);
+});
+it('starts the item cooldown from a manual ability press, not just the 3 s manual pause', () => {
+  const f = fixture(); f.setXml('<Object><MpCost>20</MpCost><Cooldown>5.5</Cooldown></Object>');
+  f.hooks.get('USEITEM')!(f.client, { data: { slotObject: { slotId: 1, objectType: 321 } } });
+  vi.setSystemTime(13100); f.enemy(); f.tick();
+  expect(f.client.sendToServer).not.toHaveBeenCalled();
+  vi.setSystemTime(15700); f.enemy(); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledOnce();
+});
+it('refuses to cast an ability whose <Cooldown> cannot be read', () => {
+  const f = fixture();
+  for (const cooldown of ['abc', '', '-2']) {
+    f.setXml(`<Object><MpCost>20</MpCost><Cooldown>${cooldown}</Cooldown></Object>`); f.tick();
+  }
+  expect(f.client.sendToServer).not.toHaveBeenCalled();
+});
