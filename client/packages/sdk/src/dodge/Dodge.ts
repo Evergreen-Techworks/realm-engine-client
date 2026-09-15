@@ -8,6 +8,8 @@ export class Dodge {
     static navigateTo(_x: number, _y: number): boolean { throw new Error('Must be run inside RealmEngine client'); }
     static navigateToPosition(_position: Position): boolean { throw new Error('Must be run inside RealmEngine client'); }
     static clearWaypoint(): void { throw new Error('Must be run inside RealmEngine client'); }
+    static setGroupPreference(_bossId: number, _x: number, _y: number): boolean { throw new Error('Must be run inside RealmEngine client'); }
+    static clearGroupPreference(): void { throw new Error('Must be run inside RealmEngine client'); }
     /** Force both uDodge lock-follow and KillAura to use this enemy instance. */
     static lockEnemy(_objectId: number): boolean { throw new Error('Must be run inside RealmEngine client'); }
     static clearEnemyLock(): void { throw new Error('Must be run inside RealmEngine client'); }

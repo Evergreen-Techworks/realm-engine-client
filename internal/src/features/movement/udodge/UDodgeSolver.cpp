@@ -185,6 +185,9 @@ float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
         const float goalWeight = kSolveGoalW + (goal.fromLock ? kSolveLockGoalW : 0.f);
         score += goalWeight * progress * ramp;
     }
+    if (goal.groupActive && goal.fromLock && !goal.walkTo) {
+        score += 0.75f * std::clamp(Len(Sub(player, goal.groupPos)) - Len(Sub(c.pos, goal.groupPos)), -1.f, 1.f);
+    }
 
     // RePP-style perpendicular sidestep: reward moving ACROSS the incoming
     // stream, PENALIZE moving along its axis — both fleeing straight back and
@@ -474,6 +477,26 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     // a route out instead of waiting. This is the immediate-reflex floor for the
     // stand: temporal only ever makes us hold LESS than instantaneous safety.
     const bool standDurable = IsDurablePocketTemporal(in, ctx, in.player, true);
+    if (standDurable && goal.groupActive && goal.fromLock && !goal.walkTo) {
+        const Vec2 towardGroup = Sub(goal.groupPos, in.player);
+        const float groupDistance = Len(towardGroup);
+        if (groupDistance > 0.1f) {
+            const Vec2 groupDirection = Mul(towardGroup, 1.f / groupDistance);
+            const Vec2 groupStep = Add(in.player, Mul(groupDirection, std::min(groupDistance, b)));
+            if (CanOccupyAt(in, groupStep) && OccupancyPathClear(in, in.player, groupStep)
+                && !Core::EnemyPathBlocked(in, in.player, groupStep)
+                && Core::ZonePathClear(in, in.player, groupStep)
+                && Core::Temporal::PathClear(ctx, in.player, in.speed, groupStep)
+                && IsDurablePocketTemporal(in, ctx, groupStep, true)
+                && Core::PendingZoneCost(in, groupStep) <= Core::PendingZoneCost(in, in.player)) {
+                out.kind = SolveKind::Safe; out.target = groupStep; out.shouldMove = true;
+                out.clearance = Core::PointSafety(in, groupStep);
+                state.lastMoveDir = groupDirection;
+                state.dampStreak = 0;
+                return;
+            }
+        }
+    }
 
     // ── Grid route from the WORKER thread (lookahead direction / goal bias) ──
     // The bounded grid Dijkstra that routes AROUND obstacles to the nearest

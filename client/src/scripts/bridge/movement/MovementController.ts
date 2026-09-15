@@ -46,6 +46,16 @@ export class MovementController {
     if (sendDllFeature('walkTargetActive', false)) this.target = null;
   }
 
+  setGroupPreference(bossId: number, x: number, y: number): boolean {
+    if (!this.deps.clientRef.current?.connected || !Number.isInteger(bossId) || bossId <= 0 || bossId > 2147483647
+      || !Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > 100000 || Math.abs(y) > 100000) return false;
+    return sendDllFeature('scriptMbcGroupGoal', `${bossId},${x},${y}`);
+  }
+
+  clearGroupPreference(): void {
+    sendDllFeature('scriptMbcGroupGoal', '');
+  }
+
   getTarget(): Position | null {
     return this.target;
   }

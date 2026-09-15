@@ -43,6 +43,8 @@ inline void RunCycle(const Path::PlannerSnapshot& local, Result& latest)
     goal.active = local.goalActive;
     goal.pos = local.goalPos;
     goal.walkTo = local.goalWalkTo;
+    goal.groupActive = local.groupActive;
+    goal.groupPos = local.groupPos;
     // Path::Compute may have produced a brand-new navigation corridor from
     // this snapshot. Solve against that corridor's immediate step, not the
     // pre-compute goal submitted by the game thread. Otherwise the overlay
@@ -92,6 +94,9 @@ inline void RunCycle(const Path::PlannerSnapshot& local, Result& latest)
     latest.snapshotPlayer = local.player;
     latest.walkGoal = local.navGoal;
     latest.walkActive = local.goalWalkTo;
+    latest.groupActive = local.groupActive;
+    latest.groupPos = local.groupPos;
+    latest.groupBossId = local.groupBossId;
     latest.timedMs = std::chrono::duration<float, std::milli>(solve0 - timed0).count();
     latest.solveMs = std::chrono::duration<float, std::milli>(solve1 - solve0).count();
 }

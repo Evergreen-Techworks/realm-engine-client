@@ -1,4 +1,5 @@
 import OryxRunner from './oryx-runner.mjs';
+import MbcGroupPositioning from './mbc-group-positioning.mjs';
 
 const norm = s => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -29,6 +30,8 @@ export default class LostHallsRunner extends OryxRunner {
 
   reset(map = '') {
     super.reset(map);
+    this.groupPositioning = new MbcGroupPositioning();
+    this.sdk.dodge.clearGroupPreference?.();
     this.stage = ({ losthalls: 'halls', thevoid: 'void', void: 'void', cultisthideout: 'cult' })[norm(map)] ?? null;
     this.landmarks = new Map();
     this.flames = new Map();
@@ -167,7 +170,18 @@ export default class LostHallsRunner extends OryxRunner {
       || this.sdk.self.distanceTo(a.position) - this.sdk.self.distanceTo(b.position))[0];
     if (boss) {
       this.encounter = boss.objectId;
-      if (boss.isTargetable) { this.fight(boss, now, boss.name); return true; }
+      if (boss.isTargetable) {
+        this.fight(boss, now, boss.name);
+        if (COLOSSUS.test(boss.name) && this.farmer.lockId === boss.objectId && this.sdk.dodge.setGroupPreference) {
+          const group = this.groupPositioning.select({
+            players: this.sdk.world.objects.getPlayers?.() ?? [], selfName: this.sdk.self.getName?.(),
+            origin: { x: this.sdk.self.getX(), y: this.sdk.self.getY() }, now, graph: this.graph(),
+          });
+          if (group?.waypoint) this.sdk.dodge.setGroupPreference(boss.objectId, group.waypoint.x, group.waypoint.y);
+          else this.sdk.dodge.clearGroupPreference?.();
+        }
+        return true;
+      }
     }
     const ordinary = enemies.filter(e => e.hp > 0 && e.isTargetable && !this.dead.has(e.objectId)
       && !HAZARD.test(e.name) && !this.isBoss(e) && !TITAN.test(e.name) && !COLOSSUS.test(e.name) && !DEFENDER.test(e.name)
@@ -236,6 +250,11 @@ export default class LostHallsRunner extends OryxRunner {
   tick(now) {
     if (!this.stage) return false;
     const sdk = this.sdk, f = this.farmer;
+    const groupBoss = sdk.enemies.getAll().find(enemy => COLOSSUS.test(enemy.name) && enemy.hp > 0
+      && enemy.isTargetable && !sdk.world.objects.isDead?.(enemy.objectId));
+    if (!groupBoss || sdk.self.getHP() <= 0 || this.stage !== 'halls' || this.mode !== 'void') {
+      this.groupPositioning.reset(); sdk.dodge.clearGroupPreference?.();
+    }
     if ((this.stage === 'void' && this.mode !== 'void') || (this.stage === 'cult' && this.mode !== 'cult')) {
       this.exit(now, 'wrong branch entered; returning to find Lost Halls'); return true;
     }

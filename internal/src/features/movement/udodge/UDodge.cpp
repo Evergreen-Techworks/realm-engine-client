@@ -5,6 +5,7 @@
 #include "UDodgeSolver.h"
 #include "UDodgePathfinder.h"
 #include "UDodgeNavigation.h"
+#include "UDodgeGroupPreference.h"
 #include "UDodgeWorker.h"
 #include "UDodgeSensors.h"
 #include "UDodgeDebug.h"
@@ -36,6 +37,11 @@ namespace UDodge {
 namespace {
 
 std::atomic<bool>  g_enabled{ false };
+std::mutex g_groupMutex;
+GroupPreference g_groupPreference{};
+bool g_previousGroupActive = false;
+Vec2 g_previousGroupPosition{};
+int32_t g_previousGroupBoss = 0;
 std::atomic<float> g_laneTiles{ 12.f };
 std::atomic<float> g_stepTiles{ 0.f };
 std::atomic<float> g_hitScale{ 1.0f };
@@ -573,6 +579,9 @@ void SetEnabled(bool enabled)
     }
     g_enabled.store(enabled, std::memory_order_relaxed);
     if (!enabled) {
+        SetGroupPreference("");
+        g_previousGroupActive = false;
+        g_previousGroupBoss = 0;
         Worker::Stop();                  // JOIN the worker before releasing state it never touches
         UpdateAutopilotLock(false);      // release any autopilot-owned enemy lock (never a manual one)
         DangerPlanner::ClearWalkGoal();  // drop any pending walk-to spot
@@ -626,8 +635,17 @@ NavWedge GetNavWedge()
     return w;
 }
 
+void SetGroupPreference(const char* payload)
+{
+    std::lock_guard<std::mutex> guard(g_groupMutex);
+    g_groupPreference.Set(payload, GetTickCount64());
+}
+
 void OnEnter()
 {
+    SetGroupPreference("");
+    g_previousGroupActive = false;
+    g_previousGroupBoss = 0;
     ProjectileTracking::Install();   // sensors need the projectile hook
     // A completed result from the previous realm is still valid plain data as far
     // as the worker handoff knows. Flush both pending/latest slots by restarting
@@ -1062,6 +1080,20 @@ void Tick(void* player, float px, float py, float dt)
         goal.innerStandoff = innerStandoff; // annulus INNER radius (never fight point-blank)
     }
 
+    {
+        std::lock_guard<std::mutex> guard(g_groupMutex);
+        Vec2 target{};
+        const bool freshGroup = g_groupPreference.Read(GetTickCount64(), g_map.hasLock ? g_map.lockId : 0, in.player, target);
+        goal.groupActive = freshGroup && goal.fromLock && !wasdActive && !walkActive;
+        goal.groupPos = target;
+    }
+    const int32_t groupBossId = goal.groupActive ? g_map.lockId : 0;
+    const bool groupChanged = goal.groupActive != g_previousGroupActive || groupBossId != g_previousGroupBoss
+        || (goal.groupActive && LenSq(Sub(goal.groupPos, g_previousGroupPosition)) > 0.0025f);
+    g_previousGroupActive = goal.groupActive;
+    g_previousGroupPosition = goal.groupPos;
+    g_previousGroupBoss = groupBossId;
+
     // ── Async grid pathfinder: publish snapshot + consume latest route ───────
     // The heavy grid Dijkstra + radius expansion runs on the WORKER thread over a
     // PLAIN-DATA snapshot; the game thread NEVER blocks on it. Publish is gated to
@@ -1141,6 +1173,9 @@ void Tick(void* player, float px, float py, float dt)
         s_snap.goalActive       = goal.active;
         s_snap.goalPos          = goal.pos;
         s_snap.goalWalkTo       = goal.walkTo;
+        s_snap.groupActive      = goal.groupActive;
+        s_snap.groupPos         = goal.groupPos;
+        s_snap.groupBossId      = groupBossId;
         s_snap.playerOnHazard   = in.playerOnHazard;
         s_snap.hasLock          = goal.fromLock;
         s_snap.lockPos          = goal.lockPos;
@@ -1197,7 +1232,9 @@ void Tick(void* player, float px, float py, float dt)
         const float maxOriginDrift = std::max(3.f, b * 2.f);
         const bool originFresh = LenSq(Sub(fresh.snapshotPlayer, in.player))
             <= maxOriginDrift * maxOriginDrift;
-        const bool acceptFresh = seqFresh && walkMatches && originFresh;
+        const bool groupMatches = fresh.groupActive == goal.groupActive && fresh.groupBossId == groupBossId
+            && (!goal.groupActive || LenSq(Sub(fresh.groupPos, goal.groupPos)) <= 0.0025f);
+        const bool acceptFresh = seqFresh && walkMatches && originFresh && groupMatches;
         if (diagOn) {
             DiagTiming::GameStats& gs = DiagTiming::Game();
             ++(acceptFresh ? gs.workerAccepted : gs.workerDiscarded);
@@ -1319,7 +1356,7 @@ void Tick(void* player, float px, float py, float dt)
     // this is only the small live safety solver, at server-tick cadence.
     if (navWaiting) routeForSolve = Path::PlanResult{};
     if (diagOn && navWaiting) ++DiagTiming::Game().navWaitFrames;
-    if (navHandoff.solve) {
+    if (navHandoff.solve || groupChanged) {
         PhaseTimer _p(DiagTiming::Game().liveSolve);
         Solver::Solve(in, b, goal, routeForSolve, proposedState, g_solve, timedForSolve);
     }

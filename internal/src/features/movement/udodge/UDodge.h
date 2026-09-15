@@ -67,6 +67,7 @@ void  SetDebugOverlay(bool en);       bool  GetDebugOverlay();
 void  SetDebugWeights(bool en);       bool  GetDebugWeights();
 void  SetDiagTiming(bool en);         bool  GetDiagTiming();   // per-phase perf timing (diag, default OFF)
 void  SetLockFollow(bool en);         bool  GetLockFollow();
+void SetGroupPreference(const char* payload);
 void  SetFollowLantern(bool en);      bool  GetFollowLantern();
 void  SetAutopilot(bool en);          bool  GetAutopilot();   // auto-lock highest-maxHp enemy
 void  SetStandOnType(int t);          int   GetStandOnType();

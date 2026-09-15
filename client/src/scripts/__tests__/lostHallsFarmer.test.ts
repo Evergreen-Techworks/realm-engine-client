@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 const read = (path: string) => readFileSync(new URL(`../../../script-packages/${path}`, import.meta.url), 'utf8')
   .replace(/^import .*;\n/gm, '').replace('export default class', 'return class');
 const OryxRunner = new Function(read('farmer/oryx-runner.mjs'))();
-const Runner = new Function('OryxRunner', read('farmer/lost-halls-runner.mjs'))(OryxRunner);
+const MbcGroupPositioning = new Function(read('farmer/mbc-group-positioning.mjs'))();
+const Runner = new Function('OryxRunner', 'MbcGroupPositioning', read('farmer/lost-halls-runner.mjs'))(OryxRunner, MbcGroupPositioning);
 const mob = (name: string, objectId = 10, x = 5.5, y = 0.5): any => ({
   name, objectId, objectType: 1, hp: 100, maxHp: 100, isTargetable: true, position: { x, y },
 });
@@ -43,6 +44,23 @@ function floor(f: ReturnType<typeof fixture>, width: number, height: number) {
 }
 
 describe('Lost Halls route selection and unlocks', () => {
+  it('keeps MBC aiming while issuing a separate safe group preference and clears it on phase change', () => {
+    const f = fixture(); floor(f, 12, 2);
+    f.sdk.self.getName = () => 'Owner';
+    f.sdk.world.objects.getPlayers = () => [1, 2, 3].map(id => ({
+      objectId: id, name: `Other${id}`, hp: 100, lastUpdate: 10000,
+      position: { x: 6.3 + id * 0.1, y: 0.5 },
+    }));
+    f.sdk.dodge.setGroupPreference = vi.fn(); f.sdk.dodge.clearGroupPreference = vi.fn();
+    const boss = mob('Marble Colossus'); f.state.enemies = [boss];
+    f.runner.tick(10000);
+    expect(f.sdk.combat.aimAt).toHaveBeenCalledWith(boss.objectId);
+    expect(f.sdk.dodge.setGroupPreference).toHaveBeenCalledWith(boss.objectId, 1.5, 0.5);
+    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+    boss.isTargetable = false; f.runner.tick(10100);
+    expect(f.sdk.dodge.clearGroupPreference).toHaveBeenCalled();
+    f.runner.reset('Nexus'); expect(f.runner.groupPositioning.anchorId).toBeNull();
+  });
   it.each([['void', 'The Void', 'Cultist Hideout'], ['cult', 'Cultist Hideout', 'The Void']])(
     '%s follows only its selected branch', (mode, destination, other) => {
       const f = fixture(mode), p = portal(destination), wrong = portal(other);

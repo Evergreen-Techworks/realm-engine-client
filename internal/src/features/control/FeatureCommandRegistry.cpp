@@ -123,6 +123,7 @@ namespace {
                 DangerPlanner::SetEnemyLock(id);
                 AutoAim::SetLockTarget(id > 0 ? id : -1);
             }),
+            FH_TEXT("scriptMbcGroupGoal", UDodge::SetGroupPreference),
             FH("scriptCombatTargetId", {
                 const int32_t id = f.Int();
                 AutoAim::SetLockTarget(id > 0 ? id : -1);

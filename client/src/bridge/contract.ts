@@ -78,7 +78,7 @@ export const DLL_FEATURE_KEYS = [
   'reppHitScale', 'reppMaxMoveTiles', 'reppMode', 'reppReactWindowMs',
   'reppStandOnType', 'rolloutAvoidEnemies', 'rolloutCommitDwell', 'rolloutDrawPath',
   'rolloutHeadings', 'rolloutHitScale', 'rolloutHorizonTicks', 'rolloutIntentWeight',
-  'rolloutRebuildN', 'rolloutSampleStepMs', 'rolloutWasdYield', 'scriptCombatTargetId', 'scriptEnemyLockId',
+  'rolloutRebuildN', 'rolloutSampleStepMs', 'rolloutWasdYield', 'scriptCombatTargetId', 'scriptEnemyLockId', 'scriptMbcGroupGoal',
   'showPluginFloatingText', 'skinOverrideEnabled', 'skinOverrideId', 'socketHotkey', 'socketHotkeyActive',
   'speedHackMult', 'targetFrameRate', 'titleOverrideEnabled', 'titleOverrideId', 'titleOverrideSlot',
   'udodgeAoePacket', 'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath',
