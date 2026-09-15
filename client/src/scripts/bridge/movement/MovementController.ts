@@ -1,5 +1,6 @@
 import { Position } from '@realmengine/sdk';
-import type { DodgeMode } from '@realmengine/sdk';
+import type { DodgeMode, NavigationStatus } from '@realmengine/sdk';
+import { nextNavigationId, subscribeNavigationStatus } from '../../../bridge/DllNavigationBus.js';
 import type { BridgeDeps } from '../BridgeDeps.js';
 import { sendDllFeature } from '../../../bridge/DllFeatureBus.js';
 
@@ -17,11 +18,35 @@ const MODE_INDEX: Record<DodgeMode, number> = {
 /** Single SDK movement adapter backed by the DLL's unified movement planner. */
 export class MovementController {
   private target: Position | null = null;
+  private requestId = 0;
+  private generation = -1;
+  private listeners = new Set<(status: NavigationStatus) => void>();
+  private unsubscribe: (() => void) | null = null;
 
   /** Avoid flooding the native feature pipe from script loops that reaffirm a waypoint. */
   private static readonly TARGET_EPSILON = 0.25;
 
-  constructor(private readonly deps: BridgeDeps) {}
+  constructor(private readonly deps: BridgeDeps) {
+    for (const packet of ['HELLO', 'MAPINFO']) deps.proxy?.hookPacket(packet, () => this.clearWaypoint());
+  }
+
+  onNavigationStatus(handler: (status: NavigationStatus) => void): () => void {
+    this.listeners.add(handler);
+    this.unsubscribe ??= subscribeNavigationStatus(status => {
+      if (!this.target || status.goalKind !== 'point' || status.goalId !== this.requestId
+        || status.generation < this.generation) return;
+      this.generation = status.generation;
+      const event = { ...status, position: { x: this.target.x, y: this.target.y } };
+      if (status.state === 'unreachable' || status.state === 'arrived') this.clearWaypoint();
+      for (const listener of this.listeners) {
+        try { listener(event); } catch { }
+      }
+    });
+    return () => {
+      this.listeners.delete(handler);
+      if (this.listeners.size === 0) { this.unsubscribe?.(); this.unsubscribe = null; }
+    };
+  }
 
   setMode(mode: DodgeMode): boolean {
     return sendDllFeature('autoDodgeMode', MODE_INDEX[mode]);
@@ -33,17 +58,23 @@ export class MovementController {
       return true;
     }
 
-    const sentX = sendDllFeature('walkTargetX', x);
-    const sentY = sendDllFeature('walkTargetY', y);
-    const sentActive = sendDllFeature('walkTargetActive', true);
-    if (sentX && sentY && sentActive) this.target = new Position(x, y);
-    return sentX && sentY && sentActive;
+    const requestId = nextNavigationId();
+    const sent = sendDllFeature('scriptNavigationGoal', `${requestId},${x},${y}`);
+    if (sent) {
+      this.target = new Position(x, y);
+      this.requestId = requestId;
+      this.generation = -1;
+    }
+    return sent;
   }
 
   clearWaypoint(): void {
     // Native/manual waypoints may exist even when this adapter has no target.
     // A clear command must reach the movement owner, including on map entry.
-    if (sendDllFeature('walkTargetActive', false)) this.target = null;
+    this.requestId = 0;
+    this.generation = -1;
+    this.target = null;
+    sendDllFeature('walkTargetActive', false);
   }
 
   setGroupPreference(bossId: number, x: number, y: number): boolean {

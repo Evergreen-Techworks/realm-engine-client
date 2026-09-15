@@ -74,6 +74,7 @@ export class ReconnectHandler {
     // calling Run() so the overlay/menu/hooks only come online after the
     // client has actually reached the in-game HELLO handshake.
     sendDllFeature('playerColliderSceneReset', 1);
+    sendDllFeature('navMapInfo', '0,0');
 
     // Look up or create state for this connection
     const key = packet.data.key as Buffer;

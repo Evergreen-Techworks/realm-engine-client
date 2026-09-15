@@ -86,6 +86,14 @@ const dllOnlySet = new Set(dllOnly);
 const knownUnhandledSet = new Set(knownUnhandled);
 
 const failures = [];
+const messageSource = readFileSync(resolve(REPO_ROOT, 'internal/src/core/ipc/IpcMessages.cpp'), 'utf8');
+if (!/NavStatus:\s*'navStatus'/.test(tsText)
+  || !messageSource.includes('\\"type\\":\\"navStatus\\"')) {
+  failures.push('FAIL: navStatus message type differs between contract.ts and IpcMessages.cpp.');
+}
+for (const field of ['goalKind', 'goalId', 'generation', 'state', 'reason']) {
+  if (!messageSource.includes(`\\"${field}\\":`)) failures.push(`FAIL: navStatus encoder omits ${field}.`);
+}
 const report = (header, keys, hint) => {
   if (!keys.length) return;
   failures.push([header, ...keys.map((k) => `  - ${hint(k)}`)].join('\n'));

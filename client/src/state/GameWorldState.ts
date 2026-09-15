@@ -4,6 +4,7 @@ import type { Packet } from '../packets/Packet.js';
 import type { GameDataLoader } from '../game-data/GameDataLoader.js';
 import type { ObjectCategory } from '../game-data/GameDataLoader.js';
 import { StatType } from '../constants/StatType.js';
+import { sendDllFeature } from '../bridge/DllFeatureBus.js';
 
 export interface TrackedEntity {
   objectId: number;
@@ -244,9 +245,15 @@ export class GameWorldState {
       if (p.isDefined && p.data.kill === true) this.rememberDeath(Number(p.data.targetId));
     });
     proxy.hookPacket('NEWTICK', (c, p) => this.onNewTick(c, p));
-    proxy.hookPacket('MAPINFO', (c) => {
+    proxy.hookPacket('MAPINFO', (c, packet) => {
       this.clear();
       this.lastMapIdentity = this.buildMapIdentity(c);
+      const width = packet.data.width;
+      const height = packet.data.height;
+      if (packet.isDefined && Number.isInteger(width) && Number.isInteger(height)
+        && width > 0 && height > 0 && width <= 2048 && height <= 2048) {
+        sendDllFeature('navMapInfo', `${width},${height}`);
+      } else sendDllFeature('navMapInfo', '0,0');
     });
   }
 

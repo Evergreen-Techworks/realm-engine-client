@@ -79,6 +79,9 @@ export default class Farmer {
     this.mapName = '';
     this.oryx = new OryxRunner(this, RealmEngine);
     this.mapUnsubscribe = null;
+    this.navigationUnsubscribe = null;
+    this.navigationGoal = null;
+    this.unreachablePositions = [];
     this.beaconSkipReason = null;
     this.zoneGoal = null;
     this.centerTripDone = false;
@@ -120,10 +123,72 @@ export default class Farmer {
     RealmEngine.combat.setAutoFire(enabled);
   }
 
+  subscribeNavigation() {
+    this.navigationUnsubscribe?.();
+    this.navigationUnsubscribe = RealmEngine.dodge.onNavigationStatus?.(status => this.handleNavigationStatus(status)) ?? null;
+  }
+
+  canNavigate(position) {
+    if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return false;
+    const now = Date.now();
+    this.unreachablePositions = this.unreachablePositions.filter(entry => entry.until > now);
+    return !this.unreachablePositions.some(entry => Math.hypot(entry.x - position.x, entry.y - position.y) < 2);
+  }
+
+  navigateToPosition(position) {
+    if (!this.canNavigate(position)) return false;
+    const accepted = RealmEngine.dodge.navigateToPosition(position);
+    if (accepted !== false) {
+      const owners = new Map();
+      for (const name of ['questGoal', 'eventGoal', 'zoneGoal', 'searchBeaconGoal', 'centerGoal', 'bossEncounter']) {
+        const goal = this[name];
+        if (goal?.position && Math.hypot(goal.position.x - position.x, goal.position.y - position.y) < 0.25) owners.set(name, goal);
+      }
+      this.navigationGoal = { x: position.x, y: position.y, owners };
+    }
+    return accepted;
+  }
+
+  handleNavigationStatus(status) {
+    if (status.state !== 'unreachable' || !this.navigationGoal
+      || Math.hypot(status.position.x - this.navigationGoal.x, status.position.y - this.navigationGoal.y) >= 0.25) return;
+    const failed = this.navigationGoal;
+    this.navigationGoal = null;
+    if (status.reason !== 'map_changed') {
+      this.unreachablePositions.push({ x: failed.x, y: failed.y, until: Date.now() + 30000 });
+      if (this.unreachablePositions.length > 64) this.unreachablePositions.shift();
+    }
+    const matches = goal => goal?.position && Math.hypot(goal.position.x - failed.x, goal.position.y - failed.y) < 0.25;
+    const owned = name => {
+      const original = failed.owners.get(name);
+      return original && this[name] && (original === this[name]
+        || (original.objectId > 0 && original.objectId === this[name].objectId));
+    };
+    for (const name of ['questGoal', 'eventGoal', 'zoneGoal', 'searchBeaconGoal', 'centerGoal']) {
+      if (!owned(name)) continue;
+      this[name] = null;
+      if (name === 'centerGoal') this.centerTripDone = true;
+      if (name === 'eventGoal') {
+        this.eventArrived = false; this.eventMissingAt = null; this.eventHoldSince = null;
+      }
+    }
+    if (owned('bossEncounter')) {
+      this.bossEncounter = null;
+      this.updateTarget(0, false);
+    }
+    this.questMissingAt = 0;
+    const bag = RealmEngine.loot.getBags().find(entry => entry.objectId === this.lootBagId);
+    if (matches(bag)) this.lootBagId = 0;
+    if (matches({ position: this.nexusSearchGoal })) this.nexusSearchGoal = null;
+    this.lastGoalAt = 0;
+    RealmEngine.dodge.clearWaypoint();
+  }
+
   onStart() {
     this.chatUnsubscribe = RealmEngine.chat?.onMessage?.(event => this.oryx.onMessage(event));
     this.mapUnsubscribe = RealmEngine.events.onMapChanged(() => this.resetMap(RealmEngine.world.getName()));
     this.resetMap(RealmEngine.world.getName());
+    this.subscribeNavigation();
     RealmEngine.dodge.clearWaypoint();
     RealmEngine.dodge.setMode('unified');
     RealmEngine.dodge.setSafeWalk(true);
@@ -146,6 +211,9 @@ export default class Farmer {
   }
 
   onStop() {
+    this.navigationUnsubscribe?.();
+    this.navigationUnsubscribe = null;
+    this.navigationGoal = null;
     this.chatUnsubscribe?.();
     this.chatUnsubscribe = null;
     this.mapUnsubscribe?.();
@@ -158,6 +226,9 @@ export default class Farmer {
   }
 
   resetMap(name) {
+    this.navigationGoal = null;
+    this.unreachablePositions = [];
+    if (this.navigationUnsubscribe) this.subscribeNavigation();
     this.mapName = name;
     this.oryx.reset(name);
     this.beaconSkipReason = null;
@@ -218,7 +289,7 @@ export default class Farmer {
     const py = RealmEngine.self.getY();
     const all = enabled ? RealmEngine.enemies.getAll() : [];
     const eligible = all
-      .filter((e) => e.hp > 0 && (e.isTargetable || e.objectId === this.lockId)
+      .filter((e) => e.hp > 0 && this.canNavigate(e.position) && (e.isTargetable || e.objectId === this.lockId)
         && Math.hypot(e.position.x - px, e.position.y - py)
           <= (e.objectId === this.lockId ? TARGET_RELEASE_RADIUS : TARGET_RADIUS))
       // Something we can damage beats a bigger thing we cannot, even the preferred or locked one.
@@ -262,7 +333,7 @@ export default class Farmer {
     if (distance > 14) {
       this.updateTarget(0, false);
       const dx = RealmEngine.self.getX() - center.x, dy = RealmEngine.self.getY() - center.y;
-      RealmEngine.dodge.navigateToPosition({ x: center.x + dx / distance * 8, y: center.y + dy / distance * 8 });
+      this.navigateToPosition({ x: center.x + dx / distance * 8, y: center.y + dy / distance * 8 });
       RealmEngine.ui.status(`${label}: returning to boss area`);
       return;
     }
@@ -276,7 +347,7 @@ export default class Farmer {
       return;
     }
     if (RealmEngine.self.distanceTo(add.position) > (this.lockId === add.objectId ? 12 : 8)) {
-      this.updateTarget(0, false); RealmEngine.dodge.navigateToPosition(add.position);
+      this.updateTarget(0, false); this.navigateToPosition(add.position);
     } else {
       RealmEngine.dodge.clearWaypoint();
       if (this.lockId !== add.objectId) {
@@ -289,6 +360,11 @@ export default class Farmer {
   }
 
   handleBossEncounter(quest, now) {
+    if (this.bossEncounter && !this.canNavigate(this.bossEncounter.position)) {
+      this.endBossEncounter(false);
+      return false;
+    }
+    if (quest && !this.canNavigate(quest.position)) return false;
     if (quest && this.objectIsDead(quest.objectId)) {
       this.endBossEncounter(false);
       RealmEngine.dodge.clearWaypoint();
@@ -358,7 +434,7 @@ export default class Farmer {
     }
     const distance = RealmEngine.self.distanceTo(boss.position);
     if (distance > (this.lockId === boss.objectId ? 12 : 8)) {
-      this.updateTarget(0, false); RealmEngine.dodge.navigateToPosition(boss.position);
+      this.updateTarget(0, false); this.navigateToPosition(boss.position);
     } else {
       RealmEngine.dodge.clearWaypoint();
       if (this.lockId !== boss.objectId) {
@@ -416,7 +492,7 @@ export default class Farmer {
     const px = RealmEngine.self.getX();
     const py = RealmEngine.self.getY();
     return RealmEngine.loot.getNearbyBags(LOOT_RADIUS)
-      .filter((bag) => this.bagIsUseful(bag) && (!whiteOnly || bag.rarity === 'white'))
+      .filter((bag) => this.canNavigate(bag.position) && this.bagIsUseful(bag) && (!whiteOnly || bag.rarity === 'white'))
       .sort((a, b) => Number(b.rarity === 'white') - Number(a.rarity === 'white')
         || Number(b.items.some((item) => RealmEngine.loot.isUT(item.objectType) || RealmEngine.loot.isST(item.objectType)))
           - Number(a.items.some((item) => RealmEngine.loot.isUT(item.objectType) || RealmEngine.loot.isST(item.objectType)))
@@ -464,7 +540,7 @@ export default class Farmer {
 
     const distance = RealmEngine.self.distanceTo(bag.position);
     if (distance > BAG_ARRIVE) {
-      RealmEngine.dodge.navigateToPosition(bag.position);
+      this.navigateToPosition(bag.position);
       RealmEngine.ui.status(`Loot detour (${distance.toFixed(1)} tiles)`);
       return true;
     }
@@ -709,7 +785,7 @@ export default class Farmer {
       return false;
     }
     if (this.tryBeaconTeleport(now, this.centerGoal)) return true;
-    RealmEngine.dodge.navigateToPosition(this.centerGoal.position);
+    this.navigateToPosition(this.centerGoal.position);
     RealmEngine.ui.status('Level 20: travelling to central Realm');
     return true;
   }
@@ -763,7 +839,7 @@ export default class Farmer {
       } else this.eventMissingAt = null;
     }
     if (!this.eventGoal) {
-      this.eventGoal = this.eventCandidates.filter(o => !this.finishedEvents.has(o.objectId)
+      this.eventGoal = this.eventCandidates.filter(o => !this.finishedEvents.has(o.objectId) && this.canNavigate(o.position)
         && !RealmEngine.world.objects.isDead?.(o.objectId))
         .sort((a,b) => RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position))[0] ?? null;
       if (this.eventGoal) {
@@ -785,7 +861,7 @@ export default class Farmer {
       this.searchBeaconGoal = null;
     }
     if (!this.searchBeaconGoal) {
-      this.searchBeaconGoal = RealmEngine.world.objects.getBeacons().filter(b => b.objectClass === 'Beacon'
+      this.searchBeaconGoal = RealmEngine.world.objects.getBeacons().filter(b => b.objectClass === 'Beacon' && this.canNavigate(b.position)
         && !BEACON_NAME_BAD.test(b.name) && RealmEngine.self.distanceTo(b.position) > 8
         && now - (this.searchBeaconVisits.get(b.objectId) ?? -Infinity) > 30000)
         .sort((a,b) => (this.searchBeaconVisits.get(a.objectId) ?? 0) - (this.searchBeaconVisits.get(b.objectId) ?? 0)
@@ -793,7 +869,7 @@ export default class Farmer {
     }
     if (this.searchBeaconGoal) {
       if (this.tryBeaconTeleport(now, this.searchBeaconGoal)) return;
-      RealmEngine.dodge.navigateToPosition(this.searchBeaconGoal.position);
+      this.navigateToPosition(this.searchBeaconGoal.position);
       RealmEngine.ui.status('Realm Farmer: searching other beacon areas for purple/white bosses');
     } else {
       RealmEngine.dodge.clearWaypoint();
@@ -846,7 +922,7 @@ export default class Farmer {
     }
 
     const quest = RealmEngine.world.objects.getQuestObject();
-    if (!quest || RealmEngine.world.objects.isDead?.(quest.objectId)
+    if (!quest || !this.canNavigate(quest.position) || RealmEngine.world.objects.isDead?.(quest.objectId)
       || (quest.hp <= 0 && quest.maxHp > 0)
       || !Number.isFinite(quest.position?.x) || !Number.isFinite(quest.position?.y)) return null;
     this.questGoal = quest;
@@ -870,7 +946,7 @@ export default class Farmer {
       this.nexusReady = true;
     }
     const portals = RealmEngine.world.objects.getOpenPortals()
-      .filter((portal) => portal.isRealm)
+      .filter((portal) => portal.isRealm && this.canNavigate(portal.position))
       .sort((a, b) => RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position)
         || a.playerCount - b.playerCount);
     const portal = portals.find(p => p.objectId === this.nexusPortalId) ?? portals[0];
@@ -882,14 +958,14 @@ export default class Farmer {
           y: RealmEngine.self.getY() - NEXUS_FORWARD_DISTANCE,
         };
       }
-      RealmEngine.dodge.navigateToPosition(this.nexusSearchGoal);
+      this.navigateToPosition(this.nexusSearchGoal);
       RealmEngine.ui.status('Searching for Realm portal: walking forward');
       return;
     }
     this.nexusSearchGoal = null;
     const distance = RealmEngine.self.distanceTo(portal.position);
     if (distance > PORTAL_RANGE) {
-      RealmEngine.dodge.navigateToPosition(portal.position);
+      this.navigateToPosition(portal.position);
       RealmEngine.ui.status(`Walking to ${portal.name} (${portal.playerCount}/85)`);
     } else {
       RealmEngine.dodge.clearWaypoint();
@@ -959,7 +1035,7 @@ export default class Farmer {
           // exactly where walking is worst: across water and around map-scale
           // obstacles the bounded nav window cannot plan around at all.
           if (this.tryBeaconTeleport(now, quest)) return LOOP_MS;
-          RealmEngine.dodge.navigateToPosition(quest.position);
+          this.navigateToPosition(quest.position);
         }
         RealmEngine.ui.status(level < 20
           ? `${distance > QUEST_AREA_ARRIVE ? 'Leveling' : 'Fighting'}: ${quest.name} → (${quest.position.x.toFixed(0)}, ${quest.position.y.toFixed(0)}) · ${distance.toFixed(0)} tiles`
@@ -975,7 +1051,7 @@ export default class Farmer {
         this.lastGoalAt = now;
       }
       if (this.zoneGoal) {
-        RealmEngine.dodge.navigateToPosition(this.zoneGoal.position);
+        this.navigateToPosition(this.zoneGoal.position);
         RealmEngine.ui.status(level >= 20
           ? `Maxing: walking toward center for a new quest${target ? ` · ${target.name}` : ''}`
           : `Leveling: walking toward center for a new quest${target ? ` · ${target.name}` : ''}`);

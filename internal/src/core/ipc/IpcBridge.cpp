@@ -92,6 +92,19 @@ static std::mutex s_pendingEventsMutex;
 static std::vector<PendingEvent> s_pendingEvents;
 static constexpr size_t kPendingEventsCap = 64;
 
+static std::mutex s_navStatusMutex;
+static std::vector<std::string> s_navStatuses;
+
+void IpcBridge_EmitNavStatus(const char* goalKind, uint64_t goalId, uint64_t generation, const char* state, const char* reason)
+{
+    char message[384];
+    const int length = IpcMessages::BuildNavStatus(message, sizeof(message), goalKind, goalId, generation, state, reason);
+    if (length < 0) return;
+    std::lock_guard<std::mutex> guard(s_navStatusMutex);
+    if (s_navStatuses.size() >= kPendingEventsCap) s_navStatuses.erase(s_navStatuses.begin());
+    s_navStatuses.emplace_back(message, length);
+}
+
 static std::mutex s_threatsMutex;
 static IpcThreat  s_threats[kIpcMaxThreats];
 static int        s_threatCount     = 0;
@@ -362,6 +375,19 @@ DWORD WINAPI IpcBridgeThread(LPVOID)
             }
             for (const auto& ev : drained) {
                 if (!WriteHotkeyEvent(hPipe, msgBuf, sizeof(msgBuf), ev.pluginId, ev.action, true)) {
+                    connected = false;
+                    break;
+                }
+            }
+            if (!connected) break;
+
+            std::vector<std::string> navigationStatuses;
+            {
+                std::lock_guard<std::mutex> guard(s_navStatusMutex);
+                navigationStatuses.swap(s_navStatuses);
+            }
+            for (const auto& status : navigationStatuses) {
+                if (!IpcFraming::WriteMessage(hPipe, status.c_str(), static_cast<int>(status.size()))) {
                     connected = false;
                     break;
                 }

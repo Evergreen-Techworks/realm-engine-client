@@ -41,6 +41,7 @@ export const DllMessageType = {
   UnresolvedClasses: 'unresolvedClasses',
   Threats: 'threats',
   Aim: 'aim',
+  NavStatus: 'navStatus',
   SetFeature: 'setFeature',
 } as const;
 export type DllMessageType = typeof DllMessageType[keyof typeof DllMessageType];
@@ -69,7 +70,7 @@ export const DLL_FEATURE_KEYS = [
   'followEntityActive', 'followEntityName', 'internalUnloadDll',
   'killauraEnabled', 'killauraMode',
   'killauraRangeTiles', 'killauraStandoffTiles',
-  'navCollisionRule',
+  'navCollisionRule', 'navMapInfo', 'navNavigator',
   'petSkinOverrideEnabled', 'petSkinOverrideId', 'pjdodgeDebugOverlay',
   'pjdodgeHitScale', 'pjdodgeHorizonMs', 'pjdodgeLeadMs', 'pjdodgeLockFollow',
   'pjdodgePredictionAccuracy', 'pjdodgeSafeWalk', 'pjdodgeSpeedScale', 'playerColliderSceneReset',
@@ -79,7 +80,7 @@ export const DLL_FEATURE_KEYS = [
   'reppStandOnType', 'rolloutAvoidEnemies', 'rolloutCommitDwell', 'rolloutDrawPath',
   'rolloutHeadings', 'rolloutHitScale', 'rolloutHorizonTicks', 'rolloutIntentWeight',
   'rolloutRebuildN', 'rolloutSampleStepMs', 'rolloutWasdYield', 'scriptCombatTargetId', 'scriptEnemyLockId', 'scriptMbcGroupGoal',
-  'showPluginFloatingText', 'skinOverrideEnabled', 'skinOverrideId', 'socketHotkey', 'socketHotkeyActive',
+  'scriptNavigationGoal', 'showPluginFloatingText', 'skinOverrideEnabled', 'skinOverrideId', 'socketHotkey', 'socketHotkeyActive',
   'speedHackMult', 'targetFrameRate', 'titleOverrideEnabled', 'titleOverrideId', 'titleOverrideSlot',
   'udodgeAoePacket', 'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath',
   'udodgeFieldEscape', 'udodgeFollowLantern', 'udodgeHitScale', 'udodgeLaneTiles',

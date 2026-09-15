@@ -9,6 +9,7 @@
 #pragma once
 #include <Windows.h>
 #include <cstdint>
+void IpcBridge_EmitNavStatus(const char* goalKind, uint64_t goalId, uint64_t generation, const char* state, const char* reason);
 
 // Named pipe IPC bridge between the injected DLL and the Node client.
 // Pipe-delivered feature state is authoritative for unified controls.
