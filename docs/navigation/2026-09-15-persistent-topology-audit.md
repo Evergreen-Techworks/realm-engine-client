@@ -148,3 +148,11 @@ harness under both rules, producing the four failures tabulated above.
 also exits 1: `Pathing scenarios FAILED: n_rooms_remote_forward [game]`.
 Selecting that scenario without its suite flag exits 2 instead of silently
 running zero tests. `git diff --check` passes. No gameplay/build validation ran.
+
+2026-09-15 follow-up: the pure MapMemory foundation is now implemented with 57
+passing checks and seven rejected mutations. Full host tests and both scenario
+rules pass; the standalone global-direction regression remains red. See
+`2026-09-15-map-memory-foundation.md` for the API, storage costs, observation
+authority contract and validation. The next integration must establish square
+observation freshness, then add capture/epoch wiring and the global router;
+persistence alone is not a routing fix.
