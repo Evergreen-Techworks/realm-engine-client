@@ -1,5 +1,5 @@
 import type { PluginContext, ClientConnection } from './api.js';
-import { automaticAbilityPaused } from './api.js';
+import { automaticAbilityPaused, connectionGameTime } from './api.js';
 
 // Class-autodetected auto ability. Fires a USEITEM for the ability slot (the
 // same proven mechanism auto-drink uses for potions). Point-aimed classes fire
@@ -132,18 +132,9 @@ export function register(ctx: PluginContext) {
     return result;
   }
 
-  /**
-   * USEITEM's `time` is the game client's int32 connection time. The proxy only
-   * learns it from the client's own time-bearing packets (first MOVE/PONG/
-   * PLAYERSHOOT); until then `client.time` is plain epoch ms, which is out of
-   * int32 range, so PacketFactory refuses to serialize and the cast is dropped
-   * ("Failed to serialize USEITEM ... Received 1_789_259_156_430", once per map
-   * entry in the 2026-09-12 session). Report no time rather than a wrong one.
-   */
-  function connectionGameTime(client: ClientConnection): number | null {
-    const time = Math.trunc(Number(client.time));
-    return Number.isFinite(time) && time >= -0x80000000 && time <= 0x7fffffff ? time : null;
-  }
+  // USEITEM's `time` comes from connectionGameTime (src/util/connectionGameTime.ts):
+  // null until the client's first MOVE/PONG/PLAYERSHOOT of the connection, when
+  // `client.time` is still epoch ms and the packet could not serialize.
 
   function sendUseAbility(client: ClientConnection, usePos: { x: number; y: number }, itemType: number, time: number): void {
     const pkt = ctx.createPacket('USEITEM');
