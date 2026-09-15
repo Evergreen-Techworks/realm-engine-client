@@ -6,6 +6,7 @@
 #include "UDodgePathfinder.h"
 #include "UDodgeNavigation.h"
 #include "UDodgeGroupPreference.h"
+#include "features/movement/nav/Runtime.h"
 #include "UDodgeWorker.h"
 #include "UDodgeSensors.h"
 #include "UDodgeDebug.h"
@@ -114,6 +115,9 @@ struct NavCache {
     bool crossesHazard = false;  // the A* found no route without damaging ground (PlanResult::navCrossesHazard)
 };
 NavCache g_navCache;
+Vec2 g_globalRawGoal{};
+bool g_globalRawActive = false;
+bool g_globalAssistance = false;
 Navigation::Progress g_navProgress;
 bool g_navAwaiting = false;
 // Stuck memory (get-unstuck). A stall re-plans, but a re-plan over the same tile
@@ -576,6 +580,7 @@ void SetEnabled(bool enabled)
     if (enabled) {
         ProjectileTracking::Install();   // sensors need the projectile hook
         Worker::Start();                 // async grid-pathfinder worker (plan 65)
+        Movement::Nav::Runtime::Start();
     }
     g_enabled.store(enabled, std::memory_order_relaxed);
     if (!enabled) {
@@ -583,6 +588,7 @@ void SetEnabled(bool enabled)
         g_previousGroupActive = false;
         g_previousGroupBoss = 0;
         Worker::Stop();                  // JOIN the worker before releasing state it never touches
+        Movement::Nav::Runtime::Stop();
         UpdateAutopilotLock(false);      // release any autopilot-owned enemy lock (never a manual one)
         DangerPlanner::ClearWalkGoal();  // drop any pending walk-to spot
         g_commitment.Reset();
@@ -646,6 +652,7 @@ void OnEnter()
     SetGroupPreference("");
     g_previousGroupActive = false;
     g_previousGroupBoss = 0;
+    Movement::Nav::Runtime::InvalidateGoal();
     ProjectileTracking::Install();   // sensors need the projectile hook
     // A completed result from the previous realm is still valid plain data as far
     // as the worker handoff knows. Flush both pending/latest slots by restarting
@@ -656,6 +663,8 @@ void OnEnter()
     g_solve = Solver::SolveResult{};
     g_route = Path::PlanResult{};
     g_navCache = NavCache{};
+    g_globalRawActive = false;
+    g_globalAssistance = false;
     g_navAwaiting = false;
     g_navProgress.Reset();
     g_lockApproach = false;
@@ -902,6 +911,31 @@ void Tick(void* player, float px, float py, float dt)
     } else {
         g_lockApproach = false;
         g_lockApproachGoalValid = false;
+    }
+
+    const bool globalPointActive = walkActive && !lockApproach && !wasdActive;
+    if (!globalPointActive || !g_globalRawActive ||
+        LenSq(Sub(g_globalRawGoal, Vec2{walkX, walkY})) > 4.f)
+        g_globalAssistance = false;
+    g_globalRawGoal = {walkX, walkY};
+    g_globalRawActive = globalPointActive;
+    const auto corridor = Movement::Nav::Runtime::Update({px, py}, {walkX, walkY},
+        baseTilesPerSec, globalPointActive);
+    if (Movement::Nav::Runtime::Enabled()) {
+        if (walkActive && !lockApproach && !wasdActive) {
+            if (g_globalAssistance && corridor.count >= 2 && corridor.state != Movement::Nav::RouteState::Unreachable) {
+                const auto& waypoint = corridor.points[corridor.count - 1];
+                walkX = waypoint.worldX;
+                walkY = waypoint.worldY;
+            } else if (corridor.state != Movement::Nav::RouteState::Repairing &&
+                       (g_globalAssistance || corridor.state == Movement::Nav::RouteState::Unreachable ||
+                        corridor.count == 0)) {
+                walkX = px;
+                walkY = py;
+                g_navCache.valid = false;
+                g_navAwaiting = false;
+            }
+        }
     }
 
     // Enemy-centred keep-outs (self blasts, point-blank shooters) stay HARD during
@@ -1288,6 +1322,10 @@ void Tick(void* player, float px, float py, float dt)
         // Only updates when the worker actually ran the nav A* (navFound) — which is
         // only when we requested a re-plan (navActive), so the cache holds the last
         // committed route until the next trigger.
+        if (acceptFresh && Movement::Nav::Runtime::Enabled() && g_globalRawActive &&
+            LenSq(Sub(g_globalRawGoal, Vec2{walkX, walkY})) < 0.01f && g_route.navPops > 0 &&
+            (!g_route.navFound || g_route.navPartial))
+            g_globalAssistance = true;
         if (acceptFresh && g_route.navArrived) {
             g_navAwaiting = false;
             navArrivedFresh = true;

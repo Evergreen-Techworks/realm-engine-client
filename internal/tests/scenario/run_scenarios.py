@@ -58,6 +58,7 @@ def main():
                     help="run unresolved persistent-routing regressions instead of the normal suite")
     ap.add_argument("--rule", choices=["legacy", "game", "both"], default="both",
                     help="navCollisionRule to run under (a tree without nav/Collision.h runs legacy only)")
+    ap.add_argument("--navigator", choices=["legacy", "dstar"], default="legacy")
     ap.add_argument("--scan-mode", type=int, default=0,
                     help="tile list selection: 1 first 65536, 2 newest 65536 + window, 3 whole list windowed; 0 = detect")
     args = ap.parse_args()
@@ -112,6 +113,7 @@ def main():
                 if args.only and name != args.only:
                     continue
                 out = subprocess.run([str(binary), name, str(scan), rule], check=True,
+                                     env={**os.environ, "HARNESS_NAVIGATOR": args.navigator},
                                      capture_output=True, text=True).stdout.strip()
                 if not out:
                     failed.append(f"{name} [{rule}] (no result)")   # a listed scenario the harness does not run

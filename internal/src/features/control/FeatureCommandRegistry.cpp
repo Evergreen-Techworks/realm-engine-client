@@ -32,6 +32,7 @@
 #include "features/movement/udodge/UDodge.h"
 #include "features/movement/udodge/UDodgeSensors.h"
 #include "features/movement/nav/Collision.h"
+#include "features/movement/nav/Runtime.h"
 #include "SpeedHack.h"
 #include <string>
 #include <cctype>
@@ -142,6 +143,7 @@ namespace {
             FH("playerColliderSceneReset", {
                 PlayerCollider::ResetScene();
                 AutoFire::NotifyMapChange();
+                Movement::Nav::Runtime::NotifySceneReset();
             }),
             FH_BOOL("colliderEnabled", PlayerCollider::SetEnabled),
             FH_FLOAT("colliderMultiplier", PlayerCollider::SetMultiplier),
@@ -295,7 +297,10 @@ namespace {
             FH_INT_BOOL("udodgeServerAnchorValid", UDodge::SetServerAnchorValid),
             FH_TEXT("udodgePacketShot", UDodge::Sensors::RecordPacketShot),
             FH_TEXT("udodgeAoePacket", UDodge::Sensors::RecordAoePacket),
-            FH_TEXT("navCollisionRule", Movement::Collision::SetRuleText)
+            FH_TEXT("navCollisionRule", Movement::Collision::SetRuleText),
+            FH_TEXT("navNavigator", Movement::Nav::Runtime::SetNavigatorText),
+            FH_TEXT("navMapInfo", Movement::Nav::Runtime::SetMapInfoText),
+            FH_TEXT("scriptNavigationGoal", Movement::Nav::Runtime::SetScriptGoalText)
         };
         return ApplyFeatureTable(f, h, sizeof(h) / sizeof(h[0]));
     }

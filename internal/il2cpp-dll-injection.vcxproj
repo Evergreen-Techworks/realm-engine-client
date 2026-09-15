@@ -66,6 +66,7 @@
     <ClCompile Include="src\features\movement\udodge\UDodgeSolver.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodgePathfinder.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodgeWorker.cpp" />
+    <ClCompile Include="src\features\movement\nav\Runtime.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodge.cpp" />
     <ClCompile Include="src\features\movement\udodge\UDodgeDebug.cpp" />
     <ClCompile Include="src\features\movement\sensors\TileSensor.cpp" />
