@@ -114,7 +114,7 @@ export class ProjectileTracker {
       const d = projDef;
       sendDllFeature('udodgePacketShot', [
         ownerId, (bulletId + i) & 0xffff, position.x, position.y, shotAngle,
-        d?.speed ?? 0, d?.lifetimeMs ?? 0, d?.hitRadius ?? 0.5,
+        d?.speed ?? 0, d?.lifetimeMs ?? 0, d?.collisionHalf ?? 0.5,
       ].join(','));
     }
   }
