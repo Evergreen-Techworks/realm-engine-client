@@ -1,6 +1,7 @@
 /** Auto Drink: locate usable potions in the belt / inventory / backpack. */
 
 import type { ClientConnection } from '../api.js';
+import { availablePlayerItemCount } from '../api.js';
 import { BELT_SLOT_BASE } from './constants.js';
 
 /** A potion found in a slot, with the USEITEM packet slot id to use. */
@@ -19,7 +20,8 @@ function beltSlots(client: ClientConnection, idSet: Set<number>, limit: number):
     const s: any = belt[i];
     if (s?.itemType === -1 || !(s?.quantity > 0) || !idSet.has(s.itemType)) continue;
     // A belt quickslot is a stack, so the same slot id is drinkable `quantity` times.
-    for (let n = 0; n < s.quantity && out.length < limit; n++) {
+    const available = availablePlayerItemCount(client, BELT_SLOT_BASE + i, s.itemType);
+    for (let n = 0; n < available && out.length < limit; n++) {
       out.push({ slotId: BELT_SLOT_BASE + i, itemType: s.itemType });
     }
   }
@@ -32,13 +34,15 @@ function bagSlots(client: ClientConnection, idSet: Set<number>, limit: number): 
   const inv = client.playerData.inventory;
   for (let slot = 4; slot < inv.length && out.length < limit; slot++) {
     const itemId = Number(inv[slot] ?? -1);
-    if (itemId !== -1 && idSet.has(itemId)) out.push({ slotId: slot, itemType: itemId });
+    if (itemId !== -1 && idSet.has(itemId) && availablePlayerItemCount(client, slot, itemId) > 0)
+      out.push({ slotId: slot, itemType: itemId });
   }
   if (client.playerData.hasBackpack) {
     const bp = client.playerData.backpack;
     for (let slot = 0; slot < bp.length && out.length < limit; slot++) {
       const itemId = Number(bp[slot] ?? -1);
-      if (itemId !== -1 && idSet.has(itemId)) out.push({ slotId: 12 + slot, itemType: itemId });
+      if (itemId !== -1 && idSet.has(itemId) && availablePlayerItemCount(client, 12 + slot, itemId) > 0)
+        out.push({ slotId: 12 + slot, itemType: itemId });
     }
   }
   return out;

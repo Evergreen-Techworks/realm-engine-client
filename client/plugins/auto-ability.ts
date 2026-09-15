@@ -1,5 +1,6 @@
 import type { PluginContext, ClientConnection } from './api.js';
-import { automaticAbilityPaused } from './api.js';
+import { automaticAbilityPaused, connectionGameTime, observeAbilityMana, reserveAbilityMana,
+  abilityCooldownMs, abilityCooldownReady, reserveAbilityCooldown } from './api.js';
 
 // Class-autodetected auto ability. Fires a USEITEM for the ability slot (the
 // same proven mechanism auto-drink uses for potions). Point-aimed classes fire
@@ -118,32 +119,26 @@ export function register(ctx: PluginContext) {
     lastDiagnosticAt.set(client, now);
     ctx.log(`Auto Ability: ${reason}`);
   }
-  const abilityMetadata = new Map<number, { xml: string | undefined; movement: boolean; cost: number | null; invalidCost: boolean }>();
+  const abilityMetadata = new Map<number, { xml: string | undefined; movement: boolean; cost: number | null; invalidCost: boolean; cooldownMs: number; shoots: boolean }>();
   function metadata(itemType: number) {
     const xml = ctx.gameData?.getRawObjectXml(itemType);
     const cached = abilityMetadata.get(itemType);
     if (cached && cached.xml === xml) return cached;
     const rawCost = xml?.match(/<MpCost\b[^>]*>\s*([^<]*)\s*<\/MpCost>/i)?.[1];
     const cost = rawCost === undefined ? null : Number(rawCost.trim());
+    const cooldownMs = abilityCooldownMs(xml) ?? NaN;
     const result = { xml, movement: xml !== undefined && MOVEMENT_ACTIVATE_RE.test(xml), cost,
-      invalidCost: cost !== null && (!rawCost?.trim() || !Number.isFinite(cost) || cost < 0) };
+      cooldownMs, shoots: /<Activate\b[^>]*>\s*Shoot\s*<\/Activate>/.test(xml ?? ''),
+      invalidCost: xml === undefined || !Number.isFinite(cooldownMs) || cooldownMs < 0
+        || (cost !== null && (!rawCost?.trim() || !Number.isFinite(cost) || cost < 0)) };
     // Missing XML can become available after startup; do not cache that absence.
     if (xml !== undefined) abilityMetadata.set(itemType, result);
     return result;
   }
 
-  /**
-   * USEITEM's `time` is the game client's int32 connection time. The proxy only
-   * learns it from the client's own time-bearing packets (first MOVE/PONG/
-   * PLAYERSHOOT); until then `client.time` is plain epoch ms, which is out of
-   * int32 range, so PacketFactory refuses to serialize and the cast is dropped
-   * ("Failed to serialize USEITEM ... Received 1_789_259_156_430", once per map
-   * entry in the 2026-09-12 session). Report no time rather than a wrong one.
-   */
-  function connectionGameTime(client: ClientConnection): number | null {
-    const time = Math.trunc(Number(client.time));
-    return Number.isFinite(time) && time >= -0x80000000 && time <= 0x7fffffff ? time : null;
-  }
+  // USEITEM's `time` comes from connectionGameTime (src/util/connectionGameTime.ts):
+  // null until the client's first MOVE/PONG/PLAYERSHOOT of the connection, when
+  // `client.time` is still epoch ms and the packet could not serialize.
 
   function sendUseAbility(client: ClientConnection, usePos: { x: number; y: number }, itemType: number, time: number): void {
     const pkt = ctx.createPacket('USEITEM');
@@ -170,8 +165,14 @@ export function register(ctx: PluginContext) {
   // Manual ability press → back off so we don't fight the player's cooldown.
   ctx.hookPacket('USEITEM', (client, packet) => {
     if (selfFiring) return;
-    if (packet.data?.slotObject?.slotId === ABILITY_SLOT) {
+    if (packet.data?.slotObject?.slotId === ABILITY_SLOT
+      && packet.data.slotObject.objectId === client.objectId) {
       nextAllowedAt.set(client, Date.now() + MANUAL_PAUSE_MS);
+      const cost = metadata(packet.data.slotObject.objectType).cost;
+      if (packet.data.useType === 1 && cost !== null && Number.isFinite(cost) && cost >= 0)
+        reserveAbilityMana(client.playerData, cost);
+      reserveAbilityCooldown(client.playerData, Math.max(MANUAL_PAUSE_MS,
+        metadata(packet.data.slotObject.objectType).cooldownMs || 0));
     }
   });
 
@@ -192,8 +193,10 @@ export function register(ctx: PluginContext) {
     const ability = metadata(itemType);
     if (ability.movement) { diagnose(client, 'movement ability excluded'); return; }
     if (ability.invalidCost) { diagnose(client, 'invalid ability MP cost in XML'); return; }
+    if (pd.hasConditionEffect('Quiet') || pd.hasConditionEffect('Silenced')
+      || (ability.shoots && pd.hasConditionEffect('Stunned'))) return;
     const maxMana = pd.effectiveMaxMana;
-    const mana = pd.mana;
+    const mana = observeAbilityMana(pd, pd.mana);
     if (!Number.isFinite(maxMana) || maxMana <= 0 || !Number.isFinite(mana) || mana < 0) {
       diagnose(client, 'MP stats unavailable'); return;
     }
@@ -206,7 +209,7 @@ export function register(ctx: PluginContext) {
       return;
     }
     const now = Date.now();
-    if (now < (nextAllowedAt.get(client) ?? 0)) { diagnose(client, 'cooldown/manual-use pause'); return; }
+    if (now < (nextAllowedAt.get(client) ?? 0) || !abilityCooldownReady(pd)) { diagnose(client, 'cooldown/manual-use pause'); return; }
     if (!Number.isFinite(pd.pos?.x) || !Number.isFinite(pd.pos?.y) || (pd.pos.x === 0 && pd.pos.y === 0)) {
       diagnose(client, 'player position unavailable'); return;
     }
@@ -246,9 +249,11 @@ export function register(ctx: PluginContext) {
     const gameTime = connectionGameTime(client);
     if (gameTime === null) { diagnose(client, 'waiting for the client game time (first MOVE of this map)'); return; }
     // Back off even if the transport throws, preventing retries every tick.
-    nextAllowedAt.set(client, now + (isSelf ? selfIntervalMs : targetIntervalMs));
+    nextAllowedAt.set(client, now + Math.max(ability.cooldownMs, isSelf ? selfIntervalMs : targetIntervalMs));
     try {
       sendUseAbility(client, usePos, itemType, gameTime);
+      reserveAbilityMana(pd, ability.cost ?? 0);
+      reserveAbilityCooldown(pd, Math.max(ability.cooldownMs, isSelf ? selfIntervalMs : targetIntervalMs));
       diagnose(client, `cast ${itemType} at (${usePos.x}, ${usePos.y}); MP ${mana}/${maxMana}; cost ${ability.cost ?? 'unknown'}`);
     } catch (err) {
       diagnose(client, `send failed: ${(err as Error).message}`);

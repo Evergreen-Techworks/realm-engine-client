@@ -44,4 +44,7 @@ export { getDllThreats, getDllGround, getDllThreatsAgeMs, getDllThreatsTruncated
 export { getDllAim, getDllAimAgeMs } from '../src/bridge/DllAimBus.js';
 
 export { tryInventoryAction } from '../src/util/InventoryActions.js';
+export { connectionGameTime } from '../src/util/connectionGameTime.js';
+export { observeAbilityMana, reserveAbilityMana, abilityCooldownMs, abilityCooldownReady, reserveAbilityCooldown } from '../src/util/AbilityMana.js';
+export { tryConsumePlayerItem, availablePlayerItemCount } from '../src/util/ItemUseReservations.js';
 export { automaticAbilityPaused } from '../src/bridge/AutomaticAbilityPause.js';

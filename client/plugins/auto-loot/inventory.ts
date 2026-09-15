@@ -7,7 +7,7 @@
  * {@link QUICKSLOT_PACKET_BASE}.
  */
 
-import { tryInventoryAction, StatType } from '../api.js';
+import { tryInventoryAction, StatType, connectionGameTime } from '../api.js';
 import type { PluginContext } from '../api.js';
 import type { ClientConnection } from '../api.js';
 import type { TrackedEntity } from '../api.js';
@@ -175,11 +175,14 @@ export function sendUseItemFromBag(
   bagSlot: number,
   itemId: number,
 ): boolean {
+  // Epoch ms before the connection's game time is known cannot serialize; try again next pass.
+  const time = connectionGameTime(client);
+  if (time === null) return false;
   const packet = ctx.createPacket('USEITEM');
-  packet.data.time = Math.trunc(client.time);
+  packet.data.time = time;
   packet.data.slotObject = { objectId: bag.objectId, slotId: bagSlot, objectType: itemId };
-  packet.data.itemUsePos = { x: 0, y: 0 };
-  packet.data.useType = 0;
+  packet.data.itemUsePos = { ...client.playerData.pos };
+  packet.data.useType = 1;
   packet.data.unknownInt = 0;
   packet.modified = true;
   return tryInventoryAction(client,
