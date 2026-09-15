@@ -150,7 +150,7 @@ export default class OryxRunner {
     }
     for (const [id, boss] of this.bosses) {
       if (this.dead.has(id)) continue;
-      const live = enemies.find(e => e.objectId === id);
+      const live = this.sdk.world.objects.getById(id) ?? enemies.find(e => e.objectId === id);
       if (this.sdk.world.objects.isDead?.(id) || (live && live.hp <= 0 && live.maxHp > 0)) {
         this.dead.add(id);
         if (this.encounter === id) this.encounter = null;
@@ -547,17 +547,21 @@ export default class OryxRunner {
       this.stopCombat();
       if (f.handleLoot(now)) return true;
     }
-    const target = enemies.filter(e => e.hp > 0 && e.isTargetable && !this.isStructure(e) && !OPTIONAL.test(e.name)
+    const target = enemies.filter(e => this.stage !== 'cellar' && e.hp > 0 && e.isTargetable && !this.isStructure(e) && !OPTIONAL.test(e.name)
       && this.reachable(e.position)
       && (this.stage === 'sanctuary' ? ROOM_ENEMY.test(e.name) : sdk.self.distanceTo(e.position) <= 8))
       .sort((a, b) => sdk.self.distanceTo(a.position) - sdk.self.distanceTo(b.position))[0];
     if (target) { this.fight(target, now, target.name); return true; }
     const quest = sdk.world.objects.getQuestObject();
-    const goal = quest && this.isBoss(quest) && !this.dead.has(quest.objectId) ? quest.position : this.routeHint();
+    const observedBoss = enemies.filter(e => this.isBoss(e) && e.hp > 0 && !this.dead.has(e.objectId))
+      .sort((a, b) => sdk.self.distanceTo(a.position) - sdk.self.distanceTo(b.position))[0];
+    const goal = quest && this.isBoss(quest) && !this.dead.has(quest.objectId) ? quest.position
+      : observedBoss?.position ?? this.routeHint();
     const moved = this.route(goal, now, true);
     if (this.breaking) return true;   // breakWall owns aim, fire and status
     this.stopCombat();
-    this.status(moved ? 'clearing route toward next encounter' : 'waiting for terrain or room gate');
+    this.status(moved ? (this.stage === 'cellar' ? 'rushing toward Oryx 2' : 'clearing route toward next encounter')
+      : 'waiting for terrain or room gate');
     return true;
   }
 }

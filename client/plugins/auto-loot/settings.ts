@@ -252,7 +252,7 @@ export class AutoLootSettings {
     boolSetting('lootHpPotions', 'Loot HP Pots', () => this.lootHpPotions, (v) => { this.lootHpPotions = v; });
     boolSetting('lootMpPotions', 'Loot MP Pots', () => this.lootMpPotions, (v) => { this.lootMpPotions = v; });
     boolSetting('lootStatPotions', 'Loot Stat Pots', () => this.lootStatPotions, (v) => { this.lootStatPotions = v; });
-    boolSetting('autodrinkStatPots', 'Autodrink Stat Pots (USEITEM from bag, 0,0 - no loot)',
+    boolSetting('autodrinkStatPots', 'Drink Stat Potions from Bags',
       () => this.autodrinkStatPots, (v) => { this.autodrinkStatPots = v; }, true);
 
     ctx.registerSetting('pickupIntervalMs', {
