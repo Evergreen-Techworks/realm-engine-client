@@ -305,7 +305,7 @@ export default class Farmer {
       if (anchor && RealmEngine.self.distanceTo(anchor.position) <= 12
         && (this.encounterGiveUps.get(anchor.objectId) ?? 0) < ENCOUNTER_MAX_ATTEMPTS)
         this.bossEncounter = { objectId: anchor.objectId, position: { ...anchor.position }, name: anchor.name,
-          everTargetable: false, waitingSince: null };
+          isEventBoss: !!anchor.isEventBoss, everTargetable: false, waitingSince: null, phaseMissingAt: null };
     }
     if (!this.bossEncounter) return false;
     const boss = enemies.find(e => e.objectId === this.bossEncounter.objectId);
@@ -314,7 +314,10 @@ export default class Farmer {
     }
     if (boss) {
       this.bossEncounter.position = { ...boss.position }; this.bossMissingAt = null;
-      if (boss.isTargetable) this.bossEncounter.everTargetable = true;
+      if (boss.isTargetable) {
+        this.bossEncounter.everTargetable = true;
+        this.bossEncounter.phaseMissingAt = null;
+      }
     } else {
       if (this.bossMissingAt === null) this.bossMissingAt = now;
       const changedQuest = quest && quest.objectId !== this.bossEncounter.objectId;
@@ -323,6 +326,16 @@ export default class Farmer {
       }
     }
     if (!boss || !boss.isTargetable) {
+      if (this.bossEncounter.isEventBoss && this.bossEncounter.everTargetable) {
+        if (this.bossEncounter.phaseMissingAt === null) this.bossEncounter.phaseMissingAt = now;
+        if (now - this.bossEncounter.phaseMissingAt < QUEST_MISSING_GRACE_MS) {
+          if (this.lockId && this.lockId !== this.bossEncounter.objectId) this.updateTarget(0, false);
+          this.setFiring(false);
+          RealmEngine.dodge.clearWaypoint();
+          RealmEngine.ui.status(`${this.bossEncounter.name}: waiting through brief boss transition`);
+          return true;
+        }
+      }
       // Nothing on the boss to damage. Targetable adds keep the wait useful; with none,
       // a present-but-untargetable boss is waited on for ENCOUNTER_WAIT_MS at most.
       const center = this.bossEncounter.position;

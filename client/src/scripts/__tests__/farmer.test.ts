@@ -31,6 +31,64 @@ function fixture() {
   return { farmer, sdk, quest, setEnemies: (value: any[]) => { enemies = value; } };
 }
 afterEach(() => vi.useRealTimers());
+it.each(['invulnerable', 'missing'])('keeps event boss priority through brief %s phases instead of chasing unrelated adds', (phase) => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const fixtureState = fixture();
+  fixtureState.sdk.self.getLevel = () => 20;
+  Object.assign(fixtureState.quest, { isEventBoss: true });
+  fixtureState.sdk.world.objects.getAll = () => [fixtureState.quest];
+  const add = { objectId: 20, name: 'Unrelated mob', position: { x: 2, y: 0 }, hp: 100, maxHp: 100, isTargetable: true };
+  fixtureState.setEnemies([fixtureState.quest, add]);
+  fixtureState.farmer.onLoop();
+  expect(fixtureState.farmer.lockId).toBe(10);
+  fixtureState.quest.isTargetable = false;
+  fixtureState.setEnemies(phase === 'missing' ? [add] : [fixtureState.quest, add]);
+  vi.setSystemTime(10100); fixtureState.farmer.onLoop();
+  expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(20);
+  expect(fixtureState.farmer.lockId).toBe(10);
+  expect(fixtureState.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(false);
+  fixtureState.quest.isTargetable = true;
+  fixtureState.setEnemies([fixtureState.quest, add]);
+  vi.setSystemTime(10200); fixtureState.farmer.onLoop();
+  expect(fixtureState.farmer.lockId).toBe(10);
+  expect(fixtureState.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(true);
+});
+it('ends event transition grace after three seconds and still releases confirmed death immediately', () => {
+  const fixtureState = fixture();
+  Object.assign(fixtureState.quest, { isEventBoss: true });
+  const add = { objectId: 20, name: 'Unrelated mob', position: { x: 2, y: 0 }, hp: 100, maxHp: 100, isTargetable: true };
+  fixtureState.setEnemies([fixtureState.quest, add]);
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 10000);
+  fixtureState.quest.isTargetable = false;
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 10100);
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 13099);
+  expect(fixtureState.farmer.lockId).toBe(10);
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 13100);
+  expect(fixtureState.farmer.lockId).toBe(20);
+  fixtureState.quest.isTargetable = true;
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 13200);
+  expect(fixtureState.farmer.lockId).toBe(10);
+  fixtureState.quest.isTargetable = false;
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 13300);
+  fixtureState.quest.hp = 0;
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 13400);
+  expect(fixtureState.farmer.lockId).toBe(0);
+  expect(fixtureState.farmer.bossEncounter).toBeNull();
+});
+it('discards event transition grace on map reset and leaves first-seen marker add handling unchanged', () => {
+  const fixtureState = fixture();
+  Object.assign(fixtureState.quest, { isEventBoss: true });
+  const add = { objectId: 20, name: 'Unrelated mob', position: { x: 2, y: 0 }, hp: 100, maxHp: 100, isTargetable: true };
+  fixtureState.setEnemies([fixtureState.quest, add]);
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 10000);
+  fixtureState.quest.isTargetable = false;
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 10100);
+  fixtureState.farmer.resetMap('Other');
+  expect(fixtureState.farmer.bossEncounter).toBeNull();
+  fixtureState.setEnemies([add]);
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 10200);
+  expect(fixtureState.farmer.lockId).toBe(20);
+});
 // Bags built by the real loot bridge from an UPDATE, so their rarity comes from the
 // bridge's BAG_RARITY table (after #77: only Loot Bag 6 and its Boost are 'white').
 const bridgeBags = (() => {
