@@ -32,6 +32,10 @@
 #include "UDodgeTimedPlanner.h"
 #include "MovementRuntime.h"
 #include "features/movement/dodge/MovementSpeed.h"
+#if __has_include("features/movement/nav/Runtime.h")
+#include "features/movement/nav/Runtime.h"
+#define HARNESS_GLOBAL_NAVIGATOR 1
+#endif
 #include "DangerPlanner.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
@@ -531,6 +535,97 @@ void  CopyBoxBlocked(float originX, float originY, int side, float cellTiles,
     }
 }
 }
+
+#ifdef HARNESS_GLOBAL_NAVIGATOR
+namespace Movement { namespace Nav { namespace Runtime {
+namespace {
+MapMemory navigationMemory;
+Router navigationRouter;
+uint64_t navigationEpoch = 0;
+uint64_t navigationGoal = 0;
+size_t capturedSquares = 0;
+bool goalActive = false;
+RoutePoint previousGoal;
+double navigationCycle = 0;
+RouteCorridor navigationResult;
+std::vector<float> navigationSpeeds{1.f};
+constexpr float coordinateOffset = 512.f;
+}
+bool Enabled()
+{
+    const char* selected = std::getenv("HARNESS_NAVIGATOR");
+    return selected && std::strcmp(selected, "dstar") == 0;
+}
+void SetNavigatorText(const char*) {}
+void SetMapInfoText(const char*) {}
+void SetScriptGoalText(const char*) {}
+void NotifySceneReset() {}
+void InvalidateGoal()
+{
+    if (!Enabled()) return;
+    navigationMemory.Reset(++navigationEpoch, 2048, 2048);
+    navigationRouter = Router{};
+    capturedSquares = 0;
+    goalActive = false;
+    navigationCycle = 0;
+    navigationResult = {};
+    navigationSpeeds = {1.f};
+}
+void Start() {}
+void Stop() {}
+RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool active)
+{
+    if (!Enabled()) return {};
+    if (!active) { goalActive = false; return {}; }
+    const RoutePoint shiftedPlayer{player.worldX + coordinateOffset, player.worldY + coordinateOffset};
+    const RoutePoint shiftedGoal{goal.worldX + coordinateOffset, goal.worldY + coordinateOffset};
+    if (H::g_nowMs - navigationCycle < 100.0) return navigationResult;
+    navigationCycle = H::g_nowMs;
+    const auto& world = *H::g_world;
+    while (capturedSquares < world.streamOrder.size()) {
+        const auto key = world.streamOrder[capturedSquares++];
+        const auto& ground = world.tiles.at(key);
+        const int column = static_cast<int16_t>(key >> 16) + static_cast<int>(coordinateOffset);
+        const int row = static_cast<int16_t>(key & 0xffff) + static_cast<int>(coordinateOffset);
+        const float factor = Speed::TileFactor(ground.speed);
+        auto found = std::find(navigationSpeeds.begin(), navigationSpeeds.end(), factor);
+        if (found == navigationSpeeds.end()) { navigationSpeeds.push_back(factor); found = navigationSpeeds.end() - 1; }
+        const auto speedClass = static_cast<uint8_t>(found - navigationSpeeds.begin());
+        navigationMemory.ObserveGround(navigationEpoch, column, row,
+            TileOccupancy::kTileKnown | TileOccupancy::GroundFlags(ground.noWalk, ground.push, ground.speed,
+                ground.sink, ground.damage > 0), speedClass);
+    }
+    for (const auto& entry : world.objs) {
+        const auto& object = entry.second;
+        const uint8_t flags = static_cast<uint8_t>((object.occ || object.full || object.enemyOcc ? TileOccupancy::kTileBlocked : 0) |
+            (object.full ? TileOccupancy::kTileFullOcc : 0));
+        navigationMemory.ObserveStructure(navigationEpoch, object.tx + static_cast<int>(coordinateOffset),
+            object.ty + static_cast<int>(coordinateOffset),
+            {StructuralState::Present, ObservationSource::CurrentSquareOccupant, static_cast<uint64_t>(entry.first) + 1, flags});
+    }
+    for (;;) {
+        auto batch = navigationMemory.TakeChangedCells();
+        navigationRouter.Apply(batch);
+        if (batch.cells.empty()) break;
+    }
+    for (size_t speedClass = 0; speedClass < navigationSpeeds.size(); ++speedClass)
+        navigationRouter.SetSpeedClass(static_cast<uint8_t>(speedClass), navigationSpeeds[speedClass]);
+    navigationRouter.SetBaseSpeed(baseSpeed);
+    if (!goalActive || std::hypot(goal.worldX - previousGoal.worldX, goal.worldY - previousGoal.worldY) > 2.f) {
+        navigationRouter.SetGoal(navigationEpoch, ++navigationGoal, shiftedPlayer, shiftedGoal);
+        previousGoal = goal;
+        goalActive = true;
+    } else navigationRouter.MoveStart(navigationEpoch, shiftedPlayer);
+    navigationRouter.Repair(2048, std::chrono::microseconds(0));
+    navigationResult = navigationRouter.Corridor();
+    for (int index = 0; index < navigationResult.count; ++index) {
+        navigationResult.points[index].worldX -= coordinateOffset;
+        navigationResult.points[index].worldY -= coordinateOffset;
+    }
+    return navigationResult;
+}
+} } }
+#endif
 
 namespace TestTAB {
 void ReadDodgePlayerStats(int32_t& hp, int32_t& maxHp, float& spd, float& tps)

@@ -55,14 +55,19 @@ public:
         }
         while (!memory_.TakeChangedCells().cells.empty()) {}
         if (active_ && !batch.cells.empty()) {
+            std::vector<uint32_t> affected;
+            affected.reserve(batch.cells.size() * 9);
             for (const auto& change : batch.cells)
                 for (int offsetY = -1; offsetY <= 1; ++offsetY)
                     for (int offsetX = -1; offsetX <= 1; ++offsetX) {
                         const int column = change.column + offsetX;
                         const int row = change.row + offsetY;
                         if (InBounds(column, row) && nodes_.find(Index(column, row)) != nodes_.end())
-                            UpdateVertex(Index(column, row));
+                            affected.push_back(Index(column, row));
                     }
+            std::sort(affected.begin(), affected.end());
+            affected.erase(std::unique(affected.begin(), affected.end()), affected.end());
+            for (const auto index : affected) UpdateVertex(index);
             state_ = RouteState::Repairing;
         }
         return true;
@@ -117,15 +122,16 @@ public:
         return true;
     }
 
-    RouteState Repair(size_t maxExpansions = 2048)
+    RouteState Repair(size_t maxExpansions = 2048, std::chrono::microseconds maxTime = std::chrono::microseconds(2000))
     {
         lastExpansions_ = 0;
         if (!active_) return state_;
         if (limited_) { BuildLimitedCorridor(); return state_; }
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
+        const auto deadline = std::chrono::steady_clock::now() + maxTime;
         while (lastExpansions_ < maxExpansions) {
-            if (lastExpansions_ > 0 && lastExpansions_ % 16 == 0 && std::chrono::steady_clock::now() >= deadline) break;
-            DiscardStale();
+            if (maxTime.count() > 0 && lastExpansions_ > 0 && lastExpansions_ % 16 == 0 &&
+                std::chrono::steady_clock::now() >= deadline) break;
+            if (!DiscardStale()) return state_ = RouteState::Repairing;
             const auto startKey = CalculateKey(startIndex_);
             if ((open_.empty() || !NeedsRepair(open_.top().key, startKey)) && Equal(G(startIndex_), Rhs(startIndex_)))
                 break;
@@ -148,7 +154,7 @@ public:
             }
             ++lastExpansions_;
         }
-        DiscardStale();
+        if (!DiscardStale()) return state_ = RouteState::Repairing;
         if (limited_) { BuildLimitedCorridor(); return state_; }
         else if ((!open_.empty() && NeedsRepair(open_.top().key, CalculateKey(startIndex_))) ||
                  !Equal(G(startIndex_), Rhs(startIndex_)))
@@ -175,6 +181,13 @@ public:
         uint32_t current = startIndex_;
         RoutePoint previous = start_;
         float travelled = 0.f;
+        const auto center = Center(current);
+        if (Distance(previous, center) > 0.05f &&
+            Collision::StepClear(verified, previous.worldX, previous.worldY, center.worldX, center.worldY)) {
+            result.points[result.count++] = center;
+            travelled = Distance(previous, center);
+            previous = center;
+        }
         int previousX = 0;
         int previousY = 0;
         for (int step = 0; step < 32; ++step) {
@@ -348,14 +361,17 @@ private:
         }
         Queue(index, *node);
     }
-    void DiscardStale()
+    bool DiscardStale()
     {
+        size_t discarded = 0;
         while (!open_.empty()) {
             const auto& entry = open_.top();
             const auto found = nodes_.find(entry.index);
-            if (found != nodes_.end() && found->second.version == entry.version) break;
+            if (found != nodes_.end() && found->second.version == entry.version) return true;
+            if (discarded++ == 256) return false;
             open_.pop();
         }
+        return true;
     }
     void BuildLimitedCorridor()
     {

@@ -43,10 +43,21 @@ for test in ("nav_collision_tests", "nav_speed_tests", "nav_map_memory_tests", "
         binary = Path(directory) / test
         subprocess.run([
             os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-pthread",
+            *(["-O2"] if test == "nav_router_tests" else []),
             "-I", str(internal / "src"), str(internal / f"tests/{test}.cpp"),
             "-o", str(binary),
         ], check=True)
         subprocess.run([str(binary)], check=True)
+
+with tempfile.TemporaryDirectory(prefix="nav-runtime-tests-") as directory:
+    binary = Path(directory) / "nav_runtime_tests"
+    subprocess.run([
+        os.environ.get("CXX", "c++"), "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror", "-pthread",
+        "-DNAV_RUNTIME_TEST_TIMING", "-I", str(internal / "tests/nav_runtime_shim"), "-I", str(internal / "src"),
+        str(internal / "tests/nav_runtime_tests.cpp"), str(internal / "src/features/movement/nav/Runtime.cpp"),
+        "-o", str(binary),
+    ], check=True)
+    subprocess.run([str(binary)], check=True)
 
 # Enemy snapshot rules, the render/game-thread snapshot hand-off and the lock policy.
 with tempfile.TemporaryDirectory(prefix="enemy-tracker-tests-") as directory:

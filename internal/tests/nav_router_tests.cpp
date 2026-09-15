@@ -183,6 +183,22 @@ void StructuralUnknownIsAdvisory()
     Check(memory.GetCell(3, 1).structure.state == Nav::StructuralState::Unknown,
           "router optimism does not invent confirmed empty observations");
 }
+
+void OffCenterCorner()
+{
+    Nav::MapMemory memory;
+    Nav::Router router;
+    memory.Reset(9, 5, 5);
+    for (int row = 0; row < 5; ++row)
+        for (int column = 0; column < 5; ++column)
+            Ground(memory, 9, column, row, (row == 1 && column >= 1 && column <= 3) ||
+                (column == 3 && row >= 1 && row <= 3) ? 0 : Tiles::kTileBlocked);
+    Transfer(memory, router);
+    router.SetGoal(9, 10, {2.81f, 1.78f}, {3.5f, 3.5f});
+    Repair(router);
+    const auto corridor = router.Corridor();
+    Check(corridor.count >= 2, "off-center corridor turn first offers a safe cell-center anchor");
+}
 }
 
 int main()
@@ -193,5 +209,6 @@ int main()
     DoorRepairAndEpoch();
     BudgetAndSpeed();
     StructuralUnknownIsAdvisory();
+    OffCenterCorner();
     std::printf("Global router tests: %d checks, 0 failures\n", checks);
 }
