@@ -214,6 +214,61 @@ describe('Oryx progression', () => {
 });
 
 describe('Oryx terrain navigation', () => {
+  it.each([
+    ['upper', false], ['lower', false], ['upper', true], ['lower', true],
+  ])('rushes the %s Wine Cellar corridor past enemies (partial reveal: %s)', (spawn, partial) => {
+    const f = fixture('Wine Cellar');
+    f.sdk.world.getSize = () => ({ width: 41, height: 41 });
+    const floorCells = new Set<string>();
+    for (const height of [3, 37, 20]) {
+      for (let column = 3; column <= 36; column++) floorCells.add(`${column},${height}`);
+    }
+    for (let row = 3; row <= 37; row++) floorCells.add(`3,${row}`);
+    const allTiles = Array.from({ length: 41 * 41 }, (_, index) => {
+      const column = index % 41, row = Math.floor(index / 41);
+      return { position: { x: column + 0.5, y: row + 0.5 }, isBlocking: !floorCells.has(`${column},${row}`) };
+    });
+    const revealed = new Set<any>();
+    f.sdk.world.tiles.getAt = (column: number, row: number) =>
+      allTiles.find(tile => Math.floor(tile.position.x) === Math.floor(column)
+        && Math.floor(tile.position.y) === Math.floor(row));
+    f.state.position = { x: 36.5, y: spawn === 'upper' ? 3.5 : 37.5 };
+    const boss = enemy('Oryx the Mad God 2', 20, 32.5, 20.5);
+    for (let tick = 0; tick < 80; tick++) {
+      for (const tile of allTiles) {
+        if (!partial || Math.hypot(tile.position.x - f.state.position.x, tile.position.y - f.state.position.y) <= 9)
+          revealed.add(tile);
+      }
+      f.state.tiles = [...revealed];
+      f.state.enemies = [enemy('Henchman of Oryx', 11, f.state.position.x, f.state.position.y)];
+      if (!partial || f.sdk.self.distanceTo(boss.position) <= 16) f.state.enemies.push(boss);
+      f.sdk.dodge.navigateToPosition.mockClear();
+      f.runner.tick(tick * 500);
+      expect(f.sdk.combat.aimAt).not.toHaveBeenCalledWith(11);
+      expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(11);
+      if (f.sdk.combat.aimAt.mock.calls.some(([objectId]: [number]) => objectId === 20)) break;
+      const next = f.sdk.dodge.navigateToPosition.mock.calls.at(-1)?.[0];
+      expect(next).toBeDefined();
+      expect(floorCells.has(`${Math.floor(next.x)},${Math.floor(next.y)}`)).toBe(true);
+      if (tick === 0) expect(next.x).toBeLessThan(36.5);
+      f.state.position = { ...next };
+    }
+    expect(f.sdk.combat.aimAt).toHaveBeenLastCalledWith(20);
+    expect(f.farmer.handleLoot).not.toHaveBeenCalled();
+  });
+  it('routes to observed O2 beyond encounter range instead of the generic map hint', () => {
+    const f = fixture('Wine Cellar'); floor(f, 80, 1);
+    f.state.position = { x: 40.5, y: 0.5 };
+    f.state.enemies = [enemy('Oryx the Mad God 2', 20, 10.5, 0.5)];
+    f.runner.tick(0);
+    expect(f.sdk.dodge.navigateToPosition.mock.calls.at(-1)?.[0].x).toBeLessThan(40.5);
+  });
+  it('keeps clearing required Sanctuary room enemies', () => {
+    const f = fixture("Oryx's Sanctuary"); floor(f, 10, 1);
+    f.state.enemies = [enemy('Oryx Minister', 11, 4.5, 0.5)];
+    f.runner.tick(0);
+    expect(f.sdk.combat.aimAt).toHaveBeenLastCalledWith(11);
+  });
   it('takes the long corridor around a wall instead of cutting directly toward O2', () => {
     const f = fixture('Wine Cellar'); floor(f, 12, 12);
     f.state.position = { x: 10.5, y: 0.5 };
