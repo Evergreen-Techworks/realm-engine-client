@@ -31,6 +31,7 @@
 #include "PJDodge.h"
 #include "features/movement/udodge/UDodge.h"
 #include "features/movement/udodge/UDodgeSensors.h"
+#include "features/movement/nav/Collision.h"
 #include "SpeedHack.h"
 #include <string>
 #include <cctype>
@@ -292,7 +293,8 @@ namespace {
             FH_FLOAT("udodgeServerAnchorY", UDodge::SetServerAnchorY),
             FH_INT_BOOL("udodgeServerAnchorValid", UDodge::SetServerAnchorValid),
             FH_TEXT("udodgePacketShot", UDodge::Sensors::RecordPacketShot),
-            FH_TEXT("udodgeAoePacket", UDodge::Sensors::RecordAoePacket)
+            FH_TEXT("udodgeAoePacket", UDodge::Sensors::RecordAoePacket),
+            FH_TEXT("navCollisionRule", Movement::Collision::SetRuleText)
         };
         return ApplyFeatureTable(f, h, sizeof(h) / sizeof(h[0]));
     }
