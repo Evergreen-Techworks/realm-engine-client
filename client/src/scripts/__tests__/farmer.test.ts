@@ -31,6 +31,59 @@ function fixture() {
   return { farmer, sdk, quest, setEnemies: (value: any[]) => { enemies = value; } };
 }
 afterEach(() => vi.useRealTimers());
+it('abandons only the matching unreachable travel goal and does not immediately select it again', () => {
+  const { farmer, sdk, quest } = fixture();
+  sdk.dodge.navigateToPosition.mockReturnValue(true);
+  farmer.questGoal = quest;
+  farmer.navigateToPosition(quest.position);
+  farmer.handleNavigationStatus({ state: 'partial', position: quest.position, reason: 'frontier' });
+  expect(farmer.questGoal).toBe(quest);
+  farmer.handleNavigationStatus({ state: 'unreachable', position: { x: 100, y: 100 }, reason: 'stuck' });
+  expect(farmer.questGoal).toBe(quest);
+  farmer.handleNavigationStatus({ state: 'unreachable', position: quest.position, reason: 'stuck' });
+  expect(farmer.questGoal).toBeNull();
+  expect(farmer.getQuestGoal(Date.now())).toBeNull();
+  expect(farmer.navigateToPosition(quest.position)).toBe(false);
+  farmer.resetMap('Other');
+  expect(farmer.navigateToPosition(quest.position)).toBe(true);
+});
+it('keeps unrelated encounter ownership and unsubscribes navigation on reset and stop', () => {
+  const { farmer, sdk, quest } = fixture();
+  const unsubscribe = vi.fn();
+  sdk.dodge.onNavigationStatus = vi.fn(() => unsubscribe);
+  farmer.subscribeNavigation();
+  farmer.questGoal = quest;
+  farmer.navigateToPosition(quest.position);
+  const otherBoss = { objectId: 99, position: { x: 40, y: 40 } };
+  farmer.bossEncounter = otherBoss;
+  farmer.handleNavigationStatus({ state: 'unreachable', position: quest.position, reason: 'map_changed' });
+  expect(farmer.bossEncounter).toBe(otherBoss);
+  expect(farmer.canNavigate(quest.position)).toBe(true);
+  farmer.resetMap('Other');
+  expect(unsubscribe).toHaveBeenCalledOnce();
+  expect(sdk.dodge.onNavigationStatus).toHaveBeenCalledTimes(2);
+  farmer.onStop();
+  expect(unsubscribe).toHaveBeenCalledTimes(2);
+});
+it('does not reacquire an unreachable event boss in the next farming loop', () => {
+  const { farmer, sdk, quest, setEnemies } = fixture();
+  Object.assign(quest, { isEventBoss: true });
+  sdk.self.getLevel = () => 20;
+  sdk.world.objects.getAll = () => [quest];
+  setEnemies([quest]);
+  farmer.eventGoal = quest;
+  farmer.bossEncounter = { ...quest };
+  farmer.centerTripDone = true;
+  farmer.navigateToPosition(quest.position);
+  farmer.handleNavigationStatus({ state: 'unreachable', position: quest.position, reason: 'stuck' });
+  sdk.dodge.lockEnemy.mockClear();
+  sdk.dodge.navigateToPosition.mockClear();
+  farmer.onLoop();
+  expect(farmer.eventGoal).toBeNull();
+  expect(farmer.bossEncounter).toBeNull();
+  expect(sdk.dodge.lockEnemy).not.toHaveBeenCalled();
+  expect(sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+});
 it.each(['invulnerable', 'missing'])('keeps event boss priority through brief %s phases instead of chasing unrelated adds', (phase) => {
   vi.useFakeTimers(); vi.setSystemTime(10000);
   const fixtureState = fixture();

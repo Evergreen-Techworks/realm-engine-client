@@ -11,8 +11,24 @@
 #include "LocalPlayer.h"
 
 #include <cstdio>
+#include <cstring>
 
 namespace IpcMessages {
+
+int BuildNavStatus(char* buf, int bufSize, const char* goalKind, uint64_t goalId, uint64_t generation, const char* state, const char* reason)
+{
+    if (!goalKind || !state || !reason || !goalId || goalId > 9007199254740991ULL || generation > 9007199254740991ULL) return -1;
+    if (strcmp(goalKind, "point") && strcmp(goalKind, "ring")) return -1;
+    if (strcmp(state, "routing") && strcmp(state, "arrived") && strcmp(state, "partial") && strcmp(state, "unreachable")) return -1;
+    if (strlen(reason) > 128) return -1;
+    for (const char* cursor = reason; *cursor; ++cursor) {
+        if ((*cursor < 'a' || *cursor > 'z') && *cursor != '_') return -1;
+    }
+    const int length = snprintf(buf, bufSize,
+        "{\"type\":\"navStatus\",\"goalKind\":\"%s\",\"goalId\":%llu,\"generation\":%llu,\"state\":\"%s\",\"reason\":\"%s\"}",
+        goalKind, static_cast<unsigned long long>(goalId), static_cast<unsigned long long>(generation), state, reason);
+    return length >= 0 && length < bufSize ? length : -1;
+}
 
 int BuildHello(char* buf, int bufSize)
 {

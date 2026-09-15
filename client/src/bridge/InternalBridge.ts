@@ -20,6 +20,7 @@ import { EventEmitter } from 'events';
 import { BRIDGE, DllMessageType } from './contract.js';
 import { decodeThreatPayload, publishDllThreats } from './DllThreatBus.js';
 import { decodeAimPayload, publishDllAim } from './DllAimBus.js';
+import { decodeNavigationStatus, publishNavigationStatus } from './DllNavigationBus.js';
 
 const PIPE_PATH = BRIDGE.DEV_PIPE_NAME;
 
@@ -143,7 +144,7 @@ export class InternalBridge extends EventEmitter {
     const valueType: 'b' | 'n' | 's'
       = typeof value === 'boolean' ? 'b' : (typeof value === 'number' ? 'n' : 's');
     const msg: DllMessage = { type: DllMessageType.SetFeature, key, valueType, value };
-    if (key !== 'internalUnloadDll') {
+    if (key !== 'internalUnloadDll' && key !== 'scriptNavigationGoal') {
       this.lastSentFeatures.set(key, { ...msg });
     }
     this.send(msg);
@@ -268,6 +269,11 @@ export class InternalBridge extends EventEmitter {
       case DllMessageType.Aim:
         this.handleAim(msg);
         break;
+      case DllMessageType.NavStatus: {
+        const status = decodeNavigationStatus(msg);
+        if (this.connected && status) publishNavigationStatus(status);
+        break;
+      }
       default:
         // Forward any other state/entity message to listeners.
         this.emit('message', msg);
