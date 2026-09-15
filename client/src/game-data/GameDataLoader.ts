@@ -14,8 +14,9 @@ export interface ProjectileDef {
   damage: number;
   speed: number;
   lifetimeMs: number;
-  /** Collision radius in tiles (scaled from XML <Size>, base 0.15 at size 100). */
+  /** Legacy visual-size radius estimate in tiles (base 0.15 at size 100). */
   hitRadius: number;
+  collisionHalf: number;
   armorPiercing: boolean;
   multiHit: boolean;
   passesCover: boolean;
@@ -484,6 +485,9 @@ export class GameDataLoader {
           const rawSize = Number(proj.Size ?? 100);
           const size = Number.isFinite(rawSize) && rawSize > 0 ? rawSize : 100;
           const hitRadius = 0.15 * (size / 100);
+          const rawCollisionMult = Number(proj.CollisionMult ?? 1);
+          const collisionHalf = Number.isFinite(rawCollisionMult) && rawCollisionMult > 0 && rawCollisionMult <= 20
+            ? rawCollisionMult * 0.5 : 0.5;
 
           const conditionEffects: { effect: string; durationSec: number }[] = [];
           if (proj.ConditionEffect) {
@@ -507,6 +511,7 @@ export class GameDataLoader {
             speed: Number(proj.Speed ?? 0),
             lifetimeMs: Number(proj.LifetimeMS ?? 0),
             hitRadius,
+            collisionHalf,
             armorPiercing: proj.ArmorPiercing !== undefined,
             multiHit: proj.MultiHit !== undefined,
             passesCover: proj.PassesCover !== undefined,
