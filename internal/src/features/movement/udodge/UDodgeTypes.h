@@ -18,6 +18,7 @@ constexpr int   kStandCandidate  = 0;
 constexpr int   kFieldCandidate  = kDirectionCount + 2;   // 34
 constexpr int   kCandidateCount  = kDirectionCount + 3;   // 35
 constexpr float kTwoPi           = 6.28318530717958647692f;
+constexpr float kUMaxProjectileHalf = 16.f;
 
 // ── Map capacities (fixed buffers — zero per-frame heap allocation) ─────────
 // Dense exaltation/O3 patterns can exceed the old 96-shot buffer. Overflow was

@@ -159,7 +159,7 @@ bool PointClear(const MapInput& in, Vec2 pos)
     const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
-        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale;
+        const float half = std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * hitScale;
         if (LaneDistCheb(L, pos) <= half) return false;
     }
     for (int i = 0; i < in.map->zoneCount; ++i) {
@@ -178,7 +178,7 @@ float PointClearance(const MapInput& in, Vec2 pos)
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
         if (L.instantCount <= 0) continue;
-        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale;
+        const float half = std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * hitScale;
         best = std::min(best, LaneDistCheb(L, pos) - half);
     }
     for (int i = 0; i < in.map->zoneCount; ++i) {
@@ -287,7 +287,7 @@ float PointSafety(const MapInput& in, Vec2 pos)
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
         if (L.instantCount <= 0) continue;
-        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + laneHalf;
+        const float half = std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * hitScale + laneHalf;
         // Exact pruning: a lane can only lower `best` if its distance is below
         // best + half; the slack keeps the float subtraction below on the same
         // side of `best` as the unpruned loop (see kPruneSlackTiles).
@@ -325,7 +325,7 @@ float SegmentSafety(const MapInput& in, Vec2 a, Vec2 b)
         const LaneThreat& L = in.map->lanes[i];
         const int n = L.instantCount;   // PAINT span, same as LaneDistCheb
         if (n <= 0) continue;
-        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + laneHalf;
+        const float half = std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * hitScale + laneHalf;
         float dCheb;
         if (n == 1) {
             // Point lane: min Cheb from the single bullet point to the swept segment.
@@ -509,7 +509,7 @@ void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2
             if (dt > 1e-3f)
                 maxSpeed = std::max(maxSpeed, Len(Sub(L.points[j], L.points[j - 1])) / dt);
         }
-        const float hitHalf = std::clamp(L.hitHalf, 0.05f, 2.5f) * scale + std::max(playerHalf, 0.f) +
+        const float hitHalf = std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * scale + std::max(playerHalf, 0.f) +
                               std::clamp(positionUncertainty, 0.f, 0.35f);
         const float timingPad = kUArrivalMargin + std::min(maxSpeed * kUPredErrMs, kUPredPadMaxTiles);
         // Euclidean broad phase encloses the complete Chebyshev hit square.
