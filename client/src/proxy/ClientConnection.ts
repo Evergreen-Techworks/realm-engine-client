@@ -8,8 +8,7 @@ import { PlayerData } from '../state/PlayerData.js';
 import { Logger } from '../util/Logger.js';
 import type { Proxy } from './Proxy.js';
 import { initialAdmission, reduceAdmission, type AdmissionEvent } from './ConnectionAdmission.js';
-
-let admissionGeneration = 0;
+import { RecoveryCoordinator } from './RecoveryCoordinator.js';
 
 const CLIENT_KEY = '5a4d2016bc16dc64883194ffd9';
 const SERVER_KEY = 'c91d9eec420160730d825604e0';
@@ -47,8 +46,15 @@ export class ClientConnection {
 
   state!: State;
   admission = initialAdmission();
+  readonly recovery: RecoveryCoordinator;
   lastAttemptedPortalId: number | null = null;
   private admissionMapReceived = false;
+
+  private beginAdmissionGeneration(): void {
+    this.updateAdmission({ type: 'begin', generation: this.recovery.beginGeneration() });
+    this.admissionMapReceived = false;
+    this.lastAttemptedPortalId = null;
+  }
 
   updateAdmission(event: AdmissionEvent): void {
     this.admission = reduceAdmission(this.admission, event);
@@ -57,17 +63,29 @@ export class ClientConnection {
 
   private observeAdmissionPacket(packet: Packet, isClient: boolean): void {
     const generation = this.admission.generation;
+    if (isClient && packet.name === 'LOAD' && this.admission.phase === 'loaded') {
+      this.beginAdmissionGeneration();
+      this.admissionMapReceived = true;
+    }
     if (isClient && packet.name === 'QUEUECANCEL') {
       this.updateAdmission({ type: 'cancel', generation });
+      this.recovery.cancelEscape(generation);
       this.cancelTransportRetry();
+    }
+    if (!isClient && packet.name === 'FAILURE') {
+      this.updateAdmission({ type: 'terminal', generation, reason: 'server-rejection-unknown' });
+      this.recovery.cancelEscape(generation);
     }
     if (isClient || !packet.isDefined) return;
     if (packet.name === 'QUEUEMESSAGE') this.updateAdmission({ type: 'queue', generation, position: packet.data.curPos as number });
-    if (packet.name === 'FAILURE') this.updateAdmission({ type: 'terminal', generation, reason: 'server-rejection-unknown' });
-    if (packet.name === 'MAPINFO') this.admissionMapReceived = true;
-    if (packet.name === 'CREATESUCCESS' && this.admissionMapReceived) this.updateAdmission({ type: 'map-loaded', generation });
+    if (packet.name === 'MAPINFO' && !['terminal', 'cancelled', 'dead', 'disconnected'].includes(this.admission.phase)) {
+      this.beginAdmissionGeneration();
+      this.admissionMapReceived = true;
+    }
+    if (packet.name === 'CREATESUCCESS' && this.admissionMapReceived) this.updateAdmission({ type: 'map-loaded', generation: this.admission.generation });
     if (packet.name === 'DEATH') {
       this.updateAdmission({ type: 'death', generation });
+      this.recovery.cancelEscape(generation);
       this.cancelTransportRetry();
     }
   }
@@ -138,6 +156,12 @@ export class ClientConnection {
     private proxy: Proxy,
     clientSocket: net.Socket,
   ) {
+    this.recovery = new RecoveryCoordinator({
+      isConnected: () => !this.closed && this.serverSocket !== null && !this.serverSocket.destroyed && !this.serverConnecting,
+      sendEscape: () => this.sendToServer(this.proxy.packetFactory.createByName('ESCAPE')),
+      schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+      cancel: timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
+    });
     this.clientSocket = clientSocket;
     this.clientSocket.setNoDelay(true);
     this.clientSocket.on('data', (data) => this.onClientData(data));
@@ -165,9 +189,10 @@ export class ClientConnection {
 
   /** Connect to the real game server. Called by ReconnectHandler after HELLO. */
   connectToServer(helloPacket: Packet): void {
-    this.updateAdmission({ type: 'begin', generation: ++admissionGeneration });
-    this.admissionMapReceived = false;
-    this.lastAttemptedPortalId = null;
+    if (this.closed) return;
+    this.beginAdmissionGeneration();
+    if (this._closeAfterFailureTimer) clearTimeout(this._closeAfterFailureTimer);
+    this._closeAfterFailureTimer = null;
     // A HELLO from the game starts fresh; the proxy's own retries keep their counts.
     this._helloRetryCount = 0;
     this._silentRetryCount = 0;
@@ -209,7 +234,9 @@ export class ClientConnection {
     this.serverSocket = socket;
     socket.setNoDelay(true);
 
-    socket.on('data', (data) => this.onServerData(data));
+    socket.on('data', (data) => {
+      if (!this.closed && this.serverSocket === socket) this.onServerData(data);
+    });
     socket.on('error', (err) => {
       if (this.onServerEnded(socket, (err as NodeJS.ErrnoException).code ?? err.message)) return;
       this.onError('server', err);
@@ -224,6 +251,7 @@ export class ClientConnection {
     Logger.debug('reconnect', 'Client', `HELLO key being sent (${Buffer.isBuffer(key) ? key.length : 0} bytes): ${Buffer.isBuffer(key) ? key.toString('hex').slice(0, 80) : typeof key}`);
 
     this.serverSocket.connect(this.state.conTargetPort, this.state.conTargetAddress, () => {
+      if (this.closed || this.serverSocket !== socket) return;
       this.serverConnectedAt = Date.now();
       Logger.log('Client', `Connected to ${this.state.conTargetAddress}:${this.state.conTargetPort}`);
       this.serverConnecting = false;
@@ -352,6 +380,11 @@ export class ClientConnection {
 
   /** Send a packet to the game client. */
   sendToClient(packet: Packet): void {
+    if (packet.name === 'RECONNECT' && this.connected) {
+      this.recovery.acceptReconnect(this.admission.generation);
+      this.cancelTransportRetry();
+      this.proxy.authorizeReconnect(this);
+    }
     this.send(packet, true);
   }
 
@@ -402,6 +435,7 @@ export class ClientConnection {
   /** Clean up both connections. */
   dispose(): void {
     if (this.closed) return;
+    this.recovery.dispose();
     this.updateAdmission({ type: 'disconnect', generation: this.admission.generation });
     Logger.debug('proxy', 'Client', `[DIAG-dispose] called — stack: ${(new Error().stack ?? '').split('\n').slice(1, 5).join(' | ').trim()}`);
     this.closed = true;

@@ -69,6 +69,7 @@ export class ReconnectHandler {
   }
 
   private onHello(client: ClientConnection, packet: Packet): void {
+    if (!client.connected) return;
     // Unblock the injected DLL's Load() — the DLL waits on this event before
     // calling Run() so the overlay/menu/hooks only come online after the
     // client has actually reached the in-game HELLO handshake.
@@ -174,6 +175,9 @@ export class ReconnectHandler {
   }
 
   private onReconnect(client: ClientConnection, packet: Packet): void {
+    if (!client.connected || ['cancelled', 'dead', 'terminal', 'disconnected'].includes(client.admission.phase)) return;
+    client.recovery.acceptReconnect(client.admission.generation);
+    this.proxy.authorizeReconnect(client);
     // Log all parsed fields for debugging
     const host = packet.data.host as string;
     const port = packet.data.port as number;
