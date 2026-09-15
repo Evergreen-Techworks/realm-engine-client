@@ -535,7 +535,7 @@ export class PluginManager {
         };
       }
 
-      const registerResult = module.register(context);
+      const registerResult = await module.register(context);
       const userCleanup: UserPluginCleanup | null =
         context instanceof UserPluginContext && typeof registerResult === 'function'
           ? (registerResult as UserPluginCleanup)
