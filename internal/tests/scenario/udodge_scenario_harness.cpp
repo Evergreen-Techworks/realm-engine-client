@@ -35,6 +35,10 @@
 #include "DangerPlanner.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
+#if __has_include("features/combat/enemytracker/LockLiveness.h")
+#include "features/combat/enemytracker/LockLiveness.h"
+#define HARNESS_LOCK_LIVENESS 1
+#endif
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
 #include "features/movement/sensors/TileSensor.h"
@@ -306,6 +310,8 @@ uint8_t ViewFlags(int tx, int ty)
 Movement::TileSensor::HazardMemo g_memo;
 uint32_t g_mapBulletVersion = 0;
 
+std::vector<EnemyTracker::Entry> g_snapshot;   // EnemyTracker::GetSnapshot (RefreshSnapshot fills it)
+
 void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s)
 {
     const World& w = *g_world;
@@ -351,7 +357,9 @@ void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s)
             b.radius = (!e.healthBar || e.scenery) ? 0.5f : 0.8f;
             b.passiveScenery = !e.healthBar || e.scenery;
         }
+#ifndef HARNESS_LOCK_LIVENESS
         if (lock != 0 && e.id == lock) { out.hasLock = true; out.lockId = e.id; out.lockPos = { e.x, e.y }; }
+#endif
         // RebuildZones: enemy-centred keep-outs (hard-coded Brawler, plus learned ones where the tree has them).
 #ifdef HARNESS_TREE_BURST
         EnemyHazards::Append(out, e.type, (e.hp > 0 || e.invuln) ? 1 : 0, { e.x, e.y }, { playerX, playerY },
@@ -362,9 +370,15 @@ void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s)
         EnemyHazards::Append(out, e.type, e.hp, { e.x, e.y }, { playerX, playerY });
 #endif
     }
+#ifdef HARNESS_LOCK_LIVENESS
+    // Line-for-line UDodgeSensors.cpp PopulateEnemies: the lock is EnemyTracker's answer.
+    const EnemyTracker::LockInfo lockInfo = EnemyTracker::ResolveLock(g_snapshot, lock);
+    if (EnemyTracker::Engages(lockInfo)) {
+        out.hasLock = true; out.lockId = lockInfo.id; out.lockPos = { lockInfo.x, lockInfo.y };
+    }
+#endif
 }
 
-std::vector<EnemyTracker::Entry> g_snapshot;
 void RefreshSnapshot()
 {
     g_snapshot.clear();

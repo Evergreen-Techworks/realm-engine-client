@@ -19,6 +19,7 @@
 #include "DangerPlanner.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
+#include "features/combat/enemytracker/LockLiveness.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
 #include "gui/tabs/CameraTAB.h"
@@ -544,7 +545,7 @@ void UpdateAutopilotLock(bool autopilotOn)
     for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot()) {
         if (!e.hasHealthBar) continue;   // walls / destructibles — not a fight target
         if (e.isInvulnerable) continue;  // <Invincible/> — untargetable / undamageable
-        if (e.hp <= 0) continue;         // dead / despawning
+        if (!EnemyTracker::EntryAlive(e)) continue;   // dead / despawning (LockLiveness.h)
         if (e.maxHp <= 0) continue;
         if (e.maxHp > bestMaxHp) { bestMaxHp = e.maxHp; bestId = e.id; }
     }

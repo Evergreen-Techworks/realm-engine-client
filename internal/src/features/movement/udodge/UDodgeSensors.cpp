@@ -13,6 +13,7 @@
 #include "DiagTiming.h"
 #include "DangerPlanner.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
+#include "features/combat/enemytracker/LockLiveness.h"
 #include "features/movement/nav/Collision.h"
 #include "features/movement/sensors/TileSensor.h"
 #include "gui/tabs/TestTAB.h"
@@ -910,13 +911,13 @@ void PopulateEnemies(DangerMap& out, float playerX, float playerY)
                 }
             }
         }
-        // Lock the enemy the USER locked on (Shift+Click), only while it is ALIVE.
-        // Not range-culled, so we keep orbit range to a far locked boss. Dead
-        // (hp<=0) / despawned (absent) / unlocked (userLockId==0) ⇒ never matched
-        // ⇒ hasLock stays false ⇒ pure assist.
-        if (userLockId != 0 && e.id == userLockId && e.hp > 0 && IsFinitePoint(e.x, e.y)) {
-            out.hasLock = true; out.lockId = e.id; out.lockPos = { e.x, e.y };
-        }
+    }
+    // The lock the user or script set, while EnemyTracker says it is still a fight
+    // (LockLiveness.h). Not range-culled, so a far locked boss keeps its orbit range.
+    // Gone or unlocked ⇒ hasLock stays false ⇒ pure assist.
+    const EnemyTracker::LockInfo lock = EnemyTracker::GetLock(userLockId);
+    if (EnemyTracker::Engages(lock)) {
+        out.hasLock = true; out.lockId = lock.id; out.lockPos = { lock.x, lock.y };
     }
 }
 
