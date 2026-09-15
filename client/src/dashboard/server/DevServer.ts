@@ -38,6 +38,7 @@ import {
 } from './AccountService.js';
 import { GameLauncher } from './GameLauncher.js';
 import { BUNDLED_PLUGIN_DEFAULTS_FILE, PluginConfigService } from './PluginConfigService.js';
+import { DASHBOARD_BIND_HOST, isDashboardRequest } from './loopbackGuard.js';
 
 // ── Debug logging ─────────────────────────────────────────────────────────────
 // Gated behind the 'accounts' debug channel (see util/DebugManager.ts). OFF by
@@ -590,11 +591,25 @@ export class DevServer {
       Logger.warn('DevServer', `Failed to load servers.json: ${(err as Error).message}`);
     }
 
-    // HTTP server for static files
-    this.httpServer = http.createServer((req, res) => this.handleHttp(req, res));
+    // HTTP server for static files. Every route and the WebSocket upgrade answer
+    // only the dashboard's own loopback requests (loopbackGuard.ts).
+    this.httpServer = http.createServer((req, res) => {
+      if (!isDashboardRequest(req, this.boundPort())) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Forbidden');
+        return;
+      }
+      this.handleHttp(req, res);
+    });
 
     // WebSocket server for real-time packet streaming
-    this.wss = new WebSocketServer({ server: this.httpServer });
+    this.wss = new WebSocketServer({
+      server: this.httpServer,
+      verifyClient: (info, done) => {
+        if (isDashboardRequest(info.req, this.boundPort())) done(true);
+        else done(false, 403, 'Forbidden');
+      },
+    });
     this.wss.on('connection', (ws) => this.handleWsConnection(ws));
 
     // Subscribe to dashboard-only plugin logs
@@ -1055,7 +1070,7 @@ export class DevServer {
       }
       process.exit(1);
     });
-    this.httpServer.listen(port, () => {
+    this.httpServer.listen(port, DASHBOARD_BIND_HOST, () => {
       Logger.log('Startup', `launch=${process.env.REALM_ENGINE_LAUNCH_ID ?? process.pid} process=proxy stage=dashboard-ready elapsedMs=${performance.now().toFixed(1)}`);
       Logger.log('DevServer', `Dashboard available at http://localhost:${port}`);
       void this.applyExaltTuneOnProxyStartMaybe().finally(() => {
@@ -1067,6 +1082,12 @@ export class DevServer {
         });
       });
     });
+  }
+
+  /** The port actually listened on (start() may be given 0); -1 before listening. */
+  private boundPort(): number {
+    const address = this.httpServer.address();
+    return address && typeof address === 'object' ? address.port : -1;
   }
 
   trimProxyMemorySmart(opts: TrimProxySmartOptions): void {

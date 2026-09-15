@@ -14,7 +14,12 @@ process.env.REALM_ENGINE_LAUNCH_ID = startupLaunchId;
 const APP_NAME = 'Realm Engine';
 const APP_USER_MODEL_ID = 'com.realmengine.app';
 const DASHBOARD_PORT = 4440;
+// The window keeps the localhost origin its localStorage lives under (Chromium
+// falls back from ::1 to 127.0.0.1 by itself). The dashboard listens on
+// 127.0.0.1 only, so the main-process readiness probe names that address
+// rather than depending on how Node resolves localhost.
 const DASHBOARD_URL = 'http://localhost:' + DASHBOARD_PORT;
+const DASHBOARD_PROBE_URL = 'http://127.0.0.1:' + DASHBOARD_PORT;
 const PROXY_STARTUP_TIMEOUT = 60000;
 const POLL_INTERVAL = 500;
 
@@ -338,7 +343,7 @@ async function waitForDashboardAndLoad() {
     }
 
     try {
-      const resp = await fetch(DASHBOARD_URL);
+      const resp = await fetch(DASHBOARD_PROBE_URL);
       if (resp.ok) {
         setLoadingStatus('Loading dashboard...');
         // Small delay so user sees the status change
