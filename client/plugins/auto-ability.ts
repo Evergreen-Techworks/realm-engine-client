@@ -5,17 +5,18 @@ import { automaticAbilityPaused } from './api.js';
 // same proven mechanism auto-drink uses for potions). Point-aimed classes fire
 // at the nearest enemy; self/area classes use the same MP reserve gate.
 const ABILITY_SLOT = 1;
-// Self-buffs last a few seconds and have a usage cooldown; re-casting every
-// tick spams past that cooldown and eventually crashes the game. Fixed
-// intervals avoid it without per-item cooldown bookkeeping.
-// Defaults for the configurable fire intervals. These are the minimum gap
-// between casts, not the item's real cooldown; there is no per-item cooldown
-// bookkeeping, so setting them too low spams the server.
+// Defaults for the configurable fire intervals: the minimum gap between casts
+// for every ability. An ability whose objects.xml entry has a <Cooldown> also
+// waits that long after its last use (ours or a manual press); the server
+// refuses a USEITEM inside that window.
 const DEFAULT_SELF_INTERVAL_MS = 2500;
 const DEFAULT_TARGET_INTERVAL_MS = 1000;
 const MIN_INTERVAL_MS = 250;
 const MAX_INTERVAL_MS = 10000;
 const MANUAL_PAUSE_MS = 3000;
+// Headroom over an item's <Cooldown> for send/receive jitter: the previous
+// cast may have reached the server later than this one will.
+const COOLDOWN_MARGIN_MS = 100;
 // Drop targets that haven't updated recently so we don't fire at a ghost
 // (a despawned/out-of-view enemy that auto-aim already ignores).
 const DEFAULT_TARGET_MAX_STALE_MS = 3000;
@@ -52,6 +53,16 @@ export function register(ctx: PluginContext) {
 
   const safeZone = new WeakMap<ClientConnection, boolean>();
   const nextAllowedAt = new WeakMap<ClientConnection, number>();
+  // Last use of each ability item type on this connection. There is no server
+  // acknowledgement of a USEITEM to key on, so the send time counts as the use:
+  // a refused cast still waits out the full cooldown. Keyed by item, so a
+  // swapped-in ability starts fresh while a swapped-back one keeps its wait.
+  const lastUseAt = new WeakMap<ClientConnection, Map<number, number>>();
+  function noteAbilityUse(client: ClientConnection, itemType: number, at: number): void {
+    let uses = lastUseAt.get(client);
+    if (!uses) { uses = new Map(); lastUseAt.set(client, uses); }
+    uses.set(itemType, at);
+  }
   let selfFiring = false;
 
   // New key intentionally does not inherit the old 85% floor from saved profiles.
@@ -118,15 +129,25 @@ export function register(ctx: PluginContext) {
     lastDiagnosticAt.set(client, now);
     ctx.log(`Auto Ability: ${reason}`);
   }
-  const abilityMetadata = new Map<number, { xml: string | undefined; movement: boolean; cost: number | null; invalidCost: boolean }>();
+  const abilityMetadata = new Map<number, {
+    xml: string | undefined; movement: boolean; cost: number | null; invalidCost: boolean;
+    cooldownMs: number | null; invalidCooldown: boolean;
+  }>();
   function metadata(itemType: number) {
     const xml = ctx.gameData?.getRawObjectXml(itemType);
     const cached = abilityMetadata.get(itemType);
     if (cached && cached.xml === xml) return cached;
     const rawCost = xml?.match(/<MpCost\b[^>]*>\s*([^<]*)\s*<\/MpCost>/i)?.[1];
     const cost = rawCost === undefined ? null : Number(rawCost.trim());
+    // <Cooldown> is in seconds. A few items carry more than one (nested under
+    // <Ability>); the longest is the one that can be violated.
+    const rawCooldowns = [...(xml ?? '').matchAll(/<Cooldown\b[^>]*>\s*([^<]*)\s*<\/Cooldown>/gi)].map((m) => m[1].trim());
+    const cooldowns = rawCooldowns.map((raw) => (raw ? Number(raw) : NaN));
+    const invalidCooldown = cooldowns.some((s) => !Number.isFinite(s) || s < 0);
+    const cooldownMs = cooldowns.length === 0 || invalidCooldown ? null : Math.ceil(Math.max(...cooldowns) * 1000);
     const result = { xml, movement: xml !== undefined && MOVEMENT_ACTIVATE_RE.test(xml), cost,
-      invalidCost: cost !== null && (!rawCost?.trim() || !Number.isFinite(cost) || cost < 0) };
+      invalidCost: cost !== null && (!rawCost?.trim() || !Number.isFinite(cost) || cost < 0),
+      cooldownMs, invalidCooldown };
     // Missing XML can become available after startup; do not cache that absence.
     if (xml !== undefined) abilityMetadata.set(itemType, result);
     return result;
@@ -171,7 +192,11 @@ export function register(ctx: PluginContext) {
   ctx.hookPacket('USEITEM', (client, packet) => {
     if (selfFiring) return;
     if (packet.data?.slotObject?.slotId === ABILITY_SLOT) {
-      nextAllowedAt.set(client, Date.now() + MANUAL_PAUSE_MS);
+      const now = Date.now();
+      nextAllowedAt.set(client, now + MANUAL_PAUSE_MS);
+      // The server starts the item's cooldown on this press too.
+      const itemType = Number(packet.data.slotObject.objectType ?? client.playerData?.inventory?.[ABILITY_SLOT]);
+      if (Number.isFinite(itemType) && itemType > 0) noteAbilityUse(client, itemType, now);
     }
   });
 
@@ -192,6 +217,7 @@ export function register(ctx: PluginContext) {
     const ability = metadata(itemType);
     if (ability.movement) { diagnose(client, 'movement ability excluded'); return; }
     if (ability.invalidCost) { diagnose(client, 'invalid ability MP cost in XML'); return; }
+    if (ability.invalidCooldown) { diagnose(client, 'invalid ability cooldown in XML'); return; }
     const maxMana = pd.effectiveMaxMana;
     const mana = pd.mana;
     if (!Number.isFinite(maxMana) || maxMana <= 0 || !Number.isFinite(mana) || mana < 0) {
@@ -207,6 +233,13 @@ export function register(ctx: PluginContext) {
     }
     const now = Date.now();
     if (now < (nextAllowedAt.get(client) ?? 0)) { diagnose(client, 'cooldown/manual-use pause'); return; }
+    if (ability.cooldownMs !== null) {
+      const readyAt = (lastUseAt.get(client)?.get(itemType) ?? -Infinity) + ability.cooldownMs + COOLDOWN_MARGIN_MS;
+      if (now < readyAt) {
+        diagnose(client, `ability ${itemType} cooling down (${readyAt - now} ms left of ${ability.cooldownMs} ms)`);
+        return;
+      }
+    }
     if (!Number.isFinite(pd.pos?.x) || !Number.isFinite(pd.pos?.y) || (pd.pos.x === 0 && pd.pos.y === 0)) {
       diagnose(client, 'player position unavailable'); return;
     }
@@ -247,6 +280,7 @@ export function register(ctx: PluginContext) {
     if (gameTime === null) { diagnose(client, 'waiting for the client game time (first MOVE of this map)'); return; }
     // Back off even if the transport throws, preventing retries every tick.
     nextAllowedAt.set(client, now + (isSelf ? selfIntervalMs : targetIntervalMs));
+    noteAbilityUse(client, itemType, now);
     try {
       sendUseAbility(client, usePos, itemType, gameTime);
       diagnose(client, `cast ${itemType} at (${usePos.x}, ${usePos.y}); MP ${mana}/${maxMana}; cost ${ability.cost ?? 'unknown'}`);
@@ -259,6 +293,7 @@ export function register(ctx: PluginContext) {
   ctx.on('clientDisconnected', (client) => {
     safeZone.delete(client);
     nextAllowedAt.delete(client);
+    lastUseAt.delete(client);
     lastDiagnosticAt.delete(client);
   });
 }
