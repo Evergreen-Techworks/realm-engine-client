@@ -38,7 +38,7 @@ inline void QueryPerformanceCounter(LARGE_INTEGER* p) {
         subprocess.run([str(binary)], check=True)
 
 # Navigation rebuild Stage 1 foundation: the game's collision rule and the speed model.
-for test in ("nav_collision_tests", "nav_speed_tests", "nav_map_memory_tests"):
+for test in ("nav_collision_tests", "nav_speed_tests", "nav_map_memory_tests", "nav_router_tests"):
     with tempfile.TemporaryDirectory(prefix=test + "-") as directory:
         binary = Path(directory) / test
         subprocess.run([
