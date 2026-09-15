@@ -49,6 +49,14 @@ int main()
     Check(Core::Temporal::PathClear(ctx, {}, in.speed, decision.target),
           "spatially clear candidate cannot bypass temporal veto");
 
+    goal.walkTo = true;
+    Solver::Solve(in, 1.f, goal, route, state, decision);
+    Check(decision.kind != Solver::SolveKind::Fallback,
+          "group waypoint with a safe alternative does not require exposed fallback");
+    Check(Core::Temporal::PathClear(ctx, {}, in.speed, decision.target),
+          "group waypoint cannot override a known projectile transit collision");
+    goal.walkTo = false;
+
     decision.kind = Solver::SolveKind::Safe;
     decision.shouldMove = true;
     decision.target = {1.f, 0.f};
