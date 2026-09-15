@@ -1,6 +1,7 @@
 #include "pch-il2cpp.h"
 
 #include "features/combat/autoaim/shoot/AimHooks.h"
+#include "features/combat/autoaim/shoot/ShootRuntime.h"
 #include "features/combat/autoaim/core/WeaponProfile.h"
 #include "GameState.h"
 #include "RuntimeOffsets.h"
@@ -17,9 +18,7 @@
 namespace {
 
 // ── IL2CPP method names ───────────────────────────────────────────────────────
-static const char* kPlayerClass   = "LKHPPBEGNOM";
 static const char* kShootClass    = "FKALGHJIADI";
-static const char* kCSAMethod     = "ELCBJAFBLJG"; // ComputeShootAngle
 static const char* kSWAMethod     = "EHGHCACPAGH"; // ShootWithAngle
 static const char* kSSPMethod     = "PMIANFBMMNN"; // SendShotPacket
 
@@ -44,14 +43,11 @@ static std::atomic<float>   s_kaY{ 0.f };
 static std::atomic<int32_t> s_kaTargetId{ 0 };
 
 // ── Hook function-pointer types ───────────────────────────────────────────────
-using ComputeShootAngleFn = void(__fastcall*)(void*, uint8_t, float*, bool*, bool, void*);
 using ShootWithAngleFn    = void(__fastcall*)(void*, float, void*);
 using SendShotPacketFn    = void(__fastcall*)(void*, void*, int32_t, void*);
 
-static ComputeShootAngleFn g_csaOrig = nullptr;
 static ShootWithAngleFn    g_swaOrig = nullptr;
 static SendShotPacketFn    g_sspOrig = nullptr;
-static void* g_csaTarget = nullptr;
 static void* g_swaTarget = nullptr;
 static void* g_sspTarget = nullptr;
 static bool  s_installed = false;
@@ -137,24 +133,6 @@ static void NoteAimSource()
 }
 
 // ── Detour implementations ────────────────────────────────────────────────────
-void __fastcall ComputeShootAngleDetour(
-    void* player, uint8_t slot, float* outAngle, bool* outCanShoot, bool boolArg, void* method)
-{
-    g_csaOrig(player, slot, outAngle, outCanShoot, boolArg, method);
-    if (!ShouldRedirect(player) || !outAngle) return;
-
-    float px = 0.f, py = 0.f;
-    __try {
-        uint8_t* lp = reinterpret_cast<uint8_t*>(player);
-        px = *reinterpret_cast<float*>(lp + RuntimeOffsets::PosX);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
-        py = *reinterpret_cast<float*>(lp + RuntimeOffsets::PosY);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
-    } __except (EXCEPTION_EXECUTE_HANDLER) { return; }
-
-    float newAngle = 0.f;
-    if (RedirectAngle(px, py, newAngle))
-        *outAngle = newAngle;
-}
-
 void __fastcall ShootWithAngleDetour(void* player, float angle, void* method)
 {
     if (ShouldRedirect(player)) {
@@ -182,12 +160,6 @@ void __fastcall ShootWithAngleDetour(void* player, float angle, void* method)
 // the next GC allocation's header, silently (Mem::TryWrite is SEH-guarded, so
 // it corrupted instead of faulting). The `Mem::AddrOk(shotData + 0x24)` probe
 // that "guarded" it only range-checked a pointer and always passed.
-//
-// It was also redundant. The redirect is carried entirely by the two clean
-// paths above — ComputeShootAngleDetour's `*outAngle` out-parameter and
-// ShootWithAngleDetour's by-value angle argument — and the game builds the shot
-// (and its packet) from that angle. `Mem::AddrOk(shotData) && projCount > 0`
-// survives only as an argument-plausibility gate on the facing write below.
 //
 // All that remains is Player_FacingAngle, which is table-resolved and correct
 // (RuntimeOffsets.cpp), and cosmetic: it turns the sprite to match the shot.
@@ -218,17 +190,13 @@ bool Install()
 {
     if (s_installed) return true;
 
-    // kPlayerClass / kShootClass are BeeByte-obfuscated tokens matched exactly
-    // (loose=false → Resolver::GetClass, identical to the prior local resolver).
-    g_csaTarget = Il2CppHook::ResolveMethod(kPlayerClass, kCSAMethod, 4, /*loose*/false);
+    if (!ShootRuntime::EnsureResolved()) return false;
     g_swaTarget = Il2CppHook::ResolveMethod(kShootClass,  kSWAMethod, 1, /*loose*/false);
     g_sspTarget = Il2CppHook::ResolveMethod(kShootClass,  kSSPMethod, 2, /*loose*/false);
-    if (!g_csaTarget || !g_swaTarget || !g_sspTarget) return false;
+    if (!g_swaTarget || !g_sspTarget) return false;
 
     if (!Il2CppHook::EnsureRuntime("AutoAim")) return false;
 
-    if (!Il2CppHook::InstallMinHook(g_csaTarget, reinterpret_cast<void*>(&ComputeShootAngleDetour),
-                                    reinterpret_cast<void**>(&g_csaOrig), "AutoAim.CSA")) return false;
     if (!Il2CppHook::InstallMinHook(g_swaTarget, reinterpret_cast<void*>(&ShootWithAngleDetour),
                                     reinterpret_cast<void**>(&g_swaOrig), "AutoAim.SWA")) return false;
     if (!Il2CppHook::InstallMinHook(g_sspTarget, reinterpret_cast<void*>(&SendShotPacketDetour),
@@ -238,8 +206,8 @@ bool Install()
     // One-shot (Install self-guards on s_installed): says out loud what this
     // module does, so a trace log is never ambiguous about the mechanism.
     DBG_FILE_LOG("[AimHooks] installed — shot redirect is ANGLE-ONLY: the bullet leaves the"
-                 " player's real position, only its direction changes (CSA out-param + SWA"
-                 " by value). No shot-packet field is written.");
+                 " player's real position, only its direction changes (SWA by value)."
+                 " No shot-packet field is written; unverified manual-angle routine is not hooked.");
     return true;
 }
 
@@ -249,11 +217,11 @@ void Uninstall()
     s_enabled.store(false, std::memory_order_release);
     s_kaActive.store(false, std::memory_order_release);
     NoteAimSource();
-    Il2CppHook::UninstallMinHook(g_csaTarget, "AutoAim.CSA");
     Il2CppHook::UninstallMinHook(g_swaTarget, "AutoAim.SWA");
     Il2CppHook::UninstallMinHook(g_sspTarget, "AutoAim.SSP");
-    g_csaOrig = nullptr; g_swaOrig = nullptr; g_sspOrig = nullptr;
+    g_swaOrig = nullptr; g_sspOrig = nullptr;
     s_installed = false;
+    ShootRuntime::Reset();
 }
 
 bool IsInstalled() { return s_installed; }

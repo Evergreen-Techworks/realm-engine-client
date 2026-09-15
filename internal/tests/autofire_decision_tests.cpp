@@ -20,7 +20,7 @@ using AutoFireDecision::EnemyView;
 using AutoFireDecision::MapWatch;
 using AutoFireDecision::ScriptStep;
 
-struct Shot { float px, py, tx, ty; };
+struct Shot { float px, py, tx, ty; int32_t weapon; };
 
 struct FakeWorld {
     bool      scriptArmed   = true;
@@ -37,6 +37,7 @@ struct FakeWorld {
     std::vector<Enemy> snapshot { { 42, 900, 14.f, 13.f } };
     float     range         = 8.f;
     bool      fireSucceeds  = true;
+    int32_t   weapon        = 1;
     // A cursor the rule must never aim at. Nothing in the World interface
     // exposes it; it is here so a test can prove no shot went there.
     float     cursorX       = -50.f, cursorY = 77.f;
@@ -62,7 +63,7 @@ struct FakeWorld {
     }
     float RangeTiles() const { return range; }
     bool Fire(float fromX, float fromY, float toX, float toY) {
-        shots.push_back(Shot{ fromX, fromY, toX, toY });
+        shots.push_back(Shot{ fromX, fromY, toX, toY, weapon });
         return fireSucceeds;
     }
 };
@@ -313,6 +314,21 @@ static void TestNamesCoverEveryBlock()
     }
 }
 
+static void TestWeaponSwitchDoesNotAddASecondScheduler()
+{
+    FakeWorld world;
+    MapWatch watch;
+    const uint64_t now = Settle(watch, world, 1000);
+    CHECK(ScriptStep(watch, world, now) == Block::None, "first weapon did not dispatch");
+    world.weapon = 2;
+    CHECK(ScriptStep(watch, world, now + 1) == Block::None, "weapon switch added a local cooldown");
+    CHECK(world.shots.size() == 2, "one game-update dispatch produced duplicate attempts");
+    CHECK(world.shots[0].weapon == 1 && world.shots[1].weapon == 2, "weapon state was cached across updates");
+    world.fireSucceeds = false;
+    CHECK(ScriptStep(watch, world, now + 2) == Block::FireFailed, "native failure was hidden");
+    CHECK(world.shots.size() == 3, "native failure triggered a second attempt in one update");
+}
+
 int main()
 {
     TestFiresAtARealTarget();
@@ -327,6 +343,7 @@ int main()
     TestFirstSightingSettles();
     TestFailedShootCallIsReported();
     TestNamesCoverEveryBlock();
+    TestWeaponSwitchDoesNotAddASecondScheduler();
     std::printf("autofire_decision_tests: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }
