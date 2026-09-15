@@ -120,7 +120,7 @@ Result Select(const Config& cfg,
         if (mx != 0.f || my != 0.f) { refX = mx; refY = my; }
     }
 
-    float maxRange = WeaponSelectionRange(weapon) + cfg.rangeLeadBias;
+    float maxRange = AutoAimSelectionRangeTiles(weapon, cfg.rangeLeadBias);
     if (useMouseRef && cfg.mouseBoundingEnabled && cfg.mouseBoundingRange > 0.f
         && cfg.mouseBoundingRange < maxRange)
         maxRange = cfg.mouseBoundingRange;
@@ -195,6 +195,11 @@ Result Select(const Config& cfg,
     else { r.aimX = winner->bestX; r.aimY = winner->bestY; }
 
     return r;
+}
+
+float AutoAimSelectionRangeTiles(const WeaponProfile& weapon, float rangeLeadBias)
+{
+    return WeaponSelectionRange(weapon) + rangeLeadBias;
 }
 
 Result SelectKillAura(bool atMouse, float rangeCapTiles,
