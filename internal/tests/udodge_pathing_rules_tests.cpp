@@ -312,6 +312,37 @@ int main()
               "legacy rule: the player box keeps it out of reach");
     }
 
+    // ── Dodge route time: every edge at its own ground speed ─────────────────────
+    // A locked target 8 tiles down a one-cell corridor: the dodge route walks to the
+    // near edge of its engagement ring. The player stands on dry ground; the corridor
+    // is half-speed water. The arrival time must be priced at the ground the route
+    // crosses, not at the speed where the player stands.
+    {
+        static Path::PlannerSnapshot dodge{};
+        static Path::PlanResult route{};
+        const auto arrivalAcross = [&](float corridorXmlSpeed) {
+            dodge = Path::PlannerSnapshot{};
+            dodge.player = { 0.25f, 0.25f };
+            dodge.grid.center = dodge.player;
+            dodge.speed = 0.006f; dodge.baseSpeed = 0.006f; dodge.moveBudget = 1.2f;
+            dodge.hasLock = true; dodge.lockPos = { 8.25f, 0.25f };
+            dodge.weaponRangeTiles = 2.f; dodge.innerStandoffTiles = 1.f;
+            for (int gy = 0; gy < kUPathMaxSide; ++gy)
+                for (int gx = 0; gx < kUPathMaxSide; ++gx)
+                    dodge.grid.flags[gy * kUPathMaxSide + gx] =
+                        (gy == kUPathMaxRadCells && gx >= kUPathMaxRadCells) ? 0 : 0x1;
+            dodge.grid.squareX0 = -kUOccSquareRad; dodge.grid.squareY0 = -kUOccSquareRad;
+            for (int tx = 1; tx <= 12; ++tx)   // squares (1..12, 0); the player's (0, 0) stays dry
+                dodge.grid.squareSpeed[kUOccSquareRad * kUOccSquareSide + kUOccSquareRad + tx] = corridorXmlSpeed;
+            Path::Compute(dodge, route);
+            return route.found ? route.goalArriveMs : -1.f;
+        };
+        const float dry = arrivalAcross(0.f);
+        const float wading = arrivalAcross(0.5f);
+        Check(dry > 0.f && wading > 1.8f * dry && wading < 2.1f * dry,
+              "a dodge route across half-speed water is timed at the water's speed");
+    }
+
     std::printf("Pathing rules tests: %d checks, 0 failures\n", g_checks);
     return 0;
 }

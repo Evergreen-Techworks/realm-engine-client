@@ -71,6 +71,9 @@ struct OccGrid {
     // (squareX0, squareY0) is cell 0.
     int     squareX0 = 0, squareY0 = 0;
     uint8_t squares[kUOccSquareCells]{};
+    // Every rule: the ground <Speed> of the same squares as WorldTAB stores it
+    // (0 = none), for route times (Movement::Speed).
+    float   squareSpeed[kUOccSquareCells]{};
 };
 
 // Coarse 1-tile navigation occupancy for the walk-to A* (SEPARATE from OccGrid —
@@ -112,6 +115,10 @@ struct PlannerSnapshot {
     // two halves of the MPC agree by construction. 0 = unreadable → the old
     // moveBudget-derived value is used as the fallback.
     float    speed = 0.f;
+    // The player's speed off any square (Movement::Speed::BaseTilesPerSec, tiles per
+    // ms). The dodge route prices each edge at the ground speed of its two cells.
+    // 0 = unknown: edges fall back to `speed`.
+    float    baseSpeed = 0.f;
     Settings settings{};           // hitScale / safeWalk feed the plain safety + occupancy tests
     bool     goalActive = false;   // a soft goal exists (tie-break only)
     Vec2     goalPos{};

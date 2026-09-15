@@ -2,6 +2,7 @@
 #include "UDodgePathfinder.h"
 #include "UDodgeNavigation.h"
 #include "UDodgeCore.h"   // Core::PointSafety — the cheap per-cell danger (plain-data)
+#include "features/movement/nav/Speed.h"
 
 #include <algorithm>
 #include <cmath>
@@ -35,6 +36,7 @@ uint8_t s_tgoal[kUPathMaxCells];  // 1 = SECOND-CLASS temporal goal (finding F):
 uint8_t s_pend[kUPathMaxCells];   // 1 = this cell sits inside a PENDING (telegraphed, unarmed) AoE disc
                                   // — cost-only, never a block; taints it as a goal (finding G-2)
 float   s_safe[kUPathMaxCells];   // cached spatial Core::PointSafety (goal test + partial-route metric)
+float   s_factor[kUPathMaxCells]; // ground <Speed> factor of the cell's square (Movement::Speed::TileFactor)
 int     s_path[kUPathMaxCells];   // reconstructed route (forward order: [0] = start)
 
 // Binary min-heap of (cost, cellIndex). Lazy Dijkstra: a cell may be pushed
@@ -133,6 +135,15 @@ Core::Temporal::Ctx s_tctx;
 // Occupancy from the plain rasterized grid ALONE (no Env). Blocked = wall bit, or
 // hazard bit when safeWalk is on (mirrors Sensors::CanOccupy(x,y,safeWalk) so the
 // worker route and the game-thread pre-position walkability check agree).
+// The ground <Speed> factor of the square under `w` (1 outside the copied squares).
+float SquareFactor(const OccGrid& g, Vec2 w)
+{
+    const int x = static_cast<int>(std::floor(w.x)) - g.squareX0;
+    const int y = static_cast<int>(std::floor(w.y)) - g.squareY0;
+    if (x < 0 || y < 0 || x >= kUOccSquareSide || y >= kUOccSquareSide) return 1.f;
+    return Movement::Speed::TileFactor(g.squareSpeed[y * kUOccSquareSide + x]);
+}
+
 Movement::Collision::RasterSquares OccSquares(const OccGrid& g)
 {
     return Movement::Collision::RasterSquares{ g.squares, g.squareX0, g.squareY0, kUOccSquareSide };
@@ -227,7 +238,9 @@ struct Ctx {
     float diskInner = 0.f;    // annulus INNER radius (0 = no inner gate). GOAL-only: cells inside
                               // this radius are rejected as goals but stay traversable.
     float timePerTile = 0.f;  // ms to cross one tile at the player's REAL speed (edge-cost scale;
-                              // PlannerSnapshot::speed — finding K)
+                              // PlannerSnapshot::speed — finding K). Used only without baseTilesPerMs.
+    float baseTilesPerMs = 0.f; // Movement::Speed base (PlannerSnapshot::baseSpeed): each edge is timed
+                                // at the ground speed of its two cells (Speed::EdgeMs); 0 = unknown
     int   prevGoalCell = -1;  // last tick's committed goal cell (plan 76 goal hysteresis; -1 = none/off-grid)
 };
 
@@ -296,6 +309,7 @@ void EvalCell(const Ctx& c, int idx, int gx, int gy)
         ? kUDurablePocketMargin
         : Core::PointSafety(c.mi, w);
     s_safe[idx] = safety;
+    s_factor[idx] = SquareFactor(c.s->grid, w);
     s_goal[idx] = (safety >= kUDurablePocketMargin && GoalGateOk(c, w)) ? 1 : 0;
     s_tgoal[idx] = 0;                                  // set lazily, only if the pass tests it
     s_pend[idx] = PendingZoneLocal(c.s->map, w) ? 1 : 0;
@@ -382,6 +396,7 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
     // lands on it momentarily — treat it as open ground so the search can leave.
     s_eval[start] = 2; s_safe[start] = startSafety; s_goal[start] = 0;
     s_tgoal[start] = 0; s_pend[start] = 0;
+    s_factor[start] = SquareFactor(c.s->grid, CellWorld(center, start % kS, start / kS));
     s_cost[start] = 0.f;                                // arrival time at the start = 0
     HeapPush(0.f, start);
 
@@ -526,7 +541,9 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
             const float stepDist = (kDx[k] != 0 && kDy[k] != 0)
                                        ? kUPathCellTiles * kUPathRoot2 : kUPathCellTiles;
             // Edge cost is TIME: how long the player takes to cross this edge.
-            const float tB = s_cost[cur] + stepDist * c.timePerTile;
+            const float tB = s_cost[cur] + (c.baseTilesPerMs > 0.f
+                ? Movement::Speed::EdgeMs(c.baseTilesPerMs, s_factor[cur], s_factor[ni], stepDist)
+                : stepDist * c.timePerTile);
             // SPEED-AWARE GATE: only walk into B if the player, arriving at tB
             // (having left cur at s_cost[cur]), is clear of every bullet there.
             const Vec2 wB = CellWorld(center, nx, ny);
@@ -608,6 +625,7 @@ void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, Pla
     // stays purely a step-LENGTH knob (it places the lookahead anchor below).
     // speed == 0 means the game's tiles-per-second was unreadable this tick; fall
     // back to the old moveBudget derivation rather than dividing by zero.
+    c.baseTilesPerMs = (std::isfinite(s.baseSpeed) && s.baseSpeed > 1e-6f) ? s.baseSpeed : 0.f;
     c.timePerTile = (s.speed > 1e-6f)
                         ? 1.f / s.speed
                         : kServerTickSec * 1000.f / std::max(s.moveBudget, 1e-3f);
