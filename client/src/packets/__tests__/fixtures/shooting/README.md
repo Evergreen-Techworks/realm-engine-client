@@ -13,3 +13,11 @@ Keep only PLAYERSHOOT frames and necessary non-sensitive observations. Exclude H
 Validation must reject missing pin/provenance, invalid/negative/non-monotonic timestamps, malformed hex, frame-length mismatch and unsupported claimed angle offsets. Before/after rewrites of the same frame may change only explicitly reviewed angle/coordinate bytes. Changing `attackIndex`, `bulletId`, `unknownShort` or any unknown/trailing byte must fail. Counts and tolerance are capture-reviewed inputs, never inferred production rules.
 
 Task 10's real-cadence acceptance and its specified commit remain blocked until actual reviewed pairs exist. Do not add skipped tests or synthetic captures to imply that gate passed.
+
+## Executable prerequisites
+
+`helpers/shootingTrace.ts` validates traces against a separate `TraceReview`: matching `pinHash`, `caseName`, nonempty `provenance` and capture-reviewed `allowedAngleByteOffsets`. The provenance string should reference the full review record described above; the validator cannot authenticate its truth. Never derive the allowed offsets from an untrusted trace itself.
+
+`expectedProjectileCounts` partitions the ordered frames into reviewed consecutive volleys. Pair comparison checks those counts, inter-volley and within-volley send intervals, and the current parser's containerType/attackIndex sequence. These field labels require current-pin capture review; they do not independently prove pattern semantics. Both traces must agree on the reviewed tolerance. Absolute clocks and unrelated shot IDs need not match.
+
+Use `verifyShotRewrite` for before/after bytes of the same frame only; it rejects non-approved changes and protects attackIndex, bulletId, unknownShort and unread trailing bytes. Use `compareShotTraces` for paired captures, never as a claim of server acceptance. `shootingCadenceReplay.test.ts` currently contains explicitly synthetic prerequisite tests only. No real fixture was invented or skipped.
