@@ -25,7 +25,7 @@
 // World, as ScriptStep uses it:
 //   bool      ScriptArmed() const;        script autoFireEnabled (and the master switch) on
 //   bool      ManualEngaged() const;      the manual path owns the trigger right now
-//   bool      ShootReady() const;         BootGate allows AutoFire and the shoot methods are bound
+//   bool      ShootReady() const;         BootGate allows AutoFire and the firing method is verified
 //   uintptr_t LocalPlayer() const;        local player object, 0 = not in a world
 //   uint32_t  SceneEpoch() const;         bumped on every new map connection
 //   bool      LocalHp(int32_t&) const;    false = unreadable

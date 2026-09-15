@@ -53,3 +53,9 @@ Capture monotonic attempt/send times, verified weapon/subattack identifiers, tar
 - Manual/script in-game acceptance without new server rejection: **pending**.
 
 No statement here claims manual shooting is restored, cadence has improved, or shots were accepted in game. No second scheduler, archive fire-rate constants or packet-layout changes are authorized by this evidence.
+
+## Safe isolation implemented
+
+Diagnostic manual autofire and manual-angle computation now fail closed because CSA's semantic identity is unverified. Ordinary player input still follows the game's existing firing path; this change does not disable regular manual shooting. Script dispatch retains the existing AppEngine-update cadence and live-object virtual-method lookup/fallback. No manual-angle detour is installed.
+
+Readiness additionally requires a nonempty packaged pin and an exact generated SWA method-row/live-pointer match. A compiled read-only check using the actual stored current-pin generated header confirmed the production `Method(ClassName(sourceClass), sourceMethod, 1)` lookup keys resolve its SWA row. This is identity evidence, not independent calling-convention or live override proof. Reset clears the virtual dispatch cache. The single resolution status log is bounded normal readiness reporting, not per-shot trace instrumentation.

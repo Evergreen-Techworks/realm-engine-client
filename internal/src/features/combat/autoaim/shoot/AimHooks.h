@@ -2,15 +2,15 @@
 
 #include <cstdint>
 
-// MinHook detours for the three game methods involved in shot angle redirection.
+// MinHook detours for the verified firing path and existing packet-facing update.
 // Install() resolves IL2CPP method pointers and creates hooks; safe to call
 // every tick until it succeeds (self-guards with installed flag).
 //
 // The redirect is ANGLE-ONLY. The bullet leaves the player's REAL position and
 // only its direction is changed, so the server's own simulation of the shot
 // agrees with the client's claim. Nothing here rewrites a shot-packet field:
-// ComputeShootAngleDetour sets the angle through the method's out-parameter and
-// ShootWithAngleDetour rewrites the angle argument by value.
+// ShootWithAngleDetour rewrites the angle argument by value. No unverified
+// manual-angle routine is hooked.
 namespace AimHooks {
 
 bool Install();

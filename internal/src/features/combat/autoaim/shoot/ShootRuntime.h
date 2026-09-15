@@ -7,15 +7,11 @@
 // SEH-guarded and returns false on any failure. Game/render thread only.
 namespace ShootRuntime {
 
-// Resolve ComputeShootAngle + ShootWithAngle. Safe to call every tick until it
-// succeeds; caches on first success. Returns true once both are bound.
 bool EnsureResolved();
 bool IsResolved();
+bool IsFiringResolved();
+bool IsManualAngleResolved();
 
-// The player's ComputeShootAngle(slot, &outAngle, &outCanShoot, false).
-// outCanShoot is the GAME'S OWN rate-limit / MP / silence gate. Returns false if
-// the method is unbound or the call faulted (outputs then untouched).
-// (The obfuscated class/method tokens live only in ShootRuntime.cpp.)
 bool TryComputeShootAngle(void* player, uint8_t slot, float& outAngle, bool& outCanShoot);
 
 // The player avatar's ShootWithAngle(angle). Virtual — re-dispatched through the
