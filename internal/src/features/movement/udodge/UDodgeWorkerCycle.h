@@ -31,6 +31,13 @@ inline void RunCycle(const Path::PlannerSnapshot& local, Result& latest)
     in.env.occSide = kUPathMaxSide;
     in.env.occRadius = kUPathMaxRadCells;
     in.env.occCellTiles = kUPathCellTiles;
+    in.env.rule = local.collisionRule;
+    if (local.collisionRule == Movement::Collision::Rule::Game) {
+        in.env.squares = local.grid.squares;
+        in.env.squareX0 = local.grid.squareX0;
+        in.env.squareY0 = local.grid.squareY0;
+        in.env.squareSide = kUOccSquareSide;
+    }
 
     Solver::Goal goal{};
     goal.active = local.goalActive;

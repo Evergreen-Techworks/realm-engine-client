@@ -4,6 +4,8 @@
 #include <cmath>
 #include <algorithm>
 
+#include "features/movement/nav/Collision.h"
+
 // UDodge — unified auto-dodge: PJDodge predictive core + RePP field
 // escape/goal layer. Pure data + inline math. No game/IL2CPP includes.
 namespace UDodge {
@@ -461,6 +463,12 @@ constexpr float kUPathRoot2        = 1.41421356f;
 constexpr int   kUPathMaxSide      = kUPathMaxRadCells * 2 + 1;                    // 49
 constexpr int   kUPathMaxCells     = kUPathMaxSide * kUPathMaxSide;               // 49x49 = 2401
 constexpr int   kUPathHeapCap      = kUPathMaxCells * 8;  // fixed min-heap (lazy Dijkstra, done-check on pop)
+// navCollisionRule=game: squares copied around the dodge window for Movement::Collision.
+// The window reaches 12 tiles from its centre; the FullOccupy rule reads one square
+// beyond, and a centre off its square's middle adds one more.
+constexpr int   kUOccSquareRad     = kUPathMaxRadCells / 2 + 2;                    // 14
+constexpr int   kUOccSquareSide    = kUOccSquareRad * 2 + 1;                       // 29
+constexpr int   kUOccSquareCells   = kUOccSquareSide * kUOccSquareSide;            // 841
 
 // ── BOUNDED WAIT EDGE (finding F) ───────────────────────────────────────────
 // g(cell) in the pathfinder is ARRIVAL TIME and every edge advances time by
@@ -682,6 +690,14 @@ struct Env {
     int occSide = 0;
     int occRadius = 0;
     float occCellTiles = 0.f;
+    // navCollisionRule. Game: walls and objects follow Movement::Collision (the game's
+    // point rule) — through stepClear on the game thread, or over `squares`, a
+    // whole-tile halfEdge-0 raster (Collision::RasterSquares), on the worker.
+    // Damaging ground keeps the existing rule either way.
+    Movement::Collision::Rule rule = Movement::Collision::Rule::Legacy;
+    bool (*stepClear)(float ax, float ay, float bx, float by) = nullptr;
+    const uint8_t* squares = nullptr;
+    int squareX0 = 0, squareY0 = 0, squareSide = 0;
 };
 
 // ── Instantaneous danger map (plan 45; temporal lookahead plan 64 ext) ──────
@@ -816,10 +832,47 @@ struct MapInput {
     const DangerMap* map = nullptr;
 };
 
+// The occupancy raster cell under `pos`, or null outside it / without one.
+inline const uint8_t* OccCellAt(const MapInput& in, Vec2 pos)
+{
+    if (!in.env.occFlags || in.env.occSide <= 0 || in.env.occCellTiles <= 0.f) return nullptr;
+    const int gx = static_cast<int>(std::lround((pos.x - in.env.occCenter.x) /
+                                                in.env.occCellTiles)) + in.env.occRadius;
+    const int gy = static_cast<int>(std::lround((pos.y - in.env.occCenter.y) /
+                                                in.env.occCellTiles)) + in.env.occRadius;
+    if (gx < 0 || gy < 0 || gx >= in.env.occSide || gy >= in.env.occSide) return nullptr;
+    return &in.env.occFlags[gy * in.env.occSide + gx];
+}
+
+// The game's rule applies when the toggle says so AND this Env carries its data.
+inline bool UsesGameRule(const MapInput& in)
+{
+    return in.env.rule == Movement::Collision::Rule::Game &&
+           (in.env.stepClear || in.env.squares);
+}
+
+inline Movement::Collision::RasterSquares SquaresOf(const Env& env)
+{
+    return Movement::Collision::RasterSquares{ env.squares, env.squareX0, env.squareY0, env.squareSide };
+}
+
+// Damaging ground at `pos` under the existing hazard rule, walls aside: the live
+// check's centre + footprint corners, or the worker raster's hazard bit.
+inline bool DamagingAt(const MapInput& in, Vec2 pos)
+{
+    if (in.env.canOccupy)
+        return !in.env.canOccupy(pos.x, pos.y, true) && in.env.canOccupy(pos.x, pos.y, false);
+    const uint8_t* cell = OccCellAt(in, pos);
+    return cell && (*cell & 0x2) != 0;
+}
+
 inline bool CanOccupyAt(const MapInput& in, Vec2 pos)
 {
     if (in.env.canOccupy)
         return in.env.canOccupy(pos.x, pos.y, in.settings.safeWalk);
+    if (UsesGameRule(in))
+        return Movement::Collision::Standable(SquaresOf(in.env), pos.x, pos.y) &&
+               !(in.settings.safeWalk && DamagingAt(in, pos));
     if (!in.env.occFlags || in.env.occSide <= 0 || in.env.occCellTiles <= 0.f)
         return true;
     const int gx = static_cast<int>(std::lround((pos.x - in.env.occCenter.x) /
@@ -865,6 +918,25 @@ inline bool PaddingClearAt(const MapInput& in, Vec2 pos)
 // a wall — the endpoint being safe says nothing about the tiles between.
 inline bool OccupancyPathClear(const MapInput& in, Vec2 from, Vec2 to)
 {
+    if (UsesGameRule(in)) {
+        // Walls and objects: the game's rule over the whole segment, exactly.
+        const bool walls = in.env.stepClear
+            ? in.env.stepClear(from.x, from.y, to.x, to.y)
+            : Movement::Collision::StepClear(SquaresOf(in.env), from.x, from.y, to.x, to.y);
+        if (!walls) return false;
+        // Damaging ground: the rule below, unchanged (end point, then 0.2-tile samples
+        // unless the player already stands on damaging ground).
+        if (!in.settings.safeWalk) return true;
+        if (DamagingAt(in, to)) return false;
+        if (in.playerOnHazard) return true;
+        const float dist = Len(Sub(to, from));
+        const int count = std::max(1, static_cast<int>(std::ceil(dist / 0.20f)));
+        for (int i = 1; i < count; ++i) {
+            const float t = static_cast<float>(i) / static_cast<float>(count);
+            if (DamagingAt(in, Add(from, Mul(Sub(to, from), t)))) return false;
+        }
+        return true;
+    }
     if (!CanOccupyAt(in, to)) return false;
     MapInput sweep = in;
     if (in.playerOnHazard) sweep.settings.safeWalk = false;   // walls only

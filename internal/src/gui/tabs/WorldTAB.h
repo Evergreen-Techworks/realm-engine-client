@@ -348,6 +348,14 @@ namespace WorldTAB {
     // 0.0 = no modifier, > 1.0 = speedy ground, < 1.0 = slow ground.
     float GetTileSpeed(int tx, int ty);
 
+    // One square's TileOccupancy bits (kTileKnown, kTileBlocked, kTileFullOcc, ...),
+    // 0 when never streamed. For Movement::Collision on the game thread.
+    uint8_t GetTileFlags(int tx, int ty);
+
+    // Ground <Speed> of side*side squares from (tx0, ty0), row-major, as GetTileSpeed
+    // returns it (0 = no <Speed>). One lock; plain ground costs no speed-map lookup.
+    void CopyTileSpeeds(int tx0, int ty0, int side, float* out);
+
     // Reads the current world/map name via ABKHBJOKLJH (WorldManager property, RVA 0x4045E0).
     // Writes a null-terminated ASCII string into buf. Returns false if unavailable.
     bool ReadMapName(char* buf, int bufLen);

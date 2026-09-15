@@ -13,6 +13,8 @@
 #include "DiagTiming.h"
 #include "DangerPlanner.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
+#include "features/combat/enemytracker/LockLiveness.h"
+#include "features/movement/nav/Collision.h"
 #include "features/movement/sensors/TileSensor.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
@@ -909,13 +911,13 @@ void PopulateEnemies(DangerMap& out, float playerX, float playerY)
                 }
             }
         }
-        // Lock the enemy the USER locked on (Shift+Click), only while it is ALIVE.
-        // Not range-culled, so we keep orbit range to a far locked boss. Dead
-        // (hp<=0) / despawned (absent) / unlocked (userLockId==0) ⇒ never matched
-        // ⇒ hasLock stays false ⇒ pure assist.
-        if (userLockId != 0 && e.id == userLockId && e.hp > 0 && IsFinitePoint(e.x, e.y)) {
-            out.hasLock = true; out.lockId = e.id; out.lockPos = { e.x, e.y };
-        }
+    }
+    // The lock the user or script set, while EnemyTracker says it is still a fight
+    // (LockLiveness.h). Not range-culled, so a far locked boss keeps its orbit range.
+    // Gone or unlocked ⇒ hasLock stays false ⇒ pure assist.
+    const EnemyTracker::LockInfo lock = EnemyTracker::GetLock(userLockId);
+    if (EnemyTracker::Engages(lock)) {
+        out.hasLock = true; out.lockId = lock.id; out.lockPos = { lock.x, lock.y };
     }
 }
 
@@ -1241,15 +1243,31 @@ bool IsHazardAt(float worldX, float worldY)
     return Movement::TileSensor::IsHazardAt(s_hazardMemo, worldX, worldY);
 }
 
+// WorldTAB's square bits for Movement::Collision (one locked lookup per square).
+static uint8_t LiveSquareFlags(int tx, int ty) { return WorldTAB::GetTileFlags(tx, ty); }
+
 bool WallsClear(float worldX, float worldY)
 {
+    if (Movement::Collision::GetRule() == Movement::Collision::Rule::Game)
+        return Movement::Collision::Standable(LiveSquareFlags, worldX, worldY);
     return Movement::TileSensor::IsFinitePoint(worldX, worldY) &&
            !Movement::TileSensor::IsWallAt(worldX, worldY);
 }
 
+bool StepClear(float ax, float ay, float bx, float by)
+{
+    return Movement::Collision::StepClear(LiveSquareFlags, ax, ay, bx, by);
+}
+
 bool CanOccupy(float worldX, float worldY, bool safeWalk)
 {
-    if (!Movement::TileSensor::CanOccupy(s_hazardMemo, worldX, worldY, safeWalk)) return false;
+    if (Movement::Collision::GetRule() == Movement::Collision::Rule::Game) {
+        // The game's point rule for walls and objects; damaging ground below as before.
+        if (!Movement::Collision::Standable(LiveSquareFlags, worldX, worldY)) return false;
+        if (safeWalk && IsHazardAt(worldX, worldY)) return false;
+    } else if (!Movement::TileSensor::CanOccupy(s_hazardMemo, worldX, worldY, safeWalk)) {
+        return false;
+    }
     if (!safeWalk) return true;
     // Damaging ground is tile-based, but the player is not a point. Check the
     // footprint corners so merely grazing a dangerous tile corner is rejected.

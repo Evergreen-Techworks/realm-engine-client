@@ -364,6 +364,14 @@ export function register(ctx: PluginContext) {
   registerModeSetting('unified', 'udodgeMoveEnvelope',
     onOff('[UDodge] Server-safe outbound MOVE envelope', 'on'),
     () => updateMoveEnvelopeArming());
+  // Navigation rebuild Stage 1: 'game' walks by the game's own point collision (diagonal
+  // squeezes between walls, no player box); 'legacy' keeps the old box. Legacy until
+  // the user confirms 'game' in play.
+  registerModeSetting('unified', 'navCollisionRule', {
+    label: '[UDodge] Collision rule (game = the game\'s own; legacy = old box)', advanced: true,
+    type: 'select', value: 'legacy',
+    options: [{ label: 'Legacy (box)', value: 'legacy' }, { label: 'Game (point rule)', value: 'game' }],
+  }, (v: string) => sendDllFeature('navCollisionRule', v === 'game' ? 'game' : 'legacy'));
 
   // Keep observing MOVE even outside Unified mode so switching modes starts
   // from the last position actually sent, never from an invented anchor.
@@ -612,6 +620,7 @@ export function register(ctx: PluginContext) {
                      'udodgeFieldEscape', 'udodgeLockFollow', 'udodgeFollowLantern',
                      'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
+    sendDllFeature('navCollisionRule', ctx.getSetting<string>('navCollisionRule') === 'game' ? 'game' : 'legacy');
     updateMoveEnvelopeArming();
     // Re-apply the 60fps cap here too. The onEnabledChange / clientConnected
     // handlers were the only places setting targetFrameRate, so if the cap

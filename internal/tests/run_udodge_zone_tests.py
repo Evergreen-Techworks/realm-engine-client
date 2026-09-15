@@ -37,6 +37,17 @@ inline void QueryPerformanceCounter(LARGE_INTEGER* p) {
         ], check=True)
         subprocess.run([str(binary)], check=True)
 
+# Navigation rebuild Stage 1 foundation: the game's collision rule and the speed model.
+for test in ("nav_collision_tests", "nav_speed_tests"):
+    with tempfile.TemporaryDirectory(prefix=test + "-") as directory:
+        binary = Path(directory) / test
+        subprocess.run([
+            os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-pthread",
+            "-I", str(internal / "src"), str(internal / f"tests/{test}.cpp"),
+            "-o", str(binary),
+        ], check=True)
+        subprocess.run([str(binary)], check=True)
+
 # Enemy snapshot rules, the render/game-thread snapshot hand-off and the lock policy.
 with tempfile.TemporaryDirectory(prefix="enemy-tracker-tests-") as directory:
     binary = Path(directory) / "enemy_tracker_tests"

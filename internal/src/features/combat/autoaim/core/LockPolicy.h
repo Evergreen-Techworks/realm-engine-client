@@ -13,8 +13,9 @@
 // AutoAim then holds instead of silently switching to another enemy — the caller
 // asked for this one, and the script re-targets on its own isTargetable. Only a
 // lock that is gone from the snapshot (killed, despawned, or dropped by
-// EnemyClassify) falls back to normal selection, as it always has.
-#include "features/combat/enemytracker/EnemyTracker.h"
+// EnemyClassify) falls back to normal selection, as it always has. Whether a lock
+// is alive is EnemyTracker's answer (LockLiveness.h), shared with the dodge planner.
+#include "features/combat/enemytracker/LockLiveness.h"
 
 namespace LockPolicy {
 
@@ -24,10 +25,10 @@ enum class Use {
     FallBack,   // locked enemy not in the snapshot: normal selection
 };
 
-inline Use Decide(const EnemyTracker::Entry* locked, bool shootInvulnerable)
+inline Use Decide(const EnemyTracker::LockInfo& lock, bool shootInvulnerable)
 {
-    if (!locked) return Use::FallBack;
-    if (locked->isInvulnerable && !shootInvulnerable) return Use::Hold;
+    if (!EnemyTracker::Engages(lock)) return Use::FallBack;
+    if (lock.state == EnemyTracker::LockState::Invulnerable && !shootInvulnerable) return Use::Hold;
     return Use::Aim;
 }
 
