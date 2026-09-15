@@ -1,22 +1,31 @@
 const manaKey = Symbol.for('realm-engine.ability-mana');
 const cooldownKey = Symbol.for('realm-engine.ability-cooldown');
-type ManaOwner = { mana: number; [manaKey]?: { observed: number; available: number }; [cooldownKey]?: number };
+const itemCooldownKey = Symbol.for('realm-engine.ability-item-cooldowns');
+type ManaOwner = { mana: number; [manaKey]?: { observed: number; available: number }; [cooldownKey]?: number; [itemCooldownKey]?: Map<number, number> };
 
 export function abilityCooldownMs(xml: string | undefined): number | null {
   if (xml === undefined) return null;
-  const raw = xml.match(/<Cooldown\b[^>]*>\s*([^<]*)\s*<\/Cooldown>/i)?.[1];
-  if (raw === undefined) return 550;
-  const duration = Number(raw.trim()) * 1000;
-  return raw.trim() && Number.isFinite(duration) && duration >= 0 ? duration : null;
+  const values = [...xml.matchAll(/<Cooldown\b[^>]*>\s*([^<]*)\s*<\/Cooldown>/gi)].map(match => match[1].trim());
+  if (values.length === 0) return 550;
+  const durations = values.map(value => value ? Number(value) * 1000 : NaN);
+  if (durations.some(duration => !Number.isFinite(duration) || duration < 0)) return null;
+  const duration = Math.ceil(Math.max(...durations)) + 100;
+  return Number.isFinite(duration) ? duration : null;
 }
 
-export function abilityCooldownReady(player: ManaOwner): boolean {
-  return Date.now() >= (player[cooldownKey] ?? 0);
+export function abilityCooldownReady(player: ManaOwner, itemType?: number): boolean {
+  return Date.now() >= Math.max(player[cooldownKey] ?? 0,
+    itemType === undefined ? 0 : player[itemCooldownKey]?.get(itemType) ?? 0);
 }
 
-export function reserveAbilityCooldown(player: ManaOwner, duration: number): void {
+export function reserveAbilityCooldown(player: ManaOwner, duration: number, itemType?: number, itemDuration = duration): void {
   if (!Number.isFinite(duration) || duration < 0) return;
-  player[cooldownKey] = Math.max(player[cooldownKey] ?? 0, Date.now() + duration);
+  const now = Date.now();
+  player[cooldownKey] = Math.max(player[cooldownKey] ?? 0, now + duration);
+  if (itemType === undefined || !Number.isInteger(itemType) || itemType <= 0 || !Number.isFinite(itemDuration) || itemDuration < 0) return;
+  const deadlines = player[itemCooldownKey] ??= new Map<number, number>();
+  for (const [type, deadline] of deadlines) if (deadline <= now) deadlines.delete(type);
+  deadlines.set(itemType, Math.max(deadlines.get(itemType) ?? 0, now + itemDuration));
 }
 
 export function observeAbilityMana(player: ManaOwner, mana: number): number {

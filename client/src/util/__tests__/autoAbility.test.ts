@@ -8,7 +8,42 @@ import { GameWorldState } from '../../state/GameWorldState.js';
 import { PlayerData } from '../../state/PlayerData.js';
 import { StatType } from '../../constants/StatType.js';
 import type { Proxy } from '../../proxy/Proxy.js';
+import { abilityCooldownMs } from '../AbilityMana.js';
 afterEach(() => { vi.useRealTimers(); });
+it.each(['automatic', 'script'])('retains item cooldown after an ambiguous %s write failure', source => {
+  const f = fixture(); f.settings.get('targetMaxStaleMs')!.set(0);
+  f.setXml('<Object><MpCost>1</MpCost><Cooldown>5</Cooldown></Object>');
+  installInventory({ clientRef: { current: f.client }, gameData: f.ctx.gameData,
+    proxy: { hookPacket: vi.fn(), packetFactory: { createByName: f.ctx.createPacket } } } as any);
+  f.client.sendToServer.mockImplementationOnce(() => { throw new Error('ambiguous write'); });
+  if (source === 'script') inventory.useItem(1); else f.tick();
+  vi.setSystemTime(13000); f.tick(); inventory.useItem(1);
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+  vi.setSystemTime(15100); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
+});
+it('preserves longest XML cooldown, margin, and rejects any invalid entry', () => {
+  expect(abilityCooldownMs('<Object><Cooldown>1</Cooldown><Ability><Cooldown>5.5</Cooldown></Ability></Object>')).toBe(5600);
+  expect(abilityCooldownMs('<Object><Cooldown>1</Cooldown><Cooldown>bad</Cooldown></Object>')).toBeNull();
+  expect(abilityCooldownMs('<Object/>')).toBe(550);
+});
+it('shares per-item cooldown across script, swapped auto casts, and revisits', () => {
+  const f = fixture(); f.settings.get('targetMaxStaleMs')!.set(0);
+  f.ctx.gameData!.getRawObjectXml = (type = 321) => `<Object><MpCost>1</MpCost><Cooldown>${type === 321 ? 5 : 1}</Cooldown></Object>`;
+  installInventory({ clientRef: { current: f.client }, gameData: f.ctx.gameData,
+    proxy: { hookPacket: vi.fn(), packetFactory: { createByName: f.ctx.createPacket } } } as any);
+  inventory.useItem(1);
+  f.pd.inventory[1] = 322;
+  vi.setSystemTime(11000); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
+  f.pd.inventory[1] = 321;
+  vi.setSystemTime(13000); f.tick(); inventory.useItem(1);
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
+  vi.setSystemTime(15000); f.tick(); inventory.useItem(1);
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
+  vi.setSystemTime(15100); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(3);
+});
 it('shares the XML cooldown after a human cast', () => {
   const f = fixture(); f.settings.get('targetMaxStaleMs')!.set(0);
   f.setXml('<Object><MpCost>1</MpCost><Cooldown>5</Cooldown></Object>');
@@ -16,6 +51,8 @@ it('shares the XML cooldown after a human cast', () => {
   vi.setSystemTime(13000); f.tick();
   expect(f.client.sendToServer).not.toHaveBeenCalled();
   vi.setSystemTime(15000); f.tick();
+  expect(f.client.sendToServer).not.toHaveBeenCalled();
+  vi.setSystemTime(15100); f.tick();
   expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
 });
 it('shares the XML cooldown after a script cast', () => {
@@ -28,6 +65,8 @@ it('shares the XML cooldown after a script cast', () => {
   vi.setSystemTime(13000); f.tick();
   expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
   vi.setSystemTime(15000); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+  vi.setSystemTime(15100); f.tick();
   expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
 });
 it('does not reuse spent mana before authoritative replenishment', () => {
@@ -48,6 +87,8 @@ it('honors item XML cooldown even when the configured interval is shorter', () =
   f.tick(); vi.setSystemTime(12000); f.tick();
   expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
   vi.setSystemTime(15000); f.tick();
+  expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
+  vi.setSystemTime(15100); f.tick();
   expect(f.client.sendToServer).toHaveBeenCalledTimes(2);
 });
 it.each(['Quiet', 'Silenced'] as const)('refuses ability while %s despite positive MP', (effect) => {

@@ -175,7 +175,7 @@ export function install(deps: BridgeDeps): void {
     const xml = slotIndex === 1 ? deps.gameData.getRawObjectXml(itemType) : undefined;
     const cost = slotIndex === 1 ? abilityManaCost(xml) : 0;
     const cooldown = slotIndex === 1 ? abilityCooldownMs(xml) : 0;
-    if (cooldown === null || (slotIndex === 1 && !abilityCooldownReady(c.playerData))) return;
+    if (cooldown === null || (slotIndex === 1 && !abilityCooldownReady(c.playerData, itemType))) return;
     if (cost === null || (slotIndex === 1 && (observeAbilityMana(c.playerData, c.playerData.mana) < cost
       || c.playerData.hasConditionEffect('Quiet') || c.playerData.hasConditionEffect('Silenced')))) return;
     try {
@@ -189,10 +189,10 @@ export function install(deps: BridgeDeps): void {
       tryInventoryAction(c, () => String(typeIdAtSlot(c.playerData, slotIndex)), () => {
         if (slotIndex >= 4) tryConsumePlayerItem(c, slotIndex, itemType, () => c.sendToServer(pkt));
         else {
+          if (slotIndex === 1) reserveAbilityCooldown(c.playerData, 550, itemType, cooldown);
           c.sendToServer(pkt);
           if (slotIndex === 1) {
             reserveAbilityMana(c.playerData, cost);
-            reserveAbilityCooldown(c.playerData, cooldown);
           }
         }
       });

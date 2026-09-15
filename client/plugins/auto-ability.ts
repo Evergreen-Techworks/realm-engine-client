@@ -6,12 +6,6 @@ import { automaticAbilityPaused, connectionGameTime, observeAbilityMana, reserve
 // same proven mechanism auto-drink uses for potions). Point-aimed classes fire
 // at the nearest enemy; self/area classes use the same MP reserve gate.
 const ABILITY_SLOT = 1;
-// Self-buffs last a few seconds and have a usage cooldown; re-casting every
-// tick spams past that cooldown and eventually crashes the game. Fixed
-// intervals avoid it without per-item cooldown bookkeeping.
-// Defaults for the configurable fire intervals. These are the minimum gap
-// between casts, not the item's real cooldown; there is no per-item cooldown
-// bookkeeping, so setting them too low spams the server.
 const DEFAULT_SELF_INTERVAL_MS = 2500;
 const DEFAULT_TARGET_INTERVAL_MS = 1000;
 const MIN_INTERVAL_MS = 250;
@@ -171,8 +165,8 @@ export function register(ctx: PluginContext) {
       const cost = metadata(packet.data.slotObject.objectType).cost;
       if (packet.data.useType === 1 && cost !== null && Number.isFinite(cost) && cost >= 0)
         reserveAbilityMana(client.playerData, cost);
-      reserveAbilityCooldown(client.playerData, Math.max(MANUAL_PAUSE_MS,
-        metadata(packet.data.slotObject.objectType).cooldownMs || 0));
+      reserveAbilityCooldown(client.playerData, MANUAL_PAUSE_MS, packet.data.slotObject.objectType,
+        metadata(packet.data.slotObject.objectType).cooldownMs || 0);
     }
   });
 
@@ -209,7 +203,7 @@ export function register(ctx: PluginContext) {
       return;
     }
     const now = Date.now();
-    if (now < (nextAllowedAt.get(client) ?? 0) || !abilityCooldownReady(pd)) { diagnose(client, 'cooldown/manual-use pause'); return; }
+    if (now < (nextAllowedAt.get(client) ?? 0) || !abilityCooldownReady(pd, itemType)) { diagnose(client, 'cooldown/manual-use pause'); return; }
     if (!Number.isFinite(pd.pos?.x) || !Number.isFinite(pd.pos?.y) || (pd.pos.x === 0 && pd.pos.y === 0)) {
       diagnose(client, 'player position unavailable'); return;
     }
@@ -249,11 +243,12 @@ export function register(ctx: PluginContext) {
     const gameTime = connectionGameTime(client);
     if (gameTime === null) { diagnose(client, 'waiting for the client game time (first MOVE of this map)'); return; }
     // Back off even if the transport throws, preventing retries every tick.
-    nextAllowedAt.set(client, now + Math.max(ability.cooldownMs, isSelf ? selfIntervalMs : targetIntervalMs));
+    const interval = Math.max(550, isSelf ? selfIntervalMs : targetIntervalMs);
+    nextAllowedAt.set(client, now + interval);
     try {
+      reserveAbilityCooldown(pd, interval, itemType, ability.cooldownMs);
       sendUseAbility(client, usePos, itemType, gameTime);
       reserveAbilityMana(pd, ability.cost ?? 0);
-      reserveAbilityCooldown(pd, Math.max(ability.cooldownMs, isSelf ? selfIntervalMs : targetIntervalMs));
       diagnose(client, `cast ${itemType} at (${usePos.x}, ${usePos.y}); MP ${mana}/${maxMana}; cost ${ability.cost ?? 'unknown'}`);
     } catch (err) {
       diagnose(client, `send failed: ${(err as Error).message}`);
