@@ -1,6 +1,7 @@
 import type { PluginContext, ClientConnection, Packet, GameDataLoader } from './api.js';
 import { sendDllFeature, StatType, getDllThreats, getDllThreatsAgeMs } from './api.js';
 import { remainingHitMs } from './auto-nexus/forecastTiming.js';
+import { HealthEvidence } from './auto-nexus/healthEvidence.js';
 import {
   type ShotRecord,
   appliedDamage,
@@ -13,7 +14,7 @@ import {
   withOnHitEffects,
 } from './auto-nexus/hitLedger.js';
 
-// Auto Nexus escapes on three layers, all driven by damage numbers the server sent:
+// Confirmed health protects the player. The two predictive layers are observations:
 //  1. Confirmed health — server HP (NEWTICK/UPDATE) and server DAMAGE amounts.
 //  2. Hit ledger — each outgoing PLAYERHIT charges the damage the server stated
 //     for that bullet in ENEMYSHOOT, after defense, until the next server HP.
@@ -89,9 +90,15 @@ export interface PredictionObservation {
   lethal: boolean;
   nativeScanAgeMs: number | null;
   sourceCertainty: 'ambiguous';
+  pendingDamage: number;
+  certainty: 'identified' | 'ambiguous';
 }
 
 interface NexusState {
+  generation: number;
+  evidence: HealthEvidence;
+  ownerIncarnations: Map<number, number>;
+  shotSequence: number;
   hp: number | null;
   maxHp: number;
   healthAt: number | null;
@@ -228,7 +235,11 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
   function stateFor(client: ClientConnection): NexusState {
     let state = states.get(client);
     if (!state) {
-      state = { hp: null, maxHp: 0, healthAt: null, safe: SAFE_ZONE_MAPS.has(
+      const evidence = new HealthEvidence();
+      const generation = client.admission?.generation ?? 0;
+      evidence.reset(generation);
+      state = { generation, evidence, ownerIncarnations: new Map(), shotSequence: 0,
+        hp: null, maxHp: 0, healthAt: null, safe: SAFE_ZONE_MAPS.has(
         String(client.playerData?.mapName ?? '').trim().toLowerCase()), escaped: false, retry: null,
         samples: [], bursts: [], shots: new Map(), lastShotPruneAt: 0, charges: [], ledgerEffects: [0, 0] };
       states.set(client, state);
@@ -241,12 +252,17 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
   function clearLedger(state: NexusState): void {
     state.charges = [];
     state.ledgerEffects = [0, 0];
+    state.evidence.reset(state.generation);
+    if (state.hp !== null) state.evidence.observeHp(state.hp, Date.now());
   }
   function reset(client: ClientConnection, safe: boolean): void {
     const state = stateFor(client); stopRetry(state);
+    state.generation = client.admission?.generation ?? 0;
     state.hp = null; state.maxHp = 0; state.healthAt = null; state.safe = safe; state.escaped = false;
     state.samples = []; state.bursts = [];
     state.shots.clear(); clearLedger(state);
+    state.ownerIncarnations.clear(); state.shotSequence = 0;
+    observations.delete(client);
   }
   ctx.on('clientDisconnected', client => {
     stopRetry(stateFor(client)); states.delete(client);
@@ -276,8 +292,7 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
     return [e0 | state.ledgerEffects[0], e1 | state.ledgerEffects[1]];
   }
   function predictedHp(state: NexusState): number | null {
-    if (state.hp === null) return null;
-    return state.hp - state.charges.reduce((sum, c) => sum + c.applied, 0);
+    return state.evidence.snapshot(Date.now()).predictedHp;
   }
   function ownerLabel(type: number | null): string {
     if (type === null) return 'unknown owner';
@@ -305,6 +320,7 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
     forecastHp: number | null = null,
   ): void {
     if ((layer === 'hit-ledger' || layer === 'forecast') && !activePredictionAllowed()) return;
+    if ((layer === 'hit-ledger' || layer === 'forecast') && state.evidence.snapshot(Date.now()).certainty === 'ambiguous') return;
     if (state.escaped || !client.connected) return;
     state.escaped = true;
     const now = Date.now();
@@ -406,7 +422,7 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
       seen.add(key);
       const shot = state.shots.get(key);
       // Only bullets the server announced with a damage count; already-charged ones never twice.
-      if (!shot || shot.charged || shot.expiresAt < now || !isPacketDamage(shot.rawDamage)) continue;
+      if (!shot || shot.ambiguous || shot.charged || shot.expiresAt < now || !isPacketDamage(shot.rawDamage)) continue;
       incoming.push({ shot, inMs });
     }
     if (incoming.length === 0) return;
@@ -439,6 +455,8 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
       confirmedHp: state.hp, healthAgeMs: state.healthAt === null ? null : Date.now() - state.healthAt,
       predictedHp: hp, effectiveThreshold: point.hp, thresholdCrossed: hp <= point.hp, lethal: hp <= 0,
       nativeScanAgeMs: layer === 'forecast' ? getDllThreatsAgeMs() : null, sourceCertainty: 'ambiguous',
+      pendingDamage: state.evidence.snapshot(Date.now()).pendingDamage,
+      certainty: state.evidence.snapshot(Date.now()).certainty,
     });
   }
 
@@ -462,7 +480,15 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
     const expiresAt = now + shotTtlMs(def?.lifetimeMs);
     const onHitEffects = (def?.conditionEffects ?? []).map(ce => ce.effect);
     for (let i = 0; i < count; i++) {
-      state.shots.set(bulletKey(ownerId, firstBulletId + i), {
+      const key = bulletKey(ownerId, firstBulletId + i);
+      const previous = state.shots.get(key);
+      const ambiguous = Boolean(previous && previous.expiresAt >= now);
+      if (ambiguous) state.evidence.noteAmbiguity();
+      const ownerIncarnation = state.ownerIncarnations.get(ownerId) ?? 0;
+      const receiptSequence = ++state.shotSequence;
+      state.shots.set(key, {
+        identity: `${state.generation}:${ownerId}:${ownerIncarnation}:${(firstBulletId + i) & 0xffff}:${receiptSequence}`,
+        ownerIncarnation, receiptSequence, receivedAt: now, ambiguous,
         ownerId, ownerType, bulletType, rawDamage,
         armorPiercing: def ? def.armorPiercing === true : null,
         onHitEffects, expiresAt, charged: false,
@@ -509,13 +535,15 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
     const state = stateFor(client);
     activeClient = client;
     const shot = state.shots.get(bulletKey(objectId, bulletId));
-    if (!shot || shot.charged || shot.expiresAt < Date.now()) return;
+    if (!shot || shot.ambiguous || shot.charged || shot.expiresAt < Date.now()) return;
     shot.charged = true;
     const applied = appliedDamage(shot.rawDamage, shot.armorPiercing, defenseOf(client), effectsOf(client, state));
     state.ledgerEffects = withOnHitEffects(state.ledgerEffects, shot.onHitEffects);
     if (applied <= 0) return;
+    state.evidence.observeHit(shot.identity, applied, shot.expiresAt, Date.now());
     state.charges.push({ key: bulletKey(objectId, bulletId), ownerType: shot.ownerType, raw: shot.rawDamage,
       applied, armorPiercing: shot.armorPiercing });
+    if (state.charges.length > MAX_SHOTS) { state.charges.shift(); state.evidence.noteAmbiguity(); }
     checkLedger(client, state);
   });
 
@@ -535,16 +563,17 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
     if (hpStat && typeof hpStat.value === 'number' && Number.isFinite(hpStat.value)) {
       state.hp = Math.max(0, hpStat.value);
       state.healthAt = Date.now();
-      // Explicit server HP already includes every hit the server applied, so the
-      // ledger restarts from it: nothing charged before is counted again.
-      clearLedger(state);
+      state.evidence.observeHp(state.hp, state.healthAt);
+      state.ledgerEffects = [0, 0];
       noteConfirmedHp(state, state.healthAt);
     } else if (state.hp === null && Number.isFinite(client.playerData.health) && client.playerData.health > 0) {
       // Hot reload can begin between full HP updates. Seed once from the last
       // server HP; delta ticks without HP must not undo confirmed DAMAGE.
       state.hp = client.playerData.health;
+      state.evidence.observeHp(state.hp, Date.now());
     }
     check(client, state, 'server health update');
+    checkLedger(client, state);
   }
   // These hooks run after StateManager so effective max HP includes gear/exalts.
   // Read HP from the packet itself; do not replace a confirmed zero with max HP.
@@ -552,12 +581,29 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
     statusHealth(client, packet, packet.data.statuses ?? []);
   });
   ctx.hookPacket('UPDATE', (client, packet) => {
+    if (packet.isDefined) {
+      const state = stateFor(client);
+      for (const ownerId of packet.data.drops ?? []) {
+        if (!Number.isInteger(ownerId)) continue;
+        state.ownerIncarnations.set(ownerId, (state.ownerIncarnations.get(ownerId) ?? 0) + 1);
+        for (const [key, shot] of state.shots) if (shot.ownerId === ownerId) {
+          state.shots.delete(key);
+          state.evidence.noteAmbiguity();
+        }
+      }
+      if (state.ownerIncarnations.size > MAX_SHOTS) {
+        state.ownerIncarnations.clear(); state.shots.clear(); state.evidence.noteAmbiguity();
+      }
+    }
     statusHealth(client, packet, (packet.data.newObjs ?? []).map((o: any) => o.status));
   });
   ctx.hookPacket('DAMAGE', (client, packet) => {
     if (!packet.isDefined || packet.data.targetId !== client.objectId) return;
     const state = stateFor(client); syncMaxHp(client, state);
-    if (state.hp === null && Number.isFinite(client.playerData.health) && client.playerData.health > 0) state.hp = client.playerData.health;
+    if (state.hp === null && Number.isFinite(client.playerData.health) && client.playerData.health > 0) {
+      state.hp = client.playerData.health;
+      state.evidence.observeHp(state.hp, Date.now());
+    }
     if (packet.data.kill === true) {
       state.hp = 0;
       clearLedger(state);
@@ -567,6 +613,10 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
       state.hp = Math.max(0, state.hp - damage);
       // The server confirmed this bullet: drop its charge so it is not subtracted twice.
       const objectId = Number(packet.data.objectId), bulletId = Number(packet.data.bulletId);
+      const knownShot = Number.isInteger(objectId) && Number.isInteger(bulletId)
+        ? state.shots.get(bulletKey(objectId, bulletId)) : undefined;
+      state.evidence.observeDamage(knownShot && !knownShot.ambiguous && knownShot.expiresAt >= Date.now()
+        ? knownShot.identity : null, damage, Date.now());
       if (Number.isInteger(objectId) && Number.isInteger(bulletId)) {
         const key = bulletKey(objectId, bulletId);
         state.charges = state.charges.filter(c => c.key !== key);
