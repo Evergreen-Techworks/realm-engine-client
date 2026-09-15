@@ -42,6 +42,10 @@
 #include "features/movement/sensors/TileOccupancy.h"
 #define HARNESS_SHARED_OCCUPANCY 1
 #endif
+#if __has_include("features/movement/nav/Collision.h")
+#include "features/movement/nav/Collision.h"
+#define HARNESS_NAV_FOUNDATION 1   // navigation rebuild Stage 1: collision rule, speed layer
+#endif
 #if __has_include("UDodgeWorkerCycle.h")
 #include "UDodgeWorkerCycle.h"
 #define HARNESS_SHARED_WORKER_CYCLE 1
@@ -371,7 +375,8 @@ void RefreshSnapshot()
 
 // ── Worker (synchronous; result visible one frame after publish) ────────────
 struct WorkerStats { uint32_t cycles = 0; double navMsSum = 0, navMsMax = 0, dodgeMsSum = 0, dodgeMsMax = 0;
-                     uint32_t navRuns = 0; double cycleMsSum = 0, cycleMsMax = 0; };
+                     uint32_t navRuns = 0; double cycleMsSum = 0, cycleMsMax = 0;
+                     uint32_t squareMismatches = 0; };   // game rule: worker squares that differ from the view
 WorkerStats g_worker;
 struct TickStats { uint32_t n = 0; double sum = 0, max = 0; };
 TickStats g_tick;
@@ -453,6 +458,7 @@ bool  IsTileFullOccupied(int tx, int ty) { return (H::ViewFlags(tx, ty) & H::kFu
 bool  IsDamagingTile(int tx, int ty) { return (H::ViewFlags(tx, ty) & H::kDamaging) != 0; }
 bool  IsTileDamagingLive(int tx, int ty) { return IsDamagingTile(tx, ty); }
 float GetTileSpeed(int, int) { return 0.f; }
+unsigned char GetTileFlags(int tx, int ty) { return H::ViewFlags(tx, ty); }
 void  CopyBoxBlocked(float originX, float originY, int side, float cellTiles,
                      float playerHalfEdge, bool foldHazard, unsigned char* out)
 {
@@ -573,9 +579,22 @@ bool IsHazardAt(float x, float y) { return Movement::TileSensor::IsHazardAt(H::g
 #if __has_include("features/movement/sensors/TileOccupancy.h")
 bool WallsClear(float x, float y) { return !TestTAB::IsWalkPositionBlocked(x, y); }   // UDodgeSensors.cpp WallsClear
 #endif
+#ifdef HARNESS_NAV_FOUNDATION
+bool StepClear(float ax, float ay, float bx, float by)   // UDodgeSensors.cpp StepClear
+{
+    return Movement::Collision::StepClear([](int tx, int ty) { return H::ViewFlags(tx, ty); }, ax, ay, bx, by);
+}
+#endif
 bool CanOccupy(float worldX, float worldY, bool safeWalk)
 {
     // Line-for-line UDodgeSensors.cpp Sensors::CanOccupy.
+#ifdef HARNESS_NAV_FOUNDATION
+    if (Movement::Collision::GetRule() == Movement::Collision::Rule::Game) {
+        if (!Movement::Collision::Standable([](int tx, int ty) { return H::ViewFlags(tx, ty); }, worldX, worldY))
+            return false;
+        if (safeWalk && IsHazardAt(worldX, worldY)) return false;
+    } else
+#endif
     if (!Movement::TileSensor::CanOccupy(H::g_memo, worldX, worldY, safeWalk)) return false;
     if (!safeWalk) return true;
     constexpr float h = kUOccPlayerHalfEdge;
@@ -650,6 +669,31 @@ uint32_t PublishSnapshot(const Path::PlannerSnapshot& snap)
 {
     *s_local = snap;
     s_local->seq = ++s_seq;
+#ifdef HARNESS_NAV_FOUNDATION
+    // Under the game rule the worker must read exactly the squares the live check reads:
+    // every square of the dodge copy, and of the walk-to raster when a plan was asked for.
+    if (snap.collisionRule == Movement::Collision::Rule::Game) {
+        namespace TO = Movement::TileOccupancy;
+        const auto normal = [](uint8_t f) -> uint8_t {   // what Collision::Standable can see
+            return (f & TO::kTileKnown) ? (f & (TO::kTileKnown | TO::kTileBlocked | TO::kTileFullOcc))
+                                        : (f & TO::kTileFullOcc);
+        };
+        const Movement::Collision::RasterSquares occ{ snap.grid.squares, snap.grid.squareX0, snap.grid.squareY0, kUOccSquareSide };
+        for (int y = 0; y < kUOccSquareSide; ++y)
+            for (int x = 0; x < kUOccSquareSide; ++x)
+                if (normal(occ(occ.tx0 + x, occ.ty0 + y)) != normal(H::ViewFlags(occ.tx0 + x, occ.ty0 + y)))
+                    ++H::g_worker.squareMismatches;
+        if (snap.navActive) {
+            const Movement::Collision::RasterSquares nav{ snap.navGrid.flags,
+                static_cast<int>(std::floor(snap.navGrid.center.x)) - kUNavRadCells,
+                static_cast<int>(std::floor(snap.navGrid.center.y)) - kUNavRadCells, kUNavSide };
+            for (int y = 0; y < kUNavSide; ++y)
+                for (int x = 0; x < kUNavSide; ++x)
+                    if (normal(nav(nav.tx0 + x, nav.ty0 + y)) != normal(H::ViewFlags(nav.tx0 + x, nav.ty0 + y)))
+                        ++H::g_worker.squareMismatches;
+        }
+    }
+#endif
     const auto t0 = std::chrono::steady_clock::now();
     s_result = Result{};
     HarnessCycle(*s_local, s_result);
@@ -836,11 +880,12 @@ void Emit(const Result& r)
                 "\"stuck_s\":%.1f,\"hits\":%u,\"in_range_frac\":%.2f,\"refused_moves\":%u,"
                 "\"overspeed_moves\":%u,\"max_step_ratio\":%.3f,"
                 "\"tick_ms_avg\":%.3f,\"tick_ms_max\":%.3f,\"nav_plans\":%u,\"nav_ms_avg\":%.3f,\"nav_ms_max\":%.3f,"
-                "\"dodge_ms_avg\":%.3f,\"dodge_ms_max\":%.3f,\"cycle_ms_avg\":%.3f,\"cycle_ms_max\":%.3f}\n",
+                "\"dodge_ms_avg\":%.3f,\"dodge_ms_max\":%.3f,\"cycle_ms_avg\":%.3f,\"cycle_ms_max\":%.3f,"
+                "\"square_mismatches\":%u}\n",
                 r.name.c_str(), r.success ? "true" : "false", r.timeS, r.pathTiles, r.finalDist, r.stuckS, r.hits,
                 r.inRangeFrac, g_move.refused, g_move.overspeed, std::min(g_move.maxStepRatio, 999.0),
                 tickAvg, g_tick.max, g_worker.navRuns, navAvg, g_worker.navMsMax,
-                dodgeAvg, g_worker.dodgeMsMax, cycleAvg, g_worker.cycleMsMax);
+                dodgeAvg, g_worker.dodgeMsMax, cycleAvg, g_worker.cycleMsMax, g_worker.squareMismatches);
     std::fflush(stdout);
 }
 
@@ -1219,17 +1264,19 @@ void ScenarioLockBossChange(const char* name, bool dies)
 // (m) a diagonal pinch: two blocked squares touching only at a corner, the only way
 // through. With NoWalk squares the game's point test lets the player through the
 // corner; with FullOccupy walls the half-tile rule does not.
-void ScenarioDiagonalPinch(const char* name, bool fullOccupy)
+enum class PinchWall { NoWalk, FullOccupy, OccupySquare };
+void ScenarioDiagonalPinch(const char* name, PinchWall kind)
 {
+    const bool fullOccupy = kind == PinchWall::FullOccupy;
     World w; Floor(w);
     // Left region: x <= 7 plus the column x = 8 above y = 0. Right region: the column
     // x = 9 at y <= 0 plus x >= 10. Squares (8,0) and (9,1) close everything except
     // their shared corner at (9,1).
     for (int y = -40; y <= 40; ++y) {
         const bool leftWall = y <= 0, rightWall = y >= 1;
-        if (fullOccupy) {
-            if (leftWall) w.PutObj(8, y, true);
-            if (rightWall) w.PutObj(9, y, true);
+        if (kind != PinchWall::NoWalk) {
+            if (leftWall) w.PutObj(8, y, fullOccupy);
+            if (rightWall) w.PutObj(9, y, fullOccupy);
         } else {
             if (leftWall) w.SetGround(8, y, kNoWalkWall);
             if (rightWall) w.SetGround(9, y, kNoWalkWall);
@@ -1355,6 +1402,9 @@ int main(int argc, char** argv)
 {
     const std::string only = argc > 1 ? argv[1] : "";
     const int scanMode = argc > 2 ? std::atoi(argv[2]) : 0;
+#ifdef HARNESS_NAV_FOUNDATION
+    if (argc > 3) Movement::Collision::SetRuleText(argv[3]);
+#endif
     auto want = [&](const char* n) { return only.empty() || only == n; };
     if (only == "bench_raster") { H::BenchRaster(); return 0; }
     if (only == "bench_nav")    { H::BenchNav(); return 0; }
@@ -1386,8 +1436,9 @@ int main(int argc, char** argv)
     if (want("l_walk_past_bomber")) H::ScenarioWalkPastBomber("l_walk_past_bomber");
     if (want("l_lock_boss_dies"))   H::ScenarioLockBossChange("l_lock_boss_dies", true);
     if (want("l_lock_boss_invuln")) H::ScenarioLockBossChange("l_lock_boss_invuln", false);
-    if (want("m_pinch_nowalk"))     H::ScenarioDiagonalPinch("m_pinch_nowalk", false);
-    if (want("m_pinch_fulloccupy")) H::ScenarioDiagonalPinch("m_pinch_fulloccupy", true);
+    if (want("m_pinch_nowalk"))     H::ScenarioDiagonalPinch("m_pinch_nowalk", H::PinchWall::NoWalk);
+    if (want("m_pinch_fulloccupy")) H::ScenarioDiagonalPinch("m_pinch_fulloccupy", H::PinchWall::FullOccupy);
+    if (want("m_pinch_object"))     H::ScenarioDiagonalPinch("m_pinch_object", H::PinchWall::OccupySquare);
     if (scanMode != 0) {
         H::g_tileScanMode = scanMode;
         if (want("i_tilelist_revisit"))  H::ScenarioTileList("i_tilelist_revisit", true);

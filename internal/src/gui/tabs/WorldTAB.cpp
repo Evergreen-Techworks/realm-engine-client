@@ -2672,6 +2672,12 @@ namespace WorldTAB {
         return (it != s_tileMaxDmgMap.end()) ? it->second : 0;
     }
 
+    uint8_t GetTileFlags(int tx, int ty)
+    {
+        std::lock_guard<std::mutex> lock(s_tileMapMutex);
+        return TileFlagsLocked(BlockedKey(tx, ty));
+    }
+
     // Returns the XML speed multiplier for the tile at (tx, ty).
     // 0.0 = no modifier; > 1.0 = speedy ground; < 1.0 = slow ground.
     float GetTileSpeed(int tx, int ty)

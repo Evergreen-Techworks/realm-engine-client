@@ -13,6 +13,7 @@
 #include "DiagTiming.h"
 #include "DangerPlanner.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
+#include "features/movement/nav/Collision.h"
 #include "features/movement/sensors/TileSensor.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
@@ -1241,15 +1242,31 @@ bool IsHazardAt(float worldX, float worldY)
     return Movement::TileSensor::IsHazardAt(s_hazardMemo, worldX, worldY);
 }
 
+// WorldTAB's square bits for Movement::Collision (one locked lookup per square).
+static uint8_t LiveSquareFlags(int tx, int ty) { return WorldTAB::GetTileFlags(tx, ty); }
+
 bool WallsClear(float worldX, float worldY)
 {
+    if (Movement::Collision::GetRule() == Movement::Collision::Rule::Game)
+        return Movement::Collision::Standable(LiveSquareFlags, worldX, worldY);
     return Movement::TileSensor::IsFinitePoint(worldX, worldY) &&
            !Movement::TileSensor::IsWallAt(worldX, worldY);
 }
 
+bool StepClear(float ax, float ay, float bx, float by)
+{
+    return Movement::Collision::StepClear(LiveSquareFlags, ax, ay, bx, by);
+}
+
 bool CanOccupy(float worldX, float worldY, bool safeWalk)
 {
-    if (!Movement::TileSensor::CanOccupy(s_hazardMemo, worldX, worldY, safeWalk)) return false;
+    if (Movement::Collision::GetRule() == Movement::Collision::Rule::Game) {
+        // The game's point rule for walls and objects; damaging ground below as before.
+        if (!Movement::Collision::Standable(LiveSquareFlags, worldX, worldY)) return false;
+        if (safeWalk && IsHazardAt(worldX, worldY)) return false;
+    } else if (!Movement::TileSensor::CanOccupy(s_hazardMemo, worldX, worldY, safeWalk)) {
+        return false;
+    }
     if (!safeWalk) return true;
     // Damaging ground is tile-based, but the player is not a point. Check the
     // footprint corners so merely grazing a dangerous tile corner is rejected.
