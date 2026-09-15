@@ -43,7 +43,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-export function fixture() {
+export function fixture(testHooks?: { allowActivePredictionForTests?: boolean }) {
   vi.useFakeTimers();
   const hooks = new Map<string, (...args: any[]) => void>();
   const settings = new Map<string, (...args: any[]) => void>();
@@ -73,7 +73,7 @@ export function fixture() {
       },
     },
   };
-  register(ctx as unknown as PluginContext);
+  const controls = register(ctx as unknown as PluginContext, testHooks);
 
   const emit = (name: string, data: any = {}) => {
     const packet = { isDefined: true, data, send: true };
@@ -140,7 +140,7 @@ export function fixture() {
 
   return {
     client, ctx, settings, events, cleanup, commands, emit, hp, enemy, enemyShoot, serverPlayerShoot, playerHit,
-    setCondition, escapes, escapeLog, entityTypes,
+    setCondition, escapes, escapeLog, entityTypes, observation: () => controls.observation(client),
     disable: () => { ctx.enabled = false; onEnable(); },
     enable: () => { ctx.enabled = true; onEnable(); },
   };

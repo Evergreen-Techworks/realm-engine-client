@@ -29,7 +29,7 @@ function threats(list: Partial<DllThreat>[], ageMs = 20): void {
 
 /** max HP 1000, nexus at 10% (100 HP), no burst guard, defense 0, one Jellyfish in view. */
 function plain() {
-  const f = fixture();
+  const f = fixture({ allowActivePredictionForTests: true });
   f.settings.get('ForceAutoNexusHealth')!(10);
   f.settings.get('BurstGuard')!(false);
   f.enemy(JELLY_ID, JELLY_TYPE, 'Hadopelagic Jellyfish', JELLY_PROJECTILES);
@@ -44,7 +44,7 @@ afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.clearAllMocks(); }
 
 describe('hit ledger (layer 2)', () => {
   it('replays the 2026-09-14 Hadopelagic Jellyfish death: one escape before the lethal total', () => {
-    const f = fixture();
+    const f = fixture({ allowActivePredictionForTests: true });
     f.client.playerData.effectiveMaxHealth = 675;
     f.client.playerData.defense = 39;
     f.enemy(JELLY_ID, JELLY_TYPE, 'Hadopelagic Jellyfish', JELLY_PROJECTILES);

@@ -75,6 +75,22 @@ interface EscapePoint { hp: number; burst: number; guarded: boolean }
 
 type EscapeLayer = 'confirmed-health' | 'hit-ledger' | 'forecast' | 'manual';
 
+export type PredictionMode = 'off' | 'observe' | 'active';
+export interface PredictionObservation {
+  sampleAt: number;
+  generation: number;
+  mode: PredictionMode;
+  layer: 'hit-ledger' | 'forecast';
+  confirmedHp: number | null;
+  healthAgeMs: number | null;
+  predictedHp: number | null;
+  effectiveThreshold: number;
+  thresholdCrossed: boolean;
+  lethal: boolean;
+  nativeScanAgeMs: number | null;
+  sourceCertainty: 'ambiguous';
+}
+
 interface NexusState {
   hp: number | null;
   maxHp: number;
@@ -95,7 +111,7 @@ interface NexusState {
   ledgerEffects: [number, number];
 }
 
-export function register(ctx: PluginContext) {
+export function register(ctx: PluginContext, testHooks?: { allowActivePredictionForTests?: boolean }) {
   ctx.name = 'Auto Nexus';
   ctx.category = 'combat';
   let thresholdPct = 25;
@@ -104,10 +120,25 @@ export function register(ctx: PluginContext) {
   let retryMs = 400;
   let burstGuard = true;
   let forecastEnabled = true;
+  let predictionMode: PredictionMode = 'observe';
+  const observations = new WeakMap<ClientConnection, PredictionObservation>();
   let horizonMs = DEFAULT_FORECAST_HORIZON_MS;
   let states = new WeakMap<ClientConnection, NexusState>();
   let activeClient: ClientConnection | null = null;
   const timers = new Set<ReturnType<typeof setInterval>>();
+
+  function activePredictionAllowed(): boolean {
+    return predictionMode !== 'off' && testHooks?.allowActivePredictionForTests === true;
+  }
+
+  ctx.registerSetting('PredictionMode', {
+    label: 'Prediction (observation only)', type: 'select', value: 'observe',
+    options: [{ label: 'Off', value: 'off' }, { label: 'Observe', value: 'observe' }],
+  }, (value: string) => {
+    predictionMode = value === 'off' ? 'off' : 'observe';
+    if (value !== predictionMode) ctx.updateSetting('PredictionMode', predictionMode);
+    syncNativeForecast();
+  });
 
   ctx.registerSetting('ForceAutoNexusHealth', {
     label: 'Nexus Health', type: 'range', value: thresholdPct, min: 0, max: 100, step: 1,
@@ -155,7 +186,7 @@ export function register(ctx: PluginContext) {
   // and its damage numbers are ignored here. Its ground predictor and overlay stay
   // off. Re-sent on connect and map change so restored native state cannot linger.
   function syncNativeForecast(): void {
-    const on = ctx.enabled && forecastEnabled;
+    const on = ctx.enabled && forecastEnabled && predictionMode !== 'off';
     sendDllFeature('autoNexusTilePredict', false);
     sendDllFeature('autoNexusDebugDraw', false);
     // Scan past the horizon by the accepted scan age, so a hit at the horizon edge
@@ -273,6 +304,7 @@ export function register(ctx: PluginContext) {
     bullets: BulletNote[] = [],
     forecastHp: number | null = null,
   ): void {
+    if ((layer === 'hit-ledger' || layer === 'forecast') && !activePredictionAllowed()) return;
     if (state.escaped || !client.connected) return;
     state.escaped = true;
     const now = Date.now();
@@ -344,8 +376,9 @@ export function register(ctx: PluginContext) {
   }
   /** Layer 2: confirmed HP minus the hits charged since. */
   function checkLedger(client: ClientConnection, state: NexusState): void {
-    if (!armed(state) || state.charges.length === 0) return;
+    if (!armed(state) || predictionMode === 'off' || state.charges.length === 0) return;
     const predicted = predictedHp(state)!;
+    observePrediction(client, state, 'hit-ledger', predicted);
     if (predicted > escapePoint(state, Date.now()).hp) return;
     escape(client, state, 'hit-ledger',
       `${state.charges.length} outgoing PLAYERHIT(s) charged at packet damage since the last server HP`,
@@ -353,7 +386,7 @@ export function register(ctx: PluginContext) {
   }
   /** Layer 3: already-fired bullets with packet damage the native scan says hit within the horizon. */
   function checkForecast(client: ClientConnection, state: NexusState): void {
-    if (!forecastEnabled || !armed(state)) return;
+    if (!forecastEnabled || predictionMode === 'off' || !armed(state)) return;
     let effects = effectsOf(client, state);
     if (isInvulnerable(effects)) return;
     const threats = getDllThreats();
@@ -388,13 +421,25 @@ export function register(ctx: PluginContext) {
       if (applied <= 0) continue;
       hp -= applied;
       counted.push({ ownerType: shot.ownerType, raw: shot.rawDamage, applied, armorPiercing: shot.armorPiercing, inMs });
+      observePrediction(client, state, 'forecast', hp);
       if (hp <= point.hp) {
         escape(client, state, 'forecast',
           `${counted.length} fired bullet(s) predicted to hit within ${horizonMs}ms`
           + ` (native scan age ${ageMs ?? 'unknown'}ms)`, counted, hp);
-        return;
+        if (activePredictionAllowed()) return;
       }
     }
+  }
+
+  function observePrediction(client: ClientConnection, state: NexusState, layer: 'hit-ledger' | 'forecast', hp: number): void {
+    const point = escapePoint(state, Date.now());
+    observations.set(client, {
+      sampleAt: performance.now(), generation: client.admission?.generation ?? 0,
+      mode: activePredictionAllowed() ? 'active' : predictionMode, layer,
+      confirmedHp: state.hp, healthAgeMs: state.healthAt === null ? null : Date.now() - state.healthAt,
+      predictedHp: hp, effectiveThreshold: point.hp, thresholdCrossed: hp <= point.hp, lethal: hp <= 0,
+      nativeScanAgeMs: layer === 'forecast' ? getDllThreatsAgeMs() : null, sourceCertainty: 'ambiguous',
+    });
   }
 
   // ── Shots (ENEMYSHOOT / enemy-owned SERVERPLAYERSHOOT) ────────────────────
@@ -549,7 +594,7 @@ export function register(ctx: PluginContext) {
       + `; ledger HP=${ledgerHp === null ? 'unknown' : Math.round(ledgerHp)} (${state.charges.length} charged hit(s), ${state.shots.size} shot(s) known)`
       + `; forecast=${forecastEnabled ? `on (horizon ${horizonMs}ms, native scan age ${scanAge === null ? 'never' : `${scanAge}ms`})` : 'off'}`
       + `; enabled=${ctx.enabled}`
-      + `; safe=${state.safe}; escapeRequested=${state.escaped}; mode=predictive-v2`);
+      + `; safe=${state.safe}; escapeRequested=${state.escaped}; mode=${predictionMode}`);
     stopRetry(state); // death is final; repeated ESCAPE cannot recover the character
   });
   // Never suppress server packets or hold outgoing hit reports. A DEATH packet
@@ -565,7 +610,7 @@ export function register(ctx: PluginContext) {
       ctx.updateSetting('ForceAutoNexusHealth', value);
     }
     ctx.sendNotification(client, 'AutoNexus', `Nexus at ${thresholdPct}% HP; burst guard ${burstGuard ? 'on' : 'off'}`
-      + `; hit ledger on; forecast ${forecastEnabled ? `on (${horizonMs}ms)` : 'off'}`);
+      + `; prediction ${predictionMode}; forecast ${forecastEnabled ? `on (${horizonMs}ms)` : 'off'}`);
   });
   ctx.hookCommand('reset', (client) => {
     const state = stateFor(client);
@@ -576,6 +621,7 @@ export function register(ctx: PluginContext) {
       + `${before === null ? 'unknown' : Math.round(before)}); confirmed HP ${state.hp ?? 'unknown'}/${state.maxHp}`);
   });
   ctx.hookCommand('nexus', (client) => escape(client, stateFor(client), 'manual', '/nexus command'));
-  ctx.log(`Loaded — confirmed health + hit ledger; forecast default on (${DEFAULT_FORECAST_HORIZON_MS}ms);`
+  ctx.log(`Loaded — confirmed health active; prediction observation only (${DEFAULT_FORECAST_HORIZON_MS}ms);`
     + ` default nexus at ${thresholdPct}% HP until the saved profile applies; burst guard default on`);
+  return { observation: (client: ClientConnection) => observations.get(client) ?? null };
 }
