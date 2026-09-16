@@ -6,6 +6,21 @@
 namespace UDodge { namespace Navigation {
 constexpr float kWallPadding = 0.15f;
 
+inline bool SameRouteRequest(bool assisting, uint64_t epoch, uint64_t goalId,
+                             uint64_t previousEpoch, uint64_t previousGoalId)
+{
+    return assisting && epoch != 0 && goalId != 0 &&
+        epoch == previousEpoch && goalId == previousGoalId;
+}
+
+inline bool TravelStepConsumed(bool walkTo, bool cacheValid, bool awaiting, bool safeMove,
+                               Vec2 player, Vec2 target, Vec2 corridorStep, float frameTiles)
+{
+    return walkTo && cacheValid && !awaiting && safeMove && frameTiles > 0.f &&
+        LenSq(Sub(target, player)) <= frameTiles * frameTiles &&
+        LenSq(Sub(corridorStep, player)) > frameTiles * frameTiles;
+}
+
 // Swept walls-only test for the padding offsets (PaddingClearAt at the same
 // 0.2-tile sample spacing as OccupancyPathClear).
 inline bool PaddingPathClear(const MapInput& in, Vec2 from, Vec2 to)

@@ -8,6 +8,21 @@ void Check(bool ok, const char* name) {
     if (!ok) { std::fprintf(stderr, "FAIL: %s\n", name); std::exit(1); }
 }
 int main() {
+    Check(Navigation::SameRouteRequest(true, 7, 42, 7, 42), "same global request retains local route across corridor refresh");
+    Check(!Navigation::SameRouteRequest(true, 8, 42, 7, 42), "scene changes invalidate the old local route");
+    Check(!Navigation::SameRouteRequest(true, 7, 43, 7, 42), "new goals invalidate the old local route");
+    Check(!Navigation::SameRouteRequest(false, 7, 42, 7, 42), "manual and legacy goal changes never retain stale routes");
+    Check(!Navigation::SameRouteRequest(true, 0, 0, 0, 0), "uncorrelated routes cannot be retained");
+    Check(Navigation::TravelStepConsumed(true, true, false, true, {1,0}, {1,0}, {4,0}, 0.1f),
+          "completed safe travel steps refresh before the next server tick");
+    Check(!Navigation::TravelStepConsumed(true, true, false, false, {1,0}, {1,0}, {4,0}, 0.1f),
+          "intentional hold and fallback decisions never trigger travel continuation");
+    Check(!Navigation::TravelStepConsumed(true, true, true, true, {1,0}, {1,0}, {4,0}, 0.1f),
+          "waiting for a verified route never authorizes travel continuation");
+    Check(!Navigation::TravelStepConsumed(true, true, false, true, {1,0}, {1,0}, {1,0}, 0.1f),
+          "arrived travel does not repeatedly solve");
+    Check(!Navigation::TravelStepConsumed(true, true, false, true, {1,0}, {1,0}, {4,0}, 0.f),
+          "paralysis cannot trigger travel continuation");
     static DangerMap emptyMap{};
     MapInput cornerInput{}; cornerInput.map = &emptyMap; cornerInput.speed = 5.f;
     Solver::Goal cornerGoal{}; cornerGoal.active = true; cornerGoal.walkTo = true;

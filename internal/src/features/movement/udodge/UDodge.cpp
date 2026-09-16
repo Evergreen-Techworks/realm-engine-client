@@ -118,6 +118,8 @@ NavCache g_navCache;
 Vec2 g_globalRawGoal{};
 bool g_globalRawActive = false;
 bool g_globalAssistance = false;
+uint64_t g_globalCorridorEpoch = 0;
+uint64_t g_globalCorridorGoalId = 0;
 Navigation::Progress g_navProgress;
 bool g_navAwaiting = false;
 // Stuck memory (get-unstuck). A stall re-plans, but a re-plan over the same tile
@@ -665,6 +667,8 @@ void OnEnter()
     g_navCache = NavCache{};
     g_globalRawActive = false;
     g_globalAssistance = false;
+    g_globalCorridorEpoch = 0;
+    g_globalCorridorGoalId = 0;
     g_navAwaiting = false;
     g_navProgress.Reset();
     g_lockApproach = false;
@@ -921,6 +925,11 @@ void Tick(void* player, float px, float py, float dt)
     g_globalRawActive = globalPointActive;
     const auto corridor = Movement::Nav::Runtime::Update({px, py}, {walkX, walkY},
         baseTilesPerSec, globalPointActive);
+    const bool sameGlobalRequest = Navigation::SameRouteRequest(
+        Movement::Nav::Runtime::Enabled() && globalPointActive && g_globalAssistance,
+        corridor.epoch, corridor.goalId, g_globalCorridorEpoch, g_globalCorridorGoalId);
+    g_globalCorridorEpoch = globalPointActive ? corridor.epoch : 0;
+    g_globalCorridorGoalId = globalPointActive ? corridor.goalId : 0;
     if (Movement::Nav::Runtime::Enabled()) {
         if (walkActive && !lockApproach && !wasdActive) {
             if (g_globalAssistance && corridor.count >= 2 && corridor.state != Movement::Nav::RouteState::Unreachable) {
@@ -968,14 +977,12 @@ void Tick(void* player, float px, float py, float dt)
         navStep = NavStepFromCache(g_navCache, in.player, lookahead, dev, nearEnd, in);
         const bool goalMoved = g_navCache.valid &&
             LenSq(Sub(wg, g_navCache.goal)) > kNavGoalMoveTiles * kNavGoalMoveTiles;
-        // Never take even one more step along the previous waypoint's corridor.
-        // It may point directly behind the player after a quest/portal handoff.
-        if (goalMoved) {
+        if (goalMoved && !sameGlobalRequest) {
             g_navCache.valid = false;
             g_navAwaiting = navWaiting = false;
             navStep = wg;
         }
-        navReplan = !g_navCache.valid
+        navReplan = goalMoved || !g_navCache.valid
             || dev > kNavDeviateTiles                                                   // pushed off the route
             || (nearEnd && g_navCache.partial)                                          // consumed a partial route → extend
             || (nearEnd && LenSq(Sub(in.player, wg)) > kNavEndTiles * kNavEndTiles);    // at route end but not the goal
@@ -1363,8 +1370,11 @@ void Tick(void* player, float px, float py, float dt)
     const auto navHandoff = Navigation::FinishRefresh(goal.walkTo, wasNavWaiting, navWaiting,
         g_navCache.valid, in.player, navStep, rebuilt || tickChanged || throttleFallback,
         commitmentChanged, rejectedFreshWalk,
-        acceptedWalkSolve && LenSq(Sub(acceptedWalkStep, navWaiting ? in.player : navStep))
-            > kUNavAnchorArriveTiles * kUNavAnchorArriveTiles);
+        (acceptedWalkSolve && LenSq(Sub(acceptedWalkStep, navWaiting ? in.player : navStep))
+            > kUNavAnchorArriveTiles * kUNavAnchorArriveTiles)
+        || Navigation::TravelStepConsumed(goal.walkTo, g_navCache.valid, navWaiting,
+            g_solve.shouldMove && g_solve.kind == Solver::SolveKind::Safe,
+            in.player, g_solve.target, navStep, in.speed * Clamp(dt * 1000.f, 1.f, 250.f)));
     if (goal.walkTo) {
         navStep = navHandoff.step;
         goal.pos = navStep;
