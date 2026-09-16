@@ -1372,9 +1372,9 @@ void Tick(void* player, float px, float py, float dt)
         commitmentChanged, rejectedFreshWalk,
         (acceptedWalkSolve && LenSq(Sub(acceptedWalkStep, navWaiting ? in.player : navStep))
             > kUNavAnchorArriveTiles * kUNavAnchorArriveTiles)
-        || Navigation::TravelStepConsumed(goal.walkTo, g_navCache.valid, navWaiting,
+        || (!UsesGameRule(in) && Navigation::TravelStepConsumed(goal.walkTo, g_navCache.valid, navWaiting,
             g_solve.shouldMove && g_solve.kind == Solver::SolveKind::Safe,
-            in.player, g_solve.target, navStep, in.speed * Clamp(dt * 1000.f, 1.f, 250.f)));
+            in.player, g_solve.target, navStep, in.speed * Clamp(dt * 1000.f, 1.f, 250.f))));
     if (goal.walkTo) {
         navStep = navHandoff.step;
         goal.pos = navStep;

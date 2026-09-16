@@ -23,6 +23,8 @@ int main() {
           "arrived travel does not repeatedly solve");
     Check(!Navigation::TravelStepConsumed(true, true, false, true, {1,0}, {1,0}, {4,0}, 0.f),
           "paralysis cannot trigger travel continuation");
+    Check(!Navigation::TravelStepConsumed(true, true, false, true, {1,0}, {1.05f,0}, {4,0}, 0.1f),
+          "short corner steps finish before choosing another step");
     static DangerMap emptyMap{};
     MapInput cornerInput{}; cornerInput.map = &emptyMap; cornerInput.speed = 5.f;
     Solver::Goal cornerGoal{}; cornerGoal.active = true; cornerGoal.walkTo = true;

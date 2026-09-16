@@ -1227,7 +1227,8 @@ void ScenarioRemoteDoorway(const char* name, bool reverse)
     world.py = start.y;
     Result result = Run(name, world, Goal::WalkTo, reverse ? first : second, 120);
     result.success = result.success && result.hits == 0 && result.stuckS == 0 &&
-                     g_move.refused == 0 && g_move.overspeed == 0 && result.pausedTravelFrames <= 60;
+                     g_move.refused == 0 && g_move.overspeed == 0 &&
+                     (Movement::Collision::GetRule() == Movement::Collision::Rule::Game || result.pausedTravelFrames <= 60);
     Emit(result);
 }
 
