@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+afterEach(() => vi.useRealTimers());
 
 const read = (path: string) => readFileSync(new URL(`../../../script-packages/${path}`, import.meta.url), 'utf8')
   .replace(/^import .*;\n/gm, '').replace('export default class', 'return class');
@@ -296,6 +298,35 @@ describe('Void sectors and phase actors', () => {
 });
 
 describe('new Farmer package integration', () => {
+  it.each(['void', 'cult'])('%s waits in Nexus, approaches a popped Lost Halls, and stops if it disappears', (mode) => {
+    vi.useFakeTimers(); vi.setSystemTime(10000);
+    const f = fixture(mode, 'Nexus');
+    const Farmer = new Function('RealmEngine', 'OryxRunner', read('farmer/index.mjs'))(f.sdk, OryxRunner);
+    const Base = new Function('RealmEngine', 'Farmer', 'LostHallsRunner', read('farmer/lost-halls-farmer.mjs'))(f.sdk, Farmer, Runner);
+    const script = new Base(mode);
+    const realm = { ...portal('Realm'), isRealm: true };
+    const closed = portal('Lost Halls', 'Closed Lost Halls Portal');
+    f.state.portals = [realm, closed];
+    script.onLoop(); script.onLoop();
+    expect(realm.enter).not.toHaveBeenCalled();
+    expect(closed.enter).not.toHaveBeenCalled();
+    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+    expect(f.sdk.ui.status).toHaveBeenLastCalledWith(expect.stringContaining('waiting in Nexus'));
+    const halls = portal('Lost Halls'); halls.position = { x: 10.5, y: 0.5 };
+    f.state.portals.push(halls); script.onLoop();
+    expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(halls.position);
+    expect(halls.enter).not.toHaveBeenCalled();
+    f.state.portals = [realm]; f.sdk.dodge.clearWaypoint.mockClear(); script.onLoop();
+    expect(f.sdk.dodge.clearWaypoint).toHaveBeenCalled();
+    expect(realm.enter).not.toHaveBeenCalled();
+    f.state.portals.push(halls); f.state.position = { ...halls.position };
+    script.onLoop(); script.onLoop();
+    expect(halls.enter).toHaveBeenCalledOnce();
+    vi.setSystemTime(13000); script.onLoop();
+    expect(halls.enter).toHaveBeenCalledTimes(2);
+    f.state.map = 'Lost Halls'; f.state.portals = []; script.onLoop();
+    expect(script.halls.stage).toBe('halls');
+  });
   it.each([['lost-halls-void-farmer', 'void'], ['lost-halls-cult-farmer', 'cult']])(
     '%s instantiates its route and prioritizes Lost Halls portals', (folder, mode) => {
       const f = fixture(mode, 'Realm');
