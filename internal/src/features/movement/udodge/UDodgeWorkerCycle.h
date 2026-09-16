@@ -52,13 +52,6 @@ inline void RunCycle(const Path::PlannerSnapshot& local, Result& latest)
     // previous/raw goal for another worker cycle.
     if (goal.walkTo && plan.navFound)
         goal.pos = plan.navStepTarget;
-    // A route that exists only across damaging ground is followed with safe-walk
-    // relaxed, matching the game thread (UDodge.cpp): the route just planned, or the
-    // cached one the game thread is still following.
-    if (goal.walkTo && ((plan.navFound && plan.navCrossesHazard) || local.navFollowingHazardRoute)) {
-        in.settings.safeWalk = false;
-        in.playerOnHazard = false;
-    }
     goal.fromLock = local.hasLock;
     goal.lockPos = local.lockPos;
     goal.maxRange = local.weaponRangeTiles;

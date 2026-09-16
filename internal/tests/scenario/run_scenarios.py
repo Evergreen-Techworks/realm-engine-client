@@ -30,7 +30,7 @@ SCENARIOS = [
     "c_u_wall", "c_u_wall_lock",
     "d_boss_open_rings", "d_boss_wall_rings", "d_boss_open_dense", "d_boss_wall_dense",
     "e_corridor1_nowalk", "e_corridor1_fullocc", "e_corridor2_fullocc",
-    "f_damaging_row", "g_fullocc_gap", "h_learned_keepout", "j_hidden_blocker",
+    "f_damaging_row", "f_lava_detour", "f_lava_pressure", "g_fullocc_gap", "h_learned_keepout", "j_hidden_blocker",
     "i_tilelist_revisit", "i_tilelist_frontier",
     "k_slowed_midwalk", "k_paralyzed_midwalk", "k_water_midpath", "k_dodge_in_water",
     "k_speedy_walk", "k_slowed_water", "k_mixed_water_land",
@@ -42,6 +42,7 @@ SCENARIOS = [
     "n_rooms1_fullocc_forward", "n_rooms1_fullocc_reverse",
     "n_rooms2_fullocc_forward", "n_rooms2_fullocc_reverse",
     "n_rooms_reveal_forward", "n_rooms_reveal_reverse",
+    "o_pending_map_waypoint", "o_pending_map_blocked",
 ]
 
 STAGE2_REGRESSIONS = ["n_rooms_remote_forward", "n_rooms_remote_reverse"]

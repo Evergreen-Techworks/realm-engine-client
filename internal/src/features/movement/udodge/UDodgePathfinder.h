@@ -153,10 +153,6 @@ struct PlannerSnapshot {
     // re-plan after a stall takes a different line instead of the same one.
     Vec2     navAvoid[kMaxNavAvoid]{};
     int      navAvoidCount = 0;
-    // The game thread is following a cached route that crosses damaging ground
-    // (PlanResult::navCrossesHazard): the worker's solve relaxes safe-walk for it on
-    // every cycle, not only on the cycle that planned the route.
-    bool     navFollowingHazardRoute = false;
     NavGrid  navGrid{};           // coarse 1-tile occupancy (game thread fills from WorldTAB)
     // navCollisionRule at publish time, so one snapshot is planned under one rule.
     Movement::Collision::Rule collisionRule = Movement::Collision::Rule::Legacy;
@@ -207,11 +203,6 @@ struct PlanResult {
     int   navWptCount  = 0;     // number of route cells in navWpts
     Vec2  navWpts[kMaxNavWpts]{}; // route polyline (world; [0] = player cell) — driver + overlay
     int   navPops      = 0;     // A* cells finalized (perf diagnostics)
-    // The route crosses damaging ground. Under safe-walk the A* first treats that
-    // ground as a wall; only when no route exists without it does it take the
-    // least-damaging one and set this. The game thread then follows that route
-    // with safe-walk relaxed (the follower and the solver hard-refuse damaging
-    // ground otherwise, which used to leave the player pacing at the hazard edge).
     bool  navCrossesHazard = false;
     // ── Worker phase timing (perf diagnostics) — plain data, filled by Compute
     // on the worker thread, read by the game thread through the normal handoff.

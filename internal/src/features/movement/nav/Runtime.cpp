@@ -437,6 +437,7 @@ RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool a
     if (!Enabled()) return output;
     if (!Capture(current, player, now)) {
         output.state = active ? RouteState::Partial : RouteState::Idle;
+        output.capturePending = active;
         if (active) Emit(RouteState::Partial, "map_pending", currentRequest);
         return output;
     }

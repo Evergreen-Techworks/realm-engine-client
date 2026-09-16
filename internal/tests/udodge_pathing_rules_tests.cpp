@@ -127,13 +127,24 @@ int main()
     for (int y = -1; y <= 1; ++y) cell(8, y) = 0x2;
     snap.navGoal = { 16, 0 };
     Path::Compute(snap, plan);
+    Check(plan.navFound && plan.navPartial && !plan.navCrossesHazard && plan.navGoalCell.x < 8.f,
+          "safe-walk stops before damaging ground even when it is the only route");
+    snap.settings.safeWalk = false;
+    Path::Compute(snap, plan);
     Check(plan.navFound && !plan.navPartial && plan.navCrossesHazard,
-          "a corridor crossed by damaging ground is routed across it, flagged for relaxed following");
+          "crossing damaging ground requires explicit safe-walk opt-out");
+    snap.settings.safeWalk = true;
     // Same corridor with a short clean bypass: the clean route wins, no relaxation.
     for (int x = 7; x <= 9; ++x) cell(x, 2) = 0;
     Path::Compute(snap, plan);
     Check(plan.navFound && !plan.navPartial && !plan.navCrossesHazard,
           "a clean detour within the slack beats crossing damaging ground");
+    cell(8, 2) = 0x1;
+    for (int vertical = 2; vertical <= 24; ++vertical) { cell(7, vertical) = 0; cell(9, vertical) = 0; }
+    cell(8, 24) = 0;
+    Path::Compute(snap, plan);
+    Check(plan.navFound && !plan.navPartial && !plan.navCrossesHazard,
+          "safe-walk takes a long clean detour instead of relaxing protection");
 
     // Goal disk: the route ends at the first cell inside the radius.
     reset();
