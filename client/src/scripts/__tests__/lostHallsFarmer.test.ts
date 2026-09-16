@@ -66,7 +66,7 @@ describe('Lost Halls route selection and unlocks', () => {
     expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(add.objectId);
     expect(fixtureState.farmer.setFiring).toHaveBeenLastCalledWith(false);
     fixtureState.runner.combatTick([boss, add], 13100);
-    expect(fixtureState.sdk.dodge.lockEnemy).toHaveBeenCalledWith(add.objectId);
+    expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(add.objectId);
   });
   it.each(['void', 'cult'])('%s releases phase grace immediately on confirmed boss death', (mode) => {
     const fixtureState = fixture(mode); floor(fixtureState, 12, 2);
@@ -88,7 +88,7 @@ describe('Lost Halls route selection and unlocks', () => {
     fixtureState.runner.combatTick([boss, core], 10100);
     expect(fixtureState.sdk.dodge.lockEnemy).toHaveBeenLastCalledWith(core.objectId);
   });
-  it('keeps MBC aiming while issuing a separate safe group preference and clears it on phase change', () => {
+  it('keeps MBC aiming and follows the reachable group without a fake lock during invulnerability', () => {
     const f = fixture(); floor(f, 12, 2);
     f.sdk.self.getName = () => 'Owner';
     f.sdk.world.objects.getPlayers = () => [1, 2, 3].map(id => ({
@@ -103,7 +103,49 @@ describe('Lost Halls route selection and unlocks', () => {
     expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
     boss.isTargetable = false; f.runner.tick(10100);
     expect(f.sdk.dodge.clearGroupPreference).toHaveBeenCalled();
+    expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(1.5, 0.5);
+    expect(f.farmer.lockId).toBe(0);
+    expect(f.farmer.setFiring).toHaveBeenLastCalledWith(false);
+    f.sdk.dodge.navigateToPosition.mockClear();
+    f.runner.tick(12000);
+    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+    expect(f.sdk.dodge.clearWaypoint).toHaveBeenCalled();
+    boss.isTargetable = true; f.sdk.dodge.clearWaypoint.mockClear(); f.runner.tick(12100);
+    expect(f.sdk.dodge.clearWaypoint).toHaveBeenCalled();
+    expect(f.farmer.lockId).toBe(boss.objectId);
+    expect(f.farmer.setFiring).toHaveBeenLastCalledWith(true);
     f.runner.reset('Nexus'); expect(f.runner.groupPositioning.anchorId).toBeNull();
+  });
+  it('cancels phase-follow movement for a real core and discards the group on boss death', () => {
+    const f = fixture(); floor(f, 12, 2);
+    f.sdk.self.getName = () => 'Owner';
+    f.sdk.world.objects.getPlayers = () => [1, 2, 3].map(id => ({
+      objectId: id, name: `Other${id}`, hp: 100, lastUpdate: 10000, position: { x: 6.5, y: 0.5 },
+    }));
+    const boss = mob('Marble Colossus'); boss.isTargetable = false;
+    f.state.enemies = [boss]; f.runner.tick(10000);
+    expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(1.5, 0.5);
+    f.sdk.dodge.navigateToPosition.mockClear(); f.sdk.dodge.clearWaypoint.mockClear();
+    f.state.enemies.push(mob('Marble Core', 71)); f.runner.tick(10100);
+    expect(f.sdk.dodge.clearWaypoint).toHaveBeenCalled();
+    expect(f.sdk.dodge.lockEnemy).toHaveBeenLastCalledWith(71);
+    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+    f.state.dead.add(boss.objectId); f.runner.tick(10200);
+    expect(f.runner.groupPositioning.anchorId).toBeNull();
+    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+  });
+  it('does not follow a group through damaging terrain during an MBC phase', () => {
+    const f = fixture(); floor(f, 12, 2);
+    const boss = mob('Marble Colossus', 10, 2.5); boss.isTargetable = false;
+    f.state.enemies = [boss];
+    f.state.tiles.filter((tile: any) => Math.floor(tile.position.x) === 4).forEach((tile: any) => { tile.damaging = true; });
+    f.sdk.self.getName = () => 'Owner';
+    f.sdk.world.objects.getPlayers = () => [1, 2, 3].map(id => ({
+      objectId: id, name: `Other${id}`, hp: 100, lastUpdate: 10000, position: { x: 6.5, y: 0.5 },
+    }));
+    f.runner.tick(10000);
+    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+    expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalled();
   });
   it.each([['void', 'The Void', 'Cultist Hideout'], ['cult', 'Cultist Hideout', 'The Void']])(
     '%s follows only its selected branch', (mode, destination, other) => {

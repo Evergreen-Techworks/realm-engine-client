@@ -166,7 +166,7 @@ export default class LostHallsRunner extends OryxRunner {
     const priority = enemies.filter(e => e.hp > 0 && e.isTargetable && LATE_ADD.test(e.name)
       && this.reachable(e.position) && this.sdk.self.distanceTo(e.position) <= 16)
       .sort((a, b) => this.sdk.self.distanceTo(a.position) - this.sdk.self.distanceTo(b.position))[0];
-    if (priority) { this.fight(priority, now, priority.name); return true; }
+    if (priority) { this.sdk.dodge.clearGroupPreference?.(); this.fight(priority, now, priority.name); return true; }
     const boss = bosses.sort((a, b) => Number(b.isTargetable) - Number(a.isTargetable)
       || Number(b.objectId === this.encounter) - Number(a.objectId === this.encounter)
       || this.sdk.self.distanceTo(a.position) - this.sdk.self.distanceTo(b.position))[0];
@@ -182,10 +182,24 @@ export default class LostHallsRunner extends OryxRunner {
           });
           if (group?.waypoint) this.sdk.dodge.setGroupPreference(boss.objectId, group.waypoint.x, group.waypoint.y);
           else this.sdk.dodge.clearGroupPreference?.();
-        }
+        } else this.sdk.dodge.clearGroupPreference?.();
+        return true;
+      }
+      this.sdk.dodge.clearGroupPreference?.();
+      if (COLOSSUS.test(boss.name)) {
+        this.stopCombat();
+        const group = this.groupPositioning.select({
+          players: this.sdk.world.objects.getPlayers?.() ?? [], selfName: this.sdk.self.getName?.(),
+          origin: { x: this.sdk.self.getX(), y: this.sdk.self.getY() }, now, graph: this.graph(),
+        });
+        if (group?.waypoint) this.sdk.dodge.navigateToPosition(group.waypoint.x, group.waypoint.y);
+        else this.sdk.dodge.clearWaypoint();
+        this.status(group ? 'Marble Colossus: staying with the group through the phase'
+          : 'Marble Colossus: dodging while waiting for the next vulnerable phase');
         return true;
       }
     }
+    this.sdk.dodge.clearGroupPreference?.();
     if (this.lastDamageableBoss?.objectId === this.encounter
       && !this.dead.has(this.encounter) && !this.sdk.world.objects.isDead?.(this.encounter)
       && now - this.lastDamageableBoss.at < 3000) {
@@ -261,7 +275,7 @@ export default class LostHallsRunner extends OryxRunner {
     if (!this.stage) return false;
     const sdk = this.sdk, f = this.farmer;
     const groupBoss = sdk.enemies.getAll().find(enemy => COLOSSUS.test(enemy.name) && enemy.hp > 0
-      && enemy.isTargetable && !sdk.world.objects.isDead?.(enemy.objectId));
+      && !sdk.world.objects.isDead?.(enemy.objectId));
     if (!groupBoss || sdk.self.getHP() <= 0 || this.stage !== 'halls' || this.mode !== 'void') {
       this.groupPositioning.reset(); sdk.dodge.clearGroupPreference?.();
     }
