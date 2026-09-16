@@ -17,9 +17,10 @@ inline bool TravelStepConsumed(bool walkTo, bool cacheValid, bool awaiting, bool
                                Vec2 player, Vec2 target, Vec2 corridorStep, float frameTiles)
 {
     return walkTo && cacheValid && !awaiting && safeMove && frameTiles > 0.f &&
-        LenSq(Sub(target, player)) <= frameTiles * frameTiles &&
+        LenSq(Sub(target, player)) <= 1e-6f &&
         LenSq(Sub(corridorStep, player)) > frameTiles * frameTiles;
 }
+
 
 // Swept walls-only test for the padding offsets (PaddingClearAt at the same
 // 0.2-tile sample spacing as OccupancyPathClear).
