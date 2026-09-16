@@ -192,7 +192,7 @@ export default class LostHallsRunner extends OryxRunner {
           players: this.sdk.world.objects.getPlayers?.() ?? [], selfName: this.sdk.self.getName?.(),
           origin: { x: this.sdk.self.getX(), y: this.sdk.self.getY() }, now, graph: this.graph(),
         });
-        if (group?.waypoint) this.sdk.dodge.navigateToPosition(group.waypoint.x, group.waypoint.y);
+        if (group?.waypoint) this.sdk.dodge.navigateToPosition(group.waypoint);
         else this.sdk.dodge.clearWaypoint();
         this.status(group ? 'Marble Colossus: staying with the group through the phase'
           : 'Marble Colossus: dodging while waiting for the next vulnerable phase');

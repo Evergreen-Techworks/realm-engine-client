@@ -103,7 +103,7 @@ describe('Lost Halls route selection and unlocks', () => {
     expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
     boss.isTargetable = false; f.runner.tick(10100);
     expect(f.sdk.dodge.clearGroupPreference).toHaveBeenCalled();
-    expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(1.5, 0.5);
+    expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 1.5, y: 0.5 });
     expect(f.farmer.lockId).toBe(0);
     expect(f.farmer.setFiring).toHaveBeenLastCalledWith(false);
     f.sdk.dodge.navigateToPosition.mockClear();
@@ -124,7 +124,7 @@ describe('Lost Halls route selection and unlocks', () => {
     }));
     const boss = mob('Marble Colossus'); boss.isTargetable = false;
     f.state.enemies = [boss]; f.runner.tick(10000);
-    expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(1.5, 0.5);
+    expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 1.5, y: 0.5 });
     f.sdk.dodge.navigateToPosition.mockClear(); f.sdk.dodge.clearWaypoint.mockClear();
     f.state.enemies.push(mob('Marble Core', 71)); f.runner.tick(10100);
     expect(f.sdk.dodge.clearWaypoint).toHaveBeenCalled();
