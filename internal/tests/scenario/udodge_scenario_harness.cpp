@@ -76,6 +76,7 @@ namespace H {
 
 double   g_nowMs = 100000.0;   // non-zero: several production timers treat 0 as "unset"
 uint64_t g_frame = 0;
+bool capturePending = false;
 
 struct Ground { bool noWalk = false, sink = false, push = false; float speed = 0.f; int damage = 0; };
 struct Obj    { int tx = 0, ty = 0; bool occ = false, full = false, enemyOcc = false; };
@@ -577,6 +578,12 @@ RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool a
 {
     if (!Enabled()) return {};
     if (!active) { goalActive = false; return {}; }
+    if (H::capturePending) {
+        RouteCorridor pending;
+        pending.state = RouteState::Partial;
+        pending.capturePending = true;
+        return pending;
+    }
     const RoutePoint shiftedPlayer{player.worldX + coordinateOffset, player.worldY + coordinateOffset};
     const RoutePoint shiftedGoal{goal.worldX + coordinateOffset, goal.worldY + coordinateOffset};
     if (H::g_nowMs - navigationCycle < 100.0) return navigationResult;
@@ -884,6 +891,7 @@ struct Result {
     double timeS = 0, pathTiles = 0, stuckS = 0, finalDist = 0, inRangeFrac = 0, firstInRangeS = -1;
     uint32_t hits = 0;
     uint32_t pausedTravelFrames = 0;
+    uint32_t damagingGroundFrames = 0;
 };
 
 constexpr Ground kFloor{};
@@ -950,6 +958,8 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
         ++g_tick.n; g_tick.sum += tickMs; g_tick.max = std::max(g_tick.max, tickMs);
 
         const Vec2 cur{ w.px, w.py };
+        const Ground* currentGround = w.GroundAt(FloorI(cur.x), FloorI(cur.y));
+        if (currentGround && currentGround->damage > 0) ++r.damagingGroundFrames;
         if (kind == Goal::WalkTo && w.walkActive && r.pathTiles > 1.f &&
             Len(Sub(cur, goal)) > 1.f && LenSq(Sub(cur, prev)) < 1e-8f)
             ++r.pausedTravelFrames;
@@ -1022,11 +1032,11 @@ void Emit(const Result& r)
                 "\"overspeed_moves\":%u,\"max_step_ratio\":%.3f,"
                 "\"tick_ms_avg\":%.3f,\"tick_ms_max\":%.3f,\"nav_plans\":%u,\"nav_ms_avg\":%.3f,\"nav_ms_max\":%.3f,"
                 "\"dodge_ms_avg\":%.3f,\"dodge_ms_max\":%.3f,\"cycle_ms_avg\":%.3f,\"cycle_ms_max\":%.3f,"
-                "\"square_mismatches\":%u,\"paused_travel_frames\":%u}\n",
+                "\"square_mismatches\":%u,\"paused_travel_frames\":%u,\"damaging_ground_frames\":%u}\n",
                 r.name.c_str(), r.success ? "true" : "false", r.timeS, r.pathTiles, r.finalDist, r.stuckS, r.hits,
                 r.inRangeFrac, g_move.refused, g_move.overspeed, std::min(g_move.maxStepRatio, 999.0),
                 tickAvg, g_tick.max, g_worker.navRuns, navAvg, g_worker.navMsMax,
-                dodgeAvg, g_worker.dodgeMsMax, cycleAvg, g_worker.cycleMsMax, g_worker.squareMismatches, r.pausedTravelFrames);
+                dodgeAvg, g_worker.dodgeMsMax, cycleAvg, g_worker.cycleMsMax, g_worker.squareMismatches, r.pausedTravelFrames, r.damagingGroundFrames);
     std::fflush(stdout);
 }
 
@@ -1233,13 +1243,30 @@ void ScenarioRemoteDoorway(const char* name, bool reverse)
 }
 
 // (f) a damaging row across a 3-wide corridor (safe-walk on, only way through)
-void ScenarioDamagingRow(const char* name)
+void ScenarioDamagingRow(const char* name, bool detour = false, bool pressure = false)
 {
     World w; Floor(w);
-    for (int x = -3; x <= 20; ++x) { w.Fill(x, -6, x, -2, kNoWalkWall); w.Fill(x, 2, x, 6, kNoWalkWall); }
+    const int firstWall = detour ? -3 : -40;
+    const int lastWall = detour ? 20 : 40;
+    const int wallDepth = detour ? 6 : 40;
+    for (int column = firstWall; column <= lastWall; ++column) {
+        w.Fill(column, -wallDepth, column, -2, kNoWalkWall);
+        w.Fill(column, 2, column, wallDepth, kNoWalkWall);
+    }
     for (int y = -1; y <= 1; ++y) w.SetGround(8, y, kLava);
     w.px = 0.5f; w.py = 0.5f;
-    Emit(Run(name, w, Goal::WalkTo, { 16.5f, 0.5f }, 60));
+    if (pressure) {
+        w.script = [nextShot = 100400.0](World& current) mutable {
+            if (g_nowMs >= nextShot) {
+                current.Fire(7.5f, 0.5f, 3.14159265f, 8.f, 1500.f, 0.2f, 0);
+                nextShot = g_nowMs + 800.0;
+            }
+        };
+    }
+    Result result = Run(name, w, Goal::WalkTo, { 16.5f, 0.5f }, 10);
+    result.success = (detour ? result.success : !result.success && w.px < 8.f)
+        && result.damagingGroundFrames == 0 && result.hits == 0 && g_move.overspeed == 0;
+    Emit(result);
 }
 
 // (g) a long FullOccupy wall with a single one-tile gap
@@ -1249,6 +1276,19 @@ void ScenarioFullOccupyGap(const char* name)
     for (int y = -35; y <= 35; ++y) if (y != 3) w.PutObj(8, y, true);
     w.px = 0.5f; w.py = 0.5f;
     Emit(Run(name, w, Goal::WalkTo, { 16.5f, 0.5f }, 60));
+}
+
+void ScenarioPendingBlocked(const char* name)
+{
+    World world;
+    Floor(world);
+    world.Fill(4, -40, 4, 40, kNoWalkWall);
+    world.px = 0.5f; world.py = 0.5f;
+    capturePending = true;
+    Result result = Run(name, world, Goal::WalkTo, {8.5f, 0.5f}, 8);
+    capturePending = false;
+    result.success = !result.success && world.px < 4.f && g_move.refused == 0 && g_move.overspeed == 0;
+    Emit(result);
 }
 
 // (h) a learned keep-out on a common mob standing in a 5-wide corridor
@@ -1750,8 +1790,16 @@ int main(int argc, char** argv)
     if (want("n_rooms_reveal_forward")) H::ScenarioConnectedRooms("n_rooms_reveal_forward", 1, false, false, true);
     if (want("n_rooms_reveal_reverse")) H::ScenarioConnectedRooms("n_rooms_reveal_reverse", 1, false, true, true);
     if (want("n_rooms_remote_forward")) H::ScenarioRemoteDoorway("n_rooms_remote_forward", false);
+    if (want("o_pending_map_blocked")) H::ScenarioPendingBlocked("o_pending_map_blocked");
+    if (want("o_pending_map_waypoint")) {
+        H::capturePending = true;
+        H::ScenarioCorridor("o_pending_map_waypoint", 2, false);
+        H::capturePending = false;
+    }
     if (want("n_rooms_remote_reverse")) H::ScenarioRemoteDoorway("n_rooms_remote_reverse", true);
     if (want("f_damaging_row"))     H::ScenarioDamagingRow("f_damaging_row");
+    if (want("f_lava_detour"))      H::ScenarioDamagingRow("f_lava_detour", true);
+    if (want("f_lava_pressure"))    H::ScenarioDamagingRow("f_lava_pressure", false, true);
     if (want("g_fullocc_gap"))      H::ScenarioFullOccupyGap("g_fullocc_gap");
     if (want("h_learned_keepout"))  H::ScenarioLearnedKeepout("h_learned_keepout");
     if (want("j_hidden_blocker"))   H::ScenarioHiddenBlocker("j_hidden_blocker");

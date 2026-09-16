@@ -25,6 +25,7 @@ struct RouteCorridor {
     uint64_t goalId = 0;
     RouteState state = RouteState::Idle;
     bool requiresLocalVerification = true;
+    bool capturePending = false;
     std::array<RoutePoint, 8> points{};
     int count = 0;
 };

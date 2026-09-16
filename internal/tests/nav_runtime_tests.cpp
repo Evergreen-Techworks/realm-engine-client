@@ -154,6 +154,7 @@ int main()
     const auto waiting = Runtime::Update({1.5f, 2.5f}, {13.5f, 2.5f}, 6.f, true);
     Check(waiting.count == 0 && waiting.epoch != route.epoch,
           "same-size map reset refuses stale corridors and old scene tiles");
+    Check(waiting.capturePending, "pending map capture permits only independently validated local routing");
     Scene second;
     world = second.worldBytes.data();
     const auto newRoute = Await(Nav::RouteState::Ready);

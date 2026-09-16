@@ -112,7 +112,7 @@ struct NavCache {
     int  n = 0;
     Vec2 wpts[kMaxNavWpts]{};     // route polyline (world; [0] = player at plan time)
     bool partial = false;        // route only reaches toward the goal (needs extending near its end)
-    bool crossesHazard = false;  // the A* found no route without damaging ground (PlanResult::navCrossesHazard)
+    bool crossesHazard = false;
 };
 NavCache g_navCache;
 Vec2 g_globalRawGoal{};
@@ -930,7 +930,7 @@ void Tick(void* player, float px, float py, float dt)
         corridor.epoch, corridor.goalId, g_globalCorridorEpoch, g_globalCorridorGoalId);
     g_globalCorridorEpoch = globalPointActive ? corridor.epoch : 0;
     g_globalCorridorGoalId = globalPointActive ? corridor.goalId : 0;
-    if (Movement::Nav::Runtime::Enabled()) {
+    if (Movement::Nav::Runtime::Enabled() && !corridor.capturePending) {
         if (walkActive && !lockApproach && !wasdActive) {
             if (g_globalAssistance && corridor.count >= 2 && corridor.state != Movement::Nav::RouteState::Unreachable) {
                 const auto& waypoint = corridor.points[corridor.count - 1];
@@ -950,18 +950,6 @@ void Tick(void* player, float px, float py, float dt)
     // Enemy-centred keep-outs (self blasts, point-blank shooters) stay HARD during
     // walk-to as well: the route goes around them, and with no way round the player
     // waits at the edge (UDodgeEnemyHazards.h).
-
-    // A route the A* could only find across damaging ground is followed with
-    // safe-walk relaxed: the follower and the solver would otherwise refuse the very
-    // squares the route needs and hold at the edge. Only walk-to, only while that
-    // route is the one being followed; FillNavGrid still folds hazard (settings).
-    const bool playerOnHazardRaw = in.playerOnHazard;
-    const auto applyNavHazardRelax = [&]() {
-        in.settings.safeWalk = settings.safeWalk &&
-            !(walkActive && g_navCache.valid && g_navCache.crossesHazard);
-        in.playerOnHazard = in.settings.safeWalk && playerOnHazardRaw;
-    };
-    applyNavHazardRelax();
 
     // ── Nav re-plan decision (walk-to route caching) ─────────────────────────
     // Follow the cached route and only re-run the A* on a real trigger. navStep is
@@ -1240,7 +1228,6 @@ void Tick(void* player, float px, float py, float dt)
         s_snap.navGoal          = { walkX, walkY };
         s_snap.navGoalRadius    = navGoalRadius;
         s_snap.navAvoidCount    = ActiveNavAvoid(s_snap.navAvoid, GetTickCount64());
-        s_snap.navFollowingHazardRoute = walkActive && g_navCache.valid && g_navCache.crossesHazard;
         if (s_snap.navActive) {
             PhaseTimer _p(DiagTiming::Game().rasterNav);
             FillNavGrid(s_snap.navGrid, in.player, settings.safeWalk, collisionRule);
@@ -1360,7 +1347,6 @@ void Tick(void* player, float px, float py, float dt)
     // Refresh BOTH the local waiting flag and steering goal before any fallback
     // solve; otherwise an accepted route is immediately overwritten by HOLD.
     navWaiting = g_navAwaiting;
-    applyNavHazardRelax();   // the cache may have been replaced above
     if (goal.walkTo && navArrivedFresh) navStep = {walkX, walkY};
     else if (goal.walkTo && navCacheRefreshed && g_navCache.valid && !navWaiting) {
         float dev = 0.f; bool nearEnd = false;

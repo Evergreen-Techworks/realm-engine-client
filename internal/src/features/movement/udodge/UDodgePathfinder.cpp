@@ -883,13 +883,6 @@ float NavOctile(int ax, int ay, int bx, int by)
            (kUPathRoot2 - 1.f) * static_cast<float>(std::min(dx, dy));
 }
 
-// Admissible remaining-cost estimate (cells) from `idx` to the goal (disk).
-float goalHCells(const PlannerSnapshot& in, int idx, int goalGx, int goalGy)
-{
-    return std::max(0.f, NavOctile(idx % kNS, idx / kNS, goalGx, goalGy) -
-                         std::max(0.f, in.navGoalRadius) / kUNavCellTiles);
-}
-
 // One goal-directed A* pass over the nav grid (worker scratch s_nav*). With
 // `hazardIsWall`, damaging ground (bit1) is impassable; otherwise it is priced at
 // kUNavHazardCost per cell. Fills the search outcome; the route itself stays in
@@ -1082,50 +1075,19 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
     startGx = std::clamp(startGx, 0, kNS - 1);
     startGy = std::clamp(startGy, 0, kNS - 1);
 
-    // Damaging ground and safe-walk. The live follower and the solver hard-refuse
-    // damaging ground under safe-walk, so a route that merely PRICES it (the old
-    // single pass) was a route the player could not follow: it paced at the edge
-    // while the stall timer re-planned onto the same corridor. So:
-    //   1. the least-damaging route is searched first (damaging ground priced at
-    //      kUNavHazardCost) — on open ground it touches none and this is the only pass;
-    //   2. when it does cross damaging ground, a clean search (damaging ground as a
-    //      wall) is run, bounded by that route's cost plus kHazardDetourSlack: a
-    //      clean route that is not much longer wins;
-    //   3. otherwise the crossing route stands, flagged navCrossesHazard, and the game
-    //      thread follows it with safe-walk relaxed.
-    constexpr float kHazardDetourWinCells = 4.f;
-    constexpr float kHazardDetourSlack    = 12.f;   // tiles of detour worth taking to stay clean
     static int s_navChain[kUNavCells];       // worker-thread scratch (single-threaded)
-    static int s_navSoftChain[kUNavCells];
     const auto buildChain = [&](int target, int* chain) {
         int n = 0;
         for (int c = target; c != -1 && n < kUNavCells; c = s_navPrev[c]) chain[n++] = c;
         return n;
     };
-    NavSearch search = RunNavSearch(in, startGx, startGy, goalGx, goalGy, false);
+    NavSearch search = RunNavSearch(in, startGx, startGy, goalGx, goalGy, in.settings.safeWalk);
     int totalPops = search.pops;
     int len = search.target == search.start ? 0 : buildChain(search.target, s_navChain);
     bool crossesHazard = false;
-    if (in.settings.safeWalk && len >= 2) {
+    if (len >= 2) {
         for (int i = 0; i < len && !crossesHazard; ++i)
             crossesHazard = (in.navGrid.flags[s_navChain[i]] & 0x2) != 0;
-    }
-    if (crossesHazard) {
-        const NavSearch soft = search;
-        const int softLen = len;
-        std::copy(s_navChain, s_navChain + softLen, s_navSoftChain);
-        const float bound = s_navG[soft.target] + goalHCells(in, soft.target, goalGx, goalGy) + kHazardDetourSlack;
-        const NavSearch clean = RunNavSearch(in, startGx, startGy, goalGx, goalGy, true, bound);
-        totalPops += clean.pops;
-        const bool cleanWins = clean.target != clean.start &&
-            (clean.reached || (!soft.reached && clean.targetH <= soft.targetH + kHazardDetourWinCells));
-        if (cleanWins) {
-            search = clean;
-            len = buildChain(clean.target, s_navChain);
-            crossesHazard = false;
-        } else {
-            std::copy(s_navSoftChain, s_navSoftChain + softLen, s_navChain);
-        }
     }
     const bool reached = search.reached;
     const int  start = search.start;
@@ -1179,7 +1141,6 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
     // reads its snapshot; no game-object calls are made here.
     MapInput navInput{};
     navInput.settings = in.settings;
-    if (crossesHazard) navInput.settings.safeWalk = false;   // the route itself crosses it
     navInput.env.occFlags = in.navGrid.flags;
     navInput.env.occCenter = center;
     navInput.env.occSide = kNS;
