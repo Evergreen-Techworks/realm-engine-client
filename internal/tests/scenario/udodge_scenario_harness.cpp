@@ -883,6 +883,7 @@ struct Result {
     bool success = false;
     double timeS = 0, pathTiles = 0, stuckS = 0, finalDist = 0, inRangeFrac = 0, firstInRangeS = -1;
     uint32_t hits = 0;
+    uint32_t pausedTravelFrames = 0;
 };
 
 constexpr Ground kFloor{};
@@ -949,6 +950,9 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
         ++g_tick.n; g_tick.sum += tickMs; g_tick.max = std::max(g_tick.max, tickMs);
 
         const Vec2 cur{ w.px, w.py };
+        if (kind == Goal::WalkTo && w.walkActive && r.pathTiles > 1.f &&
+            Len(Sub(cur, goal)) > 1.f && LenSq(Sub(cur, prev)) < 1e-8f)
+            ++r.pausedTravelFrames;
         r.pathTiles += Len(Sub(cur, prev));
         prev = cur;
         if (w.watchId != 0)
@@ -1018,11 +1022,11 @@ void Emit(const Result& r)
                 "\"overspeed_moves\":%u,\"max_step_ratio\":%.3f,"
                 "\"tick_ms_avg\":%.3f,\"tick_ms_max\":%.3f,\"nav_plans\":%u,\"nav_ms_avg\":%.3f,\"nav_ms_max\":%.3f,"
                 "\"dodge_ms_avg\":%.3f,\"dodge_ms_max\":%.3f,\"cycle_ms_avg\":%.3f,\"cycle_ms_max\":%.3f,"
-                "\"square_mismatches\":%u}\n",
+                "\"square_mismatches\":%u,\"paused_travel_frames\":%u}\n",
                 r.name.c_str(), r.success ? "true" : "false", r.timeS, r.pathTiles, r.finalDist, r.stuckS, r.hits,
                 r.inRangeFrac, g_move.refused, g_move.overspeed, std::min(g_move.maxStepRatio, 999.0),
                 tickAvg, g_tick.max, g_worker.navRuns, navAvg, g_worker.navMsMax,
-                dodgeAvg, g_worker.dodgeMsMax, cycleAvg, g_worker.cycleMsMax, g_worker.squareMismatches);
+                dodgeAvg, g_worker.dodgeMsMax, cycleAvg, g_worker.cycleMsMax, g_worker.squareMismatches, r.pausedTravelFrames);
     std::fflush(stdout);
 }
 
@@ -1223,7 +1227,7 @@ void ScenarioRemoteDoorway(const char* name, bool reverse)
     world.py = start.y;
     Result result = Run(name, world, Goal::WalkTo, reverse ? first : second, 120);
     result.success = result.success && result.hits == 0 && result.stuckS == 0 &&
-                     g_move.refused == 0 && g_move.overspeed == 0;
+                     g_move.refused == 0 && g_move.overspeed == 0 && result.pausedTravelFrames <= 60;
     Emit(result);
 }
 

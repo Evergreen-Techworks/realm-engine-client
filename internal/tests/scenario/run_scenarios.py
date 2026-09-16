@@ -54,6 +54,7 @@ def main():
     ap.add_argument("--binary-out", default="", help="also copy the built harness here")
     ap.add_argument("--check", action="store_true",
                     help="exit non-zero if any scenario outside KNOWN_LIMITATIONS fails")
+    ap.add_argument("--metrics", action="store_true", help="print scenario measurements alongside check results")
     ap.add_argument("--stage2-regressions", action="store_true",
                     help="run unresolved persistent-routing regressions instead of the normal suite")
     ap.add_argument("--rule", choices=["legacy", "game", "both"], default="both",
@@ -122,7 +123,7 @@ def main():
                     row["tree"] = args.label
                     row["scan_mode"] = scan
                     row["rule"] = rule
-                    if not args.check:
+                    if not args.check or args.metrics:
                         print(json.dumps(row), flush=True)
                     if not row["success"] and name not in known:
                         failed.append(f"{name} [{rule}]")

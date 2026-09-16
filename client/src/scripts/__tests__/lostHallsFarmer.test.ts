@@ -44,6 +44,50 @@ function floor(f: ReturnType<typeof fixture>, width: number, height: number) {
 }
 
 describe('Lost Halls route selection and unlocks', () => {
+  it.each(['void', 'cult'])('%s ignores stale dead priority and ordinary adds', (mode) => {
+    const fixtureState = fixture(mode);
+    floor(fixtureState, 12, 2);
+    const priority = mob(mode === 'void' ? 'Marble Core' : 'Molek', 70);
+    const ordinary = mob('Lost Halls Golem', 71);
+    fixtureState.state.dead.add(priority.objectId);
+    fixtureState.state.dead.add(ordinary.objectId);
+    expect(fixtureState.runner.combatTick([priority, ordinary], 10000)).toBe(false);
+    expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalled();
+    expect(fixtureState.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+  });
+  it('does not switch from a briefly invulnerable MBC to an unrelated add', () => {
+    const fixtureState = fixture(); floor(fixtureState, 12, 2);
+    const boss = mob('Marble Colossus');
+    const add = mob('Lost Halls Golem', 71);
+    fixtureState.runner.combatTick([boss, add], 10000);
+    boss.isTargetable = false;
+    fixtureState.sdk.dodge.lockEnemy.mockClear();
+    expect(fixtureState.runner.combatTick([boss, add], 10100)).toBe(true);
+    expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(add.objectId);
+    expect(fixtureState.farmer.setFiring).toHaveBeenLastCalledWith(false);
+    fixtureState.runner.combatTick([boss, add], 13100);
+    expect(fixtureState.sdk.dodge.lockEnemy).toHaveBeenCalledWith(add.objectId);
+  });
+  it.each(['void', 'cult'])('%s releases phase grace immediately on confirmed boss death', (mode) => {
+    const fixtureState = fixture(mode); floor(fixtureState, 12, 2);
+    const boss = mob(mode === 'void' ? 'Marble Colossus' : 'Agonized Titan');
+    const add = mob('Lost Halls Golem', 71);
+    fixtureState.runner.combatTick([boss], 10000);
+    fixtureState.state.dead.add(boss.objectId);
+    fixtureState.sdk.dodge.lockEnemy.mockClear();
+    fixtureState.runner.combatTick([boss, add], 10100);
+    expect(fixtureState.sdk.dodge.lockEnemy).toHaveBeenCalledWith(add.objectId);
+    expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(boss.objectId);
+  });
+  it('still prioritizes a live Marble Core during the MBC phase grace', () => {
+    const fixtureState = fixture(); floor(fixtureState, 12, 2);
+    const boss = mob('Marble Colossus');
+    fixtureState.runner.combatTick([boss], 10000);
+    boss.isTargetable = false;
+    const core = mob('Marble Core', 71);
+    fixtureState.runner.combatTick([boss, core], 10100);
+    expect(fixtureState.sdk.dodge.lockEnemy).toHaveBeenLastCalledWith(core.objectId);
+  });
   it('keeps MBC aiming while issuing a separate safe group preference and clears it on phase change', () => {
     const f = fixture(); floor(f, 12, 2);
     f.sdk.self.getName = () => 'Owner';

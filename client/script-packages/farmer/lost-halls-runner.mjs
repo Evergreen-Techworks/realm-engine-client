@@ -51,6 +51,7 @@ export default class LostHallsRunner extends OryxRunner {
     this.terminalQuietAt = null;
     this.vialUsed = false;
     this.titanReadyAt = null;
+    this.lastDamageableBoss = null;
   }
 
   status(text) {
@@ -157,6 +158,7 @@ export default class LostHallsRunner extends OryxRunner {
   }
 
   combatTick(enemies, now) {
+    enemies = enemies.filter(enemy => !this.sdk.world.objects.isDead?.(enemy.objectId));
     const bosses = enemies.filter(e => e.hp > 0 && this.isBoss(e) && !this.dead.has(e.objectId)
       && this.reachable(e.position) && (this.sdk.self.distanceTo(e.position) <= 20 || e.objectId === this.encounter)
       && !(this.stage === 'halls' && this.mode === 'cult' && !e.isTargetable && this.collectedFlames.size < 3));
@@ -171,6 +173,7 @@ export default class LostHallsRunner extends OryxRunner {
     if (boss) {
       this.encounter = boss.objectId;
       if (boss.isTargetable) {
+        this.lastDamageableBoss = { objectId: boss.objectId, at: now };
         this.fight(boss, now, boss.name);
         if (COLOSSUS.test(boss.name) && this.farmer.lockId === boss.objectId && this.sdk.dodge.setGroupPreference) {
           const group = this.groupPositioning.select({
@@ -182,6 +185,13 @@ export default class LostHallsRunner extends OryxRunner {
         }
         return true;
       }
+    }
+    if (this.lastDamageableBoss?.objectId === this.encounter
+      && !this.dead.has(this.encounter) && !this.sdk.world.objects.isDead?.(this.encounter)
+      && now - this.lastDamageableBoss.at < 3000) {
+      this.stopCombat(); this.sdk.dodge.clearWaypoint();
+      this.status('holding boss encounter through a brief phase change');
+      return true;
     }
     const ordinary = enemies.filter(e => e.hp > 0 && e.isTargetable && !this.dead.has(e.objectId)
       && !HAZARD.test(e.name) && !this.isBoss(e) && !TITAN.test(e.name) && !COLOSSUS.test(e.name) && !DEFENDER.test(e.name)
