@@ -31,6 +31,30 @@ function fixture() {
   return { farmer, sdk, quest, setEnemies: (value: any[]) => { enemies = value; } };
 }
 afterEach(() => vi.useRealTimers());
+it('does not chase unrelated mobs during a Realm event boss phase', () => {
+  const { farmer, sdk, quest, setEnemies } = fixture();
+  sdk.self.getLevel = () => 20;
+  Object.assign(quest, { isEventBoss: true, objectType: 0x1234, isTargetable: false });
+  const unrelated = { ...quest, objectId: 22, objectType: 0x2345, position: { x: 15, y: 0 }, isTargetable: true };
+  setEnemies([quest, unrelated]);
+  expect(farmer.handleBossEncounter(quest, 10000)).toBe(true);
+  expect(sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+  expect(sdk.dodge.lockEnemy).not.toHaveBeenCalled();
+  expect(sdk.ui.status).toHaveBeenLastCalledWith('Boss: waiting for adds or vulnerable boss');
+  quest.isTargetable = true;
+  expect(farmer.handleBossEncounter(quest, 10200)).toBe(true);
+  expect(sdk.dodge.lockEnemy).toHaveBeenLastCalledWith(quest.objectId);
+  expect(sdk.combat.setAutoFire).toHaveBeenLastCalledWith(true);
+});
+it('unrelated Realm mobs do not prevent an undamageable encounter timing out', () => {
+  const { farmer, sdk, quest, setEnemies } = fixture();
+  sdk.self.getLevel = () => 20;
+  Object.assign(quest, { isEventBoss: true, objectType: 0x1234, isTargetable: false });
+  setEnemies([quest, { ...quest, objectId: 22, isTargetable: true }]);
+  expect(farmer.handleBossEncounter(quest, 10000)).toBe(true);
+  expect(farmer.handleBossEncounter(quest, 41000)).toBe(false);
+  expect(farmer.bossEncounter).toBeNull();
+});
 it('does not repeatedly reacquire a bag whose item actions failed', () => {
   vi.useFakeTimers(); vi.setSystemTime(10000);
   const { farmer, sdk } = fixture();
@@ -215,7 +239,8 @@ it('ends event transition grace after three seconds and still releases confirmed
   fixtureState.farmer.handleBossEncounter(fixtureState.quest, 13099);
   expect(fixtureState.farmer.lockId).toBe(10);
   fixtureState.farmer.handleBossEncounter(fixtureState.quest, 13100);
-  expect(fixtureState.farmer.lockId).toBe(20);
+  expect(fixtureState.farmer.lockId).toBe(0);
+  expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(20);
   fixtureState.quest.isTargetable = true;
   fixtureState.farmer.handleBossEncounter(fixtureState.quest, 13200);
   expect(fixtureState.farmer.lockId).toBe(10);
@@ -226,7 +251,7 @@ it('ends event transition grace after three seconds and still releases confirmed
   expect(fixtureState.farmer.lockId).toBe(0);
   expect(fixtureState.farmer.bossEncounter).toBeNull();
 });
-it('discards event transition grace on map reset and leaves first-seen marker add handling unchanged', () => {
+it('discards event transition grace on map reset without treating unrelated mobs as marker adds', () => {
   const fixtureState = fixture();
   Object.assign(fixtureState.quest, { isEventBoss: true });
   const add = { objectId: 20, name: 'Unrelated mob', position: { x: 2, y: 0 }, hp: 100, maxHp: 100, isTargetable: true };
@@ -238,7 +263,8 @@ it('discards event transition grace on map reset and leaves first-seen marker ad
   expect(fixtureState.farmer.bossEncounter).toBeNull();
   fixtureState.setEnemies([add]);
   fixtureState.farmer.handleBossEncounter(fixtureState.quest, 10200);
-  expect(fixtureState.farmer.lockId).toBe(20);
+  expect(fixtureState.farmer.lockId).toBe(0);
+  expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(20);
 });
 // Bags built by the real loot bridge from an UPDATE, so their rarity comes from the
 // bridge's BAG_RARITY table (after #77: only Loot Bag 6 and its Boost are 'white').
@@ -599,7 +625,8 @@ it('event search keeps loot priority and handles markers without a damageable bo
   const add = { ...f.quest, objectId: 50 };
   f.setEnemies([add]); f.farmer.onLoop();
   expect(f.farmer.eventGoal.objectId).toBe(40);
-  expect(f.farmer.lockId).toBe(50);
+  expect(f.farmer.lockId).toBe(0);
+  expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(50);
   const bag = { objectId: 60, rarity: 'white', position: { x: 2, y: 0 }, items: [{ objectType: 1 }] };
   f.sdk.loot.getNearbyBags.mockReturnValue([bag]); f.farmer.onLoop();
   expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(bag.position);
