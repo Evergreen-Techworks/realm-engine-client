@@ -31,6 +31,50 @@ function fixture() {
   return { farmer, sdk, quest, setEnemies: (value: any[]) => { enemies = value; } };
 }
 afterEach(() => vi.useRealTimers());
+it.each([0x091b, 0x091c, 0x55B0, 0x0928, 0x092d, 0x5598, 0x559A])('skips Realm encounter type %i without selecting its adds', (objectType) => {
+  const { farmer, sdk, quest, setEnemies } = fixture();
+  sdk.self.getLevel = () => 20;
+  Object.assign(quest, { objectType, isEventBoss: true });
+  const otherBoss = { ...quest, objectId: 30, objectType: 0x1234, position: { x: 20, y: 0 } };
+  sdk.world.objects.getAll = () => [quest, otherBoss];
+  setEnemies([quest]);
+  expect(farmer.getEventGoal(10000)).toBe(otherBoss);
+  expect(farmer.getQuestGoal(10000)).toBeNull();
+  expect(farmer.handleBossEncounter(quest, 10000)).toBe(false);
+  expect(farmer.updateTarget(quest.objectId)).toBeNull();
+  expect(sdk.dodge.lockEnemy).not.toHaveBeenCalled();
+});
+it.each([0x091d, 0x091e, 0x55B1, 0x55B2, 0x0929, 0x5599, 0x092a, 0x092b, 0x092c, 0x559B, 0x559C, 0x559D])('ignores skipped encounter add type %i', (objectType) => {
+  const { farmer, sdk, quest, setEnemies } = fixture();
+  sdk.self.getLevel = () => 20;
+  Object.assign(quest, { objectType });
+  setEnemies([quest]);
+  expect(farmer.updateTarget()).toBeNull();
+});
+it('releases a previously selected skipped encounter and picks another boss', () => {
+  const { farmer, sdk, quest } = fixture();
+  sdk.self.getLevel = () => 20;
+  Object.assign(quest, { objectType: 0x55B0, isEventBoss: true });
+  farmer.eventGoal = quest;
+  farmer.questGoal = quest;
+  farmer.bossEncounter = { ...quest };
+  farmer.lockId = quest.objectId;
+  const otherBoss = { ...quest, objectId: 30, objectType: 0x1234 };
+  sdk.world.objects.getAll = () => [quest, otherBoss];
+  expect(farmer.getEventGoal(10000)).toBe(otherBoss);
+  expect(farmer.bossEncounter).toBeNull();
+  expect(farmer.lockId).toBe(0);
+  expect(farmer.getQuestGoal(10000)).toBeNull();
+  expect(sdk.dodge.clearWaypoint).toHaveBeenCalled();
+});
+it('does not pull skipped adds into an unrelated boss encounter', () => {
+  const { farmer, sdk, quest } = fixture();
+  sdk.self.getLevel = () => 20;
+  const ignoredAdd = { ...quest, objectId: 20, objectType: 0x55B1 };
+  farmer.handleBossAdds([ignoredAdd], quest, 'Other boss');
+  expect(sdk.dodge.lockEnemy).not.toHaveBeenCalled();
+  expect(sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+});
 it('abandons only the matching unreachable travel goal and does not immediately select it again', () => {
   const { farmer, sdk, quest } = fixture();
   sdk.dodge.navigateToPosition.mockReturnValue(true);

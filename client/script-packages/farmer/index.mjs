@@ -63,6 +63,10 @@ const BOSS_ADD_RULES = [
 // An add this close to its own boss protects it. Tight on purpose: the earlier 12 tiles plus
 // "any enemy beside a healing boss" sent the farmer after mobs that had nothing to do with it.
 const DEPENDENT_RADIUS = 8;
+const SKIPPED_REALM_TYPES = new Set([
+  ...BOSS_ADD_RULES.flatMap(rule => [...rule.bosses, ...rule.adds.flat()]),
+  0x0929, 0x5599,
+]);
 // An arrived event whose boss is dead or gone may hold the farmer for adds and loot, but
 // never longer than this (an untargetable object beside the corpse used to pin it forever).
 const EVENT_HOLD_MAX_MS = 60000;
@@ -284,12 +288,17 @@ export default class Farmer {
         || Math.hypot(a.position.x - px, a.position.y - py) - Math.hypot(b.position.x - px, b.position.y - py));
   }
 
+  shouldSkipRealmEnemy(enemy) {
+    return SKIPPED_REALM_TYPES.has(enemy?.objectType)
+      && RealmEngine.world.isRealm() && RealmEngine.self.getLevel() >= 20;
+  }
+
   updateTarget(preferredId = 0, enabled = true) {
     const px = RealmEngine.self.getX();
     const py = RealmEngine.self.getY();
     const all = enabled ? RealmEngine.enemies.getAll() : [];
     const eligible = all
-      .filter((e) => e.hp > 0 && this.canNavigate(e.position) && (e.isTargetable || e.objectId === this.lockId)
+      .filter((e) => e.hp > 0 && !this.shouldSkipRealmEnemy(e) && this.canNavigate(e.position) && (e.isTargetable || e.objectId === this.lockId)
         && Math.hypot(e.position.x - px, e.position.y - py)
           <= (e.objectId === this.lockId ? TARGET_RELEASE_RADIUS : TARGET_RADIUS))
       // Something we can damage beats a bigger thing we cannot, even the preferred or locked one.
@@ -337,7 +346,7 @@ export default class Farmer {
       RealmEngine.ui.status(`${label}: returning to boss area`);
       return;
     }
-    const add = guards ? guards[0] : enemies.filter(e => e.objectId !== boss.objectId && e.hp > 0 && e.isTargetable
+    const add = guards ? guards.find(e => !this.shouldSkipRealmEnemy(e)) : enemies.filter(e => !this.shouldSkipRealmEnemy(e) && e.objectId !== boss.objectId && e.hp > 0 && e.isTargetable
       && Math.hypot(e.position.x - center.x, e.position.y - center.y) <= 12)
       .sort((a, b) => Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
         || RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position))[0];
@@ -360,6 +369,13 @@ export default class Farmer {
   }
 
   handleBossEncounter(quest, now) {
+    if (this.shouldSkipRealmEnemy(quest)
+      || this.shouldSkipRealmEnemy(this.bossEncounter)
+      || (this.bossEncounter && this.shouldSkipRealmEnemy(RealmEngine.world.objects.getById(this.bossEncounter.objectId)))) {
+      this.endBossEncounter(false);
+      RealmEngine.dodge.clearWaypoint();
+      return false;
+    }
     if (this.bossEncounter && !this.canNavigate(this.bossEncounter.position)) {
       this.endBossEncounter(false);
       return false;
@@ -380,7 +396,7 @@ export default class Farmer {
       const anchor = boss ?? (quest.isEventBoss ? quest : null);
       if (anchor && RealmEngine.self.distanceTo(anchor.position) <= 12
         && (this.encounterGiveUps.get(anchor.objectId) ?? 0) < ENCOUNTER_MAX_ATTEMPTS)
-        this.bossEncounter = { objectId: anchor.objectId, position: { ...anchor.position }, name: anchor.name,
+        this.bossEncounter = { objectId: anchor.objectId, objectType: anchor.objectType, position: { ...anchor.position }, name: anchor.name,
           isEventBoss: !!anchor.isEventBoss, everTargetable: false, waitingSince: null, phaseMissingAt: null };
     }
     if (!this.bossEncounter) return false;
@@ -791,9 +807,15 @@ export default class Farmer {
   }
 
   getEventGoal(now) {
+    if (this.shouldSkipRealmEnemy(this.eventGoal)) {
+      this.finishedEvents.add(this.eventGoal.objectId);
+      this.eventGoal = null; this.eventArrived = false; this.eventMissingAt = null; this.eventHoldSince = null;
+      this.endBossEncounter(false);
+      RealmEngine.dodge.clearWaypoint();
+    }
     if (now - this.eventScanAt >= 1000 || !this.eventScanAt) {
       this.eventScanAt = now;
-      this.eventCandidates = RealmEngine.world.objects.getAll().filter(o => o.isEventBoss
+      this.eventCandidates = RealmEngine.world.objects.getAll().filter(o => o.isEventBoss && !this.shouldSkipRealmEnemy(o)
         && Number.isFinite(o.position?.x) && Number.isFinite(o.position?.y)
         && !(o.hp <= 0 && o.maxHp > 0)
         && !RealmEngine.world.objects.isDead?.(o.objectId));
@@ -820,7 +842,7 @@ export default class Farmer {
           return this.eventGoal;
         }
         const addsAlive = !dead && this.eventArrived && RealmEngine.enemies.getAll().some(e =>
-          e.objectId !== this.eventGoal.objectId && e.hp > 0 && e.isTargetable
+          !this.shouldSkipRealmEnemy(e) && e.objectId !== this.eventGoal.objectId && e.hp > 0 && e.isTargetable
           && Math.hypot(e.position.x-this.eventGoal.position.x, e.position.y-this.eventGoal.position.y) <= 12);
         if (this.eventArrived && this.eventHoldSince === null) this.eventHoldSince = now;
         const overHold = this.eventHoldSince !== null && now - this.eventHoldSince >= EVENT_HOLD_MAX_MS;
@@ -839,7 +861,7 @@ export default class Farmer {
       } else this.eventMissingAt = null;
     }
     if (!this.eventGoal) {
-      this.eventGoal = this.eventCandidates.filter(o => !this.finishedEvents.has(o.objectId) && this.canNavigate(o.position)
+      this.eventGoal = this.eventCandidates.filter(o => !this.shouldSkipRealmEnemy(o) && !this.finishedEvents.has(o.objectId) && this.canNavigate(o.position)
         && !RealmEngine.world.objects.isDead?.(o.objectId))
         .sort((a,b) => RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position))[0] ?? null;
       if (this.eventGoal) {
@@ -881,7 +903,7 @@ export default class Farmer {
     // Commit to the selected quest while travelling. Realm quest ids and tracked
     // entities can change as visibility/nearest-region changes, so an object merely
     // leaving the snapshot is not evidence the boss disappeared.
-    if (this.questGoal && (this.objectIsDead(this.questGoal.objectId)
+    if (this.questGoal && (this.shouldSkipRealmEnemy(this.questGoal) || this.objectIsDead(this.questGoal.objectId)
       || (this.questGoal.hp <= 0 && this.questGoal.maxHp > 0))) {
       this.questGoal = null; this.questMissingAt = 0;
     }
@@ -922,7 +944,7 @@ export default class Farmer {
     }
 
     const quest = RealmEngine.world.objects.getQuestObject();
-    if (!quest || !this.canNavigate(quest.position) || RealmEngine.world.objects.isDead?.(quest.objectId)
+    if (!quest || this.shouldSkipRealmEnemy(quest) || !this.canNavigate(quest.position) || RealmEngine.world.objects.isDead?.(quest.objectId)
       || (quest.hp <= 0 && quest.maxHp > 0)
       || !Number.isFinite(quest.position?.x) || !Number.isFinite(quest.position?.y)) return null;
     this.questGoal = quest;
