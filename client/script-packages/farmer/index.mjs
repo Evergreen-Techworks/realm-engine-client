@@ -102,6 +102,8 @@ export default class Farmer {
     this.centerGoal = null;
     this.lootBagId = 0;
     this.lootArrivedAt = 0;
+    this.lootRetryAfter = new Map();
+    this.addGoal = null;
     this.lastItemActionAt = 0;
     this.lastPortalUseAt = 0;
     this.nexusSearchGoal = null;
@@ -251,6 +253,8 @@ export default class Farmer {
     this.centerGoal = null;
     this.lootBagId = 0;
     this.lootArrivedAt = 0;
+    this.lootRetryAfter.clear();
+    this.addGoal = null;
     this.lockId = 0;
     this.patrolStep = 0;
     this.lastGoalAt = 0;
@@ -298,13 +302,13 @@ export default class Farmer {
     const py = RealmEngine.self.getY();
     const all = enabled ? RealmEngine.enemies.getAll() : [];
     const eligible = all
-      .filter((e) => e.hp > 0 && !this.shouldSkipRealmEnemy(e) && this.canNavigate(e.position) && (e.isTargetable || e.objectId === this.lockId)
+      .filter((e) => e.hp > 0 && !RealmEngine.world.objects.isDead?.(e.objectId) && !this.shouldSkipRealmEnemy(e) && this.canNavigate(e.position) && (e.isTargetable || e.objectId === this.lockId)
         && Math.hypot(e.position.x - px, e.position.y - py)
           <= (e.objectId === this.lockId ? TARGET_RELEASE_RADIUS : TARGET_RADIUS))
       // Something we can damage beats a bigger thing we cannot, even the preferred or locked one.
       .sort((a, b) => Number(b.isTargetable) - Number(a.isTargetable)
-        || Number(b.objectId === preferredId) - Number(a.objectId === preferredId)
         || Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
+        || Number(b.objectId === preferredId) - Number(a.objectId === preferredId)
         || b.maxHp - a.maxHp || b.hp - a.hp
         || Math.hypot(a.position.x - px, a.position.y - py)
           - Math.hypot(b.position.x - px, b.position.y - py));
@@ -346,10 +350,15 @@ export default class Farmer {
       RealmEngine.ui.status(`${label}: returning to boss area`);
       return;
     }
-    const add = guards ? guards.find(e => !this.shouldSkipRealmEnemy(e)) : enemies.filter(e => !this.shouldSkipRealmEnemy(e) && e.objectId !== boss.objectId && e.hp > 0 && e.isTargetable
-      && Math.hypot(e.position.x - center.x, e.position.y - center.y) <= 12)
-      .sort((a, b) => Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
-        || RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position))[0];
+    const addCandidates = (guards ?? enemies).filter(e => !this.shouldSkipRealmEnemy(e) && e.objectId !== boss.objectId && e.hp > 0 && !RealmEngine.world.objects.isDead?.(e.objectId) && e.isTargetable && this.canNavigate(e.position)
+      && (guards || Math.hypot(e.position.x - center.x, e.position.y - center.y) <= 12))
+      .sort((a, b) => guards ? guards.indexOf(a) - guards.indexOf(b)
+        : Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
+          || RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position));
+    const retained = this.addGoal?.bossId === boss.objectId
+      ? addCandidates.find(enemy => enemy.objectId === this.addGoal.objectId) : null;
+    const add = guards ? addCandidates[0] : retained ?? addCandidates[0];
+    this.addGoal = add ? { bossId: boss.objectId, objectId: add.objectId } : null;
     if (!add) {
       this.updateTarget(0, false); RealmEngine.dodge.clearWaypoint();
       RealmEngine.ui.status(`${label}: ${waitingStatus}`);
@@ -468,6 +477,7 @@ export default class Farmer {
   // engaged, and an event goal for it is finished so the next event is chosen instead
   // of re-creating the same empty encounter every 30 seconds.
   endBossEncounter(failedAttempt) {
+    this.addGoal = null;
     const encounter = this.bossEncounter;
     this.bossEncounter = null; this.bossMissingAt = null; this.updateTarget(0, false);
     if (!failedAttempt || !encounter || encounter.everTargetable) return;
@@ -505,10 +515,14 @@ export default class Farmer {
   }
 
   chooseLootBag(whiteOnly = false) {
+    const now = Date.now();
+    for (const [objectId, until] of this.lootRetryAfter) {
+      if (until <= now) this.lootRetryAfter.delete(objectId);
+    }
     const px = RealmEngine.self.getX();
     const py = RealmEngine.self.getY();
     return RealmEngine.loot.getNearbyBags(LOOT_RADIUS)
-      .filter((bag) => this.canNavigate(bag.position) && this.bagIsUseful(bag) && (!whiteOnly || bag.rarity === 'white'))
+      .filter((bag) => !this.lootRetryAfter.has(bag.objectId) && this.canNavigate(bag.position) && this.bagIsUseful(bag) && (!whiteOnly || bag.rarity === 'white'))
       .sort((a, b) => Number(b.rarity === 'white') - Number(a.rarity === 'white')
         || Number(b.items.some((item) => RealmEngine.loot.isUT(item.objectType) || RealmEngine.loot.isST(item.objectType)))
           - Number(a.items.some((item) => RealmEngine.loot.isUT(item.objectType) || RealmEngine.loot.isST(item.objectType)))
@@ -599,6 +613,7 @@ export default class Farmer {
     // standing on the bag through that bounded wait instead of reinstalling a
     // quest waypoint between the first and second item.
     if (now - this.lastItemActionAt < 5000) return true;
+    this.lootRetryAfter.set(bag.objectId, now + 30000);
     this.lootBagId = 0;
     return false;
   }
