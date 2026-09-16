@@ -51,7 +51,10 @@ export default class MbcGroupPositioning {
     this.anchorId = chosen.anchor.objectId;
     const currentCenter = center(origin);
     const cohesive = chosen.anchor.path.length <= 2 && distance(origin, chosen.anchor.position) <= 2;
-    const waypoint = cohesive ? null : distance(origin, currentCenter) > 0.05
+    const next = chosen.anchor.path[0];
+    const aligned = next && (next.x === currentCenter.x ? Math.abs(origin.x - currentCenter.x) <= 0.05
+      : Math.abs(origin.y - currentCenter.y) <= 0.05);
+    const waypoint = cohesive ? null : !aligned && distance(origin, currentCenter) > 0.05
       ? currentCenter : chosen.anchor.path[0] ?? null;
     return {
       anchorId: this.anchorId,
