@@ -31,6 +31,60 @@ function fixture() {
   return { farmer, sdk, quest, setEnemies: (value: any[]) => { enemies = value; } };
 }
 afterEach(() => vi.useRealTimers());
+it('does not repeatedly reacquire a bag whose item actions failed', () => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const { farmer, sdk } = fixture();
+  const bag = { objectId: 50, rarity: 'blue', position: { x: 0, y: 0 }, items: [{ objectType: 100, slotIndex: 2 }] };
+  sdk.loot.getNearbyBags.mockReturnValue([bag]);
+  sdk.loot.getBags = () => [bag];
+  sdk.loot.useFromBag.mockReturnValue(false);
+  expect(farmer.handleLoot(10000)).toBe(true);
+  vi.setSystemTime(11000);
+  expect(farmer.handleLoot(11000)).toBe(false);
+  for (let now = 11200; now < 20000; now += 200) {
+    vi.setSystemTime(now);
+    expect(farmer.handleLoot(now)).toBe(false);
+  }
+  vi.setSystemTime(42000);
+  expect(farmer.handleLoot(42000)).toBe(true);
+});
+it('keeps the selected add while approaching instead of switching to the nearest each loop', () => {
+  const { farmer, sdk, quest } = fixture();
+  quest.position.x = 0;
+  const first = { ...quest, objectId: 21, position: { x: 10, y: 0 } };
+  const second = { ...quest, objectId: 22, position: { x: -11, y: 0 } };
+  farmer.handleBossAdds([first, second], quest, 'Boss');
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(first.position);
+  second.position.x = -9;
+  farmer.handleBossAdds([first, second], quest, 'Boss');
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(first.position);
+  first.hp = 0;
+  farmer.handleBossAdds([first, second], quest, 'Boss');
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(second.position);
+});
+it('does not switch a live combat lock just because the preferred mob changes', () => {
+  const { farmer, sdk, quest, setEnemies } = fixture();
+  const other = { ...quest, objectId: 20 };
+  sdk.world.objects.getById = (objectId: number) => [quest, other].find(enemy => enemy.objectId === objectId);
+  setEnemies([quest, other]);
+  expect(farmer.updateTarget(10).objectId).toBe(10);
+  expect(farmer.updateTarget(20).objectId).toBe(10);
+  quest.hp = 0;
+  expect(farmer.updateTarget(20).objectId).toBe(20);
+});
+it('releases a committed add on death packets and clears commitment on map reset', () => {
+  const { farmer, sdk, quest } = fixture();
+  const first = { ...quest, objectId: 21, position: { x: 10, y: 0 } };
+  const second = { ...quest, objectId: 22, position: { x: 11, y: 0 } };
+  farmer.handleBossAdds([first, second], quest, 'Boss');
+  sdk.world.objects.isDead = (objectId: number) => objectId === 21;
+  farmer.handleBossAdds([first, second], quest, 'Boss');
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(second.position);
+  farmer.lootRetryAfter.set(50, Date.now() + 30000);
+  farmer.resetMap('Other');
+  expect(farmer.addGoal).toBeNull();
+  expect(farmer.lootRetryAfter.size).toBe(0);
+});
 it.each([0x091b, 0x091c, 0x55B0, 0x0928, 0x092d, 0x5598, 0x559A])('skips Realm encounter type %i without selecting its adds', (objectType) => {
   const { farmer, sdk, quest, setEnemies } = fixture();
   sdk.self.getLevel = () => 20;
