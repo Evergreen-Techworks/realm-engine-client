@@ -406,7 +406,7 @@ export default class Farmer {
       if (anchor && RealmEngine.self.distanceTo(anchor.position) <= 12
         && (this.encounterGiveUps.get(anchor.objectId) ?? 0) < ENCOUNTER_MAX_ATTEMPTS)
         this.bossEncounter = { objectId: anchor.objectId, objectType: anchor.objectType, position: { ...anchor.position }, name: anchor.name,
-          isEventBoss: !!anchor.isEventBoss, everTargetable: false, waitingSince: null, phaseMissingAt: null };
+          isEventBoss: !!(quest.isEventBoss || anchor.isEventBoss), everTargetable: false, waitingSince: null, phaseMissingAt: null };
     }
     if (!this.bossEncounter) return false;
     const boss = enemies.find(e => e.objectId === this.bossEncounter.objectId);
@@ -440,7 +440,10 @@ export default class Farmer {
       // Nothing on the boss to damage. Targetable adds keep the wait useful; with none,
       // a present-but-untargetable boss is waited on for ENCOUNTER_WAIT_MS at most.
       const center = this.bossEncounter.position;
-      const addAlive = enemies.some((e) => e.objectId !== this.bossEncounter.objectId && e.hp > 0 && e.isTargetable
+      const guards = this.bossEncounter.isEventBoss && RealmEngine.world.isRealm()
+        ? this.bossGuards(this.bossEncounter, enemies) : null;
+      const addAlive = (guards ?? enemies).some((e) => e.objectId !== this.bossEncounter.objectId && e.hp > 0 && e.isTargetable
+        && !RealmEngine.world.objects.isDead?.(e.objectId) && !this.shouldSkipRealmEnemy(e)
         && Math.hypot(e.position.x - center.x, e.position.y - center.y) <= 12);
       if (addAlive) this.bossEncounter.waitingSince = null;
       else if (this.bossEncounter.waitingSince === null) this.bossEncounter.waitingSince = now;
@@ -448,7 +451,7 @@ export default class Farmer {
         this.endBossEncounter(true); return false;
       }
       this.handleBossAdds(enemies, this.bossEncounter, this.bossEncounter.name,
-        boss ? 'waiting for adds or vulnerable boss' : 'waiting for encounter visibility');
+        boss ? 'waiting for adds or vulnerable boss' : 'waiting for encounter visibility', guards);
       return true;
     }
     // A vulnerable boss can still be protected by its adds; clear those first.
@@ -856,7 +859,7 @@ export default class Farmer {
           RealmEngine.log.info(`Realm Farmer: continuing nearby event phase — ${replacement.name}`);
           return this.eventGoal;
         }
-        const addsAlive = !dead && this.eventArrived && RealmEngine.enemies.getAll().some(e =>
+        const addsAlive = !dead && this.eventArrived && this.bossGuards(this.eventGoal, RealmEngine.enemies.getAll()).some(e =>
           !this.shouldSkipRealmEnemy(e) && e.objectId !== this.eventGoal.objectId && e.hp > 0 && e.isTargetable
           && Math.hypot(e.position.x-this.eventGoal.position.x, e.position.y-this.eventGoal.position.y) <= 12);
         if (this.eventArrived && this.eventHoldSince === null) this.eventHoldSince = now;
