@@ -45,6 +45,25 @@ function floor(f: ReturnType<typeof fixture>, width: number, height: number) {
   }));
 }
 
+it('stays with the group instead of chasing corridor mobs on the way to Marble Defender', () => {
+  const f = fixture(); floor(f, 16, 2);
+  f.sdk.self.getName = () => 'Owner';
+  f.sdk.world.objects.getPlayers = () => [1, 2, 3].map(objectId => ({
+    objectId, name: `Other${objectId}`, hp: 100, lastUpdate: 10000, position: { x: 6.5, y: 0.5 },
+  }));
+  f.state.enemies = [mob('Lost Halls Golem', 70, 3.5)];
+  f.runner.tick(10000);
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 1.5, y: 0.5 });
+  expect(f.sdk.combat.aimAt).not.toHaveBeenCalled();
+  expect(f.sdk.ui.status).toHaveBeenLastCalledWith(expect.stringContaining('following the group toward Marble Defender'));
+  f.state.position.x = 6.5;
+  f.sdk.dodge.navigateToPosition.mockClear(); f.runner.tick(10100);
+  expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+  expect(f.sdk.combat.aimAt).not.toHaveBeenCalled();
+  f.state.enemies = [mob('Marble Defender', 71, 8.5)]; f.runner.tick(10200);
+  expect(f.sdk.combat.aimAt).toHaveBeenLastCalledWith(71);
+});
+
 describe('Lost Halls route selection and unlocks', () => {
   it.each(['void', 'cult'])('%s ignores stale dead priority and ordinary adds', (mode) => {
     const fixtureState = fixture(mode);
@@ -118,7 +137,7 @@ describe('Lost Halls route selection and unlocks', () => {
     expect(f.farmer.setFiring).toHaveBeenLastCalledWith(true);
     f.runner.reset('Nexus'); expect(f.runner.groupPositioning.anchorId).toBeNull();
   });
-  it('cancels phase-follow movement for a real core and discards the group on boss death', () => {
+  it('keeps group movement ownership when a core appears and attacks it after regrouping', () => {
     const f = fixture(); floor(f, 12, 2);
     f.sdk.self.getName = () => 'Owner';
     f.sdk.world.objects.getPlayers = () => [1, 2, 3].map(id => ({
@@ -129,9 +148,11 @@ describe('Lost Halls route selection and unlocks', () => {
     expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 1.5, y: 0.5 });
     f.sdk.dodge.navigateToPosition.mockClear(); f.sdk.dodge.clearWaypoint.mockClear();
     f.state.enemies.push(mob('Marble Core', 71)); f.runner.tick(10100);
-    expect(f.sdk.dodge.clearWaypoint).toHaveBeenCalled();
+    expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(71);
+    expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 1.5, y: 0.5 });
+    f.state.position.x = 6.5; f.runner.tick(10150);
     expect(f.sdk.dodge.lockEnemy).toHaveBeenLastCalledWith(71);
-    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+    f.sdk.dodge.navigateToPosition.mockClear();
     f.state.dead.add(boss.objectId); f.runner.tick(10200);
     expect(f.runner.groupPositioning.anchorId).toBeNull();
     expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
