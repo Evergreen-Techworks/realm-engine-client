@@ -60,7 +60,13 @@ export default class LostHallsFarmer extends Farmer {
       }
       return 100;
     }
-    if (RealmEngine.world.isRealm() || RealmEngine.world.isNexus()) return super.onLoop();
+    if (RealmEngine.world.isNexus()) {
+      this.halls.stopCombat();
+      RealmEngine.dodge.clearWaypoint();
+      this.halls.status('waiting in Nexus for an open Lost Halls portal');
+      return 100;
+    }
+    if (RealmEngine.world.isRealm()) return super.onLoop();
     // Keep the two new farmers on their selected Lost Halls route.
     this.halls.exit(now, 'returning to Realm to find Lost Halls');
     return 100;
