@@ -32,6 +32,16 @@
 //   time_to_first_in_range_s H::Run: first frame inside the engagement ring (-1 never).
 //   heading_reversals_per_s  supplementary, not an acceptance metric: H::Run, how often the
 //                            player's step turns by more than 90 degrees.
+//
+// Clock (Slice 1): everything in a run reads SCENARIO time - GetTickCount64 (harness_win.h)
+// and, since the worker cycle takes its planning clock as a parameter, the temporal
+// planner too (HarnessCycle). Only the *_ms cost fields are host wall time.
+//   timed_plans / timed_reused / timed_budget_hits / timed_solves
+//                            per worker cycle: the temporal planner answered with a plan,
+//                            kept the plan retained from an earlier cycle, stopped a search
+//                            on its budget; the worker's solve stepped on the planner's
+//                            advice. The first three read 0 on a tree whose Worker::Result
+//                            does not carry them.
 #include "pch-il2cpp.h"
 #include "UDodge.h"
 #include "UDodgeTypes.h"
@@ -494,7 +504,12 @@ void RefreshSnapshot()
 // ── Worker (synchronous; result visible one frame after publish) ────────────
 struct WorkerStats { uint32_t cycles = 0; double navMsSum = 0, navMsMax = 0, dodgeMsSum = 0, dodgeMsMax = 0;
                      uint32_t navRuns = 0; double cycleMsSum = 0, cycleMsMax = 0;
-                     uint32_t squareMismatches = 0; };   // game rule: worker squares that differ from the view
+                     uint32_t squareMismatches = 0;   // game rule: worker squares that differ from the view
+                     // Temporal planner, per worker cycle (Tactician Slice 1; observation only):
+                     uint32_t timedPlans = 0;       // the planner answered with a plan (waiting or moving)
+                     uint32_t timedReused = 0;      // ...of which the plan retained from an earlier cycle was kept
+                     uint32_t timedBudgetHits = 0;  // a search stopped on its expansion count or deadline
+                     uint32_t timedSolves = 0; };   // the worker's solve took its step from the planner's advice
 WorkerStats g_worker;
 struct TickStats { uint32_t n = 0; double sum = 0, max = 0; };
 TickStats g_tick;
@@ -860,10 +875,31 @@ bool     s_have = false;
 uint64_t s_readyFrame = 0;
 uint32_t s_seq = 0;
 
+#ifdef UDODGE_WORKER_CYCLE_CLOCK
+double HarnessPlanningNowMs() { return H::g_nowMs; }
+#endif
+
 void HarnessCycle(const Path::PlannerSnapshot& local, Result& latest)
 {
-#ifdef HARNESS_SHARED_WORKER_CYCLE
-    Worker::RunCycle(local, latest);
+#if defined(HARNESS_SHARED_WORKER_CYCLE) && defined(UDODGE_WORKER_CYCLE_CLOCK)
+    // The temporal planner runs on SCENARIO time, like every other timer in the run
+    // (GetTickCount64 is the scenario clock too), and its search has no wall-clock
+    // deadline: a scenario simulates 40 to 200 times faster than real time, so the
+    // host clock aged every retained plan by microseconds while the world moved by
+    // whole frames, and a host deadline made the result depend on the host's speed.
+    // Two compile-time switches reproduce the pre-Slice-1 harness for comparison
+    // (HARNESS_CXXFLAGS): -DHARNESS_HOST_PLANNING_CLOCK and -DHARNESS_WALL_SEARCH_DEADLINE.
+    Timed::Budget budget{};
+#ifndef HARNESS_WALL_SEARCH_DEADLINE
+    budget.maxSearchMs = 0.f;
+#endif
+#ifdef HARNESS_HOST_PLANNING_CLOCK
+    Worker::RunCycle(local, latest, &Worker::SteadyNowMs, budget);
+#else
+    Worker::RunCycle(local, latest, &HarnessPlanningNowMs, budget);
+#endif
+#elif defined(HARNESS_SHARED_WORKER_CYCLE)
+    Worker::RunCycle(local, latest);   // a tree from before the planning clock was a parameter
 #else
     // Line-for-line UDodgeWorker.cpp WorkerLoop body (before any fix).
     Path::PlanResult plan{};
@@ -939,6 +975,15 @@ uint32_t PublishSnapshot(const Path::PlannerSnapshot& snap)
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     H::WorkerStats& ws = H::g_worker;
     ++ws.cycles; ws.cycleMsSum += ms; ws.cycleMsMax = std::max(ws.cycleMsMax, ms);
+#ifdef UDODGE_WORKER_CYCLE_CLOCK
+    {
+        const auto status = static_cast<SpacetimeDodge::Status>(s_result.timedStatus);
+        if (status == SpacetimeDodge::Status::Waiting || status == SpacetimeDodge::Status::Moving) ++ws.timedPlans;
+        if (s_result.timedReused) ++ws.timedReused;
+        if (s_result.timedBudgetHit) ++ws.timedBudgetHits;
+    }
+#endif
+    if (s_result.solve.timedEscape) ++ws.timedSolves;
     ws.dodgeMsSum += s_result.plan.computeDodgeMs;
     ws.dodgeMsMax = std::max(ws.dodgeMsMax, static_cast<double>(s_result.plan.computeDodgeMs));
     if (snap.navActive) {
@@ -1174,7 +1219,8 @@ void Emit(const Result& r)
                 "\"replans_per_s\":%.3f,\"replans_dodge_goal\":%u,\"replans_nav_route\":%u,"
                 "\"goal_drops\":%u,\"plan_publishes\":%u,\"time_to_first_in_range_s\":%.2f,"
                 "\"in_range_frames\":%llu,\"in_range_tail_frames\":%llu,"
-                "\"heading_reversals_per_s\":%.2f}\n",
+                "\"heading_reversals_per_s\":%.2f,"
+                "\"timed_plans\":%u,\"timed_reused\":%u,\"timed_budget_hits\":%u,\"timed_solves\":%u}\n",
                 r.name.c_str(), r.success ? "true" : "false", r.timeS, r.pathTiles, r.finalDist, r.stuckS, r.hits,
                 r.inRangeFrac, g_move.refused, g_move.overspeed, std::min(g_move.maxStepRatio, 999.0),
                 tickAvg, g_tick.max, g_worker.navRuns, navAvg, g_worker.navMsMax,
@@ -1183,7 +1229,8 @@ void Emit(const Result& r)
                 replansPerS, g_plan.replans, g_plan.navReplans, g_plan.goalDrops, g_plan.publishes,
                 r.firstInRangeS, static_cast<unsigned long long>(r.inRangeFrames),
                 static_cast<unsigned long long>(r.tailFrames),
-                r.simS > 0 ? r.headingReversals / r.simS : 0.0);
+                r.simS > 0 ? r.headingReversals / r.simS : 0.0,
+                g_worker.timedPlans, g_worker.timedReused, g_worker.timedBudgetHits, g_worker.timedSolves);
     std::fflush(stdout);
 }
 

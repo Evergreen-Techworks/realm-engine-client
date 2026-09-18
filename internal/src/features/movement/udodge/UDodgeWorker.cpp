@@ -57,7 +57,9 @@ void WorkerLoop()
         }
         // No lock held during compute. Pure plain-data math — no IL2CPP.
         static Result cycle;   // large (plan + solve); keep off the thread stack
-        RunCycle(local, cycle);
+        // The game's time base is the host's monotonic clock, and the search keeps its
+        // wall-clock deadline: the real clock and the default budget, as always.
+        RunCycle(local, cycle, &SteadyNowMs, Timed::Budget{});
         {
             std::lock_guard<std::mutex> lk(g_planMutex);
             g_latest = cycle;

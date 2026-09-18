@@ -11,9 +11,37 @@
 
 #include <chrono>
 
+// RunCycle takes its planning clock and search budget from the caller (see below).
+#define UDODGE_WORKER_CYCLE_CLOCK 1
+
 namespace UDodge { namespace Worker {
 
-inline void RunCycle(const Path::PlannerSnapshot& local, Result& latest)
+// The planning clock: milliseconds on the time base the caller's world runs on. The
+// temporal planner stamps the plan it retains across cycles with it and ages that
+// plan by the difference, which decides whether the plan is kept (the player is
+// where it says) or dropped, and how much of a wait is left.
+//   - The worker thread passes SteadyNowMs: the host's monotonic clock, which is the
+//     game's time base. It is sampled at the point the cycle always sampled it.
+//   - A caller that simulates time (the host scenario harness) passes its scenario
+//     clock. On the host clock its plans aged by microseconds while its world moved
+//     by whole frames, so every retained plan looked diverged or blocked.
+// The per-phase timers below (timedMs, solveMs) measure compute cost and stay on the
+// host clock for every caller.
+using PlanningClock = double (*)();
+
+inline double SteadyNowMs()
+{
+    return std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// `budget` bounds the temporal search. Its maxSearchMs is a WALL-CLOCK deadline on
+// the host (SpacetimeCore reads steady_clock for it): the worker thread passes
+// Timed::Budget{}; a caller on simulated time passes maxSearchMs = 0, leaving the
+// search bounded by its expansion count alone, so its result does not depend on how
+// fast the host is.
+inline void RunCycle(const Path::PlannerSnapshot& local, Result& latest,
+                     PlanningClock planningNowMs, const Timed::Budget& budget)
 {
     Path::PlanResult plan{};
     Path::Compute(local, plan);
@@ -65,9 +93,8 @@ inline void RunCycle(const Path::PlannerSnapshot& local, Result& latest)
     const auto timed0 = std::chrono::steady_clock::now();
     static SpacetimeDodge::State timedState;   // retained plan across cycles (worker thread only)
     SpacetimeDodge::Input timedIn{};
-    const double nowMs = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-    Timed::BuildInput(in, nowMs, 16.7f, Timed::Budget{}, timedIn);
+    const double nowMs = planningNowMs();
+    Timed::BuildInput(in, nowMs, 16.7f, budget, timedIn);
     SpacetimeDodge::Output timedOut{};
     SpacetimeDodge::Evaluate(timedIn, timedState, timedOut);
     const Solver::TimedAdvice timed = Timed::ToAdvice(timedOut, in.player, local.moveBudget);
@@ -92,6 +119,11 @@ inline void RunCycle(const Path::PlannerSnapshot& local, Result& latest)
     latest.groupBossId = local.groupBossId;
     latest.timedMs = std::chrono::duration<float, std::milli>(solve0 - timed0).count();
     latest.solveMs = std::chrono::duration<float, std::milli>(solve1 - solve0).count();
+    latest.timedStatus = static_cast<uint8_t>(timedOut.status);
+    latest.timedReplanReason = static_cast<uint8_t>(timedOut.replanReason);
+    latest.timedReused = timedOut.reused;
+    latest.timedBudgetHit = timedOut.budgetHit;
+    latest.timedExpansions = timedOut.expansions;
 }
 
 } } // namespace UDodge::Worker
