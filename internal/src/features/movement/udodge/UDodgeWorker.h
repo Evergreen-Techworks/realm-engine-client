@@ -34,6 +34,16 @@ struct Result {
     // plain data for the field diagnostics (DiagTiming); never steers anything.
     float timedMs = 0.f;
     float solveMs = 0.f;
+    // What the temporal planner did with this snapshot — plain data for the field
+    // diagnostics and the host tests; never steers anything. timedReused: the plan
+    // retained from an earlier cycle was still valid at this cycle's planning time
+    // and was kept. timedBudgetHit: the search stopped on its expansion count or its
+    // wall-clock deadline (Timed::Budget) rather than on an answer.
+    uint8_t  timedStatus = 0;         // SpacetimeDodge::Status
+    uint8_t  timedReplanReason = 0;   // SpacetimeDodge::Reason (None: nothing retained, or reused)
+    bool     timedReused = false;
+    bool     timedBudgetHit = false;
+    int32_t  timedExpansions = 0;
 };
 
 void Start();  // idempotent; spawns the worker thread (double-start guarded)
