@@ -19,6 +19,19 @@
 //     half-tile border snap) like the game's move code. Bullets fly straight.
 //
 // Output: one JSON object per scenario on stdout.
+//
+// Tactician measuring stick (spec 2026-09-18, Slice 0) — observations only, none of
+// which feed back into the run:
+//   radial_out_frac          H::Run, per frame: of the distance moved while the locked
+//                            enemy is alive AND at least one bullet is a lane for the
+//                            dodge, the share that points away from the lock.
+//   replans_per_s            how often a committed route was replaced: the game thread's
+//                            committed dodge goal moving to another cell
+//                            (H::ObserveCommittedGoal, per publish) plus a walk-to / lock-
+//                            approach nav route being replaced (H::ObserveDeliveredNavRoute).
+//   time_to_first_in_range_s H::Run: first frame inside the engagement ring (-1 never).
+//   heading_reversals_per_s  supplementary, not an acceptance metric: H::Run, how often the
+//                            player's step turns by more than 90 degrees.
 #include "pch-il2cpp.h"
 #include "UDodge.h"
 #include "UDodgeTypes.h"
@@ -154,6 +167,91 @@ struct World {
 };
 
 World* g_world = nullptr;
+
+// ── Tactician measuring stick: what the harness can observe ─────────────────
+// A bullet is a lane for the dodge when it is alive, has life left and its live
+// position is within 16 tiles of the player. FillDanger and the radial metric both
+// read this one filter, so "a lane threat is live" means "FillDanger emits a lane".
+inline bool LaneVisible(const Bullet& b, float playerX, float playerY, float& age, float& rem, Vec2& live)
+{
+    if (!b.alive) return false;
+    age = static_cast<float>(g_nowMs - b.t0);
+    rem = b.lifeMs - age;
+    if (rem <= 0.f) return false;
+    live = { b.x0 + b.vx * age, b.y0 + b.vy * age };
+    return LenSq(Sub(live, { playerX, playerY })) <= 16.f * 16.f;
+}
+inline bool AnyLaneLive(const World& w, float playerX, float playerY)
+{
+    float age = 0.f, rem = 0.f; Vec2 live{};
+    for (const Bullet& b : w.bullets)
+        if (LaneVisible(b, playerX, playerY, age, rem, live)) return true;
+    return false;
+}
+// The lock target as the dodge senses it: the locked enemy while its HP is positive,
+// invulnerable or not. That is EnemyTracker::ResolveLock + Engages (LockLiveness.h) and
+// equally the older "id matches and hp > 0" rule, so one test serves every tree.
+inline bool LockTarget(const World& w, Vec2& pos)
+{
+    if (w.lockId <= 0) return false;
+    for (const Enemy& e : w.enemies)
+        if (e.id == w.lockId) {
+            if (e.hp <= 0) return false;
+            pos = { e.x, e.y };
+            return true;
+        }
+    return false;
+}
+
+// The committed dodge goal as the GAME THREAD holds it. UDodge::Tick copies
+// g_route.found / g_route.goalPos into PlannerSnapshot::prevGoalValid / prevGoalPos on
+// every publish, and the harness owns Worker::PublishSnapshot, so it sees that pair
+// without touching production code. Counted:
+//   replans   a valid committed goal that is a DIFFERENT CELL from the last valid one.
+//             Same cell is the production identity: Path GoalCellExact rounds the old
+//             goal to the nearest cell centre, i.e. within half a path cell on both
+//             axes. A goal that is dropped and re-acquired in the same cell is not a
+//             replan; the first goal of a run is a plan, not a replan.
+//   goalDrops a committed goal going from valid to none (arrived / startIsGoal, or no
+//             route). Reported beside the rate, never added to it.
+//   navReplans a nav route (walk-to, or a lock approach, which IS a walk-to to the
+//             engagement disk) delivered to the game thread after the first one of the
+//             run. "Route" is UDodge::Tick's own test for refreshing its nav cache:
+//             navFound with at least two waypoints. Every replacement counts, including a
+//             partial route being extended; a search that returns no route replaces nothing.
+// Not counted: a dodge route whose waypoints changed while its goal cell did not
+// (prevGoal carries the goal only), searches as such (the dodge Dijkstra re-runs on every
+// publish that is not a startIsGoal short-circuit), and the per-publish solver target,
+// which is a step decision, not a committed route.
+struct PlanStats {
+    uint32_t publishes = 0, replans = 0, goalDrops = 0, navReplans = 0;
+    bool     lastValid = false, haveGoal = false, haveNavRoute = false;
+    Vec2     lastGoal{};
+};
+PlanStats g_plan;
+
+void ObserveDeliveredNavRoute(bool route)
+{
+    if (!route) return;
+    if (g_plan.haveNavRoute) ++g_plan.navReplans;
+    g_plan.haveNavRoute = true;
+}
+
+void ObserveCommittedGoal(bool valid, Vec2 goal)
+{
+    PlanStats& p = g_plan;
+    ++p.publishes;
+    if (valid) {
+        constexpr float kSameCell = kUPathCellTiles * 0.5f + 1e-4f;
+        if (p.haveGoal && std::max(std::fabs(goal.x - p.lastGoal.x), std::fabs(goal.y - p.lastGoal.y)) > kSameCell)
+            ++p.replans;
+        p.lastGoal = goal;
+        p.haveGoal = true;
+    } else if (p.lastValid) {
+        ++p.goalDrops;
+    }
+    p.lastValid = valid;
+}
 
 // ── "Game truth" collision (modelled) ───────────────────────────────────────
 // The game's walkability test is a POINT test (86ad651b HJMBOMEHGDJ::PEGDEDNHEHD,
@@ -325,12 +423,8 @@ void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s)
     out.projectileSourceUnavailable = false; out.limited = false;
     out.hasLock = false; out.lockId = 0; out.lockPos = {};
     for (const Bullet& b : w.bullets) {
-        if (!b.alive) continue;
-        const float age = static_cast<float>(g_nowMs - b.t0);
-        const float rem = b.lifeMs - age;
-        if (rem <= 0.f || out.laneCount >= kMaxProjectiles) continue;
-        const Vec2 live{ b.x0 + b.vx * age, b.y0 + b.vy * age };
-        if (LenSq(Sub(live, { playerX, playerY })) > 16.f * 16.f) continue;
+        float age = 0.f, rem = 0.f; Vec2 live{};
+        if (!LaneVisible(b, playerX, playerY, age, rem, live) || out.laneCount >= kMaxProjectiles) continue;
         LaneThreat& L = out.lanes[out.laneCount++];
         L = LaneThreat{};
         L.bulletId = b.id; L.ownerObjId = static_cast<uint32_t>(b.owner); L.attackerObjId = b.owner;
@@ -807,6 +901,7 @@ uint32_t PublishSnapshot(const Path::PlannerSnapshot& snap)
 {
     *s_local = snap;
     s_local->seq = ++s_seq;
+    H::ObserveCommittedGoal(snap.prevGoalValid, snap.prevGoalPos);
 #ifdef HARNESS_NAV_FOUNDATION
     // Every rule: the worker times route edges with the ground <Speed> the view holds.
     for (int y = 0; y < kUOccSquareSide; ++y)
@@ -876,6 +971,7 @@ bool TryGetLatest(Result& out)
     if (!s_have || H::g_frame < s_readyFrame) return false;
     out = s_result;
     s_have = false;
+    H::ObserveDeliveredNavRoute(s_result.plan.navFound && s_result.plan.navWptCount >= 2);
     return true;
 }
 } }
@@ -892,6 +988,13 @@ struct Result {
     uint32_t hits = 0;
     uint32_t pausedTravelFrames = 0;
     uint32_t damagingGroundFrames = 0;
+    // Tactician measuring stick (see the file header and ObserveCommittedGoal).
+    bool   lock = false;            // the scenario ran with an enemy lock (a "boss scenario")
+    double simS = 0;                // scenario time actually simulated
+    double threatMoveTiles = 0;     // distance moved while locked AND a lane was live
+    double radialOutTiles = 0;      // ...of which, the component pointing away from the lock
+    uint32_t headingReversals = 0;  // a step more than 90 degrees off the previous step
+    uint64_t inRangeFrames = 0, tailFrames = 0;   // in_range_frac's exact numerator / denominator
 };
 
 constexpr Ground kFloor{};
@@ -929,7 +1032,7 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
 {
     g_world = &w;
     const int32_t lockId = w.lockId;   // OnEnter clears the lock; restored every frame below
-    g_move = MoveStats{}; g_worker = WorkerStats{}; g_tick = TickStats{};
+    g_move = MoveStats{}; g_worker = WorkerStats{}; g_tick = TickStats{}; g_plan = PlanStats{};
     g_nowMs = 100000.0; g_frame = 0;
     UDodge::SetEnabled(false);
     ApplyUserSettings();
@@ -939,6 +1042,8 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
     RebuildView(w);
 
     Result r; r.name = name;
+    r.lock = kind == Goal::Lock;
+    Vec2 lastHeading{};   // unit direction of the last frame that moved
     Vec2 prev{ w.px, w.py };
     Vec2 windowAnchor = prev; double windowStart = g_nowMs;
     const double dtMs = 1000.0 / 60.0;
@@ -951,6 +1056,12 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
         if (w.script) w.script(w);
         if (kind == Goal::Lock && w.lockId == 0) w.lockId = lockId;   // OnEnter cleared it
         if (g_nowMs - lastViewMs >= 100.0) { RebuildView(w); lastViewMs = g_nowMs; }
+        // radial_out_frac: the conditions this frame's step is decided under — the world
+        // Tick is about to sense (the script has fired this frame's shots) at the position
+        // Tick is given.
+        const Vec2 before{ w.px, w.py };
+        Vec2 lockPos{};
+        const bool threatened = LockTarget(w, lockPos) && AnyLaneLive(w, before.x, before.y);
         const auto t0 = std::chrono::steady_clock::now();
         UDodge::Tick(reinterpret_cast<void*>(&w), w.px, w.py, 1.f / 60.f);
         if (std::getenv("HARNESS_TRACE_FRAMES")) UDodge::RenderDebugOverlay(0, 0, 0, 1, 0, 0);
@@ -965,6 +1076,27 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
             ++r.pausedTravelFrames;
         r.pathTiles += Len(Sub(cur, prev));
         prev = cur;
+        {
+            // heading_reversals_per_s: frames that did not move are skipped, so a pause
+            // between two opposite steps is still one reversal.
+            const Vec2 step = Sub(cur, before);
+            const float moved = Len(step);
+            if (moved > 1e-4f) {
+                const Vec2 heading = Mul(step, 1.f / moved);
+                if (LenSq(lastHeading) > 0.f && Dot(heading, lastHeading) < 0.f) ++r.headingReversals;
+                lastHeading = heading;
+            }
+        }
+        if (threatened) {
+            // Project the step onto the unit vector lock -> player (taken at the step's
+            // start); only the outward part counts. A player standing on the lock has no
+            // radial direction: the distance still counts, the outward part is 0.
+            const Vec2 step = Sub(cur, before);
+            const Vec2 away = Sub(before, lockPos);
+            const float dist = Len(away);
+            r.threatMoveTiles += Len(step);
+            if (dist > 1e-4f) r.radialOutTiles += std::max(0.f, Dot(step, away) / dist);
+        }
         if (w.watchId != 0)
             for (const Enemy& e : w.enemies)
                 if (e.id == w.watchId && e.hp > 0)
@@ -1009,11 +1141,13 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
         }
     }
     r.hits += w.extraHits;
+    r.simS = static_cast<double>(std::min(g_frame, frames)) / 60.0;   // a walk-to stops on arrival
     if (kind == Goal::WalkTo) {
         r.finalDist = Len(Sub({ w.px, w.py }, goal));
         if (!r.success) r.timeS = limitS;
     } else {
         r.inRangeFrac = tailFrames ? static_cast<double>(inRangeFrames) / tailFrames : 0.0;
+        r.inRangeFrames = inRangeFrames; r.tailFrames = tailFrames;
         r.success = r.firstInRangeS >= 0 && r.inRangeFrac >= 0.5;
         r.timeS = r.firstInRangeS;
     }
@@ -1027,16 +1161,29 @@ void Emit(const Result& r)
     const double navAvg = g_worker.navRuns ? g_worker.navMsSum / g_worker.navRuns : 0;
     const double dodgeAvg = g_worker.cycles ? g_worker.dodgeMsSum / g_worker.cycles : 0;
     const double cycleAvg = g_worker.cycles ? g_worker.cycleMsSum / g_worker.cycles : 0;
+    // 0 when nothing was moved under lock + live lane, and when no time was simulated.
+    const double radialOutFrac = r.threatMoveTiles > 1e-9 ? r.radialOutTiles / r.threatMoveTiles : 0.0;
+    const double replansPerS = r.simS > 0 ? (g_plan.replans + g_plan.navReplans) / r.simS : 0.0;
     std::printf("{\"scenario\":\"%s\",\"success\":%s,\"time_s\":%.2f,\"path_tiles\":%.1f,\"final_dist\":%.2f,"
                 "\"stuck_s\":%.1f,\"hits\":%u,\"in_range_frac\":%.2f,\"refused_moves\":%u,"
                 "\"overspeed_moves\":%u,\"max_step_ratio\":%.3f,"
                 "\"tick_ms_avg\":%.3f,\"tick_ms_max\":%.3f,\"nav_plans\":%u,\"nav_ms_avg\":%.3f,\"nav_ms_max\":%.3f,"
                 "\"dodge_ms_avg\":%.3f,\"dodge_ms_max\":%.3f,\"cycle_ms_avg\":%.3f,\"cycle_ms_max\":%.3f,"
-                "\"square_mismatches\":%u,\"paused_travel_frames\":%u,\"damaging_ground_frames\":%u}\n",
+                "\"square_mismatches\":%u,\"paused_travel_frames\":%u,\"damaging_ground_frames\":%u,"
+                "\"lock\":%s,\"sim_s\":%.2f,\"radial_out_frac\":%.4f,\"threat_move_tiles\":%.1f,"
+                "\"replans_per_s\":%.3f,\"replans_dodge_goal\":%u,\"replans_nav_route\":%u,"
+                "\"goal_drops\":%u,\"plan_publishes\":%u,\"time_to_first_in_range_s\":%.2f,"
+                "\"in_range_frames\":%llu,\"in_range_tail_frames\":%llu,"
+                "\"heading_reversals_per_s\":%.2f}\n",
                 r.name.c_str(), r.success ? "true" : "false", r.timeS, r.pathTiles, r.finalDist, r.stuckS, r.hits,
                 r.inRangeFrac, g_move.refused, g_move.overspeed, std::min(g_move.maxStepRatio, 999.0),
                 tickAvg, g_tick.max, g_worker.navRuns, navAvg, g_worker.navMsMax,
-                dodgeAvg, g_worker.dodgeMsMax, cycleAvg, g_worker.cycleMsMax, g_worker.squareMismatches, r.pausedTravelFrames, r.damagingGroundFrames);
+                dodgeAvg, g_worker.dodgeMsMax, cycleAvg, g_worker.cycleMsMax, g_worker.squareMismatches, r.pausedTravelFrames, r.damagingGroundFrames,
+                r.lock ? "true" : "false", r.simS, radialOutFrac, r.threatMoveTiles,
+                replansPerS, g_plan.replans, g_plan.navReplans, g_plan.goalDrops, g_plan.publishes,
+                r.firstInRangeS, static_cast<unsigned long long>(r.inRangeFrames),
+                static_cast<unsigned long long>(r.tailFrames),
+                r.simS > 0 ? r.headingReversals / r.simS : 0.0);
     std::fflush(stdout);
 }
 
@@ -1607,6 +1754,7 @@ void ScenarioMoveToNoClamp(const char* name)
     w.px = 0.5f; w.py = 0.5f;
     g_world = &w;
     g_move = MoveStats{};
+    g_plan = PlanStats{};   // no Run() here: nothing is planned, so nothing may be reported
     const bool ok = DodgeRuntime::CallMoveTo(&w, 5.5f, 0.5f);
     Result r; r.name = name;
     r.success = ok && std::fabs(w.px - 5.5f) < 1e-3f && std::fabs(w.py - 0.5f) < 1e-3f && g_move.overspeed == 1;
