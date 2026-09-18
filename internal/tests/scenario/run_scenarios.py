@@ -9,12 +9,17 @@ scenario runs in its own process. Prints one JSON object per scenario.
     python3 run_scenarios.py --table                  # baseline table, every scenario, both rules
     python3 run_scenarios.py --tactician-acceptance   # Tactician thresholds; red until it lands
 
+    python3 run_scenarios.py --telemetry-check         # decision telemetry: off is silent, on explains
+
 --table prints one markdown row per scenario and rule, known limitations included.
 --tactician-acceptance is a separate entry point: --check never evaluates it and
 the host suite (run_udodge_zone_tests.py) never runs it.
+--telemetry-check runs the production UDodge::Tick with field diagnostics off and on
+(HARNESS_DIAG, which forces DiagTiming on the way RE_ASSETS/diag-timing.flag does in
+game) and checks the [Diag/Nav] decision lines. The host suite runs it.
 """
 from pathlib import Path
-import argparse, json, os, shutil, subprocess, sys, tempfile
+import argparse, json, os, re, shutil, subprocess, sys, tempfile
 
 HERE = Path(__file__).resolve().parent
 # Known limitations: reported, never asserted. A locked boss firing a dense ring
@@ -119,6 +124,69 @@ def tactician_acceptance(rows, rules):
             failed.append(f"{row['scenario']} [{row['rule']}]: runs with a lock but is not in BOSS_SCENARIOS")
     return passed, failed
 
+# Decision telemetry (UDodgeTelemetry.h). Every [Diag/Nav] decision line carries these keys.
+TELEMETRY_KEYS = ["t", "why", "mode", "rule", "nav", "corridor", "map_pending", "assist", "obj", "target", "at",
+                  "dist", "bearing", "ring", "player", "goal", "navroute", "wpts", "partial", "plan", "solve",
+                  "src", "drive", "clr", "cmd", "radial", "tang", "replan", "reversal", "lanes", "zones",
+                  "enemies", "worker_ms", "timed", "reused", "budget_hit", "dropped"]
+TELEMETRY_MAX_LINES_PER_S = 8 + 3 + 1 + 1   # the three change classes' ceilings plus the heartbeat
+ROW_TIMING_FIELDS = {"tick_ms_avg", "tick_ms_max", "nav_ms_avg", "nav_ms_max", "dodge_ms_avg", "dodge_ms_max",
+                     "cycle_ms_avg", "cycle_ms_max"}
+
+
+def telemetry_check(binary, scan):
+    """Run the production Tick with diagnostics off and on. Returns a list of failures."""
+    failures = []
+
+    def run(name, rule, navigator, diag):
+        env = {k: v for k, v in os.environ.items() if k != "HARNESS_DIAG"}
+        env["HARNESS_NAVIGATOR"] = navigator
+        if diag:
+            env["HARNESS_DIAG"] = "1"
+        done = subprocess.run([str(binary), name, str(scan), rule], check=True, env=env,
+                              capture_output=True, text=True)
+        row = json.loads(done.stdout.strip().splitlines()[-1])
+        return row, done.stderr
+
+    def judge(ok, text):
+        print(("ok    " if ok else "FAIL  ") + text)
+        if not ok:
+            failures.append(text)
+
+    for name, rule, navigator in (("d_boss_open_dense", "game", "legacy"), ("d_boss_open_rings", "legacy", "legacy"),
+                                  ("o_pending_map_waypoint", "game", "dstar")):
+        label = f"{name} [{rule}, {navigator}]"
+        off_row, off_err = run(name, rule, navigator, False)
+        on_row, on_err = run(name, rule, navigator, True)
+        judge(off_err == "" and off_row["diag_lines"] == 0,
+              f"{label}: diagnostics off writes nothing ({off_row['diag_lines']} log calls, {len(off_err)} bytes)")
+        judge(on_row["diag_lines"] > 0, f"{label}: diagnostics on writes ({on_row['diag_lines']} log calls)")
+        same = all(off_row[k] == on_row[k] for k in off_row if k not in ROW_TIMING_FIELDS | {"diag_lines"})
+        judge(same, f"{label}: the run is identical with diagnostics on (telemetry only observes)")
+        lines = [line for line in on_err.splitlines() if line.startswith("[Diag/Nav] ")]
+        sim_s = on_row["sim_s"]
+        judge(len(lines) > 0 and " why=first " in lines[0], f"{label}: {len(lines)} decision lines, the first says why=first")
+        missing = sorted({key for line in lines for key in TELEMETRY_KEYS if not re.search(rf"[ (]{key}=", line)})
+        judge(not missing, f"{label}: every line carries every field (missing: {missing or 'none'})")
+        judge(len(lines) <= TELEMETRY_MAX_LINES_PER_S * max(sim_s, 1.0),
+              f"{label}: {len(lines) / max(sim_s, 1e-9):.1f} lines per scenario second (ceiling {TELEMETRY_MAX_LINES_PER_S})")
+        beats = sum(" why=heartbeat" in line or ",heartbeat " in line for line in lines)
+        judge(0.8 * sim_s - 1 <= beats <= sim_s + 1, f"{label}: {beats} heartbeats in {sim_s:.0f} s with an objective active")
+        if name.startswith("d_boss"):
+            judge(all(" mode=unified " in line and f" rule={rule} " in line and " nav=legacy " in line for line in lines),
+                  f"{label}: mode, collision rule and navigator are reported")
+            judge(any(" obj=lock_approach target=901 " in line and " ring=[" in line for line in lines),
+                  f"{label}: the lock approach names its target and engagement ring")
+            judge(any(" win{frames=" in line for line in lines), f"{label}: heartbeats carry the window totals")
+        else:
+            walking = [line for line in lines if " obj=walk_to " in line]
+            judge(bool(walking) and all(" nav=dstar " in line and " map_pending=1 " in line for line in walking),
+                  f"{label}: the capture is pending all scenario long, and every walk-to line says nav=dstar map_pending=1")
+            judge(" obj=none " in lines[-1] and "objective" in lines[-1],
+                  f"{label}: arriving is an objective change to none")
+    return failures
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--internal", default=str(HERE.parents[1]))
@@ -134,6 +202,9 @@ def main():
     ap.add_argument("--tactician-acceptance", action="store_true",
                     help="run the boss scenarios and exit non-zero unless they meet the Tactician spec's "
                          "thresholds. Separate from --check; expected to fail until the Tactician lands")
+    ap.add_argument("--telemetry-check", action="store_true",
+                    help="run the production Tick with field diagnostics off and on and check the "
+                         "[Diag/Nav] decision lines (off is silent, on only observes)")
     ap.add_argument("--stage2-regressions", action="store_true",
                     help="run unresolved persistent-routing regressions instead of the normal suite")
     ap.add_argument("--rule", choices=["legacy", "game", "both"], default="both",
@@ -144,6 +215,9 @@ def main():
     args = ap.parse_args()
     if args.tactician_acceptance and (args.check or args.only or args.stage2_regressions):
         ap.error("--tactician-acceptance is its own entry point: not with --check, --only or --stage2-regressions")
+    if args.telemetry_check and (args.check or args.only or args.stage2_regressions or args.tactician_acceptance
+                                 or args.table):
+        ap.error("--telemetry-check is its own entry point")
     scenarios = STAGE2_REGRESSIONS if args.stage2_regressions else SCENARIOS
     if args.tactician_acceptance:
         scenarios = [name for name in SCENARIOS if name in BOSS_SCENARIOS]
@@ -186,6 +260,13 @@ def main():
         subprocess.run(cmd, check=True)
         if args.binary_out:
             shutil.copy(binary, args.binary_out)
+        if args.telemetry_check:
+            failures = telemetry_check(binary, scan)
+            if failures:
+                print(f"Decision telemetry check FAILED: {len(failures)} failures")
+                sys.exit(1)
+            print("Decision telemetry check passed")
+            return
         has_rule = (src / "features/movement/nav/Collision.h").exists()
         rules = ["legacy", "game"] if args.rule == "both" else [args.rule]
         if not has_rule:
