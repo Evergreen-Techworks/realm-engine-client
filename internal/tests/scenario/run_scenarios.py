@@ -5,6 +5,13 @@
 The harness file and stubs always come from THIS checkout; the dodge sources come
 from --internal, so the same scenarios can be run against an older tree. Each
 scenario runs in its own process. Prints one JSON object per scenario.
+
+    python3 run_scenarios.py --table                  # baseline table, every scenario, both rules
+    python3 run_scenarios.py --tactician-acceptance   # Tactician thresholds; red until it lands
+
+--table prints one markdown row per scenario and rule, known limitations included.
+--tactician-acceptance is a separate entry point: --check never evaluates it and
+the host suite (run_udodge_zone_tests.py) never runs it.
 """
 from pathlib import Path
 import argparse, json, os, shutil, subprocess, sys, tempfile
@@ -47,6 +54,71 @@ SCENARIOS = [
 
 STAGE2_REGRESSIONS = ["n_rooms_remote_forward", "n_rooms_remote_reverse"]
 
+# Tactician acceptance (docs/superpowers/specs/2026-09-18-tactician-design.md, "Acceptance").
+# A boss scenario is one the harness runs with an enemy lock (its row says "lock": true).
+BOSS_SCENARIOS = [
+    "c_u_wall_lock", "d_boss_open_rings", "d_boss_wall_rings", "d_boss_open_dense", "d_boss_wall_dense",
+    "l_lock_boss_dies", "l_lock_boss_invuln",
+]
+TACTICIAN_IN_RANGE_MIN = {"d_boss_open_dense": 0.60, "d_boss_wall_dense": 0.50}   # with hits == 0
+TACTICIAN_RADIAL_OUT_MAX = 0.15   # every boss scenario
+TACTICIAN_REPLANS_MAX = 2.0       # every boss scenario, per second
+
+TABLE_COLUMNS = {   # column -> decimals, in table order
+    "hits": 0, "in_range_frac": 2, "radial_out_frac": 4, "replans_per_s": 3, "time_to_first_in_range_s": 2,
+    "path_tiles": 1, "stuck_s": 1, "threat_move_tiles": 1, "heading_reversals_per_s": 2,
+}
+LOCK_ONLY_COLUMNS = {"in_range_frac", "radial_out_frac", "time_to_first_in_range_s", "threat_move_tiles"}
+
+
+def format_table(rows):
+    """One markdown row per scenario and rule. A column that needs a lock prints "-" without one."""
+    lines = ["| scenario | rule | result | " + " | ".join(TABLE_COLUMNS) + " |",
+             "|---|---|---|" + "---:|" * len(TABLE_COLUMNS)]
+    for row in rows:
+        if row["success"]:
+            result = "pass"
+        else:
+            result = "known" if row["scenario"] in KNOWN_LIMITATIONS[row["rule"]] else "FAIL"
+        cells = ["-" if column in LOCK_ONLY_COLUMNS and not row["lock"] else f"{row[column]:.{decimals}f}"
+                 for column, decimals in TABLE_COLUMNS.items()]
+        lines.append(f"| {row['scenario']} | {row['rule']} | {result} | " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def tactician_acceptance(rows, rules):
+    """The spec's thresholds over the boss scenarios. Returns (passed, failed) lists of text lines."""
+    passed, failed = [], []
+    by_key = {(row["scenario"], row["rule"]): row for row in rows}
+
+    def judge(ok, text):
+        (passed if ok else failed).append(text)
+
+    for rule in rules:
+        for name in BOSS_SCENARIOS:
+            row = by_key.get((name, rule))
+            if row is None:
+                failed.append(f"{name} [{rule}]: no result")
+                continue
+            if not row.get("lock"):
+                failed.append(f"{name} [{rule}]: the harness did not run it with a lock")
+                continue
+            if name in TACTICIAN_IN_RANGE_MIN:
+                need = TACTICIAN_IN_RANGE_MIN[name]
+                tail = row["in_range_tail_frames"]
+                frac = row["in_range_frames"] / tail if tail else 0.0   # exact, not the 2-decimal field
+                judge(row["hits"] == 0, f"{name} [{rule}]: hits {row['hits']} (required 0)")
+                judge(frac >= need, f"{name} [{rule}]: in_range_frac {frac:.4f} (required >= {need:.2f})")
+            judge(row["radial_out_frac"] <= TACTICIAN_RADIAL_OUT_MAX,
+                  f"{name} [{rule}]: radial_out_frac {row['radial_out_frac']:.4f} "
+                  f"(required <= {TACTICIAN_RADIAL_OUT_MAX:.2f}, over {row['threat_move_tiles']} threatened tiles)")
+            judge(row["replans_per_s"] <= TACTICIAN_REPLANS_MAX,
+                  f"{name} [{rule}]: replans_per_s {row['replans_per_s']:.3f} (required <= {TACTICIAN_REPLANS_MAX:g})")
+    for row in rows:   # a locked scenario the list above does not know is a boss scenario too
+        if row.get("lock") and row["scenario"] not in BOSS_SCENARIOS:
+            failed.append(f"{row['scenario']} [{row['rule']}]: runs with a lock but is not in BOSS_SCENARIOS")
+    return passed, failed
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--internal", default=str(HERE.parents[1]))
@@ -56,6 +128,12 @@ def main():
     ap.add_argument("--check", action="store_true",
                     help="exit non-zero if any scenario outside KNOWN_LIMITATIONS fails")
     ap.add_argument("--metrics", action="store_true", help="print scenario measurements alongside check results")
+    ap.add_argument("--table", action="store_true",
+                    help="print one markdown table of every scenario under every rule run "
+                         "(known limitations included) instead of the JSON rows")
+    ap.add_argument("--tactician-acceptance", action="store_true",
+                    help="run the boss scenarios and exit non-zero unless they meet the Tactician spec's "
+                         "thresholds. Separate from --check; expected to fail until the Tactician lands")
     ap.add_argument("--stage2-regressions", action="store_true",
                     help="run unresolved persistent-routing regressions instead of the normal suite")
     ap.add_argument("--rule", choices=["legacy", "game", "both"], default="both",
@@ -64,7 +142,11 @@ def main():
     ap.add_argument("--scan-mode", type=int, default=0,
                     help="tile list selection: 1 first 65536, 2 newest 65536 + window, 3 whole list windowed; 0 = detect")
     args = ap.parse_args()
+    if args.tactician_acceptance and (args.check or args.only or args.stage2_regressions):
+        ap.error("--tactician-acceptance is its own entry point: not with --check, --only or --stage2-regressions")
     scenarios = STAGE2_REGRESSIONS if args.stage2_regressions else SCENARIOS
+    if args.tactician_acceptance:
+        scenarios = [name for name in SCENARIOS if name in BOSS_SCENARIOS]
     if args.only and args.only not in scenarios:
         ap.error("--only must name a scenario in the selected suite")
     internal = Path(args.internal).resolve()
@@ -109,6 +191,7 @@ def main():
         if not has_rule:
             rules = ["legacy"]
         failed = []
+        rows = []
         for rule in rules:
             known = KNOWN_LIMITATIONS[rule]
             for name in scenarios:
@@ -124,7 +207,8 @@ def main():
                     row["tree"] = args.label
                     row["scan_mode"] = scan
                     row["rule"] = rule
-                    if not args.check or args.metrics:
+                    rows.append(row)
+                    if args.metrics or not (args.check or args.table or args.tactician_acceptance):
                         print(json.dumps(row), flush=True)
                     if not row["success"] and name not in known:
                         failed.append(f"{name} [{rule}]")
@@ -136,6 +220,18 @@ def main():
                     # live check reads; any difference is a copy bug, in every scenario.
                     elif row.get("square_mismatches", 0) > 0:
                         failed.append(f"{name} [{rule}] (worker squares differ from the view)")
+        if args.table:
+            print(format_table(rows), flush=True)
+        if args.tactician_acceptance:
+            passed, unmet = tactician_acceptance(rows, rules)
+            for line in passed:
+                print("ok    " + line)
+            for line in unmet:
+                print("UNMET " + line)
+            if unmet:
+                print(f"Tactician acceptance FAILED: {len(unmet)} of {len(passed) + len(unmet)} thresholds unmet")
+                sys.exit(1)
+            print(f"Tactician acceptance passed ({len(passed)} thresholds)")
         if args.check:
             if failed:
                 print("Pathing scenarios FAILED: " + ", ".join(failed))
