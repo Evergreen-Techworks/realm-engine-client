@@ -42,6 +42,8 @@
 //                            on its budget; the worker's solve stepped on the planner's
 //                            advice. The first three read 0 on a tree whose Worker::Result
 //                            does not carry them.
+//   diag_lines               lines the production code handed to the ungated log writer
+//                            (DbgFileLogWrite): 0 unless HARNESS_DIAG forces diagnostics on.
 #include "pch-il2cpp.h"
 #include "UDodge.h"
 #include "UDodgeTypes.h"
@@ -60,6 +62,7 @@
 #define HARNESS_GLOBAL_NAVIGATOR 1
 #endif
 #include "DangerPlanner.h"
+#include "DbgFileLog.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
 #if __has_include("features/combat/enemytracker/LockLiveness.h")
@@ -744,6 +747,7 @@ RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool a
 #endif
 
 namespace TestTAB {
+DodgeMode GetDodgeMode() { return DodgeMode::UDodge; }
 void ReadDodgePlayerStats(int32_t& hp, int32_t& maxHp, float& spd, float& tps)
 {
     // Line-for-line MovementRuntime GetTilesPerSec, with the game's values supplied
@@ -1220,7 +1224,8 @@ void Emit(const Result& r)
                 "\"goal_drops\":%u,\"plan_publishes\":%u,\"time_to_first_in_range_s\":%.2f,"
                 "\"in_range_frames\":%llu,\"in_range_tail_frames\":%llu,"
                 "\"heading_reversals_per_s\":%.2f,"
-                "\"timed_plans\":%u,\"timed_reused\":%u,\"timed_budget_hits\":%u,\"timed_solves\":%u}\n",
+                "\"timed_plans\":%u,\"timed_reused\":%u,\"timed_budget_hits\":%u,\"timed_solves\":%u,"
+                "\"diag_lines\":%lu}\n",
                 r.name.c_str(), r.success ? "true" : "false", r.timeS, r.pathTiles, r.finalDist, r.stuckS, r.hits,
                 r.inRangeFrac, g_move.refused, g_move.overspeed, std::min(g_move.maxStepRatio, 999.0),
                 tickAvg, g_tick.max, g_worker.navRuns, navAvg, g_worker.navMsMax,
@@ -1230,7 +1235,8 @@ void Emit(const Result& r)
                 r.firstInRangeS, static_cast<unsigned long long>(r.inRangeFrames),
                 static_cast<unsigned long long>(r.tailFrames),
                 r.simS > 0 ? r.headingReversals / r.simS : 0.0,
-                g_worker.timedPlans, g_worker.timedReused, g_worker.timedBudgetHits, g_worker.timedSolves);
+                g_worker.timedPlans, g_worker.timedReused, g_worker.timedBudgetHits, g_worker.timedSolves,
+                DbgFileLogWriteCount());
     std::fflush(stdout);
 }
 

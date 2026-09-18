@@ -11,6 +11,7 @@
 #include "UDodgeSensors.h"
 #include "UDodgeDebug.h"
 #include "UDodgeEnemyHazards.h"
+#include "UDodgeTelemetry.h"
 #include "features/movement/nav/Speed.h"
 
 #include "MovementRuntime.h"
@@ -99,6 +100,18 @@ std::atomic<uint32_t> g_wedgeStampMs{ 0 };
 // Game-update thread only.
 MovementCommitment g_commitment;
 DangerMap  g_map;
+
+// ── Decision telemetry (UDodgeTelemetry.h) ───────────────────────────────────
+// OFF unless DiagTiming::On() (RE_ASSETS\diag-timing.flag, or the developer "Diag
+// timing" checkbox). Tick touches these only while it is on; game-update thread only.
+Telemetry::State g_telemetry;
+struct TelemetryWorker {          // the latest worker cycle handed to the game thread
+    float    dodgeMs = 0.f, navMs = 0.f, timedMs = 0.f, solveMs = 0.f;
+    uint8_t  timedStatus = 0;
+    bool     timedReused = false, timedBudgetHit = false;
+    uint32_t seenSolveSeq = 0;    // g_solveSeq at the last sampled frame
+};
+TelemetryWorker g_telemetryWorker;
 
 // ── Nav route cache (walk-to) ────────────────────────────────────────────────
 // Navigation is NOT safety-critical (the micro-dodge handles shots), so we do not
@@ -684,6 +697,8 @@ void OnEnter()
     DangerPlanner::ClearEnemyLock();
     g_lastPubSeq = 0;
     g_solveSeq = 0;
+    g_telemetry = Telemetry::State{};
+    g_telemetryWorker = TelemetryWorker{};
     // Reset the AutoNexus last-resort signal (plan 77) on (re)entry.
     g_udExposed.store(false, std::memory_order_relaxed);
     g_udStandClr.store(1e9f, std::memory_order_relaxed);
@@ -765,6 +780,8 @@ void Tick(void* player, float px, float py, float dt)
     if (g_map.projectileSourceUnavailable) {
         g_commitment.Reset();
         PublishMinimal(Decision::None, { px, py });
+        if (diagOn)
+            Telemetry::Idle(g_telemetry, GetTickCount64(), "projectile_source_unavailable", &DbgFileLogWrite);
         return;
     }
 
@@ -1271,6 +1288,13 @@ void Tick(void* player, float px, float py, float dt)
             gs.workerNavMsMax   = std::max(gs.workerNavMsMax, fresh.plan.computeNavMs);
             gs.workerTimedMsMax = std::max(gs.workerTimedMsMax, fresh.timedMs);
             gs.workerSolveMsMax = std::max(gs.workerSolveMsMax, fresh.solveMs);
+            g_telemetryWorker.dodgeMs = fresh.plan.computeDodgeMs;
+            g_telemetryWorker.navMs = fresh.plan.computeNavMs;
+            g_telemetryWorker.timedMs = fresh.timedMs;
+            g_telemetryWorker.solveMs = fresh.solveMs;
+            g_telemetryWorker.timedStatus = fresh.timedStatus;
+            g_telemetryWorker.timedReused = fresh.timedReused;
+            g_telemetryWorker.timedBudgetHit = fresh.timedBudgetHit;
         }
         if (acceptFresh) {
             g_route = fresh.plan;
@@ -1430,13 +1454,14 @@ void Tick(void* player, float px, float py, float dt)
     // Validate against this frame's map and replace unsafe decisions before
     // driving. A rebuild must not suppress the immediate solve while the worker
     // is still processing its snapshot.
+    bool reflexVeto = false;   // telemetry only: set inside the diagnostics branch below
     {
         PhaseTimer _p(DiagTiming::Game().revalidate);
         CoreState safetyState = g_commitment.state;
         if (Solver::RevalidateAndSolve(in, b, goal, routeForSolve, safetyState, g_solve, rebuilt,
                                        timedForSolve)) {
             proposedState = safetyState;
-            if (diagOn) ++DiagTiming::Game().revalidateResolves;
+            if (diagOn) { ++DiagTiming::Game().revalidateResolves; reflexVeto = true; }
         }
     }
     if (diagOn) {
@@ -1662,6 +1687,86 @@ void Tick(void* player, float px, float py, float dt)
     g_udMoveVx.store(udMvx, std::memory_order_relaxed);
     g_udMoveVy.store(udMvy, std::memory_order_relaxed);
     g_udSafetyTick.fetch_add(1, std::memory_order_relaxed);
+
+    // ── Decision telemetry (UDodgeTelemetry.h) ───────────────────────────────
+    // Observation only, after every decision and command of this frame. With
+    // diagnostics off this is one branch and nothing inside it runs.
+    if (diagOn) {
+        namespace T = Telemetry;
+        T::Sample t{};
+        t.nowMs = GetTickCount64();
+        t.dodgeMode = static_cast<int>(TestTAB::GetDodgeMode());
+        t.ruleGame = collisionRule == Movement::Collision::Rule::Game;
+        t.navigatorDstar = Movement::Nav::Runtime::Enabled();
+        t.corridorState = static_cast<uint8_t>(corridor.state);
+        t.mapPending = corridor.capturePending;
+        t.globalAssist = g_globalAssistance;
+        t.player = in.player;
+        if (wasdActive) {
+            t.objective = T::Objective::Steer;
+        } else if (lockApproach) {
+            t.objective = T::Objective::LockApproach;
+            t.targetId = g_map.lockId;  t.target = g_map.lockPos;  t.hasTarget = true;
+        } else if (walkActive) {
+            // A commanded walk goal (script, Shift+Click or minimap) or, with none
+            // set, the follow-player standoff point. g_globalRawGoal is the goal
+            // before the global corridor substituted its waypoint.
+            float wx = 0.f, wy = 0.f; bool commanded = false;
+            DangerPlanner::GetWalkGoal(wx, wy, commanded);
+            t.objective = commanded ? T::Objective::WalkTo : T::Objective::Follow;
+            t.targetId = commanded ? 0 : followId;
+            t.target = g_globalRawGoal;  t.hasTarget = true;
+        } else if (g_map.hasLock) {
+            t.objective = T::Objective::Lock;
+            t.targetId = g_map.lockId;  t.target = g_map.lockPos;  t.hasTarget = true;
+        }
+        if (g_map.hasLock && (t.objective == T::Objective::Lock || t.objective == T::Objective::LockApproach)) {
+            const LockGeometry lg = ComputeLockGeometry(settings);
+            t.ringInner = lg.innerStandoff;
+            t.ringOuter = lg.engagementRange;
+        }
+        t.goalActive = goal.active;
+        t.goal = goal.pos;
+        t.navRoute = !walkActive ? T::NavRoute::None : navWaiting ? T::NavRoute::Waiting
+                   : g_navCache.valid ? T::NavRoute::Cached : T::NavRoute::Direct;
+        t.navWpts = g_navCache.valid ? g_navCache.n : 0;
+        t.navPartial = g_navCache.valid && g_navCache.partial;
+        t.navRouteDelivered = navCacheRefreshed;
+        const bool routeFresh = g_route.forSeq != 0 && g_lastPubSeq >= g_route.forSeq &&
+                                (g_lastPubSeq - g_route.forSeq) <= kUPlanMaxStaleSeq;
+        t.plan = (!g_route.found && !g_route.startIsGoal) ? T::Plan::None
+               : !routeFresh          ? T::Plan::Stale
+               : g_route.startIsGoal  ? T::Plan::StartIsGoal
+               : g_route.partial      ? T::Plan::Partial
+               : g_route.tempGoal     ? T::Plan::TemporalGoal : T::Plan::Route;
+        t.planGoalValid = g_route.found;
+        t.planGoal = g_route.goalPos;
+        t.solve = !g_solve.shouldMove
+                ? (g_solve.kind == Solver::SolveKind::Surrounded ? T::Solve::Surrounded
+                   : g_solve.timedEscape ? T::Solve::TimedWait : T::Solve::Hold)
+                : g_solve.kind == Solver::SolveKind::Fallback ? T::Solve::Fallback
+                : g_solve.timedEscape  ? T::Solve::Timed
+                : g_solve.prePosition  ? (g_solve.followedRoute ? T::Solve::DodgeRoute : T::Solve::Lateral)
+                : g_solve.followedRoute ? T::Solve::NavRoute : T::Solve::Solver;
+        const bool adopted = g_solveSeq != g_telemetryWorker.seenSolveSeq;
+        g_telemetryWorker.seenSolveSeq = g_solveSeq;
+        t.source = reflexVeto ? T::Source::ReflexVeto
+                 : (navHandoff.solve || groupChanged) ? T::Source::Live
+                 : adopted ? T::Source::Worker : T::Source::Cached;
+        t.drive = !g_solve.shouldMove ? T::Drive::None
+                : !enemyDriveClear ? T::Drive::BlockedEnemy
+                : !drivePathClear  ? T::Drive::BlockedPath
+                : moveFailed       ? T::Drive::Refused : T::Drive::Ok;
+        t.clearance = g_solve.clearance;
+        t.commanded = Sub(moveTarget, in.player);
+        t.lanes = g_map.laneCount;  t.zones = g_map.zoneCount;  t.enemies = g_map.enemyCount;
+        t.workerDodgeMs = g_telemetryWorker.dodgeMs;  t.workerNavMs = g_telemetryWorker.navMs;
+        t.workerTimedMs = g_telemetryWorker.timedMs;  t.workerSolveMs = g_telemetryWorker.solveMs;
+        t.timedStatus = g_telemetryWorker.timedStatus;
+        t.timedReused = g_telemetryWorker.timedReused;
+        t.timedBudgetHit = g_telemetryWorker.timedBudgetHit;
+        T::Emit(g_telemetry, t, &DbgFileLogWrite);
+    }
 
     // The per-phase breakdown is emitted every 2 s by the update detour
     // (DangerPlanner.cpp DiagAfterUpdate) together with the whole-frame numbers.
