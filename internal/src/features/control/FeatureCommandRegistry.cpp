@@ -312,6 +312,7 @@ namespace {
             FH_TEXT("udodgePlanner", UDodge::SetPlannerPolicy),
             FH_TEXT("udodgeRouteCommit", UDodge::SetRouteCommit),
             FH_TEXT("udodgeEnemyStandoff", UDodge::SetEnemyStandoff),
+            FH_TEXT("udodgeFrameBudget", UDodge::SetFrameBudget),
             FH_TEXT("navNavigator", Movement::Nav::Runtime::SetNavigatorText),
             FH_TEXT("navMapInfo", Movement::Nav::Runtime::SetMapInfoText),
             FH_TEXT("scriptNavigationGoal", Movement::Nav::Runtime::SetScriptGoalText)

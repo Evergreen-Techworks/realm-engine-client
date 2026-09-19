@@ -85,7 +85,7 @@ export const DLL_FEATURE_KEYS = [
   'udodgeAoePacket', 'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath',
   'udodgeEnemyStandoff',
   'udodgeFallbackSidestep',
-  'udodgeFieldEscape', 'udodgeFollowLantern', 'udodgeHitScale', 'udodgeLaneTiles',
+  'udodgeFieldEscape', 'udodgeFollowLantern', 'udodgeFrameBudget', 'udodgeHitScale', 'udodgeLaneTiles',
   'udodgeLockFollow', 'udodgeMoveEnvelope', 'udodgeMoveEnvelopeArmed', 'udodgeOrbitRange',
   'udodgePacketShot',
   'udodgePlanRadius', 'udodgePlanner', 'udodgeReactMargin', 'udodgeRouteCommit', 'udodgeSafeWalk', 'udodgeServerAnchorValid',

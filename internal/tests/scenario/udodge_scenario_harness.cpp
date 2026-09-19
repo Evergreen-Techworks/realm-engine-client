@@ -64,6 +64,10 @@
 #endif
 #include "DangerPlanner.h"
 #include "DbgFileLog.h"
+#if __has_include("DiagTiming.h")
+#include "DiagTiming.h"
+#define HARNESS_DIAG_TIMING 1
+#endif
 #include "features/combat/autoaim/modes/AutoAim.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
 #if __has_include("features/combat/enemytracker/LockLiveness.h")
@@ -579,7 +583,7 @@ struct WorkerStats { uint32_t cycles = 0; double navMsSum = 0, navMsMax = 0, dod
                      uint32_t startIsGoalPlans = 0; // the search ended on the player's own cell
                      std::vector<double> dodgeMs, cycleMs; };   // every cycle's cost, for the p95
 WorkerStats g_worker;
-struct TickStats { uint32_t n = 0; double sum = 0, max = 0; };
+struct TickStats { uint32_t n = 0; double sum = 0, max = 0; std::vector<double> samples; };
 TickStats g_tick;
 
 } // namespace H
@@ -1182,6 +1186,16 @@ void ApplyUserSettings()
         UDodge::SetFallbackSidestep(!(v && std::string(v) == "off"));
     }
     if (std::getenv("HARNESS_DIAG")) UDodge::SetDiagTiming(true);   // exercise the field diagnostics
+    // Item 4 (navigation finish plan): force every Tick's solver phase to run
+    // degraded (outer ring only), regardless of measured elapsed time, so the
+    // degraded candidate set itself can be exercised and diffed against the
+    // full set without needing to actually blow the frame budget. Sets the
+    // switch to "off" first so UDodge::Tick's own auto check (which only runs
+    // while the switch is "auto") never overwrites this forced value.
+    if (std::getenv("HARNESS_FORCE_FRAME_DEGRADED")) {
+        UDodge::SetFrameBudget("off");
+        UDodge::Solver::SetFrameDegraded(true);
+    }
 }
 
 enum class Goal { WalkTo, Lock };
@@ -1192,6 +1206,12 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
     const int32_t lockId = w.lockId;   // OnEnter clears the lock; restored every frame below
     g_move = MoveStats{}; g_worker = WorkerStats{}; g_tick = TickStats{}; g_plan = PlanStats{};
     g_nowMs = 100000.0; g_frame = 0;
+#ifdef HARNESS_DIAG_TIMING
+    // Item 4 (navigation finish plan): isolate this scenario's phase-timer accumulators
+    // (DiagTiming::Game() is a process-wide singleton) so Emit() reports THIS run's split,
+    // not a running total across every scenario the binary has already executed.
+    DiagTiming::Game().ResetWindow();
+#endif
     UDodge::SetEnabled(false);
     ApplyUserSettings();
     UDodge::SetEnabled(true);
@@ -1225,6 +1245,7 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
         if (std::getenv("HARNESS_TRACE_FRAMES")) UDodge::RenderDebugOverlay(0, 0, 0, 1, 0, 0);
         const double tickMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         ++g_tick.n; g_tick.sum += tickMs; g_tick.max = std::max(g_tick.max, tickMs);
+        g_tick.samples.push_back(tickMs);
 
         const Vec2 cur{ w.px, w.py };
         const Ground* currentGround = w.GroundAt(FloorI(cur.x), FloorI(cur.y));
@@ -1351,6 +1372,14 @@ void Emit(const Result& r)
     // 0 when nothing was moved under lock + live lane, and when no time was simulated.
     const double radialOutFrac = r.threatMoveTiles > 1e-9 ? r.radialOutTiles / r.threatMoveTiles : 0.0;
     const double replansPerS = r.simS > 0 ? (g_plan.replans + g_plan.navReplans) / r.simS : 0.0;
+    const double tickP95 = p95(g_tick.samples);
+    // Item 4 (navigation finish plan): the game-thread phase split, read straight off the
+    // production DiagTiming::Game() singleton (DiagTiming.h is header-only and `inline`, so
+    // this process-wide instance is the SAME one UDodge.cpp's PhaseTimer scopes write into —
+    // no new instrumentation, just reading what already exists). All zero unless HARNESS_DIAG=1.
+#ifdef HARNESS_DIAG_TIMING
+    const DiagTiming::GameStats& diagGs = DiagTiming::Game();
+#endif
     std::printf("{\"scenario\":\"%s\",\"success\":%s,\"time_s\":%.2f,\"path_tiles\":%.1f,\"final_dist\":%.2f,"
                 "\"stuck_s\":%.1f,\"hits\":%u,\"in_range_frac\":%.2f,\"refused_moves\":%u,"
                 "\"overspeed_moves\":%u,\"max_step_ratio\":%.3f,"
@@ -1367,7 +1396,18 @@ void Emit(const Result& r)
                 "\"dodge_ms_p95\":%.3f,\"cycle_ms_p95\":%.3f,"
                 "\"ring_publishes\":%u,\"ring_goal_plans\":%u,\"ring_goal_temporal\":%u,"
                 "\"out_of_range_plans\":%u,\"start_is_goal_plans\":%u,"
-                "\"fallback_frames\":%u,\"fallback_jitter_frames\":%u}\n",
+                "\"fallback_frames\":%u,\"fallback_jitter_frames\":%u,"
+                "\"tick_ms_p95\":%.3f,"
+                "\"max_lanes\":%d,\"max_zones\":%d,\"max_enemies\":%d,"
+                "\"lanes_culled\":%u,\"lanes_seen\":%u,"
+                "\"sync_ms_avg\":%.3f,\"sync_ms_max\":%.3f,"
+                "\"rasterOcc_ms_avg\":%.3f,\"rasterOcc_ms_max\":%.3f,"
+                "\"rasterNav_ms_avg\":%.3f,\"rasterNav_ms_max\":%.3f,"
+                "\"publish_ms_avg\":%.3f,\"publish_ms_max\":%.3f,"
+                "\"liveSolve_ms_avg\":%.3f,\"liveSolve_ms_max\":%.3f,"
+                "\"revalidate_ms_avg\":%.3f,\"revalidate_ms_max\":%.3f,"
+                "\"debug_ms_avg\":%.3f,\"debug_ms_max\":%.3f,"
+                "\"phase_total_ms_avg\":%.3f,\"phase_total_ms_max\":%.3f}\n",
                 r.name.c_str(), r.success ? "true" : "false", r.timeS, r.pathTiles, r.finalDist, r.stuckS, r.hits,
                 r.inRangeFrac, g_move.refused, g_move.overspeed, std::min(g_move.maxStepRatio, 999.0),
                 tickAvg, g_tick.max, g_worker.navRuns, navAvg, g_worker.navMsMax,
@@ -1382,7 +1422,24 @@ void Emit(const Result& r)
                 p95(g_worker.dodgeMs), p95(g_worker.cycleMs),
                 g_worker.ringPublishes, g_worker.ringGoalPlans, g_worker.ringGoalTemporal,
                 g_worker.outOfRangePlans, g_worker.startIsGoalPlans,
-                r.fallbackFrames, r.fallbackJitterFrames);
+                r.fallbackFrames, r.fallbackJitterFrames,
+                tickP95,
+#ifdef HARNESS_DIAG_TIMING
+                diagGs.maxLanes, diagGs.maxZones, diagGs.maxEnemies,
+                diagGs.laneCullDropped, diagGs.laneCullSeen,
+                diagGs.sync.Avg(), diagGs.sync.max,
+                diagGs.rasterOcc.Avg(), diagGs.rasterOcc.max,
+                diagGs.rasterNav.Avg(), diagGs.rasterNav.max,
+                diagGs.publish.Avg(), diagGs.publish.max,
+                diagGs.liveSolve.Avg(), diagGs.liveSolve.max,
+                diagGs.revalidate.Avg(), diagGs.revalidate.max,
+                diagGs.debug.Avg(), diagGs.debug.max,
+                diagGs.total.Avg(), diagGs.total.max
+#else
+                0, 0, 0, 0u, 0u,
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+#endif
+                );
     std::fflush(stdout);
 }
 
@@ -1471,6 +1528,46 @@ void ScenarioULock(const char* name)
     Emit(Run(name, w, Goal::Lock, {}, 40));
 }
 
+// Item 4 (navigation finish plan): HARNESS_EXTRA_LANES=N adds N additional plausible
+// lanes around the fight, independent of the scenario's own scripted traffic, so the
+// frame cost can be measured at a chosen load instead of only the ~40-lane baseline a
+// dense boss script produces on its own. Read once (env vars do not change mid-run).
+int ExtraLaneCount()
+{
+    static const int n = [] {
+        const char* v = std::getenv("HARNESS_EXTRA_LANES");
+        return v ? std::max(0, std::atoi(v)) : 0;
+    }();
+    return n;
+}
+
+// Fires `count` lanes around the player's CURRENT position: mixed straight/aimed,
+// spread over bearings and ranges, with a fixed share placed near the 16-tile edge of
+// FillDanger's own visibility window (H::LaneVisible) — irrelevant to anything the
+// dodge could reach, but, before Item 4's relevance cull, still lanes the danger map
+// carries and the solver's Temporal::Build scans. 900 ms lifetime matches the spawn
+// cadence below (ScenarioBoss calls this every 900 ms) so the population holds
+// roughly steady instead of decaying to zero between waves.
+void SpawnExtraLanes(World& w, int count, std::mt19937& rng)
+{
+    if (count <= 0) return;
+    std::uniform_real_distribution<float> bearingD(0.f, kTwoPi);
+    std::uniform_real_distribution<float> nearRangeD(2.f, 11.f);    // inside any plausible relevance cull
+    std::uniform_real_distribution<float> farRangeD(13.5f, 15.8f);  // near FillDanger's 16-tile edge
+    std::uniform_real_distribution<float> speedD(4.f, 9.f);
+    std::bernoulli_distribution farD(0.30);    // ~30% irrelevant far-away lanes
+    std::bernoulli_distribution aimedD(0.5);   // mixed straight/aimed
+    for (int i = 0; i < count; ++i) {
+        const float bearing = bearingD(rng);
+        const float range = farD(rng) ? farRangeD(rng) : nearRangeD(rng);
+        const float sx = w.px + std::cos(bearing) * range;
+        const float sy = w.py + std::sin(bearing) * range;
+        const float speed = speedD(rng);
+        const float angle = aimedD(rng) ? std::atan2(w.py - sy, w.px - sx) : bearingD(rng);
+        w.Fire(sx, sy, angle, speed, 900.f, 0.35f, /*owner=*/0);
+    }
+}
+
 // (d) locked boss firing rings (+ aimed triples when dense), optionally behind a wall segment
 void ScenarioBoss(const char* name, bool wall, int ringCount, double ringMs, bool aimed,
                   float targetScale = 1.0f)
@@ -1482,8 +1579,9 @@ void ScenarioBoss(const char* name, bool wall, int ringCount, double ringMs, boo
     Enemy boss; boss.id = 901; boss.type = 0x0d51; boss.x = 16.5f; boss.y = 0.5f; boss.hp = boss.maxHp = 50000;
     w.enemies.push_back(boss);
     w.lockId = boss.id;
-    double nextRing = 100500.0, nextAimed = 100300.0;   // Run() restarts the clock at 100000 ms
+    double nextRing = 100500.0, nextAimed = 100300.0, nextExtra = 100200.0;   // Run() restarts the clock at 100000 ms
     int ringPhase = 0;
+    std::mt19937 extraRng(12345);
     w.script = [=](World& ww) mutable {
         const Enemy& b = ww.enemies[0];
         if (g_nowMs >= nextRing) {
@@ -1496,6 +1594,10 @@ void ScenarioBoss(const char* name, bool wall, int ringCount, double ringMs, boo
             nextAimed += 600;
             const float a = std::atan2(ww.py - b.y, ww.px - b.x);
             for (int k = -1; k <= 1; ++k) ww.Fire(b.x, b.y, a + k * 0.15f, 8.f, 1200.f, 0.35f, b.id);
+        }
+        if (g_nowMs >= nextExtra) {
+            nextExtra += 900.0;
+            SpawnExtraLanes(ww, ExtraLaneCount(), extraRng);
         }
     };
     // Hits are asserted: in range for half the fight is worth nothing if it costs hits.

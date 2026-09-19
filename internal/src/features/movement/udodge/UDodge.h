@@ -76,6 +76,14 @@ bool  GetRouteCommit();
 // udodgeEnemyStandoff: "off" = the pre-standoff engine, anything else = auto.
 void  SetEnemyStandoff(const char* text);
 Standoff::Mode GetEnemyStandoff();
+// udodgeFrameBudget (navigation finish plan, Item 4). "off" = no ceiling, ever
+// (today's behaviour). "auto" (default) = when this Tick has already spent
+// kFrameBudgetMs before the solver phases, the solver degrades — fewer
+// candidates first — for THIS frame only; never touches ReanchorMap, never
+// drops a lane the relevance cull already kept, never relaxes a safety floor
+// on the step finally chosen. See UDodgeSolver.h SetFrameDegraded.
+void  SetFrameBudget(const char* text);
+bool  GetFrameBudgetAuto();
 // The live player hitbox multiplier the last BuildMap read, and whether the
 // collider offset it came from is metadata-trusted (diagnostics).
 float GetLiveHitboxMultiplier();      bool GetLiveHitboxTrusted();
