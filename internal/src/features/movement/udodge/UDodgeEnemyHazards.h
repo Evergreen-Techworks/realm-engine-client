@@ -174,6 +174,9 @@ inline bool ObserveStationaryShot(const LaneThreat& lane, int ownerType, Vec2 ow
 {
     if (ownerType <= 0 || !IsStationaryLane(lane)) return false;
     if (LenSq(Sub(ownerPos, lane.points[0])) > kSelfCentreTiles * kSelfCentreTiles) return false;
-    return Learn(ownerType, std::clamp(lane.hitHalf, 0.05f, 2.5f) * 1.41421356f);
+    // One clamp for every layer (S3.4): this site kept a stale 2.5 while the
+    // runtime reader accepts up to 16, so a big stationary shot learned a
+    // keep-out sized for a shot six times smaller.
+    return Learn(ownerType, std::clamp(lane.hitHalf, 0.05f, kUMaxProjectileHalf) * 1.41421356f);
 }
 } }
