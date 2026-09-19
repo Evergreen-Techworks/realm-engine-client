@@ -1,0 +1,10 @@
+{
+  "marker": "TESTLAB_PRIVATE_ONLY",
+  "paths": [
+    "plugins/testlab-recorder.ts",
+    "src/testlab/recorderCore.ts",
+    "src/testlab/recorderWriter.ts",
+    "src/testlab/__tests__/recorderCore.test.ts",
+    "src/testlab/__tests__/recorderWriter.test.ts"
+  ]
+}
