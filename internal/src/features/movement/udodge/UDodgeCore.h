@@ -155,6 +155,19 @@ struct Ctx {
     // place"; past trust[i] the queries fall back to the present-tense floor
     // instead. See the UNKNOWN TAIL comment in UDodgeCore.cpp.
     int   trust[kMaxProjectiles];
+    // BROAD PHASE (exact). `reach[i]` is the axis-aligned box of EVERY position the
+    // queries can read for lane i (all march samples, plus the half-step samples of a
+    // fast lane — a beam's two ends included), grown on every side by the lane's full
+    // contact size half[i] + arrPad[i] plus a rounding slack. Every DISTANCE test in
+    // the narrow phase is a Chebyshev distance between a point of that lane and a point
+    // of the player's path compared against half[i] + arrPad[i], so for a player path
+    // whose own box lies wholly outside reach[i] all of them are settled and skipped.
+    // The traced-path floor's crossing test is not a distance and is never skipped
+    // (see SetReach in UDodgeCore.cpp). A lane with a non-finite sample or size gets
+    // an infinite box, i.e. nothing of it is skipped.
+    // Written by Build only; a Ctx filled any other way must set it too.
+    struct Box { float minX, minY, maxX, maxY; };
+    Box   reach[kMaxProjectiles];
 };
 // Solver contexts are thread-local (game thread and worker never share scratch).
 // Keep an explicit memory ceiling as projectile capacity increases.

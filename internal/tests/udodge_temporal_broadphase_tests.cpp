@@ -8,6 +8,19 @@
 // cannot reach the production overloads. Both sides read the SAME context, built by
 // the production Build(), so only the queries are under test.
 //
+// The crossing block is aimed at the one narrow-phase test that is not a distance:
+// SegSegCheb's crossing test is sign arithmetic, and in float it can read two well
+// separated segments on one line as crossing. Those answers must survive too, so the
+// block puts edges on a lane's own line, far past its end, where any contact at all is
+// the crossing test firing, and requires that a minimum number of them occur: if a
+// later change to the generator stopped producing them, the block would fail rather
+// than quietly stop guarding the case. The general set alone catches a dropped
+// crossing test on about one seed in four.
+//
+// Beside the differential, every built context is checked for what the skip relies on:
+// Ctx::reach encloses every sample the queries can read, grown by at least the lane's
+// contact size, and is infinite for a lane with a non-finite sample or size.
+//
 // Seeded and reproducible: mt19937 with a hand-rolled float draw, no <random>
 // distributions (their sequences differ between standard libraries).
 //   udodge_temporal_broadphase_tests [seed] [trials]
@@ -403,6 +416,35 @@ void CheckPath(const T::Ctx& c, Vec2 player, float speed, Vec2 P, float dwell, T
     if (got != want) { ++tally.mismatch; Report("PathClear", c, player, P, speed, dwell, got, want); }
 }
 
+// What a skip relies on, checked on every built context. Returns the number of lanes
+// whose box is wrong.
+long ReachViolations(const T::Ctx& c, long& infiniteBoxes)
+{
+    long bad = 0;
+    for (int li = 0; li < c.count; ++li) {
+        const T::Ctx::Box& b = c.reach[li];
+        const float H = c.half[li] + c.arrPad[li];
+        bool finite = std::isfinite(H);
+        for (int k = 0; k < T::kSamples; ++k) finite = finite && std::isfinite(c.pos[li][k].x) && std::isfinite(c.pos[li][k].y);
+        if (c.sub[li])
+            for (int k = 0; k < kUTemporalSteps; ++k) finite = finite && std::isfinite(c.mid[li][k].x) && std::isfinite(c.mid[li][k].y);
+        if (!finite) {
+            ++infiniteBoxes;
+            if (!(b.minX == -kInf && b.minY == -kInf && b.maxX == kInf && b.maxY == kInf)) ++bad;
+            continue;
+        }
+        bool ok = true;
+        const auto inside = [&](Vec2 p) {
+            ok = ok && b.minX < p.x - H && b.maxX > p.x + H && b.minY < p.y - H && b.maxY > p.y + H;
+        };
+        for (int k = 0; k < T::kSamples; ++k) inside(c.pos[li][k]);
+        if (c.sub[li])
+            for (int k = 0; k < kUTemporalSteps; ++k) inside(c.mid[li][k]);
+        if (!ok) ++bad;
+    }
+    return bad;
+}
+
 // A point near where lane `li` is at time t: offsets are drawn around the lane's own
 // contact size, so the set is dense exactly where a too-small margin would show.
 Vec2 NearLane(Rng& r, const T::Ctx& c, int li, float t)
@@ -419,6 +461,50 @@ Vec2 NearLane(Rng& r, const T::Ctx& c, int li, float t)
         if (r.P(0.5f)) off = { edgeOff, r.R(-1.f, 1.f) * H }; else off = { r.R(-1.f, 1.f) * H, edgeOff };
     }
     return { bp.x + off.x, bp.y + off.y };
+}
+
+// Edges and walks ON a single lane's own line, further past its end than its contact
+// size along both axes, so every distance test is clear and a contact can only be the
+// crossing test. Small coordinates on purpose: there the float grid is fine enough for
+// four points to be collinear within the rounding of the cross products (at realm
+// scale the grid is too coarse and the crossing test does not misfire).
+Tally crossingEdge, crossingWalk;
+void CrossingBlock(uint32_t seed, int rounds)
+{
+    Rng r(seed ^ 0x9E3779B9u);
+    static DangerMap one{};
+    static T::Ctx c;
+    for (int it = 0; it < rounds; ++it) {
+        LaneThreat& L = one.lanes[0];
+        L = LaneThreat{};
+        const Vec2 p0{ r.R(0.f, 12.f), r.R(0.f, 12.f) };
+        const Vec2 u = r.Dir();
+        const int kind = it % 3;                      // 0 beam, 1 traced to the horizon, 2 short trace
+        L.beam = kind == 0;
+        L.hitHalf = r.R(0.2f, 0.7f);
+        L.pointCount = L.instantCount = kind == 0 ? 2 : kind == 1 ? kMaxLanePoints : r.I(8, 20);
+        const float reach = r.R(3.f, 12.f), speed = r.R(0.004f, 0.012f);
+        for (int k = 0; k < L.pointCount; ++k) {
+            L.pointTimesMs[k] = k * kTraceStepMs;
+            const float along = kind == 0 ? reach * k : speed * L.pointTimesMs[k];
+            L.points[k] = { p0.x + u.x * along, p0.y + u.y * along };
+        }
+        one.laneCount = 1;
+        T::Build(one, 1.f, 0.f, p0, 1.0e6f, c, 0.f);
+        if (c.count != 1) continue;
+        const float H = c.half[0] + c.arrPad[0];
+        const Vec2 head = c.pos[0][0], tail = c.pos[0][kUTemporalSteps];
+        const Vec2 run = Sub(tail, head);
+        if (Len(run) < 0.5f) continue;
+        const Vec2 d = Mul(run, 1.f / Len(run));
+        // 1.5 H + 0.1 along the line is more than H on the larger axis for any direction.
+        const float gap = 1.5f * H + 0.1f + r.R(0.f, 4.f), len = r.R(0.3f, 1.8f);
+        const Vec2 A = Add(tail, Mul(d, gap)), B = Add(A, Mul(d, len));
+        const float v = r.R(0.004f, 0.012f);
+        const float tA = kind == 0 ? r.R(0.f, 1200.f) : r.R(T::kHorizonMs - 100.f, 1300.f);
+        CheckEdge(c, A, B, tA, tA + len / v, crossingEdge);
+        CheckTtd(c, A, v, B, T::kHorizonMs, crossingWalk);
+    }
 }
 
 constexpr Vec2 kLattice[8] = { {1,0},{-1,0},{0,1},{0,-1},{0.70710678f,0.70710678f},{-0.70710678f,0.70710678f},
@@ -444,7 +530,7 @@ int main(int argc, char** argv)
     Rng r(seed);
     static DangerMap map{};
     static T::Ctx ctx;
-    long lanesBuilt = 0, subLanes = 0, shortLanes = 0, beams = 0, expiring = 0;
+    long lanesBuilt = 0, subLanes = 0, shortLanes = 0, beams = 0, expiring = 0, reachBad = 0, infiniteBoxes = 0;
 
     for (int trial = 0; trial < trials; ++trial) {
         // Realm coordinates reach ~2048, where float rounding is coarsest.
@@ -463,6 +549,7 @@ int main(int argc, char** argv)
         const float cull = r.P(0.3f) ? kUTemporalCullTiles : r.P(0.5f) ? 20.5f : 60.f;
         T::Build(map, hitScale, uncertainty, origin, cull, ctx, playerHalf);
         lanesBuilt += ctx.count;
+        reachBad += ReachViolations(ctx, infiniteBoxes);
         for (int i = 0; i < ctx.count; ++i) {
             subLanes += ctx.sub[i]; beams += ctx.beam[i];
             shortLanes += ctx.trust[i] < kUTemporalSteps;
@@ -485,9 +572,25 @@ int main(int argc, char** argv)
             // ── EdgeClear ──
             {
                 const float v = r.R(0.004f, 0.012f);
-                const int mode = r.I(0, 9);
+                const int mode = r.I(0, 10);
                 Vec2 A, B; float tA, tB;
-                if (mode <= 4) {           // a lattice step that passes the anchor at tStar
+                const Vec2 laneRun = aimed ? Vec2{ ctx.pos[li][kUTemporalSteps].x - ctx.pos[li][0].x,
+                                                   ctx.pos[li][kUTemporalSteps].y - ctx.pos[li][0].y } : Vec2{};
+                if (mode == 10 && Len(laneRun) > 0.5f) {
+                    // An edge ON the lane's own line, ahead of it or behind it, often past the
+                    // horizon where the whole traced path is tested segment against segment:
+                    // four collinear points are where a crossing test is most fragile.
+                    const Vec2 u = Mul(laneRun, 1.f / Len(laneRun));
+                    const float H = ctx.half[li] + ctx.arrPad[li];
+                    const float out = r.R(-1.f, 3.f) * H + (r.P(0.5f) ? 0.f : r.R(0.f, 6.f));
+                    const float len = r.P(0.5f) ? kUPathCellTiles : r.R(0.f, 2.f);
+                    const Vec2 from = r.P(0.5f) ? ctx.pos[li][kUTemporalSteps] : ctx.pos[li][0];
+                    const float sign = r.P(0.5f) ? 1.f : -1.f;
+                    A = { from.x + u.x * out * sign, from.y + u.y * out * sign };
+                    B = { A.x + u.x * len * sign, A.y + u.y * len * sign };
+                    tA = r.P(0.6f) ? r.R(700.f, 1300.f) : tStar;
+                    tB = tA + len / v + r.R(0.f, 50.f);
+                } else if (mode <= 4) {    // a lattice step that passes the anchor at tStar
                     const Vec2 dir = kLattice[r.I(0, 7)];
                     const float len = (dir.x != 0.f && dir.y != 0.f) ? kUPathCellTiles * kUPathRoot2 : kUPathCellTiles;
                     const float f = r.U(), dur = len / v;
@@ -503,7 +606,7 @@ int main(int argc, char** argv)
                     const Vec2 dir = r.Dir();
                     A = anchor; B = { A.x + dir.x * 0.5f, A.y + dir.y * 0.5f };
                     tA = tStar; tB = r.P(0.5f) ? tA : tA - r.R(0.f, 200.f);
-                } else {                   // a long free edge, any window, also past the horizon
+                } else {                   // a long free edge, any window, also past the horizon (and mode 10's fallback)
                     const Vec2 dir = r.Dir();
                     const float len = r.R(0.f, 4.f), f = r.U();
                     A = { anchor.x - dir.x * len * f, anchor.y - dir.y * len * f };
@@ -555,6 +658,8 @@ int main(int argc, char** argv)
         }
     }
 
+    CrossingBlock(seed, 360000);
+
     int failures = 0;
     const auto line = [&](const char* name, const Tally& t, bool needBalance) {
         std::printf("  %-13s %8ld queries, %5.1f %% in contact, %ld mismatches\n", name, t.n,
@@ -573,7 +678,21 @@ int main(int argc, char** argv)
     line("TimeToDanger", ttd, true);
     line("PathClear", path, true);
     line("NaN/infinity", hostileTally, false);
+    // Every contact in the crossing block is the crossing test alone (see CrossingBlock).
+    line("crossing edge", crossingEdge, false);
+    line("crossing walk", crossingWalk, false);
+    std::printf("  crossing-only contacts: %ld edge, %ld walk (floor 40 in total)\n",
+                crossingEdge.blocked, crossingWalk.blocked);
+    if (crossingEdge.blocked + crossingWalk.blocked < 40) {
+        ++failures;
+        std::fprintf(stderr, "FAIL: the crossing block produced only %ld crossing-only contacts; it no longer guards the case\n",
+                     crossingEdge.blocked + crossingWalk.blocked);
+    }
+    std::printf("  reach boxes   %8ld lanes checked, %ld infinite (non-finite lane), %ld wrong\n",
+                lanesBuilt, infiniteBoxes, reachBad);
+    if (reachBad) { ++failures; std::fprintf(stderr, "FAIL: %ld reach boxes do not enclose their lane\n", reachBad); }
+    if (infiniteBoxes == 0) { ++failures; std::fprintf(stderr, "FAIL: no non-finite lane was generated\n"); }
     std::printf("Temporal broad-phase tests: %ld checks, %d failures\n",
-                edge.n + arrival.n + ttd.n + path.n + hostileTally.n, failures);
+                edge.n + arrival.n + ttd.n + path.n + hostileTally.n + crossingEdge.n + crossingWalk.n, failures);
     return failures == 0 ? 0 : 1;
 }
