@@ -645,26 +645,31 @@ struct EnemyBlocker {
 };
 
 struct Settings {
-    // udodgeEnemyStandoff. Auto: every shooting enemy carries a hard 2-tile core
-    // and a reaction-time band that navigation routes around, and a locked fight
-    // is held at the outer part of weapon range. Off: the pre-standoff engine.
-    Standoff::Mode enemyStandoff = Standoff::Mode::Auto;
+    // udodgeEnemyStandoff. Default OFF (owner ruling 2026-09-19: unproven
+    // behaviour ships behind a switch, default off, after private 1.0.18
+    // dodged worse with this on). Auto: every shooting enemy carries a hard
+    // 2-tile core and a reaction-time band that navigation routes around,
+    // and a locked fight is held at the outer part of weapon range. Off: the
+    // pre-standoff engine.
+    Standoff::Mode enemyStandoff = Standoff::Mode::Off;
     // udodgePlanner (S3.1). Tactician routes every contact test through
     // Contact.h (the game's proven box, the live hitbox multiplier, the ring
     // approach, the lattice and the spiral edge cost); Classic is the
     // pre-Slice-3 engine, unchanged. Captured into the PlannerSnapshot at
     // publish time so one snapshot is planned under one policy.
     Contact::Policy planner = Contact::Policy::Classic;
-    // udodgeRouteCommit (navigation finish plan, Item 1). true (default): once a
+    // udodgeRouteCommit (navigation finish plan, Item 1). Default OFF (owner
+    // ruling 2026-09-19: unproven behaviour ships behind a switch, default
+    // off, after private 1.0.18 dodged worse with this on). true: once a
     // walk-to / lock-approach route is accepted, keep following it through a
     // reflex detour (rejoin at the nearest forward point) instead of dropping it
     // on every few-tile deviation, and re-plan only on a real trigger (route
     // invalidated, objective changed, arrival, or no progress for 1.5 s). Also
     // snaps the dodge grid centre to the 0.5-tile lattice under Classic, the way
     // Tactician already does, so the committed dodge goal re-snaps to itself.
-    // false reproduces the pre-Item-1 engine exactly. Lands under both planner
-    // policies.
-    bool  routeCommit = true;
+    // false (default) reproduces the pre-Item-1 engine exactly. Lands under
+    // both planner policies.
+    bool  routeCommit = false;
     // PROJECTILE CONTACT MODEL. true (default): the player is a POINT and the
     // per-shot threshold T (runtime Chebyshev half, else CollisionMult × 0.5) is
     // the whole hit box — |dx| < T && |dy| < T. This adopts the model from the
@@ -707,7 +712,9 @@ struct Settings {
                              // (resolved weapon range × 0.85)        [0 | 2, 16]
     int   planRadius = 20;   // planner window radius (grid cells) [8, 40]
                              // shrinks the rasterized window to cut cost
-    // udodgeFallbackSidestep (navigation finish plan, item 2). true (default):
+    // udodgeFallbackSidestep (navigation finish plan, item 2). Default OFF
+    // (owner ruling 2026-09-19: unproven behaviour ships behind a switch,
+    // default off, after private 1.0.18 dodged worse with this on). true:
     // Solver::Solve's Fallback branch ranks its least-bad candidates by latest
     // time-to-danger, then within kSolveFallbackTieMs breaks the tie toward the
     // most tangential step (smaller ABSOLUTE radial component relative to the
@@ -715,8 +722,8 @@ struct Settings {
     // of bolting straight out OR cutting straight in — radial is bad both ways —
     // never selects a step shorter-lived than standing still, and will not settle
     // for a sub-kSolveFallbackMinMoveTiles jitter when a longer-lived candidate
-    // exists. false = today's plain max-time/clearance pick, unchanged.
-    bool  fallbackSidestep = true;
+    // exists. false (default) = today's plain max-time/clearance pick, unchanged.
+    bool  fallbackSidestep = false;
 };
 
 // Keep-out radius around one enemy body: its physical radius plus the player's
@@ -862,8 +869,10 @@ inline bool InsideEnemyKeepout(const ZoneThreat& z, Vec2 player, Vec2 p, float p
 
 struct DangerMap {
     // udodgeEnemyStandoff at build time, carried here for the same reason the
-    // planner policy is: the worker has the map and nothing else.
-    Standoff::Mode enemyStandoff = Standoff::Mode::Auto;
+    // planner policy is: the worker has the map and nothing else. Default OFF
+    // (owner ruling 2026-09-19), matching Settings::enemyStandoff; a real
+    // BuildMap always overwrites this from Settings before use.
+    Standoff::Mode enemyStandoff = Standoff::Mode::Off;
     // The policy this map was built under, and the world it was built in: every
     // Core test reads them from here, on the game thread and on the worker alike
     // (the map is the only thing all of them are guaranteed to hold).
