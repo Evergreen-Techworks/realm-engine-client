@@ -75,6 +75,10 @@ namespace RuntimeOffsets {
     int  GetOffsetReport(OffsetReportRow* out, int maxRows);
     // Health tallies across all offsets.
     void GetOffsetSummary(int& resolved, int& usingFallback, int& suspect, int& pending);
+    // "ok" when every ProjectileProperties offset came from live name resolution,
+    // else "baked:<n>" — the baked PP_* defaults are stale against live 86ad651b,
+    // so this decides whether the projectile sensor read fields or junk.
+    const char* ProjectilePropsWitness();
     // Flag a specific offset variable SUSPECT from a live sanity check.
     void MarkSuspect(const uint32_t* offsetVar);
 

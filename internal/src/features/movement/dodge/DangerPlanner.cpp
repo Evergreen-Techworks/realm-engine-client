@@ -13,6 +13,7 @@
 #include "DiagTiming.h"
 #include "SteerInput.h"
 #include "ProjectileTracking.h"
+#include "features/projectiles/ProjectileTrajectory.h"
 #include "LocalPlayer.h"
 #include "GameState.h"
 #include "Il2CppResolver.h"
@@ -848,14 +849,21 @@ static void DiagAfterUpdate(double t0, double t1, double t2)
     // planner/hitbox (Tactician S3.1, S3.3): which contact rules ran, and the LIVE
     // collisionRadiusMultiplier the last map build read (1.00 untrusted = the game
     // default was assumed because the collider offset is not metadata-resolved).
+    // posAt / ppNames (Slice 4a witnesses): the two facts the whole projectile model
+    // rests on and that a Release log has never stated. posAt=fail means every shot
+    // is being predicted as a straight base-speed ray (the game's own positionAt did
+    // not resolve); ppNames=baked means the stale compiled-in ProjectileProperties
+    // offsets are in use, so speed/accel/laser distance are read from the wrong
+    // fields. Both are pure cache reads — neither resolves anything here.
     DiagTiming::Logf("[Diag/Game] updates=%u gameUpdate avg/max=%.2f/%.2f ms dodgeBody avg/max=%.2f/%.2f ms"
         " gap avg/max=%.1f/%.1f ms gaps>100=%u gaps>250=%u dodgeMode=%d(%s)"
-        " planner=%s hitbox=%.2f colliderTrusted=%d",
+        " planner=%s hitbox=%.2f colliderTrusted=%d posAt=%s ppNames=%s",
         gs.origUpdate.n, gs.origUpdate.Avg(), gs.origUpdate.max, gs.dodgeBody.Avg(), gs.dodgeBody.max,
         gs.updateGap.Avg(), gs.updateGap.max, gs.gapsOver100, gs.gapsOver250,
         dodgeMode, UDodge::Telemetry::DodgeModeName(dodgeMode),
         Contact::PolicyName(UDodge::GetPlannerPolicy()), UDodge::GetLiveHitboxMultiplier(),
-        UDodge::GetLiveHitboxTrusted() ? 1 : 0);
+        UDodge::GetLiveHitboxTrusted() ? 1 : 0,
+        ProjectileTrajectory::PositionAtWitness(), RuntimeOffsets::ProjectilePropsWitness());
     DiagTiming::Logf("[Diag/UDodge] total avg/max=%.2f/%.2f sync=%.2f/%.2f (rebuild=%u reanchor=%u)"
         " rasterOcc=%.2f/%.2f rasterNav n=%u %.2f/%.2f publish n=%u %.2f/%.2f dropped=%u"
         " liveSolve n=%u %.2f/%.2f revalidate=%.2f/%.2f resolves=%u debug=%.2f/%.2f",
