@@ -14,14 +14,27 @@ import * as esbuild from 'esbuild';
 import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, copyFileSync, existsSync, statSync } from 'fs';
 import { join, resolve } from 'path';
 import { execSync } from 'child_process';
+import { excludedPluginKeys, readPrivateOnlyManifest, scanForMarker } from './lib/private-only.mjs';
 
 const ADMIN_BUILD = process.argv.includes('--admin');
+// Contract with the pipeline (infra/build-vm) — do not redefine independently.
+// RE_PRIVATE_BUILD=1 means "this is a private build: include private-only
+// features (e.g. Test Lab)". Anything else (unset, empty, "0") is a customer
+// build. Independent of --admin: the pipeline builds every portable, paid or
+// not, with --admin, so tying private-only to it would ship Test Lab to
+// customers.
+const PRIVATE_BUILD = process.env.RE_PRIVATE_BUILD === '1';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const DIST = join(ROOT, 'dist');
 const PLUGINS_SRC = join(ROOT, 'plugins');
 const PLUGINS_DIST = join(DIST, 'plugins');
 const DATA_DIR = join(ROOT, 'data');
+// private-only.json is optional: its absence means nothing is private-only
+// (a no-op), not an error. When present, a malformed manifest (bad marker,
+// a path escaping client/) throws and fails the build loudly rather than
+// silently shipping — or silently over-excluding — the wrong files.
+const PRIVATE_ONLY_MANIFEST = readPrivateOnlyManifest(join(ROOT, 'private-only.json'), ROOT);
 
 // Locate the internal DLL repo as a sibling of this one. Supports both the
 // canonical RealmEngineRotmg/internal clone name and the legacy DebugInternal
@@ -229,6 +242,11 @@ if (!ADMIN_BUILD) {
   for (const file of ADMIN_ONLY_PLUGINS)
     excludedPluginFiles.add(file);
 }
+// private-only.json's plugins (e.g. Test Lab), excluded unless this is a
+// private build. Empty set when there's no manifest or RE_PRIVATE_BUILD=1.
+const privateOnlyExcludedKeys = excludedPluginKeys(PRIVATE_ONLY_MANIFEST, PRIVATE_BUILD);
+for (const key of privateOnlyExcludedKeys)
+  excludedPluginFiles.add(key);
 // Discover plugins: top-level `*.ts` files, plus directory plugins
 // (`<name>/index.ts`, bundled to `<name>.js`). Exclusion is keyed by the file
 // name for files and by the folder name for directory plugins.
@@ -310,6 +328,29 @@ for (const f of readdirSync(PUBLIC_SRC)) {
     writeFileSync(appJsPath, js);
   }
   log(ADMIN_BUILD ? 'Admin build — all features enabled' : 'User build — admin features locked');
+}
+
+// ── Step 8: Private-only gate ────────────────────────────────────────────────
+
+// Fail-safe: this runs after every bundling/staging step above, so it scans
+// the actual shipped dist/ tree, not just the plugin list. Excluding a
+// plugin's entry point keeps its own imports (e.g. src/testlab/*) out of the
+// build too — nothing else in the tree imports those files (confirmed by
+// grepping the source), so they are only ever reachable through the plugin
+// entry points this excludes. The raw-byte scan is the backstop in case that
+// ever stops being true.
+if (!PRIVATE_ONLY_MANIFEST) {
+  log('private-only: no manifest, nothing to exclude');
+} else if (PRIVATE_BUILD) {
+  log('private-only: INCLUDED (private build)');
+} else {
+  const hits = scanForMarker(DIST, PRIVATE_ONLY_MANIFEST.marker);
+  if (hits.length > 0) {
+    console.error('[build-prod] ERROR: private-only marker found in dist/ despite exclusion:');
+    for (const hit of hits) console.error(`[build-prod]   ${hit}`);
+    process.exit(1);
+  }
+  log(`private-only: excluded ${privateOnlyExcludedKeys.size} plugin(s), marker scan clean`);
 }
 
 // ── Done ─────────────────────────────────────────────────────────────────────
