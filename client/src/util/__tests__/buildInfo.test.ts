@@ -4,7 +4,7 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { formatBuildInfoLine, formatCommit, readBuildInfoFile } from '../buildInfo.js';
 
-// Startup marker line (Test Lab task A2): `[Main] build: version=<v> commit=<c>
+// Startup marker line: `[Main] build: version=<v> commit=<c>
 // date=<ISO-8601 UTC now>`. build-info.json is stamped in the git worktree
 // (scripts/stamp-build-info.mjs) since C:\realm-engine, the build source, is not
 // a git repo — reading it back here must never throw, missing or malformed.

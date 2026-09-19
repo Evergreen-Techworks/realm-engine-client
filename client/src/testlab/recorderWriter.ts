@@ -1,5 +1,5 @@
 /**
- * Test Lab packet recorder — buffered JSONL writer + retention (task A4a).
+ * Test Lab packet recorder — buffered JSONL writer + retention.
  *
  * TESTLAB_PRIVATE_ONLY: this file is listed in `client/private-only.json` and
  * must be deletable from customer builds. Separated from recorderCore.ts

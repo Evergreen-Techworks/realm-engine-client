@@ -1,5 +1,5 @@
 /**
- * Startup build marker (Test Lab task A2): which packaged version and which
+ * Startup build marker: which packaged version and which
  * client-repo commit this proxy process was built from, so the Test Lab log
  * parser no longer has to guess which build a session came from.
  *

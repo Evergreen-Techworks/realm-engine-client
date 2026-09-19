@@ -21,7 +21,7 @@ function clearRecorderBus() {
  * A fake PluginContext that actually implements the enabled-setter ->
  * onEnabledChange-callback wiring the real PluginContext has (needed to
  * exercise the plugin's self-revert-on-refusal path), plus the cross-plugin
- * get/update-other-plugin-setting surface this task added to PluginContext.
+ * get/update-other-plugin-setting surface PluginContext exposes for this.
  */
 function load(opts: { otherSettings?: Record<string, unknown> } = {}) {
   const settings = new Map<string, unknown>();
@@ -155,7 +155,7 @@ describe('Test Lab A/B interleaver plugin', () => {
     const [record] = writer!.writeLine.mock.calls[0];
     expect(record).toMatchObject({ k: 'arm', key: 'ab.start' });
 
-    // The normal-Logger line uses the exact format from the brief.
+    // The normal-Logger line uses the documented `[TestLabAB] <key>=<value> block=<n> seed=<n>` format.
     expect(h.logs.at(-1)).toMatch(/^\[TestLabAB\] udodgeEnemyStandoff=(off|auto) block=0 seed=\d+$/);
     h.runCleanup();
   });

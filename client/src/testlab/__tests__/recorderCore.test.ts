@@ -209,7 +209,7 @@ describe('recorderCore: one test per record kind', () => {
     expect(buildArmRecord(T, 'switch', 'A')).toEqual({ k: 'arm', t: T, key: 'switch', value: 'A' });
   });
 
-  // Task A5a (switch interleaver) calls mark('ab.start', {key, a, b, blockMinutes,
+  // The A/B switch interleaver calls mark('ab.start', {key, a, b, blockMinutes,
   // seed}) and mark('ab.stop', {key, restored}) — object values, not strings.
   // buildArmRecord must pass a JSON-serialisable object through unchanged (it
   // must not stringify it into `value` becoming a string, and must not reject

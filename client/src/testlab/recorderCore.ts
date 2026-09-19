@@ -1,5 +1,5 @@
 /**
- * Test Lab packet recorder — pure core (task A4a).
+ * Test Lab packet recorder — pure core.
  *
  * TESTLAB_PRIVATE_ONLY: this file is listed in `client/private-only.json` and
  * must be deletable from customer builds. It imports nothing from `fs`, `os`,
@@ -11,7 +11,7 @@
  *
  * Implements the fixed output contract:
  *   .superpowers/sdd/2026-09-19-testlab-core/contract-packets-jsonl.md
- * Another agent is building the reader against that contract right now —
+ * The reader side of that contract is built separately from this file —
  * field names and kinds here are load-bearing. Do not rename or add fields
  * without updating the contract file first.
  */

@@ -18,8 +18,9 @@
  *
  * This file, its pure core and their tests are listed in
  * `client/private-only.json` and must be removable from customer builds by
- * deleting exactly those paths. See that file's header comment and
- * task-A5a-report.md for the removability proof.
+ * deleting exactly those paths — nothing outside those paths imports them,
+ * so removing them (or excluding them from bundling; see
+ * `scripts/build-prod.mjs`) can't leave a dangling reference.
  */
 import type { PluginContext } from './api.js';
 import { RuntimeScheduler } from './api.js';
@@ -60,8 +61,8 @@ const DEFAULT_TARGET = 'udodgeEnemyStandoff';
 
 /**
  * Same globalThis bus-slot KEY `testlab-recorder.ts` populates
- * (`BUS_SLOT_KEY` there) — duplicated here per this task's brief ("use that
- * slot, do not import the recorder module"): PluginManager dynamically
+ * (`BUS_SLOT_KEY` there) — duplicated here deliberately, not imported ("use
+ * that slot, do not import the recorder module"): PluginManager dynamically
  * imports every plugin file fresh, so importing `testlab-recorder.ts`'s
  * `mark()` would risk depending on which module instance happens to run it.
  * Reading the shared `globalThis` slot directly works regardless. The
@@ -241,9 +242,8 @@ export function register(ctx: PluginContext) {
 
   // `ctx.registerCleanup` fires on plugin unload/hot-reload, but NOT on a
   // real client shutdown (src/index.ts's `shutdown()` never calls
-  // PluginManager.unloadPlugin/runCleanup for loaded plugins — verified by
-  // reading it; see task-A5a-report.md). A crash also can't run any of
-  // this. So the switch is restored on: disable (above), unload (below),
+  // PluginManager.unloadPlugin/runCleanup for loaded plugins). A crash also
+  // can't run any of this. So the switch is restored on: disable (above), unload (below),
   // AND our own process-exit listeners (below) — the last is the only way
   // to actually catch SIGINT/SIGTERM/normal exit in this codebase today.
   function shutdownRestore(): void {
