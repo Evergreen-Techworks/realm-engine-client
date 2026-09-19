@@ -141,6 +141,32 @@ float ZonePlayerHalf(const MapInput& in)
     return kUPlayerHalf + PositionUncertainty(in);
 }
 
+// ── ONE CONTACT RULE (Tactician S3.4, contact-model-study.md) ───────────────
+// Under tactician every spatial projectile test below measures against
+// Contact::PlanHalf — the game's own proven box (T clamped, times the LIVE
+// collisionRadiusMultiplier this map was built under) plus one fixed 0.10-tile
+// cross-track comfort — and the player is a point, because the binary says it is.
+// Under classic every formula is exactly what it was: T x the udodgeHitScale
+// belief, plus whatever player half the caller folds in.
+bool Tactician(const MapInput& in)
+{
+    return in.map && in.map->planner == Contact::Policy::Tactician;
+}
+
+// The shot's own half for a SPATIAL test (no player term).
+float ShotHalf(const MapInput& in, const LaneThreat& L, float hitScale)
+{
+    if (Tactician(in)) return Contact::PlanHalf(L.hitHalf, in.map->targetScale);
+    return std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * hitScale;
+}
+
+// The player term folded into projectile tests: none under tactician (the game's
+// player IS a point, and the comfort already lives in the box).
+float LaneHalfFor(const MapInput& in)
+{
+    return Tactician(in) ? 0.f : LanePlayerHalf(in);
+}
+
 } // namespace
 
 float ProjectilePlayerHalf(const Settings& settings)
@@ -161,7 +187,7 @@ bool PointClear(const MapInput& in, Vec2 pos)
     const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
-        const float half = std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * hitScale;
+        const float half = ShotHalf(in, L, hitScale);
         if (LaneDistCheb(L, pos) <= half) return false;
     }
     for (int i = 0; i < in.map->zoneCount; ++i) {
@@ -180,7 +206,7 @@ float PointClearance(const MapInput& in, Vec2 pos)
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
         if (L.instantCount <= 0) continue;
-        const float half = std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * hitScale;
+        const float half = ShotHalf(in, L, hitScale);
         best = std::min(best, LaneDistCheb(L, pos) - half);
     }
     for (int i = 0; i < in.map->zoneCount; ++i) {
@@ -283,13 +309,13 @@ float PointSafety(const MapInput& in, Vec2 pos)
 {
     if (!in.map) return 0.f;
     const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
-    const float laneHalf = LanePlayerHalf(in);
+    const float laneHalf = LaneHalfFor(in);
     const float zoneHalf = ZonePlayerHalf(in);
     float best = kHugeClearance;
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
         if (L.instantCount <= 0) continue;
-        const float half = std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * hitScale + laneHalf;
+        const float half = ShotHalf(in, L, hitScale) + laneHalf;
         // Exact pruning: a lane can only lower `best` if its distance is below
         // best + half; the slack keeps the float subtraction below on the same
         // side of `best` as the unpruned loop (see kPruneSlackTiles).
@@ -320,14 +346,14 @@ float SegmentSafety(const MapInput& in, Vec2 a, Vec2 b)
 {
     if (!in.map) return 0.f;
     const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
-    const float laneHalf = LanePlayerHalf(in);
+    const float laneHalf = LaneHalfFor(in);
     const float zoneHalf = ZonePlayerHalf(in);
     float best = kHugeClearance;
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
         const int n = L.instantCount;   // PAINT span, same as LaneDistCheb
         if (n <= 0) continue;
-        const float half = std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * hitScale + laneHalf;
+        const float half = ShotHalf(in, L, hitScale) + laneHalf;
         float dCheb;
         if (n == 1) {
             // Point lane: min Cheb from the single bullet point to the swept segment.
@@ -555,7 +581,10 @@ static void SetReach(Ctx& c, int li)
     for (int k = 0; k < kSamples; ++k) take(c.pos[li][k]);
     if (c.sub[li])
         for (int k = 0; k < kUTemporalSteps; ++k) take(c.mid[li][k]);
-    const float grow = c.half[li] + c.arrPad[li] + kBroadSlackTiles + kBroadSlackRel * big;
+    // The along-track stretch moves a sampled point by at most speed x alongMs,
+    // so the box has to hold it too or the broad phase could drop a real contact.
+    const float grow = c.half[li] + c.arrPad[li] + c.speed[li] * c.alongMs +
+                       kBroadSlackTiles + kBroadSlackRel * big;
     if (!std::isfinite(sum) || !std::isfinite(grow)) {
         c.reach[li] = EverywhereBox();                      // never skipped: the narrow phase decides
         return;
@@ -589,6 +618,12 @@ void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2
 {
     out.count = 0;
     const float scale = std::clamp(hitScale, 0.25f, 2.5f);
+    // ONE CONTACT RULE (S3.4). Under tactician the box is the game's own (the map's
+    // live hitbox multiplier) plus cross-track comfort, the player is a point, and
+    // the timing uncertainty becomes an along-track stretch in the queries instead
+    // of an isotropic pad. hitScale / positionUncertainty / playerHalf are ignored.
+    const bool tactician = map.planner == Contact::Policy::Tactician;
+    out.alongMs = tactician ? Contact::kAlongPadMs : 0.f;
     for (int i = 0; i < map.laneCount && out.count < kMaxProjectiles; ++i) {
         const LaneThreat& L = map.lanes[i];
         if (L.pointCount <= 0) continue;
@@ -602,18 +637,25 @@ void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2
             if (dt > 1e-3f)
                 maxSpeed = std::max(maxSpeed, Len(Sub(L.points[j], L.points[j - 1])) / dt);
         }
-        const float hitHalf = std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * scale + std::max(playerHalf, 0.f) +
-                              std::clamp(positionUncertainty, 0.f, 0.35f);
-        const float timingPad = kUArrivalMargin + std::min(maxSpeed * kUPredErrMs, kUPredPadMaxTiles);
-        // Euclidean broad phase encloses the complete Chebyshev hit square.
-        if (minD > cullTiles + 1.414214f * (hitHalf + timingPad)) continue;
+        const float hitHalf = tactician
+            ? Contact::PlanHalf(L.hitHalf, map.targetScale)
+            : std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * scale + std::max(playerHalf, 0.f) +
+              std::clamp(positionUncertainty, 0.f, 0.35f);
+        const float timingPad = tactician
+            ? 0.f
+            : kUArrivalMargin + std::min(maxSpeed * kUPredErrMs, kUPredPadMaxTiles);
+        // Euclidean broad phase encloses the complete Chebyshev hit square. The
+        // along-track stretch reaches one alongMs of travel further each way.
+        if (minD > cullTiles + 1.414214f * (hitHalf + timingPad + maxSpeed * out.alongMs)) continue;
         if (L.beam && L.pointCount >= 2) {
             const int idx = out.count++;
             out.beam[idx] = true;
             out.pos[idx][0] = L.points[0];
             for (int k = 1; k < kSamples; ++k) out.pos[idx][k] = L.points[L.pointCount - 1];
             out.half[idx] = hitHalf;
-            out.arrPad[idx] = kUArrivalMargin;
+            // A beam never had the speed term; under tactician its comfort is
+            // already inside PlanHalf, so there is nothing left to add.
+            out.arrPad[idx] = tactician ? 0.f : kUArrivalMargin;
             out.speed[idx] = 0.f;
             out.sub[idx] = false;
             out.trust[idx] = kUTemporalSteps;
@@ -786,6 +828,20 @@ static inline Vec2 BulletInStep(const Ctx& c, int li, int k, float f)
     return Add(a, Mul(Sub(b, a), f));
 }
 
+// ALONG-TRACK TIMING PAD (Tactician S3.4). Zero under classic, and zero for a
+// shot that is not moving. The shot may be up to Ctx::alongMs early or late along
+// its own path, so its swept sub-segment is stretched by (velocity x alongMs) at
+// BOTH ends — never sideways, which is what the old isotropic speed term did (it
+// widened an 8 tiles/s lane by 0.28 tile in every direction, closing the very gaps
+// the reflex threads; see contact-model-study.md section 3). The velocity comes
+// from the sub-segment itself, so a curve is followed piece by piece.
+static inline Vec2 AlongPad(const Ctx& c, Vec2 bPrev, Vec2 bCur, float dtMs)
+{
+    if (c.alongMs <= 0.f || !(dtMs > 1e-4f)) return Vec2{};
+    const float k = c.alongMs / dtMs;
+    return Vec2{ (bCur.x - bPrev.x) * k, (bCur.y - bPrev.y) * k };
+}
+
 // TIME-parameterized clearance test (solver query). The player walks STRAIGHT
 // from `player` toward P at `speed`, arriving at tArrive, then holds at P. March
 // time over the horizon and, at each step, test the RELATIVE sweep: the segment
@@ -930,16 +986,18 @@ float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P, float scanUnt
             }
             if (outOfReach) continue;   // the march below is distance tests only
             const bool useMid = c.sub[li];
-            Vec2 pPrev = ps[0];
-            Vec2 bPrev = BulletInStep(c, li, k, 0.f);
+            Vec2  pPrev = ps[0];
+            Vec2  bPrev = BulletInStep(c, li, k, 0.f);
+            float tPrev = ts[0];
             for (int i = 1; i < n; ++i) {
                 if (isMid[i] && !useMid) continue;   // slow lane: one chord across the step
                 const float curTime = std::min(ts[i], expiry);
                 const Vec2 pCur = curTime == ts[i] ? ps[i] : playerAt(curTime);
                 const Vec2 bCur = BulletInStep(c, li, k, (curTime - t0) / kUTemporalStepMs);
-                if (MinChebOnSegment(bPrev.x - pPrev.x, bPrev.y - pPrev.y,
-                                     bCur.x  - pCur.x,  bCur.y  - pCur.y) <= half) return t0;
-                pPrev = pCur; bPrev = bCur;
+                const Vec2 e = AlongPad(c, bPrev, bCur, curTime - tPrev);
+                if (MinChebOnSegment(bPrev.x - pPrev.x - e.x, bPrev.y - pPrev.y - e.y,
+                                     bCur.x  - pCur.x  + e.x, bCur.y  - pCur.y  + e.y) <= half) return t0;
+                pPrev = pCur; bPrev = bCur; tPrev = curTime;
                 if (curTime >= expiry) break;
             }
         }
@@ -1042,8 +1100,9 @@ bool ArrivalClear(const Ctx& c, Vec2 B, float tA, float tB)
             float tn = (std::floor(t / dt) + 1.f) * dt;
             if (tn > tEnd || tn <= t) tn = tEnd;
             const Vec2 cur = BulletPosFine(c, li, tn);
-            if (MinChebOnSegment(prev.x - B.x, prev.y - B.y,
-                                 cur.x  - B.x, cur.y  - B.y) <= half) return false;
+            const Vec2 e = AlongPad(c, prev, cur, tn - t);
+            if (MinChebOnSegment(prev.x - B.x - e.x, prev.y - B.y - e.y,
+                                 cur.x  - B.x + e.x, cur.y  - B.y + e.y) <= half) return false;
             prev   = cur;
             t      = tn;
             tested = true;
@@ -1107,8 +1166,9 @@ bool EdgeClear(const Ctx& c, Vec2 A, Vec2 B, float tA, float tB)
             if (tn > tEnd || tn <= t) tn = tEnd;
             const Vec2 pCur = playerAt(tn);
             const Vec2 bCur = BulletPosFine(c, li, tn);
-            if (MinChebOnSegment(bPrev.x - pPrev.x, bPrev.y - pPrev.y,
-                                 bCur.x  - pCur.x,  bCur.y  - pCur.y) <= half) return false;
+            const Vec2 e = AlongPad(c, bPrev, bCur, tn - t);
+            if (MinChebOnSegment(bPrev.x - pPrev.x - e.x, bPrev.y - pPrev.y - e.y,
+                                 bCur.x  - pCur.x  + e.x, bCur.y  - pCur.y  + e.y) <= half) return false;
             pPrev = pCur;
             bPrev = bCur;
             t = tn;

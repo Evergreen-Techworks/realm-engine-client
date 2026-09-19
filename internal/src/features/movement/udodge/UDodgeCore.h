@@ -168,6 +168,12 @@ struct Ctx {
     // Written by Build only; a Ctx filled any other way must set it too.
     struct Box { float minX, minY, maxX, maxY; };
     Box   reach[kMaxProjectiles];
+    // ALONG-TRACK timing pad (ms), tactician only; 0 under classic. A timing
+    // error moves a shot ALONG its own path, so the queries stretch each lane's
+    // swept sub-segment by (its velocity there) x alongMs at both ends instead of
+    // widening the contact box sideways — the sideways growth is what turned an
+    // aimed triple 0.9 tiles apart into one solid wall (contact-model-study.md 3).
+    float alongMs = 0.f;
 };
 // Solver contexts are thread-local (game thread and worker never share scratch).
 // Keep an explicit memory ceiling as projectile capacity increases.
@@ -185,6 +191,9 @@ void SampleLane(const LaneThreat& L, Vec2* outPos);
 // `playerHalf` is the projectile-contact player half (Core::ProjectilePlayerHalf);
 // it defaults to the legacy padded value so existing callers/tests keep their
 // contract, and production passes the setting-derived value.
+// UNDER TACTICIAN (map.planner) `hitScale`, `positionUncertainty` and `playerHalf`
+// are IGNORED: the contact size is Contact::PlanHalf over the map's own live
+// hitbox multiplier, and the timing pad moves along the shot (Ctx::alongMs).
 void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2 cullCenter,
            float cullTiles, Ctx& out, float playerHalf = kUPlayerHalf);
 
