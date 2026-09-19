@@ -186,4 +186,43 @@ bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& g
                         SolveResult& committed, bool mapRebuilt,
                         const TimedAdvice& timed = {});
 
+// ── Navigation finish plan, item 2: "no safe move, sidestep, do not bolt" ───
+// The reduced view of a least-bad Fallback candidate that the ranking needs —
+// exposed so the selection policy is unit-testable without reconstructing a
+// full DangerMap. `dir` is unit(pos - player), {} for the stand point; `val` is
+// the existing clearance/pocket/retreat-biased score Solve() already computes;
+// `safeTime` is Core::Temporal::TimeToDanger at this candidate (kUDwellMs dwell).
+struct FallbackCandidate {
+    Vec2  dir{};
+    float moveDist = 0.f;
+    float val      = 0.f;
+    float safeTime = 0.f;
+};
+
+// Pick the least-bad Fallback candidate out of `cands[0..n)` (already filtered
+// to the Fallback branch's own occupancy/escape/zone floors — this never widens
+// or narrows admission, only ranks).
+//
+// sidestepOn == false: today's behaviour, unchanged — latest safeTime wins,
+// ties broken by the higher val, first-seen wins an exact tie.
+//
+// sidestepOn == true (udodgeFallbackSidestep):
+//   1. Latest safeTime first, as before.
+//   2. Within kSolveFallbackTieMs of the best safeTime, prefer the candidate
+//      with the smaller radially-OUTWARD component against `radialRef` (the
+//      unit vector pointing away from the lock target, or the mean direction
+//      the threatening lanes are travelling when unlocked; pass {} when
+//      neither is available, which disables this tie-break only).
+//   3. Remaining ties broken by val, as before.
+//   4. A candidate whose safeTime is shorter than `standTime` (standing still)
+//      is never selected — if every candidate is worse than standing, returns
+//      -1 so the caller's existing Surrounded fallback applies.
+//   5. A selection under kSolveFallbackMinMoveTiles loses to any OTHER
+//      candidate that also clears the standTime floor and moves at least that
+//      far, ranked the same way — so a near-stationary jitter never wins over
+//      a real, longer-or-equal sidestep.
+// Returns an index into `cands`, or -1 when nothing clears the standTime floor.
+int SelectFallbackCandidate(const FallbackCandidate* cands, int n, Vec2 radialRef,
+                            bool sidestepOn, float standTime);
+
 } } // namespace UDodge::Solver
