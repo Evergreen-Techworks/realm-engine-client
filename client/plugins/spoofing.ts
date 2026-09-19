@@ -236,6 +236,8 @@ export function register(ctx: PluginContext): void {
     state.lastClassType = classType;
     state.actual.clear();
     markAllPending(client);
+    // A new connection reports class 0 until its first UPDATE; keep the last
+    // real class's skin list rather than flashing an empty one on every map change.
     if (classChanged && classType) updateSkinOptions(classType);
     flushNativeTransition();
   }
