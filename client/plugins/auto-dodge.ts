@@ -382,6 +382,13 @@ export function register(ctx: PluginContext) {
     type: 'select', value: 'classic',
     options: [{ label: 'Classic', value: 'classic' }, { label: 'Tactician (experimental)', value: 'tactician' }],
   }, (v: string) => sendDllFeature('udodgePlanner', v === 'tactician' ? 'tactician' : 'classic'));
+  // Navigation finish plan, Item 1: once a walk-to / lock-approach route is
+  // accepted, keep following it through a reflex detour (rejoin at the nearest
+  // forward point) instead of re-planning on every few-tile deviation, and
+  // re-plan only on a real trigger. Default on; off reproduces the pre-Item-1
+  // follower exactly. Lands under both udodgePlanner policies.
+  registerModeSetting('unified', 'udodgeRouteCommit', onOff('[UDodge] Route commitment', 'on'),
+    (v: string) => sendDllFeature('udodgeRouteCommit', v === 'off' ? 'off' : 'on'));
   // Navigation rebuild Stage 1: 'game' walks by the game's own point collision (diagonal
   // squeezes between walls, no player box); 'legacy' keeps the old box. Legacy until
   // the user confirms 'game' in play.
@@ -644,6 +651,7 @@ export function register(ctx: PluginContext) {
                      'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     sendDllFeature('udodgePlanner', ctx.getSetting<string>('udodgePlanner') === 'tactician' ? 'tactician' : 'classic');
+    sendDllFeature('udodgeRouteCommit', ctx.getSetting<string>('udodgeRouteCommit') === 'off' ? 'off' : 'on');
     sendDllFeature('udodgeEnemyStandoff',
                    ctx.getSetting<string>('udodgeEnemyStandoff') === 'off' ? 'off' : 'auto');
     sendDllFeature('navCollisionRule', ctx.getSetting<string>('navCollisionRule') === 'game' ? 'game' : 'legacy');
