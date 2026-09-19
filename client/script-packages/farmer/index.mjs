@@ -83,6 +83,41 @@ const QUEST_UNSEEN_COMMIT_MS = 60000;
 // long dwell on one status is visible after the fact instead of only live.
 const STATUS_LOG_HEARTBEAT_MS = 5000;
 
+// ── Test Lab telemetry (task A2) ─────────────────────────────────────────────
+// The persisted/dashboard `state: <message>` line (see setStatus below) gets a
+// machine-readable ` | ctx ...` suffix appended, so the Test Lab can plot the
+// farmer's position and know what triggered a status change without parsing
+// English. RealmEngine.ui.status(message) — the separate dashboard status
+// widget — stays bare; only the logged line carries this.
+//
+// The literal delimiter ' | ctx ', the key names, and one-decimal-place
+// formatting are a contract with the Test Lab's log parser: don't change them
+// without updating that parser too.
+
+/** Pure: raw context fields -> the suffix string. Any missing/non-finite value renders as '-'. */
+function formatStatusContextSuffix({ pos, goal, enemyDistance, questObjectId } = {}) {
+  const isPoint = (p) => !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
+  const point = (p) => (isPoint(p) ? `${p.x.toFixed(1)},${p.y.toFixed(1)}` : '-');
+  const num = (value) => (typeof value === 'number' && Number.isFinite(value) ? value.toFixed(1) : '-');
+  const distance = (isPoint(pos) && isPoint(goal)) ? Math.hypot(goal.x - pos.x, goal.y - pos.y) : null;
+  const quest = (typeof questObjectId === 'number' && Number.isFinite(questObjectId)) ? String(questObjectId) : '-';
+  return ` | ctx pos=${point(pos)} goal=${point(goal)} d=${num(distance)} enemy=${num(enemyDistance)} quest=${quest}`;
+}
+
+/**
+ * Runs `collectContext` (a live SDK read that can throw — missing self, a
+ * malformed enemy entry, whatever) and formats the result. Never throws: any
+ * failure yields the ' | ctx err' marker instead, so the state line is always
+ * written even when the context behind it could not be read.
+ */
+function buildStatusContextSuffix(collectContext) {
+  try {
+    return formatStatusContextSuffix(collectContext());
+  } catch {
+    return ' | ctx err';
+  }
+}
+
 export default class Farmer {
   constructor() {
     this.mapName = '';
@@ -136,12 +171,29 @@ export default class Farmer {
     RealmEngine.combat.setAutoFire(enabled);
   }
 
+  // Live inputs for the ' | ctx ...' suffix (task A2). Called only once setStatus
+  // has already decided a line is going to be logged — not on every call, since
+  // a moving position must not itself force a log line (see setStatus). May
+  // throw (self not spawned yet, a malformed enemy entry, ...); the caller
+  // (buildStatusContextSuffix) is what makes that safe.
+  collectStatusContext() {
+    const pos = { x: RealmEngine.self.getX(), y: RealmEngine.self.getY() };
+    const goal = this.navigationGoal ? { x: this.navigationGoal.x, y: this.navigationGoal.y } : null;
+    let enemyDistance = null;
+    for (const enemy of RealmEngine.enemies.getAll()) {
+      if (!(enemy?.hp > 0) || !enemy.position) continue;
+      const d = Math.hypot(enemy.position.x - pos.x, enemy.position.y - pos.y);
+      if (enemyDistance === null || d < enemyDistance) enemyDistance = d;
+    }
+    return { pos, goal, enemyDistance, questObjectId: this.questGoal?.objectId };
+  }
+
   setStatus(message) {
     RealmEngine.ui.status(message);
     if (!message) return;
     const now = Date.now();
     if (message !== this.lastLoggedStatus || now - this.lastStatusLogAt >= STATUS_LOG_HEARTBEAT_MS) {
-      RealmEngine.log.info(`state: ${message}`);
+      RealmEngine.log.info(`state: ${message}${buildStatusContextSuffix(() => this.collectStatusContext())}`);
       this.lastLoggedStatus = message;
       this.lastStatusLogAt = now;
     }
