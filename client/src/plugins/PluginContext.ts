@@ -99,6 +99,29 @@ export class PluginContext {
   /** Callback set by PluginManager when dashboard setting definitions change. */
   public onSettingOptionsChanged: ((pluginId: string, key: string) => void) | null = null;
 
+  /**
+   * Callback set by PluginManager: read a live setting value from a
+   * DIFFERENT loaded plugin's context (`PluginManager.getPlugins()`'s
+   * per-plugin `settings`, read via that plugin's own `getSetting`). Powers
+   * a small set of cross-plugin controllers (e.g. the Test Lab A/B
+   * interleaver reading Auto Dodge's `dodgeMode`) that need to check another
+   * plugin's current value without importing that plugin's module.
+   */
+  public onGetOtherPluginSetting: ((pluginId: string, key: string) => any) | null = null;
+
+  /**
+   * Callback set by PluginManager: update a setting on a DIFFERENT loaded
+   * plugin via `PluginManager.updateSetting(pluginId, key, value)` — the
+   * exact same call the dashboard's `updateSetting` websocket message
+   * (DevServer.ts) and a config replay (PluginConfigService.
+   * applyPluginConfigSnapshot) both make, so the target plugin's own
+   * `updateSetting` runs (type coercion + its registered onChange callback)
+   * exactly as it would from a dashboard click. Unlike those two callers,
+   * this does NOT itself schedule an autosave — see
+   * `updateOtherPluginSetting`'s doc comment.
+   */
+  public onUpdateOtherPluginSetting: ((pluginId: string, key: string, value: any) => boolean) | null = null;
+
   /** Game data (objects.xml parsed). Available after proxy startup. */
   public readonly gameData: GameDataLoader | null;
   /** Live entity tracker. Available after proxy startup. */
@@ -223,6 +246,44 @@ export class PluginContext {
   /** Get current value of a setting. */
   getSetting<T = any>(key: string): T {
     return this._settings.get(key)?.value;
+  }
+
+  /**
+   * Read a setting's current value from a DIFFERENT loaded plugin (see
+   * `onGetOtherPluginSetting`). Returns `undefined` when no such wiring is
+   * available (e.g. a bare/test context) or the plugin/key doesn't exist.
+   * Never throws.
+   */
+  getOtherPluginSetting<T = any>(pluginId: string, key: string): T | undefined {
+    try {
+      return this.onGetOtherPluginSetting?.(pluginId, key);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Update a setting on a DIFFERENT loaded plugin through the real
+   * PluginManager.updateSetting() path (see `onUpdateOtherPluginSetting`) —
+   * so the DLL receives the change exactly as it would from a dashboard
+   * click on that plugin's own setting. Returns false when no such wiring is
+   * available or the update was rejected (unknown plugin/key). Never throws.
+   *
+   * Deliberately does NOT trigger `PluginConfigService.scheduleAutosave()` —
+   * that only fires from DevServer's own websocket-message handlers (the
+   * `updateSetting` message and friends), not from `PluginManager.
+   * updateSetting()` itself. A caller that flips a switch through this path
+   * many times in one session does not, by itself, cause each flip to be
+   * persisted to the owner's profile; an autosave triggered by an unrelated
+   * settings change elsewhere in the same session will still snapshot
+   * whatever value is live at that moment, same as it always has.
+   */
+  updateOtherPluginSetting(pluginId: string, key: string, value: any): boolean {
+    try {
+      return this.onUpdateOtherPluginSetting?.(pluginId, key, value) ?? false;
+    } catch {
+      return false;
+    }
   }
 
   /** Update a setting value (called by dashboard). */
