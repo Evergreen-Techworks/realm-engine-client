@@ -307,9 +307,10 @@ constexpr float kSolveFallbackPocketW = 0.5f; // fallback: bias the least-bad st
 constexpr float kSolveFallbackBackW   = 0.35f; // no-safe-cell fallback: prefer the known corridor behind us
 
 // Navigation finish plan, item 2 (udodgeFallbackSidestep): when the least-bad
-// Fallback candidates tie on time-to-danger within this window, prefer the one
-// with the smaller radially-OUTWARD component instead of bolting straight away
-// from the threat. See UDodgeSolver::SelectFallbackCandidate.
+// Fallback candidates tie on time-to-danger within this window, prefer the
+// most tangential one (smaller ABSOLUTE radial component) instead of bolting
+// straight away from the threat OR cutting straight in — radial is bad in
+// both directions. See UDodgeSolver::SelectFallbackCandidate.
 constexpr float kSolveFallbackTieMs = 60.f;
 // A Fallback pick under this displacement is a near-stationary jitter; it loses
 // to any candidate that lives at least as long as standing still and moves at
@@ -699,8 +700,9 @@ struct Settings {
     // udodgeFallbackSidestep (navigation finish plan, item 2). true (default):
     // Solver::Solve's Fallback branch ranks its least-bad candidates by latest
     // time-to-danger, then within kSolveFallbackTieMs breaks the tie toward the
-    // smaller radially-outward step (relative to the lock target, or the mean
-    // threatening-lane direction when unlocked) instead of bolting straight out,
+    // most tangential step (smaller ABSOLUTE radial component relative to the
+    // lock target, or the mean threatening-lane direction when unlocked) instead
+    // of bolting straight out OR cutting straight in — radial is bad both ways —
     // never selects a step shorter-lived than standing still, and will not settle
     // for a sub-kSolveFallbackMinMoveTiles jitter when a longer-lived candidate
     // exists. false = today's plain max-time/clearance pick, unchanged.

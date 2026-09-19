@@ -1041,15 +1041,23 @@ int SelectFallbackCandidate(const FallbackCandidate* cands, int n, Vec2 radialRe
 
     const bool haveRadialRef = LenSq(radialRef) > 1e-6f;
     // true when `a` should be preferred to `b`: latest time-to-danger first,
-    // then (within the tie band) the smaller radially-outward component, then
-    // the higher val. An exact tie on every term keeps the incumbent `b`.
+    // then (within the tie band) the smaller ABSOLUTE radial component — most
+    // tangential first. Controller ruling 2026-09-19: radial motion is bad in
+    // BOTH directions (owner ruling 2026-09-18, "radial is the worst move...
+    // spiral, not radial"), so this must never prefer a step that is merely
+    // "less outward" than another when it is actually radially INWARD — an
+    // inward step must never beat a tangential one. Ranking on the signed
+    // value (an earlier version of this function) let an inward pick win a
+    // tie against a tangential one and regressed a hit on d_boss_open_dense
+    // [legacy]; |Dot| fixes that. Remaining ties broken by the higher val. An
+    // exact tie on every term keeps the incumbent `b`.
     const auto better = [&](const FallbackCandidate& a, const FallbackCandidate& b) -> bool {
         const float dt = a.safeTime - b.safeTime;
         if (dt > kSolveFallbackTieMs) return true;
         if (dt < -kSolveFallbackTieMs) return false;
         if (haveRadialRef) {
-            const float ra = Dot(a.dir, radialRef);
-            const float rb = Dot(b.dir, radialRef);
+            const float ra = std::fabs(Dot(a.dir, radialRef));
+            const float rb = std::fabs(Dot(b.dir, radialRef));
             if (ra < rb - 1e-4f) return true;
             if (rb < ra - 1e-4f) return false;
         }
