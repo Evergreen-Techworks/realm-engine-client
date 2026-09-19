@@ -61,6 +61,29 @@ float SegSegCheb(Vec2 a, Vec2 b, Vec2 p, Vec2 q)
     return d;
 }
 
+// Slice 4a moved BEAMS to the Euclidean metric the game's laser job actually uses
+// (JNHOCNOANFC::Execute). The reference carries the same metric, because what this
+// file tests is that the BROAD PHASE changes no answer — not which metric a beam
+// takes. Everything else is still the frozen 2be5472 code.
+float PointSegDistEuclid(Vec2 c, Vec2 a, Vec2 b)
+{
+    const Vec2  ab = Sub(b, a);
+    const float l2 = LenSq(ab);
+    float t = 0.f;
+    if (l2 > 1e-12f) t = std::clamp(Dot(Sub(c, a), ab) / l2, 0.f, 1.f);
+    return Len(Sub(c, Add(a, Mul(ab, t))));
+}
+
+float SegSegEuclid(Vec2 a, Vec2 b, Vec2 p, Vec2 q)
+{
+    if (SegmentsIntersect(a, b, p, q)) return 0.f;
+    float d = PointSegDistEuclid(a, p, q);
+    d = std::min(d, PointSegDistEuclid(b, p, q));
+    d = std::min(d, PointSegDistEuclid(p, a, b));
+    d = std::min(d, PointSegDistEuclid(q, a, b));
+    return d;
+}
+
 static bool TracedPathClear(const Ctx& c, int li, Vec2 a, Vec2 b, float half)
 {
     const int n = c.trust[li];
@@ -68,8 +91,11 @@ static bool TracedPathClear(const Ctx& c, int li, Vec2 a, Vec2 b, float half)
         return MinChebOnSegment(c.pos[li][0].x - a.x, c.pos[li][0].y - a.y,
                                 c.pos[li][0].x - b.x, c.pos[li][0].y - b.y) > half;
     }
-    for (int j = 0; j < n; ++j)
-        if (SegSegCheb(a, b, c.pos[li][j], c.pos[li][j + 1]) <= half) return false;
+    for (int j = 0; j < n; ++j) {
+        const float d = c.beam[li] ? SegSegEuclid(a, b, c.pos[li][j], c.pos[li][j + 1])
+                                   : SegSegCheb(a, b, c.pos[li][j], c.pos[li][j + 1]);
+        if (d <= half) return false;
+    }
     return true;
 }
 

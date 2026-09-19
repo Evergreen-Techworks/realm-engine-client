@@ -123,6 +123,23 @@ float PointSegDistEuclid(Vec2 c, Vec2 a, Vec2 b)
     return Len(Sub(c, Add(a, Mul(ab, t))));
 }
 
+// Min EUCLIDEAN distance between segment a→b and segment p→q. Same convexity
+// argument as SegSegCheb, with the Euclidean metric: absent a proper crossing the
+// minimum sits at one segment's endpoint against the other segment. BEAMS ONLY —
+// the game's laser job (JNHOCNOANFC::Execute, RVA 0x16468B0) is a Euclidean
+// point-to-segment test, so a Chebyshev answer over-covers a beam diagonally by up
+// to sqrt(2) and disagrees with SpacetimeCore, which already measures beams this
+// way (SegmentSeparation). Ordinary shots keep SegSegCheb: their job IS per-axis.
+float SegSegEuclid(Vec2 a, Vec2 b, Vec2 p, Vec2 q)
+{
+    if (SegmentsIntersect(a, b, p, q)) return 0.f;
+    float d = PointSegDistEuclid(a, p, q);
+    d = std::min(d, PointSegDistEuclid(b, p, q));
+    d = std::min(d, PointSegDistEuclid(p, a, b));
+    d = std::min(d, PointSegDistEuclid(q, a, b));
+    return d;
+}
+
 float PositionUncertainty(const MapInput& in)
 {
     return std::clamp(in.settings.positionUncertainty, 0.f, 0.35f);
@@ -154,8 +171,18 @@ bool Tactician(const MapInput& in)
 }
 
 // The shot's own half for a SPATIAL test (no player term).
+//
+// BEAMS (Slice 4a): the laser job applies NO multiplier of any kind — not the
+// player's live collisionRadiusMultiplier and not the udodgeHitScale belief that
+// mirrors it (Contact::TruthHalfBeam). Both policies therefore measure a beam
+// against T itself; scaling it by the owner's 0.65 made every laser 35 % narrower
+// than the one that actually hits.
 float ShotHalf(const MapInput& in, const LaneThreat& L, float hitScale)
 {
+    if (L.beam) {
+        return Tactician(in) ? Contact::PlanHalfBeam(L.hitHalf)
+                             : std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf);
+    }
     if (Tactician(in)) return Contact::PlanHalf(L.hitHalf, in.map->targetScale);
     return std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * hitScale;
 }
@@ -637,10 +664,18 @@ void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2
             if (dt > 1e-3f)
                 maxSpeed = std::max(maxSpeed, Len(Sub(L.points[j], L.points[j - 1])) / dt);
         }
-        const float hitHalf = tactician
-            ? Contact::PlanHalf(L.hitHalf, map.targetScale)
-            : std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * scale + std::max(playerHalf, 0.f) +
-              std::clamp(positionUncertainty, 0.f, 0.35f);
+        // BEAMS (Slice 4a): T unscaled under BOTH policies — the laser job carries no
+        // multiplier slot at all, so neither hitScale nor the live collider value may
+        // shrink it. The classic player/uncertainty pads stay, since they are that
+        // policy's comfort, not a belief about the shot's size.
+        const float hitHalf = L.beam
+            ? (tactician ? Contact::PlanHalfBeam(L.hitHalf)
+                         : std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) + std::max(playerHalf, 0.f) +
+                           std::clamp(positionUncertainty, 0.f, 0.35f))
+            : (tactician
+                ? Contact::PlanHalf(L.hitHalf, map.targetScale)
+                : std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * scale + std::max(playerHalf, 0.f) +
+                  std::clamp(positionUncertainty, 0.f, 0.35f));
         const float timingPad = tactician
             ? 0.f
             : kUArrivalMargin + std::min(maxSpeed * kUPredErrMs, kUPredPadMaxTiles);
@@ -754,9 +789,16 @@ void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2
 // crossing test fires and one of those distances otherwise, so only the crossing
 // test is left to evaluate; it is sign arithmetic, the boxes say nothing about what
 // it computes, and it is never skipped.
+//
+// METRIC (Slice 4a). A BEAM is measured in EUCLIDEAN distance because the game's
+// laser job is (JNHOCNOANFC::Execute: pointToSegmentDist^2 <= T^2); everything else
+// keeps Chebyshev because the box job is per-axis. The broad phase is unaffected:
+// Euclidean distance is never smaller than Chebyshev, so a `distancesClear` proof
+// that every Chebyshev distance exceeds `half` still proves it for Euclidean.
 static bool TracedPathClear(const Ctx& c, int li, Vec2 a, Vec2 b, float half, bool distancesClear = false)
 {
     const int n = c.trust[li];
+    const bool beam = c.beam[li];
     if (n <= 0) {   // nothing traced at all (single-point lane): the live disc
         if (distancesClear) return true;   // a pure distance, already known to exceed half
         return MinChebOnSegment(c.pos[li][0].x - a.x, c.pos[li][0].y - a.y,
@@ -767,7 +809,9 @@ static bool TracedPathClear(const Ctx& c, int li, Vec2 a, Vec2 b, float half, bo
             if (SegmentsIntersect(a, b, c.pos[li][j], c.pos[li][j + 1]) && 0.f <= half) return false;
             continue;
         }
-        if (SegSegCheb(a, b, c.pos[li][j], c.pos[li][j + 1]) <= half) return false;
+        const float d = beam ? SegSegEuclid(a, b, c.pos[li][j], c.pos[li][j + 1])
+                             : SegSegCheb(a, b, c.pos[li][j], c.pos[li][j + 1]);
+        if (d <= half) return false;
     }
     return true;
 }
