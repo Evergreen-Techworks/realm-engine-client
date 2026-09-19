@@ -83,7 +83,7 @@ const QUEST_UNSEEN_COMMIT_MS = 60000;
 // long dwell on one status is visible after the fact instead of only live.
 const STATUS_LOG_HEARTBEAT_MS = 5000;
 
-// ── Test Lab telemetry (task A2) ─────────────────────────────────────────────
+// ── Test Lab telemetry ────────────────────────────────────────────────────────
 // The persisted/dashboard `state: <message>` line (see setStatus below) gets a
 // machine-readable ` | ctx ...` suffix appended, so the Test Lab can plot the
 // farmer's position and know what triggered a status change without parsing
@@ -171,7 +171,7 @@ export default class Farmer {
     RealmEngine.combat.setAutoFire(enabled);
   }
 
-  // Live inputs for the ' | ctx ...' suffix (task A2). Called only once setStatus
+  // Live inputs for the ' | ctx ...' suffix. Called only once setStatus
   // has already decided a line is going to be logged — not on every call, since
   // a moving position must not itself force a log line (see setStatus). May
   // throw (self not spawned yet, a malformed enemy entry, ...); the caller

@@ -1,5 +1,5 @@
 /**
- * Test Lab A/B switch interleaver — pure core (task A5a).
+ * Test Lab A/B switch interleaver — pure core.
  *
  * TESTLAB_PRIVATE_ONLY: this file is listed in `client/private-only.json` and
  * must be deletable from customer builds. It imports nothing from `fs`,

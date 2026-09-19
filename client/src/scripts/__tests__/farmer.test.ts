@@ -11,7 +11,7 @@ const source = rawSource
   .replace("import { RealmEngine } from '@realmengine/sdk';", '')
   .replace("import OryxRunner from './oryx-runner.mjs';", '')
   .replace('export default class Farmer', 'return class Farmer');
-// The status-context helpers (task A2) are plain top-level functions declared
+// The status-context helpers are plain top-level functions declared
 // before the class, so they can be pulled out and unit-tested standalone —
 // same trick as OryxRunner above, just stopping before the class body instead
 // of renaming its export.
@@ -1113,11 +1113,11 @@ it('prefers a targetable enemy over a bigger locked one that can no longer be da
   expect(f.farmer.updateTarget(0).objectId).toBe(31);
 });
 
-// Test Lab task A2: the persisted `state:` line carries a machine-readable
+// Test Lab: the persisted `state:` line carries a machine-readable
 // ` | ctx ...` suffix so the Test Lab can plot position without parsing English.
 // The literal delimiter, key names, and one-decimal formatting are a contract
 // with its log parser — do not change them casually.
-describe('status context suffix (Test Lab task A2)', () => {
+describe('status context suffix (Test Lab)', () => {
   describe('formatStatusContextSuffix (pure)', () => {
     it('formats every known field to one decimal place', () => {
       expect(formatStatusContextSuffix({
