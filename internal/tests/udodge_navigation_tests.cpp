@@ -260,5 +260,34 @@ int main() {
     Check(!plan.navArrived && plan.navWptCount==1 && LenSq(plan.navStepTarget)==0.f,
           "boxed-in A* never returns the raw destination as a steering step");
     std::puts("Navigation regressions passed (real A*, corner compression, swept steering, completion).");
+    // A locked fight: nine stationary shots form a closed arm between the player and
+    // weapon range. The route must go round it, never through it.
+    static Path::PlannerSnapshot fight{};
+    fight.hasLock = true;
+    fight.lockPos = {4.f, 0.f};
+    fight.weaponRangeTiles = 2.f;
+    fight.innerStandoffTiles = 1.f;
+    fight.speed = .005f;
+    fight.moveBudget = .5f;
+    for (int shot = 0; shot < 9; ++shot) {
+        auto& lane = fight.map.lanes[fight.map.laneCount++];
+        lane.hitHalf = .3f;
+        lane.pointCount = lane.instantCount = 2;
+        lane.points[0] = lane.points[1] = {1.f, (shot - 4) * .5f};
+        lane.pointTimesMs[1] = 3000.f;
+    }
+    Path::Compute(fight, plan);
+    Check(plan.found && !plan.partial, "locked fight finds a reachable pocket around the shot arm");
+    Core::Temporal::Ctx fightTime{};
+    Core::Temporal::Build(fight.map, fight.settings.hitScale, fight.settings.positionUncertainty,
+        fight.player, 20.f, fightTime, Core::ProjectilePlayerHalf(fight.settings));
+    float arrival = 0.f;
+    for (int vertex = 1; vertex < plan.wptCount; ++vertex) {
+        const float nextArrival = arrival + Len(Sub(plan.wpts[vertex], plan.wpts[vertex - 1])) / fight.speed;
+        Check(Core::Temporal::EdgeClear(fightTime, plan.wpts[vertex - 1], plan.wpts[vertex], arrival, nextArrival),
+            "locked fight route never crosses a closed projectile arm to reach weapon range");
+        arrival = nextArrival;
+    }
+    std::puts("Locked fight route passed (time-checked round the shot arm).");
     Ring::LadderTests();
 }

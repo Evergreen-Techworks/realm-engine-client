@@ -227,11 +227,6 @@ struct Ctx {
     const PlannerSnapshot* s = nullptr;
     MapInput mi{};            // .env NULL, .map aliases the plain snapshot copy — plain-data only
     bool  diskActive = false;
-    // A locked approach is a durable TOPOLOGY route: walls, enemy bodies and
-    // active zones shape it, while the immediate solver handles moving bullets.
-    // Otherwise every new shot rewrites the entire approach before it can be
-    // consumed and the player never commits into weapon range.
-    bool  strategicLockRoute = false;
     bool  preferRetreat = false; // breadcrumb is active only when forward topology is closed
     Vec2  diskCenter{};
     float diskLimit = 0.f;    // weaponRange + slack (annulus OUTER radius)
@@ -305,9 +300,7 @@ void EvalCell(const Ctx& c, int idx, int gx, int gy)
         s_eval[idx] = 1;
         return;
     }
-    const float safety = c.strategicLockRoute
-        ? kUDurablePocketMargin
-        : Core::PointSafety(c.mi, w);
+    const float safety = Core::PointSafety(c.mi, w);
     s_safe[idx] = safety;
     s_factor[idx] = SquareFactor(c.s->grid, w);
     s_goal[idx] = (safety >= kUDurablePocketMargin && GoalGateOk(c, w)) ? 1 : 0;
@@ -549,8 +542,7 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
             const Vec2 wB = CellWorld(center, nx, ny);
             const Vec2 wA = CellWorld(center, cgx, cgy);
             float tArr = tB;
-            if (!c.strategicLockRoute &&
-                !Core::Temporal::EdgeClear(s_tctx, wA, wB, s_cost[cur], tB)) {
+            if (!Core::Temporal::EdgeClear(s_tctx, wA, wB, s_cost[cur], tB)) {
                 // ── BOUNDED WAIT EDGE (finding F) ───────────────────────────
                 // Leaving NOW walks into a bullet. Try leaving one or two temporal
                 // slices later instead — "stand here, let the wall pass, then go".
@@ -606,7 +598,6 @@ void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, Pla
     c.mi.settings = s.settings;
     c.mi.map      = &s.map;     // plain-data alias; .env stays NULL
     c.diskActive  = diskActive;
-    c.strategicLockRoute = diskActive && s.hasLock;   // never a ring approach: that route is time-checked
     c.diskCenter  = s.lockPos;
     c.diskLimit   = s.weaponRangeTiles + kUInRangeSlack;
     c.diskInner   = s.innerStandoffTiles;   // annulus inner radius (goal-only gate)
