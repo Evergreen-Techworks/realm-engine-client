@@ -533,6 +533,15 @@ export class PluginManager {
             try { listener(); } catch {}
           }
         };
+        // Cross-plugin read/update, used by controllers like the Test Lab
+        // A/B interleaver that flip another plugin's setting (e.g. Auto
+        // Dodge's udodgeEnemyStandoff) through the exact same call the
+        // dashboard's 'updateSetting' websocket handler makes.
+        context.onGetOtherPluginSetting = (pluginId, key) => {
+          const plugin = this.loadedPlugins.get(pluginId);
+          return plugin ? plugin.context.getSetting(key) : undefined;
+        };
+        context.onUpdateOtherPluginSetting = (pluginId, key, value) => this.updateSetting(pluginId, key, value);
       }
 
       const registerResult = await module.register(context);
