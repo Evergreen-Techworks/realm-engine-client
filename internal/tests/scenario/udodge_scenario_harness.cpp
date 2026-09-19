@@ -1176,7 +1176,10 @@ void ApplyUserSettings()
     // ENEMY STANDOFF A/B: `HARNESS_ENEMY_STANDOFF=off` runs the pre-standoff engine.
     UDodge::SetEnemyStandoff(std::getenv("HARNESS_ENEMY_STANDOFF"));
     // ROUTE COMMIT A/B (navigation finish plan, Item 1): `HARNESS_ROUTE_COMMIT=off`
-    // runs the pre-Item-1 follower; unset or any other value keeps the default (on).
+    // runs the pre-Item-1 follower; unset (or any other value) turns route commit ON
+    // in this harness. That is NOT the shipped default: g_routeCommit now boots off
+    // (UDodge.cpp's initializer, owner ruling 2026-09-19) — this call's "anything
+    // else means on" behaviour only matters once a scenario explicitly asks for it.
     UDodge::SetRouteCommit(std::getenv("HARNESS_ROUTE_COMMIT"));
     // FALLBACK SIDESTEP A/B (navigation finish plan, item 2): this harness fixture
     // pins the A/B baseline to on regardless of Settings::fallbackSidestep's own
