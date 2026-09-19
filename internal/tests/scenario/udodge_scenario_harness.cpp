@@ -436,6 +436,7 @@ void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s)
     out.laneCount = 0; out.zoneCount = 0; out.enemyCount = 0;
     out.projectileSourceUnavailable = false; out.limited = false;
     out.hasLock = false; out.lockId = 0; out.lockPos = {};
+    out.planner = s.planner;
     for (const Bullet& b : w.bullets) {
         float age = 0.f, rem = 0.f; Vec2 live{};
         if (!LaneVisible(b, playerX, playerY, age, rem, live) || out.laneCount >= kMaxProjectiles) continue;
