@@ -876,13 +876,14 @@ static void DiagAfterUpdate(double t0, double t1, double t2)
         " | nav replans=%u stalls=%u blocked=%u waitFrames=%u avoids=%u lockApproach=%u hazardRoutes=%u"
         " | worker accepted=%u discarded=%u"
         " routeFound=%u partial=%u maxMs dodge=%.1f nav=%.1f timed=%.1f solve=%.1f"
-        " | map maxLanes=%d maxZones=%d maxEnemies=%d limitedFrames=%u",
+        " | map maxLanes=%d maxZones=%d maxEnemies=%d limitedFrames=%u"
+        " | frameBudgetHits=%u",
         gs.holds, gs.safes, gs.fallbacks, gs.surrounded, gs.moves, gs.moveRefused,
         gs.navReplans, gs.navStalls, gs.navBlocked, gs.navWaitFrames,
         gs.navAvoids, gs.lockApproachFrames, gs.hazardRoutes,
         gs.workerAccepted, gs.workerDiscarded, gs.routeFound, gs.routePartial,
         gs.workerDodgeMsMax, gs.workerNavMsMax, gs.workerTimedMsMax, gs.workerSolveMsMax,
-        gs.maxLanes, gs.maxZones, gs.maxEnemies, gs.mapLimited);
+        gs.maxLanes, gs.maxZones, gs.maxEnemies, gs.mapLimited, gs.frameBudgetHits);
     gs.ResetWindow();
 }
 

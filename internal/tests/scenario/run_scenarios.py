@@ -148,7 +148,16 @@ TELEMETRY_KEYS = ["t", "why", "mode", "rule", "nav", "corridor", "map_pending", 
                   "enemies", "worker_ms", "timed", "reused", "budget_hit", "dropped"]
 TELEMETRY_MAX_LINES_PER_S = 8 + 3 + 1 + 1   # the three change classes' ceilings plus the heartbeat
 ROW_TIMING_FIELDS = {"tick_ms_avg", "tick_ms_max", "nav_ms_avg", "nav_ms_max", "dodge_ms_avg", "dodge_ms_max",
-                     "cycle_ms_avg", "cycle_ms_max", "dodge_ms_p95", "cycle_ms_p95"}
+                     "cycle_ms_avg", "cycle_ms_max", "dodge_ms_p95", "cycle_ms_p95",
+                     # Item 4 (navigation finish plan): the game-thread phase split (read off
+                     # DiagTiming::Game(), which only accumulates while diagnostics are on) plus
+                     # tick_ms_p95 and the lane counts/cull stats that ride the same switch.
+                     "tick_ms_p95", "max_lanes", "max_zones", "max_enemies",
+                     "lanes_culled", "lanes_seen",
+                     "sync_ms_avg", "sync_ms_max", "rasterOcc_ms_avg", "rasterOcc_ms_max",
+                     "rasterNav_ms_avg", "rasterNav_ms_max", "publish_ms_avg", "publish_ms_max",
+                     "liveSolve_ms_avg", "liveSolve_ms_max", "revalidate_ms_avg", "revalidate_ms_max",
+                     "debug_ms_avg", "debug_ms_max", "phase_total_ms_avg", "phase_total_ms_max"}
 
 
 def telemetry_check(binary, scan):

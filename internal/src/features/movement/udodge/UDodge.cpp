@@ -92,6 +92,12 @@ std::atomic<float> g_serverAnchorX{ 0.f }, g_serverAnchorY{ 0.f };
 std::atomic<bool>  g_serverAnchorValid{ false };
 // udodgeFallbackSidestep (navigation finish plan, item 2). Default ON.
 std::atomic<bool>  g_fallbackSidestep{ true };
+// udodgeFrameBudget (navigation finish plan, item 4). AUTO by default.
+std::atomic<bool>  g_frameBudgetAuto{ true };
+// Target: p95 under 3 ms in a dense fight (navigation finish plan, Item 4
+// acceptance). Measured against the same clock the phase timers use, checked
+// once per Tick right before the solver phases.
+constexpr double kFrameBudgetMs = 3.0;
 
 // Last-resort signal for AutoNexus (plan 77). Written at the end of Tick, read
 // via GetSafetyState from AutoNexus's poll thread. g_enabled (above) carries the
@@ -884,6 +890,10 @@ void Tick(void* player, float px, float py, float dt)
     // per-phase breakdown is emitted every 2 s by DangerPlanner's update detour.
     PhaseTimer total(DiagTiming::Game().total);
     const bool diagOn = DiagTiming::On();
+    // Item 4 (navigation finish plan): frame-cost ceiling. One QueryPerformanceCounter
+    // read (DiagTiming::NowMs(), the same clock the phase timers already use) — cheap
+    // enough to always take, so "off" costs the same as before this switch existed.
+    const double tickStartMs = DiagTiming::NowMs();
 
     const Settings settings = ReadSettings();
     const SteerInput::SteerState steer = SteerInput::Get();
@@ -1750,6 +1760,26 @@ void Tick(void* player, float px, float py, float dt)
     // this is only the small live safety solver, at server-tick cadence.
     if (navWaiting) routeForSolve = Path::PlanResult{};
     if (diagOn && navWaiting) ++DiagTiming::Game().navWaitFrames;
+    // ── Frame-cost ceiling (navigation finish plan, Item 4) ──────────────────
+    // Set immediately before the solver phases (liveSolve below, then
+    // revalidate) so BOTH calls this tick see the same decision. "auto"
+    // degrades ONLY the candidate ring (BuildCandidates); it never skips
+    // ReanchorMap/BuildMap above, never drops a lane the relevance cull kept,
+    // and never relaxes a safety floor on the step finally chosen — Evaluate
+    // and the temporal admission tests still run, unchanged, on whatever
+    // candidates the (possibly smaller) ring produces.
+    if (g_frameBudgetAuto.load(std::memory_order_relaxed)) {
+        const bool overBudget = (DiagTiming::NowMs() - tickStartMs) > kFrameBudgetMs;
+        Solver::SetFrameDegraded(overBudget);
+        if (overBudget) {
+            ++DiagTiming::Game().frameBudgetHits;
+            static int s_fbN = 0;
+            if ((s_fbN++ % 120) == 0)
+                DBG_FILE_LOG("[UDodge] Frame budget: over " << kFrameBudgetMs
+                             << " ms before the solver phases -> fewer candidates this frame"
+                             << " (hits=" << s_fbN << ")");
+        }
+    }
     if (navHandoff.solve || groupChanged) {
         PhaseTimer _p(DiagTiming::Game().liveSolve);
         Solver::Solve(in, b, goal, routeForSolve, proposedState, g_solve, timedForSolve);
@@ -2293,5 +2323,11 @@ void  SetServerAnchorY(float y) { if (std::isfinite(y)) g_serverAnchorY.store(y,
 void  SetServerAnchorValid(bool valid) { g_serverAnchorValid.store(valid, std::memory_order_release); }
 void  SetFallbackSidestep(bool en) { g_fallbackSidestep.store(en, std::memory_order_relaxed); }
 bool  GetFallbackSidestep() { return g_fallbackSidestep.load(std::memory_order_relaxed); }
+// udodgeFrameBudget: "off" = no ceiling, ever; anything else (default) = auto.
+void  SetFrameBudget(const char* text)
+{
+    g_frameBudgetAuto.store(!(text && text[0] == 'o' && text[1] == 'f'), std::memory_order_relaxed);
+}
+bool  GetFrameBudgetAuto() { return g_frameBudgetAuto.load(std::memory_order_relaxed); }
 
 } // namespace UDodge

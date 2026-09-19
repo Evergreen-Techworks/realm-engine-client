@@ -58,6 +58,17 @@
 // physical consequence of the per-tick move budget, not a solver weakness.
 namespace UDodge { namespace Solver {
 
+// udodgeFrameBudget (navigation finish plan, Item 4): per-thread, per-call
+// degrade flag. UDodge::Tick sets it (game thread only) right before the
+// solver phases when this Tick has already spent longer than the budget;
+// BuildCandidates reads it to shrink the candidate ring. thread_local so the
+// worker thread's own Solve() calls (UDodgeWorkerCycle.h) are NEVER affected —
+// the worker has no per-game-frame deadline, and this must never touch its
+// own planning. Nothing here relaxes a safety floor: Evaluate/the temporal
+// admission tests still run on whatever candidates ARE produced, unchanged.
+void SetFrameDegraded(bool degraded);
+bool GetFrameDegraded();
+
 struct Goal {
     bool groupActive = false;
     Vec2 groupPos{};

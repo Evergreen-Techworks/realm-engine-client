@@ -7,6 +7,13 @@
 #include <cmath>
 
 namespace UDodge { namespace Solver {
+
+namespace {
+thread_local bool t_frameDegraded = false;
+}
+void SetFrameDegraded(bool degraded) { t_frameDegraded = degraded; }
+bool GetFrameDegraded() { return t_frameDegraded; }
+
 namespace {
 
 // The solver's HARD safety constraint is Core::PointSafety / Core::PointSafe,
@@ -330,8 +337,18 @@ int BuildCandidates(const MapInput& in, float b, const Goal& goal,
     out[n].stand = true;
     ++n;
 
-    // Polar rings.
-    for (int ri = 0; ri < kSolveRings; ++ri) {
+    // Polar rings. Item 4 (navigation finish plan): when this Tick is over its
+    // frame budget, keep only the OUTER ring (the full move-budget headings —
+    // the best escape reach, and still 32 candidates around the compass) and
+    // drop the three inner rings, cutting the temporal ranking pass below by
+    // ~4x for this frame only. Never removes the stand point, the goal-
+    // direction point or the pocket-direction point (the search below still
+    // ranks a full compass of headings; only the finer-radius resolution is
+    // lost for one frame), and never touches Evaluate's occupancy/safety
+    // floors or the temporal admission tests every surviving candidate is
+    // still put through.
+    const int ringStart = GetFrameDegraded() ? kSolveRings - 1 : 0;
+    for (int ri = ringStart; ri < kSolveRings; ++ri) {
         const float r = b * kRingFrac[ri];
         for (int k = 0; k < kSolveAngles; ++k) {
             const float ang = kTwoPi * static_cast<float>(k) / static_cast<float>(kSolveAngles);
