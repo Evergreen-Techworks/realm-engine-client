@@ -13,6 +13,7 @@
 #include "UDodgeEnemyHazards.h"
 #include "UDodgeTelemetry.h"
 #include "UDodgePredErr.h"
+#include "UDodgeGoalOwner.h"
 #include "features/movement/nav/Speed.h"
 
 #include "MovementRuntime.h"
@@ -51,6 +52,13 @@ std::atomic<float> g_hitScale{ 1.0f };
 // udodgePlanner. DEFAULT TACTICIAN on this private branch (S3.1); the public
 // default is decided before any release.
 std::atomic<uint8_t> g_planner{ static_cast<uint8_t>(Contact::Policy::Tactician) };
+// udodgeRouteCommit (navigation finish plan, Item 1). ON by default: once a
+// walk-to / lock-approach route is accepted, keep following it through a reflex
+// detour instead of dropping it on every few-tile deviation; re-plan only on a
+// real trigger. OFF reproduces today's behaviour exactly (the plain 5-tile
+// deviation threshold, the 500 ms stall timer, no objective-changed trigger, no
+// lattice snap under Classic). Lands under BOTH planner policies.
+std::atomic<bool> g_routeCommit{ true };
 // udodgeEnemyStandoff. AUTO by default: the owner's rule ("never walk near enemies,
 // right on top of them, or in front of them to get shotgunned") is the safe
 // behaviour, and `off` exists to A/B it against the pre-standoff engine.
@@ -143,6 +151,11 @@ struct NavCache {
     bool crossesHazard = false;
 };
 NavCache g_navCache;
+// The objective the currently-cached route was last checked against (Item 1
+// S1/S2), and an id that changes each time a genuinely new route replaces the
+// cache (Item 1 S4 telemetry: route_id). Both reset when walk-to ends.
+GoalOwner g_lastRouteObjective{};
+uint64_t  g_routeId = 0;
 Vec2 g_globalRawGoal{};
 bool g_globalRawActive = false;
 bool g_globalAssistance = false;
@@ -472,6 +485,7 @@ Settings ReadSettings()
     s.stepTiles    = stepT <= 0.f ? 0.f : Clamp(stepT, 0.4f, 3.f);
     s.hitScale     = Clamp(g_hitScale.load(std::memory_order_relaxed), 0.25f, 2.5f);
     s.planner      = static_cast<Contact::Policy>(g_planner.load(std::memory_order_relaxed));
+    s.routeCommit  = g_routeCommit.load(std::memory_order_relaxed);
     s.enemyStandoff = static_cast<Standoff::Mode>(g_enemyStandoff.load(std::memory_order_relaxed));
     s.positionUncertainty = Clamp(g_serverPositionError.load(std::memory_order_relaxed), 0.f, 0.35f);
     s.reactMargin  = Clamp(g_reactMargin.load(std::memory_order_relaxed), 0.05f, 2.0f);
@@ -1075,6 +1089,33 @@ void Tick(void* player, float px, float py, float dt)
     } else {
         g_lockApproach = false;
         g_lockApproachGoalValid = false;
+    }
+
+    // ── Goal owner (Item 1 S1) ────────────────────────────────────────────────
+    // ONE place that decides this tick's objective, from the same flags already
+    // derived above (wasdActive / lockApproach / walkActive / followId /
+    // g_map.hasLock) — the ones that build Solver::Goal below and the [Diag/Nav]
+    // objective today. A plain fill, not a new derivation: DangerPlanner's
+    // setters (SetWalkGoal, SetEnemyLock, SetFollowPlayer) are untouched. The
+    // route-commitment decision below reads this for "did the objective change";
+    // nothing else consumes it yet.
+    GoalOwner objective{};
+    if (wasdActive) {
+        objective.kind = Telemetry::Objective::Steer;
+    } else if (lockApproach) {
+        objective.kind     = Telemetry::Objective::LockApproach;
+        objective.targetId = g_map.lockId;
+        objective.target   = g_map.lockPos;
+    } else if (walkActive) {
+        float wcx = 0.f, wcy = 0.f; bool commanded = false;
+        DangerPlanner::GetWalkGoal(wcx, wcy, commanded);
+        objective.kind     = commanded ? Telemetry::Objective::WalkTo : Telemetry::Objective::Follow;
+        objective.targetId = commanded ? 0 : followId;
+        objective.target   = { walkX, walkY };
+    } else if (g_map.hasLock) {
+        objective.kind     = Telemetry::Objective::Lock;
+        objective.targetId = g_map.lockId;
+        objective.target   = g_map.lockPos;
     }
 
     const bool globalPointActive = walkActive && !lockApproach && !wasdActive;
@@ -2064,6 +2105,14 @@ Contact::Policy GetPlannerPolicy()
 {
     return static_cast<Contact::Policy>(g_planner.load(std::memory_order_relaxed));
 }
+// udodgeRouteCommit: "off" = the pre-Item-1 follower (plain 5-tile deviation
+// threshold, no objective-changed trigger, no lattice snap under Classic);
+// anything else (default) = route commitment on.
+void SetRouteCommit(const char* text)
+{
+    g_routeCommit.store(!(text && text[0] == 'o' && text[1] == 'f'), std::memory_order_relaxed);
+}
+bool GetRouteCommit() { return g_routeCommit.load(std::memory_order_relaxed); }
 void  SetEnemyStandoff(const char* text)
 {
     g_enemyStandoff.store(static_cast<uint8_t>(Standoff::ModeFromText(text)), std::memory_order_relaxed);
