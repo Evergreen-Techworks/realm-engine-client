@@ -64,6 +64,32 @@ inline float PlanHalf(float T, float targetScale, float extraTiles = 0.f)
     return TruthHalf(T, targetScale) + kComfortTiles + (extraTiles > 0.f ? extraTiles : 0.f);
 }
 
+// ── BEAMS are a DIFFERENT job with a DIFFERENT rule (PROVEN, 86ad651b) ──────
+// A laser is not tested by the box job at all. `JNHOCNOANFC::Execute`
+// (RVA 0x16468B0) takes an origin A, a UNIT direction u, a length L and T, and
+// hits iff the EUCLIDEAN point-to-segment distance obeys
+//
+//     pointToSegmentDist^2(P, A, A + u*L) <= T^2
+//
+// Its 20-byte job record has NO collisionRadiusMultiplier slot: the box job's
+// `mulss xmm0,[rec+0x1C]` has no counterpart here. So the player's collider
+// multiplier does not shrink a beam, and neither does the udodgeHitScale belief
+// that mirrors it — a beam's half is T itself, under BOTH planner policies.
+// Scaling it by the owner's 0.65 modelled every laser 35 % too narrow
+// (0.325 against the 0.5 that actually hits), which is the strongest candidate
+// for "the dodge walks into lasers" (accel-and-laser-check.md section 6).
+inline float TruthHalfBeam(float T)
+{
+    return std::clamp(T, kMinHalfTiles, kMaxHalfTiles);
+}
+
+// Beam planning half: the unscaled truth plus the SAME cross-track comfort every
+// other planning layer carries. Callers keep their own preference thresholds.
+inline float PlanHalfBeam(float T, float extraTiles = 0.f)
+{
+    return TruthHalfBeam(T) + kComfortTiles + (extraTiles > 0.f ? extraTiles : 0.f);
+}
+
 // The game's hit test (P1-P5): per-axis, non-strict, player a point.
 inline bool Hit(float relX, float relY, float half)
 {
