@@ -7,6 +7,7 @@ import {
   buildMapRecord,
   buildMoveRecord,
   buildProjDefRecord,
+  buildMissingProjDefRecord,
   buildShotRecord,
   buildHitRecord,
   buildGroundRecord,
@@ -135,6 +136,17 @@ describe('recorderCore: one test per record kind', () => {
     expect(buildMoveRecord(T, data)).toEqual({ k: 'move', t: T, tick: 1, x: null, y: null, recs: [] });
   });
 
+  it('move: coordinates round to 3 decimals (raw floats can carry 13+ digits)', () => {
+    const data = {
+      tickId: 1,
+      records: [{ time: 0, x: 1017.0716552734375, y: 500.1234567 }],
+    };
+    expect(buildMoveRecord(T, data)).toEqual({
+      k: 'move', t: T, tick: 1, x: 1017.072, y: 500.123,
+      recs: [[0, 1017.072, 500.123]],
+    });
+  });
+
   it('projdef: only non-default path properties are included', () => {
     expect(buildProjDefRecord(T, 0x123, 0, PROJ)).toEqual({
       k: 'projdef', t: T, otype: 0x123, bt: 0, oname: 'Ghost Bear',
@@ -148,6 +160,13 @@ describe('recorderCore: one test per record kind', () => {
       k: 'projdef', t: T, otype: 0x123, bt: 1, oname: 'Ghost Bear',
       speed: 8.5, life: 1400, size: 0.15,
       wavy: true, amplitude: 2, magnitude: 5,
+    });
+  });
+
+  it('projdef: a GameData lookup miss reports otype/bt with missing:true and null facts', () => {
+    expect(buildMissingProjDefRecord(T, 0x123, 4)).toEqual({
+      k: 'projdef', t: T, otype: 0x123, bt: 4,
+      oname: null, speed: null, life: null, size: null, missing: true,
     });
   });
 
@@ -170,6 +189,20 @@ describe('recorderCore: one test per record kind', () => {
     });
   });
 
+  it('shot: coordinates round to 3 decimals, angles round to 5 (long float noise)', () => {
+    const data = {
+      bulletId: 7, ownerId: 999, bulletType: 2,
+      position: { x: 1017.0716552734375, y: 34.256789012345 },
+      angle: 1.2345678912345, damage: 40, angleInc: 0.123456789,
+    };
+    const rec = buildShotRecord(T, data, 0x123);
+    expect(rec.x).toBe(1017.072);
+    expect(rec.y).toBe(34.257);
+    expect(rec.a).toBe(1.23457);
+    expect(rec.ainc).toBe(0.12346);
+    expect(rec.dmg).toBe(40); // not a coordinate/distance/angle — untouched
+  });
+
   it('hit: bid/oid from the packet, everything else from the resolved lookup', () => {
     const data = { bulletId: 7, objectId: 999 };
     const lookup = { otype: 0x123, x: 10, y: 20, odist: 3.5, edist: 1.2, hp: 40, maxhp: 100 };
@@ -187,8 +220,26 @@ describe('recorderCore: one test per record kind', () => {
     expect(rec.edist).toBeNull();
   });
 
+  it('hit: position and distances round to 3 decimals (Math.hypot noise)', () => {
+    const data = { bulletId: 7, objectId: 999 };
+    const lookup = {
+      otype: 0x123, x: 1017.0716552734375, y: 500.1234567,
+      odist: 3.141592653589793, edist: 1.0000004999999, hp: 40, maxhp: 100,
+    };
+    expect(buildHitRecord(T, data, lookup)).toEqual({
+      k: 'hit', t: T, bid: 7, oid: 999, otype: 0x123,
+      x: 1017.072, y: 500.123, odist: 3.142, edist: 1, hp: 40, maxhp: 100,
+    });
+  });
+
   it('ground', () => {
     expect(buildGroundRecord(T, { time: 0, position: { x: 5, y: 6 } })).toEqual({ k: 'ground', t: T, x: 5, y: 6 });
+  });
+
+  it('ground: coordinates round to 3 decimals', () => {
+    expect(buildGroundRecord(T, { position: { x: 1017.0716552734375, y: 500.1234567 } })).toEqual({
+      k: 'ground', t: T, x: 1017.072, y: 500.123,
+    });
   });
 
   it('death', () => {
@@ -253,16 +304,37 @@ describe('recorderCore: projdef emitted once per (otype, bt) per file/session', 
     expect(forBt1.map((r) => r.k)).toEqual(['projdef', 'shot']);
   });
 
-  it('omits projdef when GameData has no match, but still emits the shot', () => {
+  it('emits a missing projdef once, then never again for the same pair, when GameData has no match', () => {
     const ctx = { ownerType: 0x123, projectile: null };
-    const out = dispatchPacket('ENEMYSHOOT', T, shotData, ctx, tracker);
+    const first = dispatchPacket('ENEMYSHOOT', T, shotData, ctx, tracker);
+    expect(first.map((r) => r.k)).toEqual(['projdef', 'shot']);
+    expect(first[0]).toEqual({
+      k: 'projdef', t: T, otype: 0x123, bt: 0,
+      oname: null, speed: null, life: null, size: null, missing: true,
+    });
+
+    const second = dispatchPacket('ENEMYSHOOT', T + 100, { ...shotData, bulletId: 2 }, ctx, tracker);
+    expect(second.map((r) => r.k)).toEqual(['shot']);
+  });
+
+  it('a pair that already got a missing projdef never gets a real one later either (still one per pair per file)', () => {
+    const missCtx = { ownerType: 0x123, projectile: null };
+    dispatchPacket('ENEMYSHOOT', T, shotData, missCtx, tracker);
+    const laterCtx = { ownerType: 0x123, projectile: PROJ };
+    const out = dispatchPacket('ENEMYSHOOT', T + 100, shotData, laterCtx, tracker);
     expect(out.map((r) => r.k)).toEqual(['shot']);
   });
 
-  it('omits projdef when the owner type could not be resolved', () => {
+  it('omits projdef when the owner type could not be resolved (nothing identifiable to report)', () => {
     const ctx = { ownerType: null, projectile: PROJ };
     const out = dispatchPacket('ENEMYSHOOT', T, shotData, ctx, tracker);
     expect(out.map((r) => r.k)).toEqual(['shot']);
     expect((out[0] as any).otype).toBeNull();
+  });
+
+  it('omits projdef (real or missing) when the owner type could not be resolved, even on a GameData miss', () => {
+    const ctx = { ownerType: null, projectile: null };
+    const out = dispatchPacket('ENEMYSHOOT', T, shotData, ctx, tracker);
+    expect(out.map((r) => r.k)).toEqual(['shot']);
   });
 });
