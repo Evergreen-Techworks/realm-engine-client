@@ -89,6 +89,8 @@ std::atomic<bool>  g_moveEnvelopeArmed{ false }; // proxy confirms outbound clam
 std::atomic<float> g_serverPositionError{ 0.f }; // desired position ahead of last sent MOVE
 std::atomic<float> g_serverAnchorX{ 0.f }, g_serverAnchorY{ 0.f };
 std::atomic<bool>  g_serverAnchorValid{ false };
+// udodgeFallbackSidestep (navigation finish plan, item 2). Default ON.
+std::atomic<bool>  g_fallbackSidestep{ true };
 
 // Last-resort signal for AutoNexus (plan 77). Written at the end of Tick, read
 // via GetSafetyState from AutoNexus's poll thread. g_enabled (above) carries the
@@ -102,6 +104,11 @@ std::atomic<uint32_t> g_udSafetyTick{ 0 };
 // nexus on shots udodge dodges) nor a frozen stand (misses the backstop). 0 = hold.
 std::atomic<float>    g_udMoveVx{ 0.f };
 std::atomic<float>    g_udMoveVy{ 0.f };
+// Raw Solver::SolveKind of the last solve, published unconditionally (same
+// reason as the AutoNexus signal above: a diagnostic/test consumer must not
+// depend on the debug overlay flag). Navigation finish plan item 2 acceptance
+// reads this to count Fallback frames; nothing production-facing consumes it.
+std::atomic<uint8_t>  g_udSolveKind{ 0 };
 
 // Nav wedge signal for auto-break-walls (plan 89). A pure OBSERVATION of the
 // walk-to stuck detector below — it never feeds back into navReplan or any
@@ -509,6 +516,7 @@ Settings ReadSettings()
     const float orbit = g_orbitRange.load(std::memory_order_relaxed);
     s.orbitRange   = orbit <= 0.f ? 0.f : Clamp(orbit, 2.f, 16.f);
     s.planRadius   = ClampInt(static_cast<int>(std::lround(g_planRadius.load(std::memory_order_relaxed))), 8, 40);
+    s.fallbackSidestep = g_fallbackSidestep.load(std::memory_order_relaxed);
     return s;
 }
 
@@ -772,6 +780,7 @@ void SetEnabled(bool enabled)
         g_udStandClr.store(1e9f, std::memory_order_relaxed);
         g_udMoveVx.store(0.f, std::memory_order_relaxed);
         g_udMoveVy.store(0.f, std::memory_order_relaxed);
+        g_udSolveKind.store(0, std::memory_order_relaxed);
         g_serverAnchorValid.store(false, std::memory_order_release);
         PublishDebug(DebugSnapshot{});
     }
@@ -793,6 +802,8 @@ SafetyState GetSafetyState()
     s.serverY        = g_serverAnchorY.load(std::memory_order_relaxed);
     return s;
 }
+
+uint8_t GetLastSolveKind() { return g_udSolveKind.load(std::memory_order_relaxed); }
 
 NavWedge GetNavWedge()
 {
@@ -853,6 +864,7 @@ void OnEnter()
     // Reset the AutoNexus last-resort signal (plan 77) on (re)entry.
     g_udExposed.store(false, std::memory_order_relaxed);
     g_udStandClr.store(1e9f, std::memory_order_relaxed);
+    g_udSolveKind.store(0, std::memory_order_relaxed);
     PublishDebug(DebugSnapshot{});
 }
 
@@ -1981,6 +1993,7 @@ void Tick(void* player, float px, float py, float dt)
                            && standClr <= kULatencyPad;
     g_udStandClr.store(standClr, std::memory_order_relaxed);
     g_udExposed.store(udExposed, std::memory_order_relaxed);
+    g_udSolveKind.store(static_cast<uint8_t>(g_solve.kind), std::memory_order_relaxed);
     // Committed move velocity (tiles/ms) = unit(target − player) × speed, or 0 when
     // holding. AutoNexus predicts the player along this so it only fires when the
     // dodge udodge is taking STILL leads to a hit (a genuine failure).
@@ -2245,5 +2258,7 @@ void  SetServerPositionError(float tiles) {
 void  SetServerAnchorX(float x) { if (std::isfinite(x)) g_serverAnchorX.store(x, std::memory_order_relaxed); }
 void  SetServerAnchorY(float y) { if (std::isfinite(y)) g_serverAnchorY.store(y, std::memory_order_relaxed); }
 void  SetServerAnchorValid(bool valid) { g_serverAnchorValid.store(valid, std::memory_order_release); }
+void  SetFallbackSidestep(bool en) { g_fallbackSidestep.store(en, std::memory_order_relaxed); }
+bool  GetFallbackSidestep() { return g_fallbackSidestep.load(std::memory_order_relaxed); }
 
 } // namespace UDodge

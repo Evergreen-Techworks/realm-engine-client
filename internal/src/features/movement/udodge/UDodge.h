@@ -33,6 +33,9 @@ struct SafetyState {
     float    serverX = 0.f, serverY = 0.f; // last position emitted in outbound MOVE
 };
 SafetyState GetSafetyState();
+// Raw Solver::SolveKind of the last solve (0=Hold,1=Safe,2=Fallback,3=Surrounded),
+// published unconditionally like SafetyState above — diagnostics/tests only.
+uint8_t GetLastSolveKind();
 
 // Nav wedge signal (plan 89). Published from the walk-to stuck detector inside
 // Tick(): `wedged` is true on a frame where the follower is `blocked` (its next
@@ -99,5 +102,8 @@ void  SetServerPositionError(float tiles);
 void  SetServerAnchorX(float x);
 void  SetServerAnchorY(float y);
 void  SetServerAnchorValid(bool valid);
+// udodgeFallbackSidestep (navigation finish plan, item 2). Default ON — see
+// Settings::fallbackSidestep / Solver::SelectFallbackCandidate.
+void  SetFallbackSidestep(bool en);   bool  GetFallbackSidestep();
 
 } // namespace UDodge

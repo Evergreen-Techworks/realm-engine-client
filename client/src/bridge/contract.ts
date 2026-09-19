@@ -84,6 +84,7 @@ export const DLL_FEATURE_KEYS = [
   'speedHackMult', 'targetFrameRate', 'titleOverrideEnabled', 'titleOverrideId', 'titleOverrideSlot',
   'udodgeAoePacket', 'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath',
   'udodgeEnemyStandoff',
+  'udodgeFallbackSidestep',
   'udodgeFieldEscape', 'udodgeFollowLantern', 'udodgeHitScale', 'udodgeLaneTiles',
   'udodgeLockFollow', 'udodgeMoveEnvelope', 'udodgeMoveEnvelopeArmed', 'udodgeOrbitRange',
   'udodgePacketShot',
