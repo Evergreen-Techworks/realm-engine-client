@@ -52,6 +52,7 @@
 #include "UDodgeSolver.h"
 #include "UDodgeWorker.h"
 #include "UDodgeSensors.h"
+#include "UDodgePredErr.h"
 #include "UDodgeDebug.h"
 #include "UDodgeEnemyHazards.h"
 #include "UDodgeTimedPlanner.h"
@@ -430,7 +431,12 @@ uint32_t g_mapBulletVersion = 0;
 
 std::vector<EnemyTracker::Entry> g_snapshot;   // EnemyTracker::GetSnapshot (RefreshSnapshot fills it)
 
-void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s)
+// Harness PredErr state: this synthetic model rebuilds every lane from world
+// state on every call (no incremental re-anchor), so both stub entry points may
+// arm — see FillDanger below.
+PredErr::State g_predErr;
+
+void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s, bool diagOn)
 {
     const World& w = *g_world;
     out.laneCount = 0; out.zoneCount = 0; out.enemyCount = 0;
@@ -461,7 +467,11 @@ void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s)
             L.instantCount = i + 1;
             if (len >= s.laneTiles) break;
         }
+        if (diagOn)   // perfect sensors: observed == live, so errors should sit near zero
+            PredErr::Sample(g_predErr, { L.bulletId, L.attackerObjId, L.ownerObjId }, L, live,
+                            static_cast<uint64_t>(g_nowMs), /*curved=*/false, age, /*allowArm=*/true);
     }
+    if (diagOn) PredErr::MaybeEmit(g_predErr, static_cast<uint64_t>(g_nowMs), &DbgFileLogWrite);
     const int32_t lock = w.lockId;
     for (const Enemy& e : w.enemies) {
         if (e.hp <= 0) continue;
@@ -601,6 +611,8 @@ bool  IsTileBlocked(int tx, int ty) { return (H::ViewFlags(tx, ty) & H::kBlocked
 bool  IsTileFullOccupied(int tx, int ty) { return (H::ViewFlags(tx, ty) & H::kFullOcc) != 0; }
 bool  IsDamagingTile(int tx, int ty) { return (H::ViewFlags(tx, ty) & H::kDamaging) != 0; }
 bool  IsTileDamagingLive(int tx, int ty) { return IsDamagingTile(tx, ty); }
+int   GetTileDamageLive(int tx, int ty) { return IsDamagingTile(tx, ty) ? 1 : 0; }
+bool  IsLiveHazardActive() { return false; }   // the harness models only the cached map path
 float GetTileSpeed(int tx, int ty)
 {
     auto it = H::g_viewSpeed.find(H::Key(tx, ty));
@@ -861,19 +873,19 @@ bool CanOccupy(float worldX, float worldY, bool safeWalk)
            !IsHazardAt(worldX - h, worldY + h) && !IsHazardAt(worldX + h, worldY + h);
 }
 bool ReadWorldTick(uint32_t& out) { out = static_cast<uint32_t>(H::g_nowMs / 200.0); return true; }
-void BuildMap(DangerMap& out, float px, float py, const Settings& s)
+void BuildMap(DangerMap& out, float px, float py, const Settings& s, bool diagOn)
 {
     H::g_memo.Clear();
     H::RefreshSnapshot();
-    H::FillDanger(out, px, py, s);
+    H::FillDanger(out, px, py, s, diagOn);
     H::g_mapBulletVersion = H::g_world->bulletVersion;
 }
-bool ReanchorMap(DangerMap& map, float px, float py, const Settings& s)
+bool ReanchorMap(DangerMap& map, float px, float py, const Settings& s, bool diagOn)
 {
     if (H::g_mapBulletVersion != H::g_world->bulletVersion) return false;   // structural change → rebuild
     const uint32_t tick = map.tickId; const bool valid = map.tickValid;
     H::RefreshSnapshot();
-    H::FillDanger(map, px, py, s);
+    H::FillDanger(map, px, py, s, diagOn);
     map.tickId = tick; map.tickValid = valid;
     return true;
 }
