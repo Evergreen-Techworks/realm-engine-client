@@ -1167,6 +1167,9 @@ void ApplyUserSettings()
     UDodge::SetMoveEnvelope(true);
     // ENEMY STANDOFF A/B: `HARNESS_ENEMY_STANDOFF=off` runs the pre-standoff engine.
     UDodge::SetEnemyStandoff(std::getenv("HARNESS_ENEMY_STANDOFF"));
+    // ROUTE COMMIT A/B (navigation finish plan, Item 1): `HARNESS_ROUTE_COMMIT=off`
+    // runs the pre-Item-1 follower; unset or any other value keeps the default (on).
+    UDodge::SetRouteCommit(std::getenv("HARNESS_ROUTE_COMMIT"));
     if (std::getenv("HARNESS_DIAG")) UDodge::SetDiagTiming(true);   // exercise the field diagnostics
 }
 

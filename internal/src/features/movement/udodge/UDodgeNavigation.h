@@ -89,12 +89,16 @@ struct Progress {
     uint64_t since = 0;
     bool active = false;
     void Reset() { active = false; }
-    bool Stalled(Vec2 player, uint64_t now, bool waitingForRoute = false) {
+    // `stallMs`: how long without 0.5 tiles of movement counts as no progress.
+    // Default 500 ms is the pre-Item-1 stuck-memory timer; route commitment
+    // (Item 1 S2) passes 1500 ms so a detour has time to rejoin before the
+    // follower gives up on the route.
+    bool Stalled(Vec2 player, uint64_t now, bool waitingForRoute = false, uint64_t stallMs = 500) {
         if (waitingForRoute) { Reset(); return false; }
         if (!active || LenSq(Sub(player, anchor)) >= 0.25f * 0.25f) {
             anchor = player; since = now; active = true; return false;
         }
-        if (now - since < 500) return false;
+        if (now - since < stallMs) return false;
         anchor = player; since = now;
         return true;
     }
@@ -124,11 +128,17 @@ inline Handoff FinishRefresh(bool walkTo, bool wasWaiting, bool awaiting,
 
 // Keep lookahead on the visible part of the corridor. A bend is only skipped
 // when the player can sweep directly to the farther target.
+//
+// `outConnected` (Item 1 S2): true when SOME point on the polyline is reachable
+// by a clear straight line from the player, however far off it the player has
+// drifted — that is a DETOUR, and the caller should rejoin here rather than
+// re-plan. false only when the whole route is disconnected (every candidate
+// line is blocked): that is the one case genuinely worth a fresh search.
 template<class Clear>
 Vec2 Follow(const Vec2* points, int count, Vec2 player, float lookahead,
-            float& outDev, bool& outNearEnd, Clear clear)
+            float& outDev, bool& outNearEnd, bool& outConnected, Clear clear)
 {
-    outDev = 0.f; outNearEnd = false;
+    outDev = 0.f; outNearEnd = false; outConnected = false;
     if (count < 2) return player;
     // Nearest point on the polyline + which segment it's on.
     float bestD2 = 1e18f; int bestSeg = -1; Vec2 bestProj = points[0];
@@ -143,6 +153,7 @@ Vec2 Follow(const Vec2* points, int count, Vec2 player, float lookahead,
     }
     outDev = std::sqrt(bestD2);
     if (bestSeg < 0) return player; // disconnected from this corridor: request a replan
+    outConnected = true;
 
     // The projection is verified; the next bend is not. Never return an
     // unchecked bend when lookahead hits a blocked shortcut.
