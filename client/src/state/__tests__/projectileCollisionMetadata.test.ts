@@ -49,6 +49,12 @@ it.each([
   expect(definition).toMatchObject({ collisionHalf: expected, hitRadius: 0.15 });
 });
 
+it('reads the <Laser> length so a packet-recovered laser can be a beam', () => {
+  expect(loadProjectile('<Laser>20</Laser>').getProjectile(0x1234, 0))
+    .toMatchObject({ laserDistance: 20 });
+  expect(loadProjectile('').getProjectile(0x1234, 0)).toMatchObject({ laserDistance: 0 });
+});
+
 it('keeps collision width independent of the preserved visual size estimate', () => {
   expect(loadProjectile('<CollisionMult>1.5</CollisionMult>', 400).getProjectile(0x1234, 0))
     .toMatchObject({ collisionHalf: 0.75, hitRadius: 0.6 });
@@ -70,6 +76,6 @@ it.each([true, false])('sends contact width rather than sprite size for provisio
   });
   const packet = factory.createFromBytes(factory.serialize(outgoing), 'server');
   proxy.fireServerPacket({} as any, packet);
-  expect(send).toHaveBeenCalledWith('udodgePacketShot', `77,17,1,2,0,${known ? '100,1000,0.75' : '0,0,0.5'}`);
+  expect(send).toHaveBeenCalledWith('udodgePacketShot', `77,17,1,2,0,${known ? '100,1000,0.75,0' : '0,0,0.5,0'}`);
   expect(tracker.getBullet('77:17')?.projDef?.hitRadius).toBe(known ? 0.15 : undefined);
 });
