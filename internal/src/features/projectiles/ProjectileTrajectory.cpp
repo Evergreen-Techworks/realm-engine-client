@@ -89,6 +89,19 @@ static bool ReadGamePositionAtTime(void* projectilePtr, float tMs, float& outX, 
 
 namespace ProjectileTrajectory {
 
+// WITNESS (Slice 4a). Everything the lane tracer claims about accel / wavy /
+// boomerang / turning shots rests on this one method resolving: if it does not,
+// TraceLane falls all the way through to LaneFromStraightExtrapolation and EVERY
+// shot silently becomes a straight ray at base speed. Its only previous witness
+// was a DBG_FILE_LOG that Release drops, so the shipped build has never said which
+// way it went. Reads the cache ONLY — it must never resolve, because it is called
+// from the diagnostics emitter and IL2CPP metadata reads belong on the game thread.
+const char* PositionAtWitness()
+{
+    if (!s_posAt.tried) return "untried";
+    return s_posAt.ok ? "ok" : "fail";
+}
+
 float NormalizeLifetimeMs(float rawFromProps)
 {
     if (!(rawFromProps > 0.f) || rawFromProps != rawFromProps)
