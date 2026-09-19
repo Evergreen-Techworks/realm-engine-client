@@ -83,6 +83,9 @@ TACTICIAN_REVERSALS_MAX = 0.5     # every boss scenario, per second (ledger ruli
 TABLE_COLUMNS = {   # column -> decimals, in table order
     "hits": 0, "in_range_frac": 2, "radial_out_frac": 4, "replans_per_s": 3, "time_to_first_in_range_s": 2,
     "path_tiles": 1, "stuck_s": 1, "threat_move_tiles": 1, "heading_reversals_per_s": 2,
+    # Navigation finish plan, item 2 (udodgeFallbackSidestep): how often a
+    # Fallback solve moved the player less than kSolveFallbackMinMoveTiles.
+    "fallback_frames": 0, "fallback_jitter_frames": 0,
 }
 LOCK_ONLY_COLUMNS = {"in_range_frac", "radial_out_frac", "time_to_first_in_range_s", "threat_move_tiles"}
 
