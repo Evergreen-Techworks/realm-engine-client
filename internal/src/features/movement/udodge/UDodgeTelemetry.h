@@ -28,10 +28,12 @@
 //                 replan | solve | drive | reversal | veto | heartbeat (comma list)
 //   mode          dodge mode (unified = UDodge; the line is only written by UDodge)
 //   rule          navCollisionRule: legacy | game
-//   nav           navNavigator: legacy | dstar;  corridor = the global router's state
-//                 (idle | repairing | ready | arrived | partial | unreachable),
-//                 map_pending = the map capture is not ready, so the router cannot
-//                 answer yet; assist = the global corridor is steering the walk-to
+//   nav           navNavigator: legacy | dstar (or dstar(fallback) once capture has
+//                 been map_pending for kMapFallbackMs — see below);  corridor = the
+//                 global router's state (idle | repairing | ready | arrived |
+//                 partial | unreachable), map_pending = the map capture is not
+//                 ready, so the router cannot answer yet; assist = the global
+//                 corridor is steering the walk-to
 //   obj           objective source: lock (in the engagement ring's hand-off range,
 //                 orbiting) | lock_approach (locked target out of range, routed
 //                 through the walk-to pipeline) | walk_to (script, Shift+Click or
@@ -116,6 +118,13 @@ struct Sample {
     bool     navigatorDstar = false; // navNavigator == dstar
     uint8_t  corridorState = 0;      // Movement::Nav::RouteState
     bool     mapPending = false;     // RouteCorridor::capturePending
+    // Item 3 (navigation finish plan, 2026-09-19): true once capture has been
+    // map_pending for kMapFallbackMs straight — dstar is selected but doing
+    // nothing, and the walk-to is running on the same local path it would
+    // under navNavigator=legacy (UDodge.cpp's substitution block is skipped
+    // whenever capturePending is set). Surfaced so a stuck capture is never
+    // silently indistinguishable from a working one in the log.
+    bool     navFallback = false;
     bool     globalAssist = false;
     // Objective.
     Objective objective = Objective::None;
@@ -168,6 +177,10 @@ struct Sample {
 };
 
 inline constexpr uint64_t kHeartbeatMs = 1000;
+// Item 3: how long capture must sit map_pending before the log calls it a
+// fallback rather than the ordinary few-hundred-ms window every map load
+// spends pending. "~5 s" per the navigation finish plan.
+inline constexpr uint64_t kMapFallbackMs = 5000;
 inline constexpr uint64_t kStateExpiryMs = 2000;   // no sample for this long: start over
 inline constexpr size_t   kLineCap = 1024;
 // Change lines allowed per second, by the most important thing that changed.
@@ -200,6 +213,7 @@ struct State {
     Objective objective = Objective::None;
     int32_t  targetId = 0;
     bool     navigatorDstar = false, mapPending = false, globalAssist = false, ruleGame = false;
+    bool     navFallback = false;
     uint8_t  corridorState = 0;
     NavRoute navRoute = NavRoute::None;
     Plan     plan = Plan::None;
@@ -364,7 +378,8 @@ inline size_t Format(const Sample& s, uint32_t why, bool replan, bool reversal, 
     w.Add("[Diag/Nav] t=%llu why=", static_cast<unsigned long long>(s.nowMs));
     WriteWhy(w, why);
     w.Add(" mode=%s rule=%s nav=%s corridor=%s map_pending=%d assist=%d",
-          DodgeModeName(s.dodgeMode), s.ruleGame ? "game" : "legacy", s.navigatorDstar ? "dstar" : "legacy",
+          DodgeModeName(s.dodgeMode), s.ruleGame ? "game" : "legacy",
+          s.navigatorDstar ? (s.navFallback ? "dstar(fallback)" : "dstar") : "legacy",
           CorridorStateName(s.corridorState), s.mapPending ? 1 : 0, s.globalAssist ? 1 : 0);
     w.Add(" obj=%s target=%d", Name(s.objective), s.targetId);
     if (s.hasTarget) {
@@ -432,7 +447,7 @@ inline size_t Step(State& state, const Sample& s, char* out, size_t cap)
         if (s.targetId != state.targetId) why |= kWhyTarget;
         if (s.navigatorDstar != state.navigatorDstar || s.mapPending != state.mapPending ||
             s.globalAssist != state.globalAssist || s.corridorState != state.corridorState ||
-            s.ruleGame != state.ruleGame) why |= kWhyNav;
+            s.ruleGame != state.ruleGame || s.navFallback != state.navFallback) why |= kWhyNav;
         if (s.navRoute != state.navRoute) why |= kWhyRoute;
         if (s.plan != state.plan || s.ringApproach != state.ringApproach) why |= kWhyPlan;
         if (s.solve != state.solve) why |= kWhySolve;
@@ -485,6 +500,7 @@ inline size_t Step(State& state, const Sample& s, char* out, size_t cap)
     state.objective = s.objective;       state.targetId = s.targetId;
     state.navigatorDstar = s.navigatorDstar; state.mapPending = s.mapPending;
     state.globalAssist = s.globalAssist; state.corridorState = s.corridorState;
+    state.navFallback = s.navFallback;
     state.ruleGame = s.ruleGame;
     state.navRoute = s.navRoute;         state.plan = s.plan;
     state.ringApproach = s.ringApproach;
