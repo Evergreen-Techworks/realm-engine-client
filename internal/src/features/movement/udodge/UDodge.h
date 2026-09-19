@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "features/movement/contact/Contact.h"
+
 // UDodge — unified auto-dodge (DodgeMode 7).
 //
 // PJDodge's predictive core (exact Chebyshev CCD, intent ladder, hysteresis,
@@ -59,6 +61,12 @@ void RenderDebugOverlay(float camX, float camY, float angle, float zoom, float c
 void  SetLaneTiles(float t);          float GetLaneTiles();
 void  SetStepTiles(float t);          float GetStepTiles();
 void  SetHitScale(float s);           float GetHitScale();
+// udodgePlanner: "classic" = the pre-Slice-3 engine, anything else = tactician.
+void  SetPlannerPolicy(const char* text);
+Contact::Policy GetPlannerPolicy();
+// The live player hitbox multiplier the last BuildMap read, and whether the
+// collider offset it came from is metadata-trusted (diagnostics).
+float GetLiveHitboxMultiplier();      bool GetLiveHitboxTrusted();
     void  SetReactMargin(float m);        float GetReactMargin();
 void  SetSafeWalk(bool en);           bool  GetSafeWalk();
 void  SetSpeedScale(bool en);         bool  GetSpeedScale();

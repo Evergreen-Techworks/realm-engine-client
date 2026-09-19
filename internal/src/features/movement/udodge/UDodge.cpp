@@ -47,6 +47,9 @@ int32_t g_previousGroupBoss = 0;
 std::atomic<float> g_laneTiles{ 12.f };
 std::atomic<float> g_stepTiles{ 0.f };
 std::atomic<float> g_hitScale{ 1.0f };
+// udodgePlanner. DEFAULT TACTICIAN on this private branch (S3.1); the public
+// default is decided before any release.
+std::atomic<uint8_t> g_planner{ static_cast<uint8_t>(Contact::Policy::Tactician) };
 std::atomic<float> g_reactMargin{ 0.60f };
 std::atomic<bool>  g_safeWalk{ true };
 std::atomic<bool>  g_speedScale{ true };
@@ -387,6 +390,7 @@ Settings ReadSettings()
     const float stepT = g_stepTiles.load(std::memory_order_relaxed);
     s.stepTiles    = stepT <= 0.f ? 0.f : Clamp(stepT, 0.4f, 3.f);
     s.hitScale     = Clamp(g_hitScale.load(std::memory_order_relaxed), 0.25f, 2.5f);
+    s.planner      = static_cast<Contact::Policy>(g_planner.load(std::memory_order_relaxed));
     s.positionUncertainty = Clamp(g_serverPositionError.load(std::memory_order_relaxed), 0.f, 0.35f);
     s.reactMargin  = Clamp(g_reactMargin.load(std::memory_order_relaxed), 0.05f, 2.0f);
     s.safeWalk     = g_safeWalk.load(std::memory_order_relaxed);
@@ -1237,6 +1241,7 @@ void Tick(void* player, float px, float py, float dt)
         s_snap.retreatPos       = retreatPos;
         s_snap.map              = g_map;    // plain-data danger copy (lanes/zones/enemies)
         s_snap.collisionRule    = collisionRule;
+        s_snap.planner          = settings.planner;
         // Navigation (walk-to): only ask the worker to (re)plan — and only pay the
         // large nav-grid rasterize — when a re-plan is actually triggered (navReplan).
         // Between re-plans we FOLLOW the cached route, so the walk-to costs nothing
@@ -1839,6 +1844,14 @@ float GetLaneTiles()        { return g_laneTiles.load(std::memory_order_relaxed)
 void  SetStepTiles(float t) { g_stepTiles.store(t <= 0.f ? 0.f : Clamp(t, 0.4f, 3.f), std::memory_order_relaxed); }
 float GetStepTiles()        { return g_stepTiles.load(std::memory_order_relaxed); }
 void  SetHitScale(float s) { g_hitScale.store(Clamp(s, 0.25f, 2.5f), std::memory_order_relaxed); }
+void  SetPlannerPolicy(const char* text)
+{
+    g_planner.store(static_cast<uint8_t>(Contact::PolicyFromText(text)), std::memory_order_relaxed);
+}
+Contact::Policy GetPlannerPolicy()
+{
+    return static_cast<Contact::Policy>(g_planner.load(std::memory_order_relaxed));
+}
 float GetHitScale() { return g_hitScale.load(std::memory_order_relaxed); }
 void  SetReactMargin(float m) { g_reactMargin.store(Clamp(m, 0.05f, 2.0f), std::memory_order_relaxed); }
 float GetReactMargin() { return g_reactMargin.load(std::memory_order_relaxed); }

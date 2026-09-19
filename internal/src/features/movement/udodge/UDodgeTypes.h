@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "features/movement/nav/Collision.h"
+#include "features/movement/contact/Contact.h"
 
 // UDodge — unified auto-dodge: PJDodge predictive core + RePP field
 // escape/goal layer. Pure data + inline math. No game/IL2CPP includes.
@@ -18,7 +19,7 @@ constexpr int   kStandCandidate  = 0;
 constexpr int   kFieldCandidate  = kDirectionCount + 2;   // 34
 constexpr int   kCandidateCount  = kDirectionCount + 3;   // 35
 constexpr float kTwoPi           = 6.28318530717958647692f;
-constexpr float kUMaxProjectileHalf = 16.f;
+constexpr float kUMaxProjectileHalf = Contact::kMaxHalfTiles;   // one clamp for every layer
 
 // ── Map capacities (fixed buffers — zero per-frame heap allocation) ─────────
 // Dense exaltation/O3 patterns can exceed the old 96-shot buffer. Overflow was
@@ -617,6 +618,12 @@ struct EnemyBlocker {
 };
 
 struct Settings {
+    // udodgePlanner (S3.1). Tactician routes every contact test through
+    // Contact.h (the game's proven box, the live hitbox multiplier, the ring
+    // approach, the lattice and the spiral edge cost); Classic is the
+    // pre-Slice-3 engine, unchanged. Captured into the PlannerSnapshot at
+    // publish time so one snapshot is planned under one policy.
+    Contact::Policy planner = Contact::Policy::Classic;
     // PROJECTILE CONTACT MODEL. true (default): the player is a POINT and the
     // per-shot threshold T (runtime Chebyshev half, else CollisionMult × 0.5) is
     // the whole hit box — |dx| < T && |dy| < T. This adopts the model from the
@@ -803,6 +810,15 @@ inline bool InsideEnemyKeepout(const ZoneThreat& z, Vec2 player, Vec2 p, float p
 }
 
 struct DangerMap {
+    // The policy this map was built under, and the world it was built in: every
+    // Core test reads them from here, on the game thread and on the worker alike
+    // (the map is the only thing all of them are guaranteed to hold).
+    Contact::Policy planner = Contact::Policy::Classic;
+    // LIVE ObjectProperties.collisionRadiusMultiplier of the local player, read
+    // once per BuildMap (S3.3); 1.0 when unreadable or the collider offset is
+    // untrusted, which is the game's own default and the larger box.
+    float    targetScale = 1.f;
+    bool     colliderTrusted = false;   // the read came from a metadata-trusted offset
     uint32_t tickId    = 0;      // WM_TickId this layout was built from
     bool     tickValid = false;  // false => tick source unreadable (fail-safe mode)
     LaneThreat lanes[kMaxProjectiles]{};

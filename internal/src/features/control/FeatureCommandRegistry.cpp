@@ -298,6 +298,7 @@ namespace {
             FH_TEXT("udodgePacketShot", UDodge::Sensors::RecordPacketShot),
             FH_TEXT("udodgeAoePacket", UDodge::Sensors::RecordAoePacket),
             FH_TEXT("navCollisionRule", Movement::Collision::SetRuleText),
+            FH_TEXT("udodgePlanner", UDodge::SetPlannerPolicy),
             FH_TEXT("navNavigator", Movement::Nav::Runtime::SetNavigatorText),
             FH_TEXT("navMapInfo", Movement::Nav::Runtime::SetMapInfoText),
             FH_TEXT("scriptNavigationGoal", Movement::Nav::Runtime::SetScriptGoalText)

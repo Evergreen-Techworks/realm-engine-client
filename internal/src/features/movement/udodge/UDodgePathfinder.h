@@ -165,6 +165,9 @@ struct PlannerSnapshot {
     NavGrid  navGrid{};           // coarse 1-tile occupancy (game thread fills from WorldTAB)
     // navCollisionRule at publish time, so one snapshot is planned under one rule.
     Movement::Collision::Rule collisionRule = Movement::Collision::Rule::Legacy;
+    // udodgePlanner at publish time, for the same reason (S3.1). `map.planner`
+    // carries the same value to every Core test the worker runs.
+    Contact::Policy planner = Contact::Policy::Classic;
 };
 
 // The pathfinder's output — PLAIN DATA ONLY.

@@ -364,6 +364,15 @@ export function register(ctx: PluginContext) {
   registerModeSetting('unified', 'udodgeMoveEnvelope',
     onOff('[UDodge] Server-safe outbound MOVE envelope', 'on'),
     () => updateMoveEnvelopeArming());
+  // Tactician Slice 3: which planner the DLL's unified engine runs. 'tactician'
+  // routes every projectile-contact test through the game's own proven box (the
+  // live hitbox multiplier included) and turns on the ring approach, the lattice
+  // and the spiral edge cost; 'classic' is the pre-Slice-3 engine, unchanged.
+  registerModeSetting('unified', 'udodgePlanner', {
+    label: '[UDodge] Planner',
+    type: 'select', value: 'tactician',
+    options: [{ label: 'Tactician (new)', value: 'tactician' }, { label: 'Classic', value: 'classic' }],
+  }, (v: string) => sendDllFeature('udodgePlanner', v === 'classic' ? 'classic' : 'tactician'));
   // Navigation rebuild Stage 1: 'game' walks by the game's own point collision (diagonal
   // squeezes between walls, no player box); 'legacy' keeps the old box. Legacy until
   // the user confirms 'game' in play.
@@ -625,6 +634,7 @@ export function register(ctx: PluginContext) {
                      'udodgeFieldEscape', 'udodgeLockFollow', 'udodgeFollowLantern',
                      'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
+    sendDllFeature('udodgePlanner', ctx.getSetting<string>('udodgePlanner') === 'classic' ? 'classic' : 'tactician');
     sendDllFeature('navCollisionRule', ctx.getSetting<string>('navCollisionRule') === 'game' ? 'game' : 'legacy');
     sendDllFeature('navNavigator', ctx.getSetting<string>('navNavigator') === 'dstar' ? 'dstar' : 'legacy');
     updateMoveEnvelopeArming();

@@ -988,6 +988,7 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
     out.hasLock = false;
     out.lockId = 0;
     out.lockPos = {};
+    out.planner = settings.planner;
     s_hazardMemo.Clear();
     // tickId/tickValid deliberately untouched — the caller owns the stamp.
 
