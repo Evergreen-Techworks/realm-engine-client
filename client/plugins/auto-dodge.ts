@@ -408,6 +408,16 @@ export function register(ctx: PluginContext) {
   registerModeSetting('unified', 'udodgeFallbackSidestep',
     onOff('[UDodge] Fallback sidestep', 'on'),
     (v: string) => sendDllFeature('udodgeFallbackSidestep', v === 'on' ? 1 : 0));
+  // Navigation finish plan, item 4: when a Tick has already spent longer than
+  // the frame-cost ceiling before the solver phases, degrade the candidate
+  // ring for that frame only (never a safety floor, never ReanchorMap, never a
+  // lane the relevance cull already kept). 'off' disables the ceiling entirely
+  // (today's behaviour, no per-frame budget check).
+  registerModeSetting('unified', 'udodgeFrameBudget', {
+    label: '[UDodge] Frame budget',
+    type: 'select', value: 'auto',
+    options: [{ label: 'Auto', value: 'auto' }, { label: 'Off', value: 'off' }],
+  }, (v: string) => sendDllFeature('udodgeFrameBudget', v === 'off' ? 'off' : 'auto'));
 
   // Keep observing MOVE even outside Unified mode so switching modes starts
   // from the last position actually sent, never from an invented anchor.
@@ -664,6 +674,8 @@ export function register(ctx: PluginContext) {
     sendDllFeature('navNavigator', ctx.getSetting<string>('navNavigator') === 'dstar' ? 'dstar' : 'legacy');
     sendDllFeature('udodgeFallbackSidestep',
                    ctx.getSetting<string>('udodgeFallbackSidestep') === 'off' ? 0 : 1);
+    sendDllFeature('udodgeFrameBudget',
+                   ctx.getSetting<string>('udodgeFrameBudget') === 'off' ? 'off' : 'auto');
     updateMoveEnvelopeArming();
     // Re-apply the 60fps cap here too. The onEnabledChange / clientConnected
     // handlers were the only places setting targetFrameRate, so if the cap
