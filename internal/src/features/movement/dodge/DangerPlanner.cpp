@@ -845,11 +845,17 @@ static void DiagAfterUpdate(double t0, double t1, double t2)
     // dodgeMode: the [Diag/Nav] decision lines come from the unified engine only, so a
     // session in any other mode has none, and this line is what says why.
     const int dodgeMode = static_cast<int>(TestTAB::GetDodgeMode());
+    // planner/hitbox (Tactician S3.1, S3.3): which contact rules ran, and the LIVE
+    // collisionRadiusMultiplier the last map build read (1.00 untrusted = the game
+    // default was assumed because the collider offset is not metadata-resolved).
     DiagTiming::Logf("[Diag/Game] updates=%u gameUpdate avg/max=%.2f/%.2f ms dodgeBody avg/max=%.2f/%.2f ms"
-        " gap avg/max=%.1f/%.1f ms gaps>100=%u gaps>250=%u dodgeMode=%d(%s)",
+        " gap avg/max=%.1f/%.1f ms gaps>100=%u gaps>250=%u dodgeMode=%d(%s)"
+        " planner=%s hitbox=%.2f colliderTrusted=%d",
         gs.origUpdate.n, gs.origUpdate.Avg(), gs.origUpdate.max, gs.dodgeBody.Avg(), gs.dodgeBody.max,
         gs.updateGap.Avg(), gs.updateGap.max, gs.gapsOver100, gs.gapsOver250,
-        dodgeMode, UDodge::Telemetry::DodgeModeName(dodgeMode));
+        dodgeMode, UDodge::Telemetry::DodgeModeName(dodgeMode),
+        Contact::PolicyName(UDodge::GetPlannerPolicy()), UDodge::GetLiveHitboxMultiplier(),
+        UDodge::GetLiveHitboxTrusted() ? 1 : 0);
     DiagTiming::Logf("[Diag/UDodge] total avg/max=%.2f/%.2f sync=%.2f/%.2f (rebuild=%u reanchor=%u)"
         " rasterOcc=%.2f/%.2f rasterNav n=%u %.2f/%.2f publish n=%u %.2f/%.2f dropped=%u"
         " liveSolve n=%u %.2f/%.2f revalidate=%.2f/%.2f resolves=%u debug=%.2f/%.2f",

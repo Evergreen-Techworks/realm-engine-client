@@ -50,6 +50,14 @@ float GetMultiplier();
 // so it measures "the driver still calls me", not "I did work". 0 until first tick.
 uint64_t LastTickMs();
 
+// The LIVE ObjectProperties.collisionRadiusMultiplier the game will use for this
+// player's own hit test — the value this feature writes when it is armed, and the
+// game's own otherwise. Reads through the same registry-trusted offset the write
+// uses and is fail-closed: false (leaving `out` untouched) when the offset is not
+// metadata-trusted, no ObjectProperties could be read, or the value read is not a
+// finite positive number. The dodge reads it once per map build (Tactician S3.3).
+bool ReadLiveMultiplier(void* player, float& out);
+
 // True when the collision-multiplier offset is registry-trusted (resolved from live
 // metadata) AND the feature is currently applying. For the Test diag row.
 bool OffsetTrusted();

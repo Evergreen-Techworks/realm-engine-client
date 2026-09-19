@@ -376,11 +376,12 @@ void DiagLogHit(int32_t prevHp, int32_t hp, int32_t maxHp, Vec2 player, const Se
 
     DiagTiming::Logf("[Diag/Hit] hp %d->%d (-%d of %d) at (%.2f,%.2f) lastDecision=%d move=%d"
         " targetDist=%.2f standClr=%.2f lanes=%d zones=%d nearestActiveZoneGap=%.2f nearestEnemy=%.2f"
-        " walk=%d wedged=%d lock=%d%s",
+        " walk=%d wedged=%d lock=%d planner=%s hitbox=%.2f colliderTrusted=%d%s",
         prevHp, hp, prevHp - hp, maxHp, player.x, player.y, static_cast<int>(g_solve.kind),
         g_solve.shouldMove ? 1 : 0, Len(Sub(g_solve.target, player)), standClr,
         g_map.laneCount, g_map.zoneCount, zoneGap, enemyDist, walkActive ? 1 : 0,
-        g_wedged.load(std::memory_order_relaxed) ? 1 : 0, g_map.hasLock ? 1 : 0, lanes);
+        g_wedged.load(std::memory_order_relaxed) ? 1 : 0, g_map.hasLock ? 1 : 0,
+        Contact::PolicyName(g_map.planner), g_map.targetScale, g_map.colliderTrusted ? 1 : 0, lanes);
 }
 
 Settings ReadSettings()
@@ -1852,6 +1853,9 @@ Contact::Policy GetPlannerPolicy()
 {
     return static_cast<Contact::Policy>(g_planner.load(std::memory_order_relaxed));
 }
+// Game thread: whatever the last map build read (UDodgeSensors BuildMap, S3.3).
+float GetLiveHitboxMultiplier() { return g_map.targetScale; }
+bool  GetLiveHitboxTrusted()    { return g_map.colliderTrusted; }
 float GetHitScale() { return g_hitScale.load(std::memory_order_relaxed); }
 void  SetReactMargin(float m) { g_reactMargin.store(Clamp(m, 0.05f, 2.0f), std::memory_order_relaxed); }
 float GetReactMargin() { return g_reactMargin.load(std::memory_order_relaxed); }
