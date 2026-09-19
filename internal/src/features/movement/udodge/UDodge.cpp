@@ -1227,9 +1227,15 @@ void Tick(void* player, float px, float py, float dt)
         // hysteresis cannot recognise its own goal, and the route jitters. Snapping the
         // centre to the 0.5-tile lattice makes every publish share one cell grid, so a
         // goal re-snaps to itself while the player moves through it.
+        // The lattice is offset by half a cell so no cell centre ever lands exactly
+        // on a tile boundary: under the game's point rule a centre on the edge of a
+        // FullOccupy object is refused, and a route made of such cells is one the
+        // game declines move after move (measured: d_boss_wall_rings [game] stuck
+        // 36 s with 1981 refused moves on the unoffset lattice).
         if (settings.planner == Contact::Policy::Tactician) {
-            gridCenter.x = std::round(gridCenter.x / kUPathCellTiles) * kUPathCellTiles;
-            gridCenter.y = std::round(gridCenter.y / kUPathCellTiles) * kUPathCellTiles;
+            constexpr float kHalfCell = kUPathCellTiles * 0.5f;
+            gridCenter.x = std::round((gridCenter.x - kHalfCell) / kUPathCellTiles) * kUPathCellTiles + kHalfCell;
+            gridCenter.y = std::round((gridCenter.y - kHalfCell) / kUPathCellTiles) * kUPathCellTiles + kHalfCell;
         }
         {
             PhaseTimer _p(DiagTiming::Game().rasterOcc);
