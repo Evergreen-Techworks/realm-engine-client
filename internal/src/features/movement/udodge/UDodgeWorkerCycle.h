@@ -80,6 +80,11 @@ inline void RunCycle(const Path::PlannerSnapshot& local, Result& latest,
     // previous/raw goal for another worker cycle.
     if (goal.walkTo && plan.navFound)
         goal.pos = plan.navStepTarget;
+    // A ring approach steers by the dodge route into the ring, as the game thread
+    // does (UDodge.cpp, RING ROUTE): both halves solve toward the same point, so an
+    // accepted worker solve is not thrown away for a live one on every publish.
+    if (goal.walkTo && local.ringApproach && plan.found && plan.ringGoal)
+        goal.pos = plan.stepTarget;
     goal.fromLock = local.hasLock;
     goal.lockPos = local.lockPos;
     goal.maxRange = local.weaponRangeTiles;

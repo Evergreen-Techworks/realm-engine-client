@@ -139,7 +139,7 @@ def tactician_acceptance(rows, rules):
 
 # Decision telemetry (UDodgeTelemetry.h). Every [Diag/Nav] decision line carries these keys.
 TELEMETRY_KEYS = ["t", "why", "mode", "rule", "nav", "corridor", "map_pending", "assist", "obj", "target", "at",
-                  "dist", "bearing", "ring", "player", "goal", "navroute", "wpts", "partial", "plan", "solve",
+                  "dist", "bearing", "ring", "player", "goal", "navroute", "wpts", "partial", "ring_approach", "plan", "solve",
                   "src", "drive", "clr", "cmd", "radial", "tang", "replan", "reversal", "lanes", "zones",
                   "enemies", "worker_ms", "timed", "reused", "budget_hit", "dropped"]
 TELEMETRY_MAX_LINES_PER_S = 8 + 3 + 1 + 1   # the three change classes' ceilings plus the heartbeat

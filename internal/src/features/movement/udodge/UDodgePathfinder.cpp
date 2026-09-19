@@ -25,7 +25,13 @@ namespace {
 // ── Fixed scratch (worker thread only — never re-entered) ────────────────────
 // g(cell) IS THE ARRIVAL TIME (ms) along the route — the Dijkstra cost is TIME,
 // not distance (speed-aware / time-expanded search).
-float   s_cost[kUPathMaxCells];   // best known ARRIVAL TIME (ms) at the cell
+float   s_cost[kUPathMaxCells];   // best known SEARCH COST at the cell: the arrival
+                                  // time, times the spiral preference under tactician
+                                  // (S3.7). Classic leaves it exactly the arrival time.
+float   s_time[kUPathMaxCells];   // the real ARRIVAL TIME (ms) along the same route —
+                                  // what every temporal gate and the published
+                                  // goalArriveMs must use. Identical to s_cost under
+                                  // classic, float for float.
 int     s_prev[kUPathMaxCells];   // predecessor cell index (path reconstruction)
 uint8_t s_done[kUPathMaxCells];   // 1 = finalized (popped) this pass
 uint8_t s_eval[kUPathMaxCells];   // 0 = unevaluated, 1 = blocked, 2 = open
@@ -374,7 +380,8 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
                int& tempGoalIdx, float& tempGoalMs)
 {
     for (int i = 0; i < kUPathMaxCells; ++i) {
-        s_cost[i] = kHugeClearance; s_prev[i] = -1; s_done[i] = 0; s_eval[i] = 0;
+        s_cost[i] = kHugeClearance; s_time[i] = kHugeClearance;
+        s_prev[i] = -1; s_done[i] = 0; s_eval[i] = 0;
     }
     HeapClear();
     partialIdx = -1;
@@ -391,6 +398,18 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
     s_tgoal[start] = 0; s_pend[start] = 0;
     s_factor[start] = SquareFactor(c.s->grid, CellWorld(center, start % kS, start / kS));
     s_cost[start] = 0.f;                                // arrival time at the start = 0
+    s_time[start] = 0.f;
+
+    // ── SPIRAL, NEVER RADIAL (Tactician S3.7) ──────────────────────────────
+    // While a ring is wanted and shots are live, RANK routes that travel around the
+    // target above routes that travel along the line to it: an edge's cost is its
+    // time x (1 + 0.75 x |dot(edge direction, bearing to the target)|), so a
+    // tangential edge is unchanged and a purely radial one is 1.75x dearer. This is
+    // ranking only — every pass/fail gate below still uses the real arrival time
+    // (s_time), so nothing is admitted or refused that was not before; the search
+    // simply prefers to circle rather than to charge or to flee.
+    const bool spiral = c.s->planner == Contact::Policy::Tactician &&
+                        c.diskActive && c.s->map.laneCount > 0;
     HeapPush(0.f, start);
 
     int found = -1;
@@ -411,7 +430,7 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
         // stays -1 and is dropped) — RunSearch then decides whether to keep it.
         if (cur != start && s_eval[cur] == 2 && cur == c.prevGoalCell) {
             prevGoalIdx = cur;
-            prevGoalMs  = cost;
+            prevGoalMs  = cost;   // search cost: only ever compared with other search costs
         }
 
         if (cur != start && s_eval[cur] == 2 && s_goal[cur]) {
@@ -482,7 +501,7 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
             // stricter of the two. Core::ZoneClear because Temporal is lane-blind —
             // without it a cell dead-centre in a live blast reads perfectly clear.
             if (GoalGateOk(c, wc) && Core::ZoneClear(c.mi, wc) &&
-                Core::Temporal::ArrivalClear(s_tctx, wc, cost, cost + kUDwellMs)) {
+                Core::Temporal::ArrivalClear(s_tctx, wc, s_time[cur], s_time[cur] + kUDwellMs)) {
                 s_tgoal[cur] = 1;
                 if (tempGoalIdx < 0) { tempGoalIdx = cur; tempGoalMs = cost; }
             }
@@ -534,15 +553,16 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
             const float stepDist = (kDx[k] != 0 && kDy[k] != 0)
                                        ? kUPathCellTiles * kUPathRoot2 : kUPathCellTiles;
             // Edge cost is TIME: how long the player takes to cross this edge.
-            const float tB = s_cost[cur] + (c.baseTilesPerMs > 0.f
+            const float edgeMs = (c.baseTilesPerMs > 0.f
                 ? Movement::Speed::EdgeMs(c.baseTilesPerMs, s_factor[cur], s_factor[ni], stepDist)
                 : stepDist * c.timePerTile);
+            const float tB = s_time[cur] + edgeMs;
             // SPEED-AWARE GATE: only walk into B if the player, arriving at tB
             // (having left cur at s_cost[cur]), is clear of every bullet there.
             const Vec2 wB = CellWorld(center, nx, ny);
             const Vec2 wA = CellWorld(center, cgx, cgy);
             float tArr = tB;
-            if (!Core::Temporal::EdgeClear(s_tctx, wA, wB, s_cost[cur], tB)) {
+            if (!Core::Temporal::EdgeClear(s_tctx, wA, wB, s_time[cur], tB)) {
                 // ── BOUNDED WAIT EDGE (finding F) ───────────────────────────
                 // Leaving NOW walks into a bullet. Try leaving one or two temporal
                 // slices later instead — "stand here, let the wall pass, then go".
@@ -553,11 +573,11 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
                 // kUPathMaxWaitSlices extra ArrivalClear calls on an edge that has
                 // ALREADY failed — a passing edge costs exactly what it did before.
                 if (waitSlices < 0)
-                    waitSlices = ClearWaitSlices(c, CellWorld(center, cgx, cgy), s_cost[cur]);
+                    waitSlices = ClearWaitSlices(c, CellWorld(center, cgx, cgy), s_time[cur]);
                 int w = 1;
                 for (; w <= waitSlices; ++w) {
                     const float d = static_cast<float>(w) * kUTemporalStepMs;
-                    if (Core::Temporal::EdgeClear(s_tctx, wA, wB, s_cost[cur] + d, tB + d)) break;
+                    if (Core::Temporal::EdgeClear(s_tctx, wA, wB, s_time[cur] + d, tB + d)) break;
                 }
                 if (w > waitSlices) continue;   // no admissible departure delay — edge stays blocked
                 tArr = tB + static_cast<float>(w) * kUTemporalStepMs;
@@ -576,10 +596,28 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
             // the route EXIST so the player is aimed at the gap instead of being
             // dragged toward open space; the pause is produced by the safety floor.
             // goalArriveMs does include the wait, so the arrival time stays honest.
-            if (tArr < s_cost[ni]) {
-                s_cost[ni] = tArr;
+            // The spiral preference prices the EDGE, not the clock: the wait (if any)
+            // is already inside tArr - s_time[cur], and it is time the player really
+            // spends, so it is priced as it is.
+            float costB = tArr;   // classic: the search cost IS the arrival time
+            if (spiral) {
+                float bias = 1.f;
+                const Vec2 toTarget = Sub(c.diskCenter, wA);
+                const float d = Len(toTarget);
+                if (d > 1e-3f) {
+                    const float inv = 1.f / (d * std::sqrt(static_cast<float>(
+                        kDx[k] * kDx[k] + kDy[k] * kDy[k])));
+                    const float dot = (static_cast<float>(kDx[k]) * toTarget.x +
+                                       static_cast<float>(kDy[k]) * toTarget.y) * inv;
+                    bias = 1.f + 0.75f * std::fabs(dot);
+                }
+                costB = s_cost[cur] + (tArr - s_time[cur]) * bias;
+            }
+            if (costB < s_cost[ni]) {
+                s_cost[ni] = costB;
+                s_time[ni] = tArr;
                 s_prev[ni] = cur;
-                HeapPush(tArr, ni);
+                HeapPush(costB, ni);
             }
         }
     }
@@ -712,7 +750,7 @@ void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, Pla
     out.found       = true;
     out.partial     = isPartial;
     out.tempGoal    = isTempGoal;
-    out.goalArriveMs = s_cost[target];   // predicted arrival TIME along the route (ms)
+    out.goalArriveMs = s_time[target];   // predicted arrival TIME along the route (ms)
     out.waypoints   = n;
     out.goalPos     = CellWorld(center, target % kS, target / kS);
 
