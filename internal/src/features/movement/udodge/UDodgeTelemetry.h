@@ -100,8 +100,11 @@ enum class Drive     : uint8_t { None, Ok, BlockedEnemy, BlockedPath, Refused };
 // Changed, Arrival, NoProgress) plus two pre-existing hard-safety triggers
 // (GoalMoved: the lock-approach goal itself moved; Blocked: a fresh occupancy/
 // keep-out read invalidated the route immediately, not by distance).
+// Refused (controller ruling, 2026-09-19): a sustained streak of game-refused
+// commanded steps under route commitment — direct evidence the route is wrong
+// here, so it invalidates immediately rather than waiting out NoProgress.
 enum class ReplanReason : uint8_t {
-    None, Invalidated, ObjectiveChanged, Arrival, NoProgress, GoalMoved, Blocked
+    None, Invalidated, ObjectiveChanged, Arrival, NoProgress, GoalMoved, Blocked, Refused
 };
 
 // One frame of UDodge::Tick, as plain data. Filled only while telemetry is on.
@@ -273,7 +276,7 @@ inline const char* Name(ReplanReason v)
         case ReplanReason::None: return "none"; case ReplanReason::Invalidated: return "invalidated";
         case ReplanReason::ObjectiveChanged: return "objective_changed"; case ReplanReason::Arrival: return "arrival";
         case ReplanReason::NoProgress: return "no_progress"; case ReplanReason::GoalMoved: return "goal_moved";
-        case ReplanReason::Blocked: return "blocked";
+        case ReplanReason::Blocked: return "blocked"; case ReplanReason::Refused: return "refused";
     }
     return "?";
 }

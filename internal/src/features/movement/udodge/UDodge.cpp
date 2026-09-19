@@ -176,6 +176,13 @@ int      g_refusedFrames = 0;         // consecutive commands the game granted <
 ULONGLONG g_lastRefusedMs = 0;        // when the latest of those was measured
 Vec2     g_lastCmdFrom{}, g_lastCmdTo{};
 bool     g_lastCmdValid = false;
+// Item 1 S2 refinement: edge-latch for the refused-streak route-invalidate
+// trigger below, so ONE streak forces ONE immediate re-plan (like the
+// self-resetting Navigation::Progress::Stalled), not a fresh forced re-plan
+// every tick the streak stays fresh. Clears on a real successful command (a
+// step the game actually granted) so a later, genuinely new streak can fire
+// again; also cleared with the rest of the stuck memory.
+bool     g_refusedStreakFired = false;
 constexpr ULONGLONG kNavAvoidMs = 12000ULL;
 constexpr int       kNavRefusedFramesForAvoid = 12;   // ~0.2 s of refusal at 60 FPS
 constexpr ULONGLONG kNavRefusalFreshMs = 300ULL;       // a refusal older than this says nothing about now
@@ -196,6 +203,7 @@ void ClearNavAvoid()
     g_refusedFrames = 0;
     g_lastRefusedMs = 0;
     g_lastCmdValid = false;
+    g_refusedStreakFired = false;
 }
 
 // ── Stuck dump (field diagnostics; OFF unless RE_ASSETS/diag-timing.flag) ────
@@ -1238,8 +1246,28 @@ void Tick(void* player, float px, float py, float dt)
         // on the route); the pre-existing 500 ms timer otherwise.
         const bool stalled = in.speed > 0.f &&
             g_navProgress.Stalled(in.player, nowNav, g_navAwaiting, settings.routeCommit ? 1500ULL : 500ULL);
-        if (stalled && g_refusedFrames >= kNavRefusedFramesForAvoid &&
-            nowNav - g_lastRefusedMs <= kNavRefusalFreshMs) {
+        // Item 1 S2 refinement (controller ruling): a step the GAME refuses is
+        // direct evidence the committed route is wrong right here — the world
+        // model disagrees with what the game actually allows — so it should not
+        // have to wait out the (now longer) no-progress timer. Under route
+        // commitment, a sustained refusal streak invalidates the route
+        // immediately; it is the SAME signal (g_refusedFrames / kNavRefusedFrames-
+        // ForAvoid / kNavRefusalFreshMs) that already feeds the navAvoid memory
+        // below, just no longer gated on `stalled` first. OFF is unaffected:
+        // refusedStreak is always false there, so the avoid-population and
+        // replan conditions below reduce to exactly what they were before this
+        // refinement. Cases with no refusal signal still wait the full 1.5 s.
+        // Edge-triggered (g_refusedStreakFired), like Navigation::Progress::
+        // Stalled's own self-reset: ONE streak forces ONE immediate re-plan, not
+        // a fresh forced re-plan every tick the streak stays fresh (which, while
+        // the follower holds at the player and issues no new command, never
+        // re-arms on its own -- it stayed latched and thrashed the route every
+        // tick; measured on j_hidden_blocker, fixed by this latch).
+        const bool refusedFresh = g_refusedFrames >= kNavRefusedFramesForAvoid &&
+            nowNav - g_lastRefusedMs <= kNavRefusalFreshMs;
+        const bool refusedStreak = settings.routeCommit && refusedFresh && !g_refusedStreakFired;
+        if (refusedStreak) g_refusedStreakFired = true;
+        if ((stalled || refusedStreak) && refusedFresh) {
             // Remember the square just past the player box in the refused direction,
             // and its two neighbours across that direction: whatever refused the step
             // is more often a wall than a single post, and one square per stall made
@@ -1264,20 +1292,22 @@ void Tick(void* player, float px, float py, float dt)
             if (blocked) ++DiagTiming::Game().navBlocked;
             if (stalled) ++DiagTiming::Game().navStalls;
         }
-        if ((blocked || stalled) && diagOn) {
+        if ((blocked || stalled || refusedStreak) && diagOn) {
             Vec2 avoid[kMaxNavAvoid];
             const int avoidCount = ActiveNavAvoid(avoid, nowNav);
-            DiagStuckDump(blocked ? "blocked" : "stalled", in.player, wg, navStep, lockApproach,
-                          in, g_map, avoidCount, avoid);
+            DiagStuckDump(blocked ? "blocked" : refusedStreak ? "refused" : "stalled", in.player, wg, navStep,
+                          lockApproach, in, g_map, avoidCount, avoid);
         }
-        if (blocked || stalled) {
+        if (blocked || stalled || refusedStreak) {
             navReplan = true;
-            navReplanReason = blocked ? Telemetry::ReplanReason::Blocked : Telemetry::ReplanReason::NoProgress;
+            navReplanReason = blocked ? Telemetry::ReplanReason::Blocked
+                             : refusedStreak ? Telemetry::ReplanReason::Refused
+                             : Telemetry::ReplanReason::NoProgress;
             g_navAwaiting = navWaiting = true;
             g_navCache.valid = false;
             navStep = in.player;
         }
-        g_wedged.store(!lockApproach && (blocked || stalled), std::memory_order_relaxed);
+        g_wedged.store(!lockApproach && (blocked || stalled || refusedStreak), std::memory_order_relaxed);
         // Plan 89: publish the wedge observation (goal, player, freshness stamp).
         // A locked-target approach is not a commanded walk; it never asks for walls to break.
         g_wedgeWalkActive.store(!lockApproach, std::memory_order_relaxed);
@@ -1710,6 +1740,7 @@ void Tick(void* player, float px, float py, float dt)
             g_lastRefusedMs = GetTickCount64();
         } else {
             g_refusedFrames = 0;
+            g_refusedStreakFired = false;   // a real granted step re-arms the trigger
         }
     }
     g_lastCmdValid = false;
