@@ -132,6 +132,11 @@ struct PlannerSnapshot {
     float    weaponRangeTiles = 0.f; // disk radius (0 = no gate)
     float    innerStandoffTiles = 0.f; // annulus inner radius (0 = no inner gate). Goal cells inside
                                        // this radius of lockPos are rejected as GOALS but stay traversable.
+    // A lock target exists and the player is still APPROACHING its ring (the walk-to
+    // pipeline carries the approach, so hasLock is off): plan into
+    // [innerStandoffTiles, weaponRangeTiles] exactly as when hasLock is set.
+    // lockPos / weaponRangeTiles / innerStandoffTiles are valid.
+    bool     ringApproach = false;
     // ── Plan-commitment hysteresis (plan 76) ─────────────────────────────────
     // Last tick's accepted durable-safe goal, carried forward so the Dijkstra can
     // prefer it among near-equal options (stops the goal marker flip-flopping). The
@@ -178,6 +183,9 @@ struct PlanResult {
     bool  startIsGoal = false; // the player cell is already durable-safe (no route needed)
     bool  expanded    = false; // the window grew beyond the base radius to find the goal
     bool  outOfRange  = false; // locked: no in-range goal, used an unconstrained (out-of-range) goal
+    bool  ringGoal    = false; // goalPos lies inside the ring (hasLock or ringApproach): a shot-free
+                               // in-ring cell, or the in-ring time-clear cell (tempGoal) that outranks
+                               // any ground outside the ring
     bool  partial      = false; // no durable pocket was time-reachable; the route heads to the
                                 // SAFEST reachable-in-time cell instead (best-effort lookahead bias,
                                 // still fully time-feasible — never assumes impossible speed)

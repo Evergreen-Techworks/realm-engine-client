@@ -1,12 +1,117 @@
 #include "UDodgePathfinder.h"
 #include "UDodgeNavigation.h"
 #include "UDodgeSolver.h"
+#include "UDodgeCore.h"
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 using namespace UDodge;
 void Check(bool ok, const char* name) {
     if (!ok) { std::fprintf(stderr, "FAIL: %s\n", name); std::exit(1); }
 }
+
+// ── The result ladder prefers the ring (Tactician Slice 2) ───────────────────
+// A boss at lockPos fires one volley of 45 shots, one every 8 degrees, each traced
+// from r = 1 to r = 9 tiles where it dies. Every other shot is fast (800 ms to r = 9),
+// the ones between are slow (1600 ms), and the player stands at r = 9.6 on the bearing
+// of a slow shot, beyond every shot's end. With weapon range 7 the engagement ring is
+// [2.45, 6.25]. Measured against whole shot paths (PointSafety) no cell of the ring is
+// shot-free, and the ground outside r = 9 is. Measured in time the ring can be entered:
+// the fast shots pass either side of the player's bearing 0.9 tiles away and the slow
+// shot on it is still 2 tiles short of the ring's outer cells when the player gets there.
+// (The plan's first fixture, every shot at 800 ms, is a closed wave: 8 degrees apart the
+// shots' arrival boxes overlap out to r = 10.7, so nothing crosses it and the ring can
+// only be entered once the volley is dead, which no bounded-wait route expresses.)
+namespace Ring {
+constexpr float kOuter = 6.25f, kInner = 2.45f;   // LockGeometry for weapon range 7
+const Vec2 kLock{ -9.6f, 0.f };                   // the player stands at the origin: r = 9.6, bearing +x
+
+void Volley(Path::PlannerSnapshot& s)
+{
+    s = Path::PlannerSnapshot{};
+    s.lockPos = kLock;
+    s.weaponRangeTiles = kOuter;
+    s.innerStandoffTiles = kInner;
+    s.speed = .005f;
+    s.moveBudget = .5f;
+    for (int k = -22; k <= 22; ++k) {
+        const float a = static_cast<float>(k) * 8.f * kTwoPi / 360.f;
+        const Vec2 dir{ std::cos(a), std::sin(a) };
+        const float lifeMs = (k % 2 == 0) ? 1600.f : 800.f;   // k = 0, the player's bearing, is slow
+        auto& lane = s.map.lanes[s.map.laneCount++];
+        lane.hitHalf = .3f;
+        lane.pointCount = lane.instantCount = 2;
+        lane.points[0] = Add(kLock, Mul(dir, 1.f));
+        lane.points[1] = Add(kLock, Mul(dir, 9.f));
+        lane.pointTimesMs[1] = lifeMs;
+        lane.remainingLifeMs = lifeMs;
+        lane.tailAtShotEnd = true;
+    }
+}
+
+int failures = 0;
+void Expect(bool ok, const char* name) {
+    if (!ok) { std::fprintf(stderr, "FAIL: %s\n", name); ++failures; }
+}
+
+void LadderTests()
+{
+    static Path::PlannerSnapshot snap{};
+    static Path::PlanResult plan{};
+    Volley(snap);
+
+    // The fixture's premise, checked against the production safety test.
+    MapInput mi{}; mi.player = snap.player; mi.settings = snap.settings; mi.map = &snap.map;
+    Check(Core::PointSafety(mi, snap.player) >= kUDurablePocketMargin,
+          "fixture: the stand outside the ring is shot-free");
+    int ringCells = 0, shotFreeRingCells = 0;
+    for (int gy = -kUPathMaxRadCells; gy <= kUPathMaxRadCells; ++gy)
+        for (int gx = -kUPathMaxRadCells; gx <= kUPathMaxRadCells; ++gx) {
+            const Vec2 w{ gx * kUPathCellTiles, gy * kUPathCellTiles };
+            const float r = Len(Sub(w, kLock));
+            if (r < kInner || r > kOuter + kUInRangeSlack) continue;
+            ++ringCells;
+            if (Core::PointSafety(mi, w) >= kUDurablePocketMargin) ++shotFreeRingCells;
+        }
+    Check(ringCells > 100 && shotFreeRingCells == 0, "fixture: no cell of the ring is shot-free");
+
+    // 1. Approaching a ring, a shot-free stand outside it is not a goal.
+    snap.ringApproach = true;
+    Path::Compute(snap, plan);
+    Expect(!plan.startIsGoal,
+           "a shot-free stand outside the ring is not a goal while a ring is being approached");
+
+    // 2. The in-ring time-clear spot wins over the shot-free ground outside the ring.
+    Expect(plan.found && plan.ringGoal && !plan.outOfRange,
+           "an in-ring time-clear spot outranks the shot-free ground outside the ring");
+    Expect(plan.found && plan.tempGoal && !plan.partial,
+           "fixture: the ring is entered on the time-aware goal, not a shot-free cell");
+    const float goalR = Len(Sub(plan.goalPos, kLock));
+    Expect(plan.found && goalR >= kInner && goalR <= kOuter + kUInRangeSlack,
+           "the ring goal lies inside the ring");
+    Core::Temporal::Ctx time{};
+    Core::Temporal::Build(snap.map, snap.settings.hitScale, snap.settings.positionUncertainty,
+        snap.player, 20.f, time, Core::ProjectilePlayerHalf(snap.settings));
+    Expect(plan.wptCount >= 2, "the way into the ring is a route");
+    float arrival = 0.f;
+    for (int vertex = 1; vertex < plan.wptCount; ++vertex) {
+        const float nextArrival = arrival + Len(Sub(plan.wpts[vertex], plan.wpts[vertex - 1])) / snap.speed;
+        Expect(Core::Temporal::EdgeClear(time, plan.wpts[vertex - 1], plan.wpts[vertex], arrival, nextArrival),
+               "the way into the ring never crosses a shot");
+        arrival = nextArrival;
+    }
+
+    // 3. Without a ring, nothing changes: a shot-free stand ends the search.
+    snap.ringApproach = false;
+    snap.hasLock = false;
+    Path::Compute(snap, plan);
+    Expect(plan.startIsGoal && !plan.ringGoal, "unlocked play still short-circuits on a shot-free stand");
+
+    if (failures) { std::fprintf(stderr, "Ring ladder tests: %d failures\n", failures); std::exit(1); }
+    std::puts("Ring ladder tests passed (ring goal outranks out-of-range ground, start rule, unlocked unchanged).");
+}
+} // namespace Ring
+
 int main() {
     Check(Navigation::SameRouteRequest(true, 7, 42, 7, 42), "same global request retains local route across corridor refresh");
     Check(!Navigation::SameRouteRequest(true, 8, 42, 7, 42), "scene changes invalidate the old local route");
@@ -155,4 +260,5 @@ int main() {
     Check(!plan.navArrived && plan.navWptCount==1 && LenSq(plan.navStepTarget)==0.f,
           "boxed-in A* never returns the raw destination as a steering step");
     std::puts("Navigation regressions passed (real A*, corner compression, swept steering, completion).");
+    Ring::LadderTests();
 }
