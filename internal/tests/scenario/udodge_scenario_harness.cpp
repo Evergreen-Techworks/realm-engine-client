@@ -535,6 +535,15 @@ void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s,
     const EnemyTracker::LockInfo lockInfo = EnemyTracker::ResolveLock(g_snapshot, lock);
     if (EnemyTracker::Engages(lockInfo)) {
         out.hasLock = true; out.lockId = lockInfo.id; out.lockPos = { lockInfo.x, lockInfo.y };
+        // ENEMY STANDOFF: the locked target's band feeds the fight distance only.
+        if (s.enemyStandoff != Standoff::Mode::Off)
+            for (const EnemyTracker::Entry& e : g_snapshot)
+                if (e.id == lockInfo.id) {
+                    out.lockBand = Standoff::BandRadius(e.shotSpeedTilesPerSec,
+                        (!e.hasHealthBar || e.isScenery) ? 0.5f : 0.8f, e.hasProjectiles,
+                        EnemyHazards::KeepoutRadius(e.objType));
+                    break;
+                }
     }
 #endif
 }
@@ -1156,6 +1165,8 @@ void ApplyUserSettings()
     UDodge::SetOrbitRange(0.f);
     UDodge::SetPlanRadius(29.f);
     UDodge::SetMoveEnvelope(true);
+    // ENEMY STANDOFF A/B: `HARNESS_ENEMY_STANDOFF=off` runs the pre-standoff engine.
+    UDodge::SetEnemyStandoff(std::getenv("HARNESS_ENEMY_STANDOFF"));
     if (std::getenv("HARNESS_DIAG")) UDodge::SetDiagTiming(true);   // exercise the field diagnostics
 }
 
