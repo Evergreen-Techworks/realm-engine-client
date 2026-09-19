@@ -8,14 +8,22 @@
  * causes a synchronous write per packet, and keeping `<tmpdir>/testlab/`
  * under a size cap.
  *
- * `os.tmpdir()` is the same path convention `DiagGate.ts` / `Logger.ts` /
- * `StatDump.ts` already rely on — in the portable build it resolves to
- * RE_ASSETS, so the live path is `RE_ASSETS\testlab\packets-....jsonl`,
- * beside `RE_ASSETS\realm-engine-proxy.log` (contract-packets-jsonl.md).
+ * The base directory is NOT resolved here via `os.tmpdir()` — an earlier
+ * version of this file did that, on the belief (still written into
+ * `DiagGate.ts` and contract-packets-jsonl.md) that `os.tmpdir()` always
+ * resolves to RE_ASSETS in the portable build. Measured in the first real
+ * Test Lab session (2026-09-19), that belief was false: the recorder's own
+ * `tmpdir()` call landed in the real Windows temp folder while the client
+ * log (`Logger.ts`) landed elsewhere in the same running process. Rather
+ * than re-derive "wherever the log went" a second time and risk the same
+ * divergence again, every caller here must pass that directory in explicitly
+ * — the plugin (`testlab-recorder.ts`) gets it from `Logger.loggerDirectory()`,
+ * the single source of truth, so this file's own path can never disagree
+ * with the client log's. The live path is `<Logger dir>\testlab\packets-....jsonl`,
+ * beside `<Logger dir>\realm-engine-proxy.log` (contract-packets-jsonl.md).
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
-import { tmpdir } from 'os';
 
 /** See recorderCore.ts's TESTLAB_PRIVATE_ONLY doc comment — same purpose, same string. */
 export const TESTLAB_PRIVATE_ONLY = 'TESTLAB_PRIVATE_ONLY';
@@ -43,12 +51,14 @@ export function formatUtcCompact(date: Date): string {
   );
 }
 
-export function testlabDir(baseDir: string = tmpdir()): string {
+/** `baseDir` is the caller's resolved base directory — see this file's header
+ *  comment for why there is no `tmpdir()` default here any more. */
+export function testlabDir(baseDir: string): string {
   return join(baseDir, TESTLAB_DIR_NAME);
 }
 
-/** File: `<tmpdir>/testlab/packets-<YYYYMMDDTHHMMSSZ>.jsonl` — one per client start. */
-export function packetsFilePath(startedAt: Date, baseDir: string = tmpdir()): string {
+/** File: `<baseDir>/testlab/packets-<YYYYMMDDTHHMMSSZ>.jsonl` — one per client start. */
+export function packetsFilePath(startedAt: Date, baseDir: string): string {
   return join(testlabDir(baseDir), `${FILE_PREFIX}${formatUtcCompact(startedAt)}${FILE_SUFFIX}`);
 }
 

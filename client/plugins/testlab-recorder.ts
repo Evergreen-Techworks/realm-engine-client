@@ -25,6 +25,7 @@ import { fileURLToPath } from 'url';
 import { resolve } from 'path';
 import type { PluginContext, ClientConnection, Packet } from './api.js';
 import { readBuildInfoFile } from '../src/util/buildInfo.js';
+import { loggerDirectory } from '../src/util/Logger.js';
 import {
   dispatchPacket,
   ProjDefTracker,
@@ -98,8 +99,13 @@ export function register(ctx: PluginContext) {
   // Filename is fixed once, at plugin registration (~= client start), and the
   // writer is never recreated across enable/disable toggles within this
   // process — "one file per client start", not one per toggle.
+  //
+  // The base directory comes from Logger.loggerDirectory(), NOT this file's
+  // own tmpdir() call — see recorderWriter.ts's header comment for why an
+  // independent tmpdir() call here previously wrote to a different directory
+  // than the client log in the packaged app.
   const startedAt = new Date();
-  const writer = new BufferedJsonlWriter(packetsFilePath(startedAt));
+  const writer = new BufferedJsonlWriter(packetsFilePath(startedAt, loggerDirectory()));
   const tracker = new ProjDefTracker();
   let wroteStart = false;
 

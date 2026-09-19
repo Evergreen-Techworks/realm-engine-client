@@ -10,12 +10,20 @@ import { tmpdir } from 'os';
  * so its own [Diag/Bridge] / [Diag/Loop] / [Diag/ScriptTick] / [Diag/Nexus]
  * lines share one on/off switch with no new dashboard setting.
  *
- * `Logger.ts`'s own log file resolves to `join(tmpdir(), 'realm-engine-proxy.log')`
- * — in the portable build this directory IS RE_ASSETS (see CLAUDE.md's build
- * procedure: "RE_ASSETS\realm-engine-proxy.log"). So checking
- * `join(tmpdir(), 'diag-timing.flag')` is the same "same folder as the trace
- * log" rule DiagTiming.h uses, expressed with the path helper this codebase
- * already relies on for that resolution (see Proxy.ts's TARGET_FILE).
+ * `Logger.ts`'s own log file resolves to `join(tmpdir(), 'realm-engine-proxy.log')`.
+ * This file assumed that directory is always RE_ASSETS in the portable build
+ * (see CLAUDE.md's build procedure: "RE_ASSETS\realm-engine-proxy.log") and
+ * computes its own, independent `join(tmpdir(), 'diag-timing.flag')` on that
+ * belief. The 2026-09-19 Test Lab session measured that belief false for a
+ * second independent `tmpdir()` caller in this same process (the recorder
+ * plugin landed in the real Windows temp folder while `Logger.ts` landed
+ * elsewhere) — see `Logger.ts`'s `loggerDirectory()` and
+ * `recorderWriter.ts`'s header comment for the fix applied there. This file
+ * was not touched by that fix (its `tmpdir()` call is a deliberate contract
+ * with the native side's `GetTempPathW()`-based `DiagTiming.h`, not "beside
+ * the client log"), but the same divergence risk applies here and is
+ * unconfirmed either way — Proxy.ts's `TARGET_FILE` uses the same
+ * `tmpdir()` convention for the same reason (talking to native code).
  *
  * Cost when off: one `Date.now()` comparison per call; the filesystem is only
  * touched at most once every POLL_MS.
