@@ -1137,6 +1137,10 @@ struct Result {
     double radialOutTiles = 0;      // ...of which, the component pointing away from the lock
     uint32_t headingReversals = 0;  // a step more than 90 degrees off the previous step
     uint64_t inRangeFrames = 0, tailFrames = 0;   // in_range_frac's exact numerator / denominator
+    // Navigation finish plan, item 2: how often a Fallback solve (no safe
+    // reachable cell) moved the player less than kSolveFallbackMinMoveTiles —
+    // read via UDodge::GetLastSolveKind(), published unconditionally.
+    uint32_t fallbackFrames = 0, fallbackJitterFrames = 0;
 };
 
 constexpr Ground kFloor{};
@@ -1170,6 +1174,13 @@ void ApplyUserSettings()
     // ROUTE COMMIT A/B (navigation finish plan, Item 1): `HARNESS_ROUTE_COMMIT=off`
     // runs the pre-Item-1 follower; unset or any other value keeps the default (on).
     UDodge::SetRouteCommit(std::getenv("HARNESS_ROUTE_COMMIT"));
+    // FALLBACK SIDESTEP A/B (navigation finish plan, item 2): default on, matching
+    // Settings::fallbackSidestep; `HARNESS_FALLBACK_SIDESTEP=off` runs today's
+    // plain least-bad Fallback pick.
+    {
+        const char* v = std::getenv("HARNESS_FALLBACK_SIDESTEP");
+        UDodge::SetFallbackSidestep(!(v && std::string(v) == "off"));
+    }
     if (std::getenv("HARNESS_DIAG")) UDodge::SetDiagTiming(true);   // exercise the field diagnostics
 }
 
@@ -1232,6 +1243,10 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
                 const Vec2 heading = Mul(step, 1.f / moved);
                 if (LenSq(lastHeading) > 0.f && Dot(heading, lastHeading) < 0.f) ++r.headingReversals;
                 lastHeading = heading;
+            }
+            if (UDodge::GetLastSolveKind() == static_cast<uint8_t>(Solver::SolveKind::Fallback)) {
+                ++r.fallbackFrames;
+                if (moved < 0.05f) ++r.fallbackJitterFrames;
             }
         }
         if (threatened) {
@@ -1351,7 +1366,8 @@ void Emit(const Result& r)
                 "\"diag_lines\":%lu,"
                 "\"dodge_ms_p95\":%.3f,\"cycle_ms_p95\":%.3f,"
                 "\"ring_publishes\":%u,\"ring_goal_plans\":%u,\"ring_goal_temporal\":%u,"
-                "\"out_of_range_plans\":%u,\"start_is_goal_plans\":%u}\n",
+                "\"out_of_range_plans\":%u,\"start_is_goal_plans\":%u,"
+                "\"fallback_frames\":%u,\"fallback_jitter_frames\":%u}\n",
                 r.name.c_str(), r.success ? "true" : "false", r.timeS, r.pathTiles, r.finalDist, r.stuckS, r.hits,
                 r.inRangeFrac, g_move.refused, g_move.overspeed, std::min(g_move.maxStepRatio, 999.0),
                 tickAvg, g_tick.max, g_worker.navRuns, navAvg, g_worker.navMsMax,
@@ -1365,7 +1381,8 @@ void Emit(const Result& r)
                 DbgFileLogWriteCount(),
                 p95(g_worker.dodgeMs), p95(g_worker.cycleMs),
                 g_worker.ringPublishes, g_worker.ringGoalPlans, g_worker.ringGoalTemporal,
-                g_worker.outOfRangePlans, g_worker.startIsGoalPlans);
+                g_worker.outOfRangePlans, g_worker.startIsGoalPlans,
+                r.fallbackFrames, r.fallbackJitterFrames);
     std::fflush(stdout);
 }
 
