@@ -92,9 +92,13 @@ struct Disc {
 constexpr int kMaxDiscs = 48;
 
 // Raster bits added to the existing occupancy grids (NavGrid::flags,
-// OccGrid::flags). 0x1/0x2/0x4/0x8/0x10 are already spoken for.
-constexpr uint8_t kCoreBit = 0x20;
-constexpr uint8_t kBandBit = 0x40;
+// OccGrid::flags). The low six are ALL spoken for by TileOccupancy's cell
+// vocabulary — 0x20 is kCellFullBody, which the game collision rule reads back
+// out of the nav raster (Collision::SquaresFromCells), so taking it silently
+// deleted every FullOccupy object from the walk-to route. Only 0x40 and 0x80 are
+// genuinely free.
+constexpr uint8_t kCoreBit = 0x40;
+constexpr uint8_t kBandBit = 0x80;
 
 // Stamp the discs into a square flags grid, ONCE per publish. Cost is the sum of
 // the disc areas (about 170 cells for the widest band), never cells x enemies:
