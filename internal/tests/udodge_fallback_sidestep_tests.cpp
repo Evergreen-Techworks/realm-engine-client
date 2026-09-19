@@ -103,10 +103,12 @@ int main()
         Check(SelectFallbackCandidate(nullptr, 0, Vec2{}, false, 0.f) == -1, "empty set (off) returns -1");
     }
 
-    // Settings default: the switch ships ON.
+    // Settings default: the switch ships OFF (owner ruling 2026-09-19:
+    // unproven behaviour ships behind a switch, default off, after private
+    // 1.0.18 dodged worse with this on).
     {
         Settings s{};
-        Check(s.fallbackSidestep, "udodgeFallbackSidestep defaults on");
+        Check(!s.fallbackSidestep, "udodgeFallbackSidestep defaults off");
     }
 
     std::printf("Fallback sidestep regression tests: %d checks, %d failures\n", checks, failures);
