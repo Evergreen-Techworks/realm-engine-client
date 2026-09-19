@@ -80,6 +80,22 @@ void* lastWorld = nullptr;
 void* lastList = nullptr;
 int32_t lastSize = 0;
 bool awaitingReplacement = false;
+// Item 3 (navigation finish plan, 2026-09-19): awaitingReplacement no longer
+// blocks capture outright (see Capture() below) — it only means pointer/size
+// evidence alone cannot prove the list was replaced. epochConfirmed is the
+// real readiness bit for the current epoch: false until either the pointer
+// genuinely changed/shrunk (the pre-existing fast path) or the own-tile+ring
+// proof passes.
+bool epochConfirmed = false;
+bool epochFastPath = false;
+uint64_t epochPendingSinceMs = 0;
+// The last time lastWorld/lastList actually changed (epoch bump or mid-epoch
+// pointer swap). OwnTileReady is only trusted kCaptureSettleMs after this, so
+// a pointer still mid-swap (old object, not yet replaced) gets superseded —
+// and its scan progress reset — before Capture() would act on its data.
+uint64_t pointerStableSinceMs = 0;
+constexpr uint64_t kCaptureSettleMs = 250;
+CaptureDiag lastCaptureDiag;
 size_t nextSquare = 0;
 std::deque<size_t> retrySquares;
 size_t localCursor = 0;
@@ -173,9 +189,47 @@ bool CaptureSquare(const uint8_t* entries, size_t index, const Session& current)
     return true;
 }
 
+// Item 3: "own tile plus a small ring" — the player's current square and its
+// immediate 3x3 neighbourhood must all read back as KNOWN (successfully
+// captured this epoch) before a suspected pointer-reuse capture is trusted,
+// and the player's own square specifically must be walkable (they are
+// standing on it). Neighbours are only required to be known, not walkable —
+// a wall one tile over is completely normal next to a player and must not
+// keep capture pending forever. MapMemory::Accepts() rejects any write tagged
+// with a stale epoch, so a cell reads kTileKnown here only because
+// CaptureSquare freshly read that exact square THIS epoch.
+//
+// That alone does not prove the pointer was actually replaced — a pointer
+// that is still the OLD map's object (native transition not yet applied) is
+// just as internally self-consistent as a genuinely new one, and the docs
+// explicitly note no discriminator was found that proves replacement from
+// data alone. kCaptureSettleMs (below, in Capture()) is the other half of
+// this: OwnTileReady is only consulted once the CURRENT world/list pointer
+// has been unchanged for a short settle window, so a pointer still mid-swap
+// gets superseded (and its scan progress reset) before its data is trusted.
+constexpr int kCaptureReadyRingRadius = 1;   // 3x3 including the centre
+
+bool OwnTileReady(RoutePoint player)
+{
+    const int column = static_cast<int>(std::floor(player.worldX));
+    const int row = static_cast<int>(std::floor(player.worldY));
+    for (int dy = -kCaptureReadyRingRadius; dy <= kCaptureReadyRingRadius; ++dy)
+        for (int dx = -kCaptureReadyRingRadius; dx <= kCaptureReadyRingRadius; ++dx) {
+            const auto cell = captured.GetCell(column + dx, row + dy);
+            if (!cell.inBounds || !(cell.ground.flags & TileOccupancy::kTileKnown)) return false;
+            if (dx == 0 && dy == 0 && (cell.ground.flags & TileOccupancy::kTileBlocked)) return false;
+        }
+    return true;
+}
+
 bool Capture(const Session& current, RoutePoint player, uint64_t now)
 {
-    if (current.width <= 0 || current.height <= 0) return false;
+    lastCaptureDiag = CaptureDiag{};
+    lastCaptureDiag.epoch = current.epoch;
+    if (current.width <= 0 || current.height <= 0) {
+        lastCaptureDiag.guard = CaptureGuard::NoMapInfo;
+        return false;
+    }
     void* world = GameState::GetWorldMgr();
     void* list = nullptr;
     void* items = nullptr;
@@ -184,11 +238,20 @@ bool Capture(const Session& current, RoutePoint player, uint64_t now)
         !Mem::TryRead(list, Il2CppC::kListItems, items) || !Mem::AddrOk(items) ||
         !Mem::TryRead(list, Il2CppC::kListSize, size) ||
         !Mem::TryRead(items, Il2CppC::kArrMaxLen, capacity) ||
-        size < 0 || size > current.width * current.height || size > capacity) return false;
+        size < 0 || size > current.width * current.height || size > capacity) {
+        lastCaptureDiag.guard = CaptureGuard::ListUnreadable;
+        return false;
+    }
+    lastCaptureDiag.listPtr = list;
+    lastCaptureDiag.worldPtr = world;
+    lastCaptureDiag.listSize = size;
     if (capturedEpoch != current.epoch) {
         awaitingReplacement = observedSessionEpoch != current.epoch && lastList != nullptr &&
             list == lastList && world == lastWorld && size >= lastSize;
-        if (!captured.Reset(current.epoch, current.width, current.height)) return false;
+        if (!captured.Reset(current.epoch, current.width, current.height)) {
+            lastCaptureDiag.guard = CaptureGuard::ListUnreadable;
+            return false;
+        }
         capturedEpoch = current.epoch;
         observedSessionEpoch = current.epoch;
         nextSquare = 0;
@@ -197,15 +260,28 @@ bool Capture(const Session& current, RoutePoint player, uint64_t now)
         groundTypes.clear();
         capturedSpeeds.fill(1.f);
         speedCount = 1;
+        epochConfirmed = false;
+        epochFastPath = false;
+        epochPendingSinceMs = now;
+        pointerStableSinceMs = now;
     }
-    if (awaitingReplacement) {
-        if (list == lastList && world == lastWorld && size >= lastSize) return false;
-        awaitingReplacement = false;
-    }
+    // awaitingReplacement used to `return false` here, before a single square
+    // was read for the new epoch, and — on a reused pointer with an
+    // equal-or-larger count — never got another chance to (the documented
+    // fail-closed limitation). captured.Reset() above already wiped every
+    // cell's knowledge for the new epoch, and CaptureSquare below always does
+    // a live, bounds-checked read, so letting the scan run is not a staleness
+    // risk by itself; it just used to be treated as proof of nothing. Now it
+    // is proof once OwnTileReady confirms it, at the bottom of this function.
     if (lastList != list || lastWorld != world || size < lastSize) {
         nextSquare = 0;
         retrySquares.clear();
         squareIndices.clear();
+        // A mid-epoch pointer change (the native transition finally applying,
+        // or — as far as this function can tell — anything else) restarts the
+        // settle window: whatever OwnTileReady saw of the PREVIOUS pointer is
+        // now moot, and the ring must be re-proven against the one live now.
+        if (!epochConfirmed) pointerStableSinceMs = now;
     }
     lastWorld = world;
     lastList = list;
@@ -234,6 +310,28 @@ bool Capture(const Session& current, RoutePoint player, uint64_t now)
                 CaptureSquare(entries, found->second, current);
         }
     }
+    lastCaptureDiag.squaresRead = static_cast<int32_t>(nextSquare);
+    lastCaptureDiag.pendingSinceMs = epochPendingSinceMs;
+    lastCaptureDiag.pendingMs = now > epochPendingSinceMs ? now - epochPendingSinceMs : 0;
+    if (!epochConfirmed) {
+        // Not (yet) suspected of reuse -> the pre-existing pointer/shrink
+        // evidence is already trusted (fast path, unchanged timing from
+        // before this item). Suspected reuse -> only the own-tile+ring proof,
+        // once the current pointer has held for kCaptureSettleMs, clears it
+        // (Item 3's new positive signal).
+        const bool suspectedReuse = awaitingReplacement;
+        const bool settled = now - pointerStableSinceMs >= kCaptureSettleMs;
+        if (!suspectedReuse || (settled && OwnTileReady(player))) {
+            epochConfirmed = true;
+            epochFastPath = !suspectedReuse;
+            awaitingReplacement = false;
+        } else {
+            lastCaptureDiag.guard = CaptureGuard::AwaitingReplacement;
+            return false;
+        }
+    }
+    lastCaptureDiag.ready = true;
+    lastCaptureDiag.fastPath = epochFastPath;
     return true;
 }
 
@@ -465,7 +563,9 @@ RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool a
     output.goalId = currentRequest.goalId;
     output.state = active ? RouteState::Repairing : RouteState::Idle;
     if (!Enabled()) return output;
-    if (!Capture(current, player, now)) {
+    const bool captureOk = Capture(current, player, now);
+    output.captureDiag = lastCaptureDiag;   // Item 3 observability: always filled, plain data
+    if (!captureOk) {
         output.state = active ? RouteState::Partial : RouteState::Idle;
         output.capturePending = active;
         if (active) Emit(RouteState::Partial, "map_pending", currentRequest);
@@ -484,8 +584,14 @@ RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool a
         if (lock.owns_lock()) result = latest;
     }
     if (active && result.revision == currentRequest.revision && result.corridor.epoch == current.epoch &&
-        result.corridor.goalId == currentRequest.goalId && now - result.publishedMs <= 300)
+        result.corridor.goalId == currentRequest.goalId && now - result.publishedMs <= 300) {
+        // The worker's own RouteCorridor never carries captureDiag (that is
+        // game-thread-only, read-side-of-Capture() state) — keep this tick's
+        // game-thread diag rather than let the substitution default it away.
+        const auto diag = output.captureDiag;
         output = result.corridor;
+        output.captureDiag = diag;
+    }
     if (std::hypot(player.worldX - progressAnchor.worldX, player.worldY - progressAnchor.worldY) >= 0.25f ||
         baseSpeed <= 0.f || output.state == RouteState::Repairing || output.count < 2) {
         progressAnchor = player;
