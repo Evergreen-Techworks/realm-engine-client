@@ -11,6 +11,7 @@ import {
   writerPrivateOnlyMarker,
   TESTLAB_PRIVATE_ONLY,
 } from '../recorderWriter.js';
+import { loggerDirectory } from '../../util/Logger.js';
 
 let dir: string;
 
@@ -35,6 +36,18 @@ describe('recorderWriter: file naming', () => {
     const d = new Date(Date.UTC(2026, 8, 19, 3, 4, 5));
     expect(packetsFilePath(d, '/tmp/RE_ASSETS')).toBe(join('/tmp/RE_ASSETS', 'testlab', 'packets-20260919T030405Z.jsonl'));
     expect(testlabDir('/tmp/RE_ASSETS')).toBe(join('/tmp/RE_ASSETS', 'testlab'));
+  });
+
+  // The 2026-09-19 folder-mismatch fix: the recorder must root itself at
+  // Logger's own resolved directory, not at a second, independent tmpdir()
+  // call. This proves the wiring accepts that value and builds the expected
+  // path under it — see recorderWriter.ts's header comment and Logger.ts's
+  // loggerDirectory() doc comment for why.
+  it('is rooted at Logger.loggerDirectory(), not its own tmpdir() call', () => {
+    const base = loggerDirectory();
+    const d = new Date(Date.UTC(2026, 8, 19, 3, 4, 5));
+    expect(testlabDir(base)).toBe(join(base, 'testlab'));
+    expect(packetsFilePath(d, base)).toBe(join(base, 'testlab', 'packets-20260919T030405Z.jsonl'));
   });
 });
 
