@@ -6,10 +6,21 @@ import { StatType } from '../../constants/StatType.js';
 const runnerSource = readFileSync(new URL('../../../script-packages/farmer/oryx-runner.mjs', import.meta.url), 'utf8')
   .replace('export default class OryxRunner', 'return class OryxRunner');
 const OryxRunner = new Function(runnerSource)();
-const source = readFileSync(new URL('../../../script-packages/farmer/index.mjs', import.meta.url), 'utf8')
+const rawSource = readFileSync(new URL('../../../script-packages/farmer/index.mjs', import.meta.url), 'utf8');
+const source = rawSource
   .replace("import { RealmEngine } from '@realmengine/sdk';", '')
   .replace("import OryxRunner from './oryx-runner.mjs';", '')
   .replace('export default class Farmer', 'return class Farmer');
+// The status-context helpers (task A2) are plain top-level functions declared
+// before the class, so they can be pulled out and unit-tested standalone —
+// same trick as OryxRunner above, just stopping before the class body instead
+// of renaming its export.
+const contextHelpersSource = rawSource.split('export default class Farmer')[0]
+  .replace("import { RealmEngine } from '@realmengine/sdk';", '')
+  .replace("import OryxRunner from './oryx-runner.mjs';", '');
+const { formatStatusContextSuffix, buildStatusContextSuffix } = new Function(
+  `${contextHelpersSource}\nreturn { formatStatusContextSuffix, buildStatusContextSuffix };`,
+)();
 function fixture() {
   let enemies: any[] = [];
   const quest = { objectId: 10, name: 'Boss', position: { x: 6, y: 0 }, hp: 100, maxHp: 100, isTargetable: true };
@@ -1100,4 +1111,97 @@ it('prefers a targetable enemy over a bigger locked one that can no longer be da
   f.farmer.lockId = 30;
   f.setEnemies([shielded, mob]);
   expect(f.farmer.updateTarget(0).objectId).toBe(31);
+});
+
+// Test Lab task A2: the persisted `state:` line carries a machine-readable
+// ` | ctx ...` suffix so the Test Lab can plot position without parsing English.
+// The literal delimiter, key names, and one-decimal formatting are a contract
+// with its log parser — do not change them casually.
+describe('status context suffix (Test Lab task A2)', () => {
+  describe('formatStatusContextSuffix (pure)', () => {
+    it('formats every known field to one decimal place', () => {
+      expect(formatStatusContextSuffix({
+        pos: { x: 1.23, y: 4.56 }, goal: { x: 7.891, y: 0 }, enemyDistance: 9.999, questObjectId: 42,
+      })).toBe(' | ctx pos=1.2,4.6 goal=7.9,0.0 d=8.1 enemy=10.0 quest=42');
+    });
+
+    it('reports unknowns as - for a missing goal, including the derived distance', () => {
+      expect(formatStatusContextSuffix({ pos: { x: 0, y: 0 }, goal: null, enemyDistance: 3, questObjectId: 1 }))
+        .toBe(' | ctx pos=0.0,0.0 goal=- d=- enemy=3.0 quest=1');
+    });
+
+    it('reports unknowns as - for a missing position too', () => {
+      expect(formatStatusContextSuffix({ pos: null, goal: { x: 5, y: 5 }, enemyDistance: null, questObjectId: null }))
+        .toBe(' | ctx pos=- goal=5.0,5.0 d=- enemy=- quest=-');
+    });
+
+    it('reports unknowns as - for a missing enemy distance', () => {
+      expect(formatStatusContextSuffix({ pos: { x: 0, y: 0 }, goal: { x: 0, y: 0 }, enemyDistance: null, questObjectId: 5 }))
+        .toBe(' | ctx pos=0.0,0.0 goal=0.0,0.0 d=0.0 enemy=- quest=5');
+    });
+
+    it('reports unknowns as - for a missing quest target', () => {
+      expect(formatStatusContextSuffix({ pos: { x: 0, y: 0 }, goal: null, enemyDistance: null, questObjectId: undefined }))
+        .toBe(' | ctx pos=0.0,0.0 goal=- d=- enemy=- quest=-');
+    });
+
+    it('is entirely - when given nothing', () => {
+      expect(formatStatusContextSuffix()).toBe(' | ctx pos=- goal=- d=- enemy=- quest=-');
+      expect(formatStatusContextSuffix({})).toBe(' | ctx pos=- goal=- d=- enemy=- quest=-');
+    });
+  });
+
+  describe('buildStatusContextSuffix (wraps a live read)', () => {
+    it('formats whatever the getter returns', () => {
+      expect(buildStatusContextSuffix(() => ({ pos: { x: 1, y: 1 }, goal: null, enemyDistance: null, questObjectId: 9 })))
+        .toBe(' | ctx pos=1.0,1.0 goal=- d=- enemy=- quest=9');
+    });
+
+    it('never throws: a throwing getter yields the err marker instead', () => {
+      expect(buildStatusContextSuffix(() => { throw new Error('SDK not ready'); })).toBe(' | ctx err');
+    });
+  });
+
+  describe('Farmer.setStatus wiring', () => {
+    it('appends live context to the persisted/log line but leaves the dashboard status bare', () => {
+      const f = fixture();
+      f.farmer.navigationGoal = { x: 3, y: 4, owners: new Map() };
+      f.farmer.questGoal = { objectId: 77 };
+      f.setEnemies([
+        { hp: 100, position: { x: 3, y: 0 } },   // living, distance 3 from (0,0)
+        { hp: 0, position: { x: 1, y: 0 } },     // dead — must not count as nearest
+      ]);
+      f.farmer.setStatus('Fighting');
+      expect(f.sdk.ui.status).toHaveBeenLastCalledWith('Fighting');
+      expect(f.sdk.log.info).toHaveBeenLastCalledWith('state: Fighting | ctx pos=0.0,0.0 goal=3.0,4.0 d=5.0 enemy=3.0 quest=77');
+    });
+
+    it('reports all-unknown context when there is no goal, enemy, or quest', () => {
+      const f = fixture();
+      f.setEnemies([]);
+      f.farmer.setStatus('Idle');
+      expect(f.sdk.log.info).toHaveBeenLastCalledWith('state: Idle | ctx pos=0.0,0.0 goal=- d=- enemy=- quest=-');
+    });
+
+    it('still logs on a throwing context read, and never breaks the bare-message change/heartbeat gate', () => {
+      vi.useFakeTimers(); vi.setSystemTime(10000);
+      const f = fixture();
+      const originalGetX = f.sdk.self.getX;
+      f.sdk.self.getX = () => { throw new Error('not spawned'); };
+      f.farmer.setStatus('Booting');
+      expect(f.sdk.log.info).toHaveBeenLastCalledWith('state: Booting | ctx err');
+      f.sdk.self.getX = originalGetX;
+
+      // Same message again immediately: must not re-log just because position/context changed.
+      f.farmer.navigationGoal = { x: 1, y: 1, owners: new Map() };
+      f.farmer.setStatus('Booting');
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(1);
+
+      // Heartbeat: same message after 5s does re-log, with fresh context.
+      vi.setSystemTime(15000);
+      f.farmer.setStatus('Booting');
+      expect(f.sdk.log.info).toHaveBeenLastCalledWith('state: Booting | ctx pos=0.0,0.0 goal=1.0,1.0 d=1.4 enemy=- quest=-');
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(2);
+    });
+  });
 });
