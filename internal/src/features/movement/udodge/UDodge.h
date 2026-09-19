@@ -68,20 +68,23 @@ void  SetHitScale(float s);           float GetHitScale();
 // udodgePlanner: "classic" = the pre-Slice-3 engine, anything else = tactician.
 void  SetPlannerPolicy(const char* text);
 Contact::Policy GetPlannerPolicy();
-// udodgeRouteCommit (navigation finish plan, Item 1). "off" = today's follower
-// (5-tile deviation → re-plan, no objective-changed trigger, no lattice snap
-// under Classic); anything else (default) = route commitment on.
+// udodgeRouteCommit (navigation finish plan, Item 1). Default OFF (owner
+// ruling 2026-09-19). "off" (default) = today's follower (5-tile deviation →
+// re-plan, no objective-changed trigger, no lattice snap under Classic);
+// anything else = route commitment on.
 void  SetRouteCommit(const char* text);
 bool  GetRouteCommit();
-// udodgeEnemyStandoff: "off" = the pre-standoff engine, anything else = auto.
+// udodgeEnemyStandoff. Default OFF (owner ruling 2026-09-19): "off" (default)
+// = the pre-standoff engine, anything else = auto.
 void  SetEnemyStandoff(const char* text);
 Standoff::Mode GetEnemyStandoff();
-// udodgeFrameBudget (navigation finish plan, Item 4). "off" = no ceiling, ever
-// (today's behaviour). "auto" (default) = when this Tick has already spent
-// kFrameBudgetMs before the solver phases, the solver degrades — fewer
-// candidates first — for THIS frame only; never touches ReanchorMap, never
-// drops a lane the relevance cull already kept, never relaxes a safety floor
-// on the step finally chosen. See UDodgeSolver.h SetFrameDegraded.
+// udodgeFrameBudget (navigation finish plan, Item 4). Default OFF (owner
+// ruling 2026-09-19). "off" (default) = no ceiling, ever (today's behaviour).
+// "auto" = when this Tick has already spent kFrameBudgetMs before the solver
+// phases, the solver degrades — fewer candidates first — for THIS frame
+// only; never touches ReanchorMap, never drops a lane the relevance cull
+// already kept, never relaxes a safety floor on the step finally chosen. See
+// UDodgeSolver.h SetFrameDegraded.
 void  SetFrameBudget(const char* text);
 bool  GetFrameBudgetAuto();
 // The live player hitbox multiplier the last BuildMap read, and whether the
@@ -110,8 +113,9 @@ void  SetServerPositionError(float tiles);
 void  SetServerAnchorX(float x);
 void  SetServerAnchorY(float y);
 void  SetServerAnchorValid(bool valid);
-// udodgeFallbackSidestep (navigation finish plan, item 2). Default ON — see
-// Settings::fallbackSidestep / Solver::SelectFallbackCandidate.
+// udodgeFallbackSidestep (navigation finish plan, item 2). Default OFF (owner
+// ruling 2026-09-19) — see Settings::fallbackSidestep /
+// Solver::SelectFallbackCandidate.
 void  SetFallbackSidestep(bool en);   bool  GetFallbackSidestep();
 
 } // namespace UDodge

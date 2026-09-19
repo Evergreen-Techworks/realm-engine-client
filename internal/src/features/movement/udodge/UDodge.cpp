@@ -53,17 +53,21 @@ std::atomic<float> g_hitScale{ 1.0f };
 // udodgePlanner. DEFAULT TACTICIAN on this private branch (S3.1); the public
 // default is decided before any release.
 std::atomic<uint8_t> g_planner{ static_cast<uint8_t>(Contact::Policy::Tactician) };
-// udodgeRouteCommit (navigation finish plan, Item 1). ON by default: once a
-// walk-to / lock-approach route is accepted, keep following it through a reflex
-// detour instead of dropping it on every few-tile deviation; re-plan only on a
-// real trigger. OFF reproduces today's behaviour exactly (the plain 5-tile
-// deviation threshold, the 500 ms stall timer, no objective-changed trigger, no
-// lattice snap under Classic). Lands under BOTH planner policies.
-std::atomic<bool> g_routeCommit{ true };
-// udodgeEnemyStandoff. AUTO by default: the owner's rule ("never walk near enemies,
+// udodgeRouteCommit (navigation finish plan, Item 1). OFF by default (owner
+// ruling 2026-09-19: unproven behaviour ships behind a switch, default off,
+// after private 1.0.18 dodged worse with this on). ON: once a walk-to /
+// lock-approach route is accepted, keep following it through a reflex detour
+// instead of dropping it on every few-tile deviation; re-plan only on a real
+// trigger. OFF reproduces today's (pre-Item-1) behaviour exactly (the plain
+// 5-tile deviation threshold, the 500 ms stall timer, no objective-changed
+// trigger, no lattice snap under Classic). Lands under BOTH planner policies.
+std::atomic<bool> g_routeCommit{ false };
+// udodgeEnemyStandoff. OFF by default (owner ruling 2026-09-19: unproven
+// behaviour ships behind a switch, default off, after private 1.0.18 dodged
+// worse with this on). AUTO: the owner's rule ("never walk near enemies,
 // right on top of them, or in front of them to get shotgunned") is the safe
-// behaviour, and `off` exists to A/B it against the pre-standoff engine.
-std::atomic<uint8_t> g_enemyStandoff{ static_cast<uint8_t>(Standoff::Mode::Auto) };
+// behaviour; `off` is the pre-standoff engine.
+std::atomic<uint8_t> g_enemyStandoff{ static_cast<uint8_t>(Standoff::Mode::Off) };
 std::atomic<float> g_reactMargin{ 0.60f };
 std::atomic<bool>  g_safeWalk{ true };
 std::atomic<bool>  g_speedScale{ true };
@@ -90,10 +94,14 @@ std::atomic<bool>  g_moveEnvelopeArmed{ false }; // proxy confirms outbound clam
 std::atomic<float> g_serverPositionError{ 0.f }; // desired position ahead of last sent MOVE
 std::atomic<float> g_serverAnchorX{ 0.f }, g_serverAnchorY{ 0.f };
 std::atomic<bool>  g_serverAnchorValid{ false };
-// udodgeFallbackSidestep (navigation finish plan, item 2). Default ON.
-std::atomic<bool>  g_fallbackSidestep{ true };
-// udodgeFrameBudget (navigation finish plan, item 4). AUTO by default.
-std::atomic<bool>  g_frameBudgetAuto{ true };
+// udodgeFallbackSidestep (navigation finish plan, item 2). Default OFF (owner
+// ruling 2026-09-19: unproven behaviour ships behind a switch, default off,
+// after private 1.0.18 dodged worse with this on).
+std::atomic<bool>  g_fallbackSidestep{ false };
+// udodgeFrameBudget (navigation finish plan, item 4). Default OFF (owner
+// ruling 2026-09-19: unproven behaviour ships behind a switch, default off,
+// after private 1.0.18 dodged worse with this on). AUTO when turned on.
+std::atomic<bool>  g_frameBudgetAuto{ false };
 // Target: p95 under 3 ms in a dense fight (navigation finish plan, Item 4
 // acceptance). Measured against the same clock the phase timers use, checked
 // once per Tick right before the solver phases.
@@ -2271,7 +2279,10 @@ Contact::Policy GetPlannerPolicy()
 }
 // udodgeRouteCommit: "off" = the pre-Item-1 follower (plain 5-tile deviation
 // threshold, no objective-changed trigger, no lattice snap under Classic);
-// anything else (default) = route commitment on.
+// anything else = route commitment on. The switch itself now BOOTS off
+// (g_routeCommit's initializer, owner ruling 2026-09-19) — this parser's
+// "anything else" branch only matters once something has explicitly asked
+// for a non-"off" value.
 void SetRouteCommit(const char* text)
 {
     g_routeCommit.store(!(text && text[0] == 'o' && text[1] == 'f'), std::memory_order_relaxed);
@@ -2331,7 +2342,10 @@ void  SetServerAnchorY(float y) { if (std::isfinite(y)) g_serverAnchorY.store(y,
 void  SetServerAnchorValid(bool valid) { g_serverAnchorValid.store(valid, std::memory_order_release); }
 void  SetFallbackSidestep(bool en) { g_fallbackSidestep.store(en, std::memory_order_relaxed); }
 bool  GetFallbackSidestep() { return g_fallbackSidestep.load(std::memory_order_relaxed); }
-// udodgeFrameBudget: "off" = no ceiling, ever; anything else (default) = auto.
+// udodgeFrameBudget: "off" = no ceiling, ever; anything else = auto. The
+// switch itself now BOOTS off (g_frameBudgetAuto's initializer, owner ruling
+// 2026-09-19) — this parser's "anything else" branch only matters once
+// something has explicitly asked for a non-"off" value.
 void  SetFrameBudget(const char* text)
 {
     g_frameBudgetAuto.store(!(text && text[0] == 'o' && text[1] == 'f'), std::memory_order_relaxed);
