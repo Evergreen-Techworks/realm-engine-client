@@ -662,15 +662,18 @@ void FillNavGrid(Path::NavGrid& grid, Vec2 player, bool safeWalk, Movement::Coll
 // steering target `lookahead` tiles further along it. Reports the player's distance
 // FROM the route (deviation) and whether they've reached its end — the re-plan
 // triggers. Returns the raw player position when there is no usable cached route.
+// `outConnected` (Item 1 S2): whether Follow found a clear rejoin point on the
+// cached polyline at all, however far off it the player has drifted. false only
+// when no cache exists or the whole route is disconnected.
 Vec2 NavStepFromCache(const NavCache& c, Vec2 player, float lookahead,
-                      float& outDev, bool& outNearEnd, const MapInput& in)
+                      float& outDev, bool& outNearEnd, bool& outConnected, const MapInput& in)
 {
-    outDev = 0.f; outNearEnd = false;
+    outDev = 0.f; outNearEnd = false; outConnected = false;
     if (!c.valid || c.n < 2) return player;
 
     Vec2 avoid[kMaxNavAvoid];
     const int avoidCount = ActiveNavAvoid(avoid, GetTickCount64());
-    return Navigation::Follow(c.wpts, c.n, player, lookahead, outDev, outNearEnd,
+    return Navigation::Follow(c.wpts, c.n, player, lookahead, outDev, outNearEnd, outConnected,
         [&](Vec2 from, Vec2 to) {
             return Navigation::PaddedPathClear(in, from, to) &&
                    Navigation::AvoidClear(avoid, avoidCount, from, to);
@@ -1166,14 +1169,16 @@ void Tick(void* player, float px, float py, float dt)
     // Follow the cached route and only re-run the A* on a real trigger. navStep is
     // the steering target ~lookahead budgets ahead along the cached polyline.
     bool navReplan = false;
+    ReplanReason navReplanReason = ReplanReason::None;
+    bool navRejoin = false;   // Item 1 S4 telemetry: a detour rejoined the route instead of re-planning
     const bool wasNavWaiting = g_navAwaiting;
     bool navWaiting = g_navAwaiting;
     Vec2 navStep{ walkX, walkY };
     if (walkActive) {
         const Vec2  wg{ walkX, walkY };
         const float lookahead = std::max(b, 1.f) * kUNavLookaheadBudgets;
-        float dev = 0.f; bool nearEnd = false;
-        navStep = NavStepFromCache(g_navCache, in.player, lookahead, dev, nearEnd, in);
+        float dev = 0.f; bool nearEnd = false; bool routeConnected = false;
+        navStep = NavStepFromCache(g_navCache, in.player, lookahead, dev, nearEnd, routeConnected, in);
         const bool goalMoved = g_navCache.valid &&
             LenSq(Sub(wg, g_navCache.goal)) > kNavGoalMoveTiles * kNavGoalMoveTiles;
         if (goalMoved && !sameGlobalRequest) {
@@ -1181,10 +1186,29 @@ void Tick(void* player, float px, float py, float dt)
             g_navAwaiting = navWaiting = false;
             navStep = wg;
         }
-        navReplan = goalMoved || !g_navCache.valid
-            || dev > kNavDeviateTiles                                                   // pushed off the route
-            || (nearEnd && g_navCache.partial)                                          // consumed a partial route → extend
-            || (nearEnd && LenSq(Sub(in.player, wg)) > kNavEndTiles * kNavEndTiles);    // at route end but not the goal
+        // Item 1 S2: route commitment. ON (default, settings.routeCommit): once a
+        // route is accepted, keep following it through a reflex detour — Follow
+        // already rejoins the polyline at the nearest forward point regardless of
+        // how far the detour pushed the player (routeConnected) — and re-plan only
+        // on a real trigger: the route is truly disconnected (routeConnected
+        // false), the objective changed, the cached route ran out before the goal
+        // (nearEnd), or no progress for 1.5 s (below, via g_navProgress). OFF
+        // reproduces the old plain "5 tiles off the route -> re-plan" rule exactly.
+        const bool objectiveChanged = g_navCache.valid && settings.routeCommit &&
+            !objective.SameObjective(g_lastRouteObjective);
+        const bool routeInvalidated = settings.routeCommit
+            ? (g_navCache.valid && !routeConnected)
+            : (dev > kNavDeviateTiles);
+        const bool routeExhausted = nearEnd && (g_navCache.partial ||                    // consumed a partial route → extend
+            LenSq(Sub(in.player, wg)) > kNavEndTiles * kNavEndTiles);                    // at route end but not the goal
+        navRejoin = settings.routeCommit && routeConnected && dev > kNavDeviateTiles;
+        navReplan = goalMoved || !g_navCache.valid || objectiveChanged || routeInvalidated || routeExhausted;
+        if (goalMoved)               navReplanReason = ReplanReason::GoalMoved;
+        else if (!g_navCache.valid)  navReplanReason = ReplanReason::Invalidated;
+        else if (objectiveChanged)   navReplanReason = ReplanReason::ObjectiveChanged;
+        else if (routeInvalidated)   navReplanReason = ReplanReason::Invalidated;
+        else if (routeExhausted)     navReplanReason = ReplanReason::Arrival;
+        g_lastRouteObjective = objective;
 
         // Blocked corridor: replan immediately. Small alternating nudges do
         // not count as progress; real movement around a wall does, even when
@@ -1209,7 +1233,11 @@ void Tick(void* player, float px, float py, float dt)
         };
         const bool blocked = g_navCache.valid &&
             (!Navigation::PaddedPathClear(in, in.player, navStep) || keepoutOnRoute());
-        const bool stalled = in.speed > 0.f && g_navProgress.Stalled(in.player, nowNav, g_navAwaiting);
+        // Item 1 S2: "no progress along the route for 1.5 s" under route
+        // commitment (a detour needs time to rejoin before the follower gives up
+        // on the route); the pre-existing 500 ms timer otherwise.
+        const bool stalled = in.speed > 0.f &&
+            g_navProgress.Stalled(in.player, nowNav, g_navAwaiting, settings.routeCommit ? 1500ULL : 500ULL);
         if (stalled && g_refusedFrames >= kNavRefusedFramesForAvoid &&
             nowNav - g_lastRefusedMs <= kNavRefusalFreshMs) {
             // Remember the square just past the player box in the refused direction,
@@ -1244,6 +1272,7 @@ void Tick(void* player, float px, float py, float dt)
         }
         if (blocked || stalled) {
             navReplan = true;
+            navReplanReason = blocked ? ReplanReason::Blocked : ReplanReason::NoProgress;
             g_navAwaiting = navWaiting = true;
             g_navCache.valid = false;
             navStep = in.player;
@@ -1271,6 +1300,8 @@ void Tick(void* player, float px, float py, float dt)
         g_navProgress.Reset();
         g_navAwaiting = false;
         g_navCache.valid = false;              // walk-to ended → drop the cache
+        g_lastRouteObjective = GoalOwner{};     // Item 1 S1/S2: next walk-to starts as a plan, not a replan
+        g_routeId = 0;
         ClearNavAvoid();
         g_wedged.store(false, std::memory_order_relaxed);            // plan 89: walk-to ended
         g_wedgeWalkActive.store(false, std::memory_order_relaxed);
@@ -1572,6 +1603,7 @@ void Tick(void* player, float px, float py, float dt)
             g_navAwaiting = false;
             g_navCache.valid   = true;
             navCacheRefreshed = true;
+            ++g_routeId;   // Item 1 S4 telemetry: a genuinely new committed route
             g_navCache.goal    = { walkX, walkY };
             g_navCache.n       = std::min(g_route.navWptCount, kMaxNavWpts);
             for (int i = 0; i < g_navCache.n; ++i) g_navCache.wpts[i] = g_route.navWpts[i];
@@ -1593,9 +1625,9 @@ void Tick(void* player, float px, float py, float dt)
     navWaiting = g_navAwaiting;
     if (goal.walkTo && navArrivedFresh) navStep = {walkX, walkY};
     else if (goal.walkTo && navCacheRefreshed && g_navCache.valid && !navWaiting) {
-        float dev = 0.f; bool nearEnd = false;
+        float dev = 0.f; bool nearEnd = false; bool routeConnected = false;
         navStep = NavStepFromCache(g_navCache, in.player,
-            std::max(b, 1.f) * kUNavLookaheadBudgets, dev, nearEnd, in);
+            std::max(b, 1.f) * kUNavLookaheadBudgets, dev, nearEnd, routeConnected, in);
     }
     // RING ROUTE: while a lock approach has a fresh dodge route whose goal lies in
     // the ring, this frame steers by THAT route's step target, not the corridor's.

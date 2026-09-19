@@ -173,6 +173,12 @@ int main() {
     Check(!progress.Stalled({-0.4f,0}, 4000, true), "worker waiting time does not count as stuck movement");
     Check(!progress.Stalled({-0.4f,0}, 5000), "fresh route receives a fresh movement-progress window");
     Check(progress.Stalled({-0.4f,0}, 5500), "a real stall after route arrival still triggers recovery");
+    // Item 1 S2: route commitment passes a longer stall window (1.5 s) so a
+    // detour has time to rejoin before the follower gives up on the route.
+    Navigation::Progress committed;
+    Check(!committed.Stalled({}, 6000, false, 1500), "committed progress starts with a fresh observation");
+    Check(!committed.Stalled({}, 7000, false, 1500), "still short of 1.5s: not yet a stall");
+    Check(committed.Stalled({}, 7500, false, 1500), "1.5s without 0.5 tiles of movement is a stall");
     MapInput padded{};
     padded.env.canOccupy = [](float, float y, bool) { return y > 0.f; };
     Check(!Navigation::PaddedPathClear(padded, {0,1}, {2,0.1f}), "navigation refuses wall-hugging shortcut");
@@ -197,7 +203,7 @@ int main() {
     in.env.occFlags=snap.navGrid.flags; in.env.occSide=kUNavSide;
     in.env.occRadius=kUNavRadCells; in.env.occCellTiles=1;
     auto clear = [&](Vec2 a, Vec2 b) { return OccupancyPathClear(in,a,b); };
-    float dev; bool end;
+    float dev; bool end; bool con;
     // The closest segment is across a tree/wall. Rejoin the visible earlier
     // leg instead of repeatedly aiming at the inaccessible nearby projection.
     Vec2 folded[] = {{0,0}, {0,3}, {1,3}, {1,0}};
@@ -208,28 +214,37 @@ int main() {
         }
         return true;
     };
-    Vec2 rejoin=Navigation::Follow(folded,4,{0.6f,1},6,dev,end,wallClear);
+    Vec2 rejoin=Navigation::Follow(folded,4,{0.6f,1},6,dev,end,con,wallClear);
     Check(wallClear({0.6f,1},rejoin) && rejoin.y>1,
           "folded route follows visible leg around wall");
+    Check(con, "a rejoin point on a folded-but-reachable route reports connected");
     Vec2 inaccessible[]={{0,0},{2,0}};
-    Vec2 hold=Navigation::Follow(inaccessible,2,{0,0},6,dev,end,wallClear);
+    Vec2 hold=Navigation::Follow(inaccessible,2,{0,0},6,dev,end,con,wallClear);
     Check(wallClear({0,0},hold), "blocked first bend is never returned unchecked");
     Vec2 shortRoute[]={{0,0},{2,0}};
-    Navigation::Follow(shortRoute,2,{0,0},6,dev,end,[](Vec2,Vec2){return true;});
+    Navigation::Follow(shortRoute,2,{0,0},6,dev,end,con,[](Vec2,Vec2){return true;});
     Check(!end, "lookahead reaching the end does not consume a route before arrival");
-    Navigation::Follow(shortRoute,2,{1.8f,0},6,dev,end,[](Vec2,Vec2){return true;});
+    Navigation::Follow(shortRoute,2,{1.8f,0},6,dev,end,con,[](Vec2,Vec2){return true;});
     Check(end, "route is consumed when the player actually reaches its endpoint");
-    Vec2 prefix=Navigation::Follow(inaccessible,2,{0,0},6,dev,end,wallClear);
+    Vec2 prefix=Navigation::Follow(inaccessible,2,{0,0},6,dev,end,con,wallClear);
     Check(prefix.x>0.3f && wallClear({0,0},prefix),
           "blocked lookahead still advances along the verified open prefix");
+    Check(con, "a verified open prefix still reports the route connected");
+    // Item 1 S2: a route with NO clear line anywhere is disconnected, not merely
+    // deviated — the one case that should still trigger a fresh search.
+    Vec2 never=Navigation::Follow(inaccessible,2,{5,5},6,dev,end,con,
+        [](Vec2,Vec2){ return false; });
+    Check(!con && LenSq(Sub(never,Vec2{5,5}))==0.f,
+          "a fully blocked route reports disconnected and holds at the player");
     Vec2 p{};
     for (int frame=0; frame<200 && Len(Sub(p,{4,4}))>0.05f; ++frame) {
-        Vec2 next=Navigation::Follow(plan.navWpts,plan.navWptCount,p,6,dev,end,clear);
+        Vec2 next=Navigation::Follow(plan.navWpts,plan.navWptCount,p,6,dev,end,con,clear);
         Check(clear(p,next), "every follower shortcut stays inside L corridor");
+        Check(con, "an on-map route stays connected while it is followed");
         p=Add(p,Mul(Normalize(Sub(next,p)),std::min(0.1f,Len(Sub(next,p)))));
     }
     Check(Len(Sub(p,{4,4}))<=0.05f, "follower traverses corner without stalling");
-    Vec2 target=Navigation::Follow(plan.navWpts,3,{0,0},6,dev,end,
+    Vec2 target=Navigation::Follow(plan.navWpts,3,{0,0},6,dev,end,con,
         [](Vec2,Vec2){return true;});
     Check(target.y>0, "open space retains smooth lookahead");
     // Approach a square tree from each cardinal direction; exercise replanning
@@ -244,7 +259,7 @@ int main() {
         Check(plan.navFound && !plan.navPartial, "tree detour found");
         p=start;
         for (int frame=0; frame<400 && Len(Sub(p,snap.navGoal))>0.05f; ++frame) {
-            Vec2 next=Navigation::Follow(plan.navWpts,plan.navWptCount,p,6,dev,end,clear);
+            Vec2 next=Navigation::Follow(plan.navWpts,plan.navWptCount,p,6,dev,end,con,clear);
             Check(clear(p,next), "tree shortcut has clear swept footprint");
             p=Add(p,Mul(Normalize(Sub(next,p)),std::min(0.1f,Len(Sub(next,p)))));
         }

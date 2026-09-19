@@ -1202,9 +1202,9 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
         navInput.env.squareY0 = squares.ty0;
         navInput.env.squareSide = squares.side;
     }
-    float deviation = 0.f; bool nearEnd = false;
+    float deviation = 0.f; bool nearEnd = false; bool connected = false;
     out.navStepTarget = Navigation::Follow(out.navWpts, wn, in.player,
-        std::max(in.moveBudget, 1.f) * kUNavLookaheadBudgets, deviation, nearEnd,
+        std::max(in.moveBudget, 1.f) * kUNavLookaheadBudgets, deviation, nearEnd, connected,
         [&](Vec2 from, Vec2 to) {
             return OccupancyPathClear(navInput, from, to) &&
                    Navigation::AvoidClear(in.navAvoid, in.navAvoidCount, from, to);

@@ -32,4 +32,14 @@ struct GoalOwner {
     }
 };
 
+// Item 1 S2: why the walk-to / lock-approach route follower re-planned this
+// tick, or None on a frame that kept following the committed route. Exactly the
+// four triggers the plan names, plus the two pre-existing hard-safety triggers
+// (GoalMoved covers the lock-approach goal itself moving, which is a form of
+// "objective changed" already handled by its own hysteresis; Blocked is "route
+// invalidated" by a fresh occupancy/keep-out read rather than by distance).
+enum class ReplanReason : uint8_t {
+    None, Invalidated, ObjectiveChanged, Arrival, NoProgress, GoalMoved, Blocked
+};
+
 } // namespace UDodge
