@@ -495,7 +495,7 @@ bool IsDurablePocketTemporal(const MapInput& in, const Core::Temporal::Ctx& ctx,
 
 void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
            const Path::PlanResult& route, CoreState& state, SolveResult& out,
-           const TimedAdvice& timed)
+           const TimedAdvice& timed, SharedCtx* shared)
 {
     out = SolveResult{};
     if (!in.map) { out.kind = SolveKind::Hold; return; }
@@ -517,10 +517,18 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     // then find the nearest cell where the STRAIGHT walk to it — and holding
     // there — dodges the moving bullets in TIME. This threads gaps the static
     // whole-path test cannot, and it drives the pre-positioning below.
-    static thread_local Core::Temporal::Ctx ctx;
-    Core::Temporal::Build(*in.map, in.settings.hitScale, in.settings.positionUncertainty,
-                          in.player, kUTemporalCullTiles, ctx,
-                          Core::ProjectilePlayerHalf(in.settings));
+    // Item 4 follow-up: build into the caller's SharedCtx (game-thread liveSolve
+    // and revalidate) when given one and it is not already built this tick;
+    // otherwise the original thread_local, rebuilt-every-call behaviour (worker
+    // thread, harness fallback path — anything not passing `shared`).
+    static thread_local Core::Temporal::Ctx localCtx;
+    Core::Temporal::Ctx& ctx = shared ? shared->ctx : localCtx;
+    if (!shared || !shared->built) {
+        Core::Temporal::Build(*in.map, in.settings.hitScale, in.settings.positionUncertainty,
+                              in.player, kUTemporalCullTiles, ctx,
+                              Core::ProjectilePlayerHalf(in.settings));
+        if (shared) shared->built = true;
+    }
     out.tempLanes = static_cast<uint16_t>(ctx.count);
     // How far into the horizon this context is EVIDENCE for every lane. Computed
     // once per solve (one int compare per lane), consumed only by the durability
@@ -1111,16 +1119,19 @@ int SelectFallbackCandidate(const FallbackCandidate* cands, int n, Vec2 radialRe
 bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
                         const Path::PlanResult& route, CoreState& state,
                         SolveResult& committed, bool mapRebuilt,
-                        const TimedAdvice& timed)
+                        const TimedAdvice& timed, SharedCtx* shared)
 {
     if (!in.map) return false;
     if (in.movementLocked || !std::isfinite(in.speed) || in.speed <= 0.f) {
         if (!committed.shouldMove) return false;
-        Solve(in, moveBudgetTiles, goal, route, state, committed, timed);
+        Solve(in, moveBudgetTiles, goal, route, state, committed, timed, shared);
         return true;
     }
     // Keep the hot stationary path cheap between map rebuilds. On a new map,
     // even a spatially clear Hold must inspect the new shot's future trajectory.
+    // NOT built when this branch never needs it (the common "holding still,
+    // map only re-anchored" tick returns above, before Build() — sharing must
+    // never turn that cheap path into a guaranteed build).
     const auto decisionClear = [&]() -> bool {
         if (!committed.shouldMove) {
             if (Core::PointSafety(in, in.player) < kULatencyPad) return false;
@@ -1133,10 +1144,17 @@ bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& g
                 !Core::ZonePathClear(in, in.player, committed.target)) return false;
         }
         // Never approve a moving target solely from the shorter painted lane.
-        static thread_local Core::Temporal::Ctx ctx;
-        Core::Temporal::Build(*in.map, in.settings.hitScale, in.settings.positionUncertainty,
-                              in.player, kUTemporalCullTiles, ctx,
-                              Core::ProjectilePlayerHalf(in.settings));
+        // Item 4 follow-up: same shared-or-thread_local choice as Solve() above,
+        // over IDENTICAL Build() inputs (same in.map/in.player/in.settings,
+        // same kUTemporalCullTiles) — see SharedCtx's contract in UDodgeSolver.h.
+        static thread_local Core::Temporal::Ctx localCtx;
+        Core::Temporal::Ctx& ctx = shared ? shared->ctx : localCtx;
+        if (!shared || !shared->built) {
+            Core::Temporal::Build(*in.map, in.settings.hitScale, in.settings.positionUncertainty,
+                                  in.player, kUTemporalCullTiles, ctx,
+                                  Core::ProjectilePlayerHalf(in.settings));
+            if (shared) shared->built = true;
+        }
         const Vec2 target = committed.shouldMove ? committed.target : in.player;
         const float dwell = committed.shouldMove ? kUDwellMs : Core::Temporal::kHorizonMs;
         return Core::Temporal::PathClear(ctx, in.player, in.speed, target, dwell);
@@ -1144,7 +1162,7 @@ bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& g
     if (decisionClear()) return false;
     // A rebuilt map contains the freshest evidence. It does not imply a solve
     // occurred: the worker may still be processing an older snapshot.
-    Solve(in, moveBudgetTiles, goal, route, state, committed, timed);
+    Solve(in, moveBudgetTiles, goal, route, state, committed, timed, shared);
     return true;
 }
 
