@@ -4,12 +4,14 @@
 #include "Collision.h"
 #include "Speed.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
 #include <limits>
 #include <queue>
 #include <unordered_map>
+#include <vector>
 
 namespace Movement { namespace Nav {
 

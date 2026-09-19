@@ -6,6 +6,8 @@
 #include "core/runtime/MemRead.h"
 #include "core/il2cpp/Il2CppContainers.h"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cerrno>
