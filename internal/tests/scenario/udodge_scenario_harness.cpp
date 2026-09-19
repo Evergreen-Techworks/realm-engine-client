@@ -1178,9 +1178,10 @@ void ApplyUserSettings()
     // ROUTE COMMIT A/B (navigation finish plan, Item 1): `HARNESS_ROUTE_COMMIT=off`
     // runs the pre-Item-1 follower; unset or any other value keeps the default (on).
     UDodge::SetRouteCommit(std::getenv("HARNESS_ROUTE_COMMIT"));
-    // FALLBACK SIDESTEP A/B (navigation finish plan, item 2): default on, matching
-    // Settings::fallbackSidestep; `HARNESS_FALLBACK_SIDESTEP=off` runs today's
-    // plain least-bad Fallback pick.
+    // FALLBACK SIDESTEP A/B (navigation finish plan, item 2): this harness fixture
+    // pins the A/B baseline to on regardless of Settings::fallbackSidestep's own
+    // default (owner ruling 2026-09-19: that switch now ships off); `HARNESS_
+    // FALLBACK_SIDESTEP=off` runs today's plain least-bad Fallback pick.
     {
         const char* v = std::getenv("HARNESS_FALLBACK_SIDESTEP");
         UDodge::SetFallbackSidestep(!(v && std::string(v) == "off"));
