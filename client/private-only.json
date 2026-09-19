@@ -5,6 +5,10 @@
     "src/testlab/recorderCore.ts",
     "src/testlab/recorderWriter.ts",
     "src/testlab/__tests__/recorderCore.test.ts",
-    "src/testlab/__tests__/recorderWriter.test.ts"
+    "src/testlab/__tests__/recorderWriter.test.ts",
+    "plugins/testlab-interleaver.ts",
+    "src/testlab/interleaverCore.ts",
+    "src/testlab/__tests__/interleaverCore.test.ts",
+    "src/plugins/__tests__/testlabInterleaver.test.ts"
   ]
 }
