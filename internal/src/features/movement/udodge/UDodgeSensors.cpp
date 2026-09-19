@@ -3,6 +3,7 @@
 #include "UDodgeEnemyHazards.h"
 #include "UDodgeTrajectoryPhase.h"
 #include "UDodgeLaneMotion.h"
+#include "UDodgePredErr.h"
 
 #include "AoeTracking.h"
 #include "GameState.h"
@@ -91,6 +92,7 @@ constexpr float kAoeArmWindowFallbackMs = 900.f;
 // no per-frame heap allocation. Single game-update-thread consumer; cleared at
 // the top of BuildMap/ReanchorMap.
 Movement::TileSensor::HazardMemo s_hazardMemo;
+PredErr::State s_predErr;   // [Diag/PredErr] calibration telemetry; untouched while diagOn is false
 
 using Movement::TileSensor::IsFinite;
 using Movement::TileSensor::IsFinitePoint;
@@ -978,7 +980,7 @@ void ClearPacketShots()
     s_packetCount = 0;
 }
 
-void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& settings)
+void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& settings, bool diagOn)
 {
     out.laneCount = 0;
     out.zoneCount = 0;
@@ -1072,6 +1074,9 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
         // here: the live position is the anchor.
         TraceLane(lane, p, elapsedMs, laneCap);
         if (lane.pointCount >= 1) ++out.laneCount;
+        if (diagOn)   // [Diag/PredErr]: arm/observe against the lane model's own forecast (UDodgePredErr.h)
+            PredErr::Sample(s_predErr, { lane.bulletId, lane.attackerObjId, lane.ownerObjId }, lane,
+                            Vec2{ p.x, p.y }, nowMs, IsCurvedShot(p), elapsedMs, /*allowArm=*/true);
 
         // A shot that never moves and sits on its owner is a stationary damage
         // field around that enemy: learn a keep-out for the enemy's type so the
@@ -1099,6 +1104,7 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
             DBG_FILE_LOG("[UDodge] BuildMap DONE lanes=" << out.laneCount
                 << " zones=" << out.zoneCount << " enemies=" << out.enemyCount);
     }
+    if (diagOn) PredErr::MaybeEmit(s_predErr, nowMs, &DbgFileLogWrite);
 }
 
 bool ReadWorldTick(uint32_t& outTickId)
@@ -1111,7 +1117,7 @@ bool ReadWorldTick(uint32_t& outTickId)
     return true;
 }
 
-bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& settings)
+bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& settings, bool diagOn)
 {
     if (!ProjectileTracking::IsInstalled()) return false;
     s_hazardMemo.Clear();   // per-frame hazard memo reset (same contract as Build)
@@ -1206,6 +1212,9 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
             // Core::Temporal takes over rather than the freeze silently under-counting.
             SetInstantSpan(lane, laneCap);
         }
+        if (diagOn)   // [Diag/PredErr]: observe only — BuildMap owns arming (UDodgePredErr.h)
+            PredErr::Sample(s_predErr, { lane.bulletId, lane.attackerObjId, lane.ownerObjId }, lane,
+                            Vec2{ p.x, p.y }, nowMs, curved, elapsedMs, /*allowArm=*/false);
     }
     int runtimeLaneCount = 0;
     for (int i = 0; i < map.laneCount; ++i)
@@ -1235,6 +1244,7 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
     // — otherwise the immediate solve / step re-validation would clear a spot the
     // add has already walked onto. Cheap: EnemyTracker::Tick() is self-throttled.
     PopulateEnemies(map, playerX, playerY);
+    if (diagOn) PredErr::MaybeEmit(s_predErr, nowMs, &DbgFileLogWrite);
     return true;
 }
 
