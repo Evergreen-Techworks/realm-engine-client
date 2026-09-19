@@ -209,6 +209,21 @@ describe('recorderCore: one test per record kind', () => {
     expect(buildArmRecord(T, 'switch', 'A')).toEqual({ k: 'arm', t: T, key: 'switch', value: 'A' });
   });
 
+  // Task A5a (switch interleaver) calls mark('ab.start', {key, a, b, blockMinutes,
+  // seed}) and mark('ab.stop', {key, restored}) — object values, not strings.
+  // buildArmRecord must pass a JSON-serialisable object through unchanged (it
+  // must not stringify it into `value` becoming a string, and must not reject
+  // it), since the Test Lab reader expects `arm.value` to be a string OR an
+  // object depending on the key.
+  it('arm passes a JSON-serialisable object value through unchanged (ab.start/ab.stop shape)', () => {
+    const payload = { key: 'udodgeEnemyStandoff', a: 'off', b: 'auto', blockMinutes: 3, seed: 42 };
+    const rec = buildArmRecord(T, 'ab.start', payload);
+    expect(rec).toEqual({ k: 'arm', t: T, key: 'ab.start', value: payload });
+    expect(typeof rec.value).toBe('object');
+    // And it survives a real JSON round-trip (what the writer actually does).
+    expect(JSON.parse(JSON.stringify(rec))).toEqual(rec);
+  });
+
   it('end', () => {
     expect(buildEndRecord(T, 'disabled')).toEqual({ k: 'end', t: T, reason: 'disabled' });
     expect(buildEndRecord(T, null)).toEqual({ k: 'end', t: T, reason: null });
