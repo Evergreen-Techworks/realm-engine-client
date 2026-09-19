@@ -32,6 +32,13 @@ export interface ProjectileDef {
   acceleration: number;
   accelerationDelay: number;
   speedClamp: number;
+  /**
+   * objects.xml <Laser> length in tiles (0 = not a laser). A laser has Speed 0
+   * and LifetimeMS 200, so without this length a shot recovered from ENEMYSHOOT
+   * alone cannot be modelled as a beam at all — the DLL used to treat it as a
+   * slow moving dot at the emitter.
+   */
+  laserDistance: number;
 }
 
 export type ObjectCategory =
@@ -526,6 +533,10 @@ export class GameDataLoader {
             acceleration: Number(proj.Acceleration ?? 0),
             accelerationDelay: Number(proj.AccelerationDelay ?? 0),
             speedClamp: Number(proj.SpeedClamp ?? 0),
+            laserDistance: (() => {
+              const v = Number(proj.Laser ?? 0);
+              return Number.isFinite(v) && v > 0 ? v : 0;
+            })(),
           });
         }
       }
