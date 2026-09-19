@@ -14,6 +14,7 @@
 #include "UDodgeTelemetry.h"
 #include "UDodgePredErr.h"
 #include "UDodgeGoalOwner.h"
+#include "UDodgeMapDiag.h"
 #include "features/movement/nav/Speed.h"
 
 #include "MovementRuntime.h"
@@ -130,6 +131,9 @@ PredErr::HitCulprit::Ring g_hitHistory;
 // [Diag/Ground]: edge-triggered damaging-ground steps (UDodgePredErr.h). OFF
 // unless diagOn; game-update thread only.
 PredErr::GroundDiag::State g_groundDiag;
+// [Diag/Map]: Item 3 map-capture readiness observability (UDodgeMapDiag.h).
+// OFF unless diagOn; game-update thread only.
+MapDiag::State g_mapDiag;
 
 // ── Decision telemetry (UDodgeTelemetry.h) ───────────────────────────────────
 // OFF unless DiagTiming::On() (RE_ASSETS\diag-timing.flag, or the developer "Diag
@@ -861,6 +865,7 @@ void OnEnter()
     g_solveSeq = 0;
     g_telemetry = Telemetry::State{};
     g_telemetryWorker = TelemetryWorker{};
+    g_mapDiag = MapDiag::State{};
     // Reset the AutoNexus last-resort signal (plan 77) on (re)entry.
     g_udExposed.store(false, std::memory_order_relaxed);
     g_udStandClr.store(1e9f, std::memory_order_relaxed);
@@ -1164,6 +1169,19 @@ void Tick(void* player, float px, float py, float dt)
         corridor.epoch, corridor.goalId, g_globalCorridorEpoch, g_globalCorridorGoalId);
     g_globalCorridorEpoch = globalPointActive ? corridor.epoch : 0;
     g_globalCorridorGoalId = globalPointActive ? corridor.goalId : 0;
+    // Item 3 (navigation finish plan, 2026-09-19), VISIBLE FALLBACK: this gate
+    // is already the whole contract. While capturePending is set, this block
+    // never runs, so walkX/walkY keep whatever DangerPlanner::GetWalkGoal (or
+    // the lock-approach/follow logic above) already put in them — the exact
+    // same values navNavigator=legacy would use — and every nav-replan / cache
+    // / follow decision from here down (they only ever branch on walkActive,
+    // g_navCache, etc., never on Runtime::Enabled()) runs identically to
+    // legacy too. So a stuck capture already degrades to legacy walk-to
+    // behaviour from its very first pending tick; nothing here needed to
+    // change for Item 3's fallback requirement. What was missing was making
+    // that visible — see t.navFallback / "nav=dstar(fallback)" below, and
+    // [Diag/Map] (UDodgeMapDiag.h) for why capture is pending in the first
+    // place.
     if (Movement::Nav::Runtime::Enabled() && !corridor.capturePending) {
         if (walkActive && !lockApproach && !wasdActive) {
             if (g_globalAssistance && corridor.count >= 2 && corridor.state != Movement::Nav::RouteState::Unreachable) {
@@ -2020,6 +2038,12 @@ void Tick(void* player, float px, float py, float dt)
         t.navigatorDstar = Movement::Nav::Runtime::Enabled();
         t.corridorState = static_cast<uint8_t>(corridor.state);
         t.mapPending = corridor.capturePending;
+        // Item 3: dstar selected, capture stuck pending past kMapFallbackMs.
+        // The walk-to is already running the legacy path underneath (the
+        // waypoint-substitution block a few hundred lines below is skipped
+        // whenever capturePending is set) — this only makes that visible.
+        t.navFallback = t.navigatorDstar && corridor.capturePending &&
+                        corridor.captureDiag.pendingMs >= T::kMapFallbackMs;
         t.globalAssist = g_globalAssistance;
         t.player = in.player;
         if (wasdActive) {
@@ -2109,6 +2133,15 @@ void Tick(void* player, float px, float py, float dt)
         const int groundDmg = WorldTAB::GetTileDamageLive(groundTileX, groundTileY);
         t.onHazard = groundDmg > 0;
         T::Emit(g_telemetry, t, &DbgFileLogWrite);
+
+        // [Diag/Map]: Item 3 observability — which guard is holding capture,
+        // tiles read, list pointer/count/epoch, ms pending, and the
+        // transition to ready with the reason. Only while dstar is selected;
+        // corridor.captureDiag is always-filled plain data (Runtime.cpp), so
+        // this is purely a formatting + logging cost, gated the same as
+        // every other line in this block.
+        if (t.navigatorDstar)
+            MapDiag::Step(g_mapDiag, corridor.captureDiag, t.nowMs, &DbgFileLogWrite);
 
         // [Diag/Ground]: edge-triggered damaging-ground steps (UDodgePredErr.h).
         // Reuses this frame's own telemetry sample for the decision fields —

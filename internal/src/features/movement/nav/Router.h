@@ -22,6 +22,36 @@ struct RoutePoint {
 
 enum class RouteState { Idle, Repairing, Ready, Arrived, Partial, Unreachable };
 
+// Item 3 (navigation finish plan, 2026-09-19) observability: WHY the D* capture
+// has not produced a result yet, or what proved it could. Plain data, always
+// filled by Runtime::Update (a handful of field copies, not a string format or
+// a file write) so this costs nothing when nobody looks at it; UDodge.cpp
+// decides whether to log it, gated behind the existing diag-timing flag.
+enum class CaptureGuard : uint8_t {
+    None,               // not currently pending
+    NoMapInfo,          // the client has not bridged valid map dimensions yet (navMapInfo)
+    ListUnreadable,      // the world/tile-list pointer chain did not read this tick
+    AwaitingReplacement, // docs/navigation/2026-09-15-global-routing-integration.md's fail-closed
+                          // limitation: the game reused both the world and list pointers with an
+                          // equal-or-larger count, so pointer/size evidence alone cannot prove the
+                          // list holds the new map. Waiting on the own-tile+ring proof instead.
+};
+
+struct CaptureDiag {
+    CaptureGuard guard = CaptureGuard::None;
+    uint64_t     epoch = 0;
+    int32_t      squaresRead = 0;   // this epoch's incremental scan progress (Runtime's nextSquare)
+    int32_t      listSize = 0;      // live List<Square>.Count read this tick
+    void*        listPtr = nullptr;
+    void*        worldPtr = nullptr;
+    uint64_t     pendingSinceMs = 0; // GetTickCount64() when this epoch started (0 = not applicable)
+    uint64_t     pendingMs = 0;      // now - pendingSinceMs: time waited so far, or time it took to
+                                      // become ready on the one tick `ready` flips true
+    bool         ready = false;      // capture confirmed for this epoch
+    bool         fastPath = false;   // reached ready via the pre-existing pointer/shrink evidence,
+                                      // not the new own-tile+ring proof (Item 3)
+};
+
 struct RouteCorridor {
     uint64_t epoch = 0;
     uint64_t goalId = 0;
@@ -30,6 +60,7 @@ struct RouteCorridor {
     bool capturePending = false;
     std::array<RoutePoint, 8> points{};
     int count = 0;
+    CaptureDiag captureDiag{};
 };
 
 class Router {
