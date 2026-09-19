@@ -939,7 +939,27 @@ float BlockerRadiusFor(const EnemyTracker::Entry& e)
     return (!e.hasHealthBar || e.isScenery) ? kStaticBlockerRadius : kEnemyRadius;
 }
 
-void PopulateEnemies(DangerMap& out, float playerX, float playerY)
+// ENEMY STANDOFF: the two radii this enemy contributes (UDodgeStandoff.h). Every
+// input is cached per TYPE by EnemyTracker, so this is arithmetic, not a read.
+//
+// The LOCKED target keeps its core but carries NO band: how close we fight it is
+// the engagement geometry's decision (ComputeLockGeometry), not navigation's — the
+// same split the burst keep-out already makes. An enemy that cannot shoot and has
+// learned no self-blast contributes nothing at all, so a crate or a wall segment
+// never fences off a room.
+void FillStandoff(EnemyBlocker& b, const EnemyTracker::Entry& e, const Settings& settings, bool isLock)
+{
+    b.standoffCore = 0.f;
+    b.standoffBand = 0.f;
+    if (settings.enemyStandoff == Standoff::Mode::Off) return;
+    if (e.hp <= 0 && !e.isInvulnerable) return;
+    const float band = Standoff::BandRadius(e.shotSpeedTilesPerSec, b.radius, e.hasProjectiles,
+                                            EnemyHazards::KeepoutRadius(e.objType));
+    b.standoffCore = Standoff::CoreRadius(b.passiveScenery, band);
+    b.standoffBand = isLock ? 0.f : std::max(band, b.standoffCore);
+}
+
+void PopulateEnemies(DangerMap& out, float playerX, float playerY, const Settings& settings)
 {
     out.enemyCount = 0;
     out.hasLock = false;
@@ -979,6 +999,7 @@ void PopulateEnemies(DangerMap& out, float playerX, float playerY)
                 b.pos = { e.x, e.y };
                 b.radius = BlockerRadiusFor(e);
                 b.passiveScenery = !e.hasHealthBar || e.isScenery;
+                FillStandoff(b, e, settings, userLockId != 0 && e.id == userLockId);
                 if (out.enemyCount == kMaxEnemies) refreshFarthest();   // just filled
             } else {
                 // Full: the snapshot exceeded capacity (still reported via
@@ -990,6 +1011,7 @@ void PopulateEnemies(DangerMap& out, float playerX, float playerY)
                     b.pos = { e.x, e.y };
                     b.radius = BlockerRadiusFor(e);
                     b.passiveScenery = !e.hasHealthBar || e.isScenery;
+                    FillStandoff(b, e, settings, userLockId != 0 && e.id == userLockId);
                     refreshFarthest();
                 }
             }
@@ -1001,6 +1023,16 @@ void PopulateEnemies(DangerMap& out, float playerX, float playerY)
     const EnemyTracker::LockInfo lock = EnemyTracker::GetLock(userLockId);
     if (EnemyTracker::Engages(lock)) {
         out.hasLock = true; out.lockId = lock.id; out.lockPos = { lock.x, lock.y };
+        // The locked target's band feeds the fight distance, never navigation.
+        out.lockBand = 0.f;
+        if (settings.enemyStandoff != Standoff::Mode::Off)
+            for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot())
+                if (e.id == lock.id) {
+                    out.lockBand = Standoff::BandRadius(e.shotSpeedTilesPerSec, BlockerRadiusFor(e),
+                                                        e.hasProjectiles,
+                                                        EnemyHazards::KeepoutRadius(e.objType));
+                    break;
+                }
     }
 }
 
@@ -1076,6 +1108,7 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
     out.lockId = 0;
     out.lockPos = {};
     out.planner = settings.planner;
+    out.enemyStandoff = settings.enemyStandoff;
     // LIVE HIT BOX (S3.3). One read per map build of the multiplier the game's own
     // hit test uses — the value the collider feature writes when armed, the game's
     // own otherwise. Untrusted offset or unreadable => 1.0, the game default and
@@ -1103,7 +1136,7 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
     const int32_t localId = ProjectileTracking::GetLocalPlayerObjectId();
 
     // Enemies → hard-no-go blockers + the user's enemy lock (live snapshot).
-    PopulateEnemies(out, playerX, playerY);
+    PopulateEnemies(out, playerX, playerY, settings);
 
     // Prune shots the game deleted early (wall/enemy/player hit) BEFORE reading the
     // tracked list, so their lanes vanish immediately instead of lingering to their
@@ -1343,7 +1376,7 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
     // a HARD no-go, so a moving add's CURRENT position must be reflected each frame
     // — otherwise the immediate solve / step re-validation would clear a spot the
     // add has already walked onto. Cheap: EnemyTracker::Tick() is self-throttled.
-    PopulateEnemies(map, playerX, playerY);
+    PopulateEnemies(map, playerX, playerY, settings);
     if (diagOn) PredErr::MaybeEmit(s_predErr, nowMs, &DbgFileLogWrite);
     return true;
 }

@@ -51,6 +51,10 @@ std::atomic<float> g_hitScale{ 1.0f };
 // udodgePlanner. DEFAULT TACTICIAN on this private branch (S3.1); the public
 // default is decided before any release.
 std::atomic<uint8_t> g_planner{ static_cast<uint8_t>(Contact::Policy::Tactician) };
+// udodgeEnemyStandoff. AUTO by default: the owner's rule ("never walk near enemies,
+// right on top of them, or in front of them to get shotgunned") is the safe
+// behaviour, and `off` exists to A/B it against the pre-standoff engine.
+std::atomic<uint8_t> g_enemyStandoff{ static_cast<uint8_t>(Standoff::Mode::Auto) };
 std::atomic<float> g_reactMargin{ 0.60f };
 std::atomic<bool>  g_safeWalk{ true };
 std::atomic<bool>  g_speedScale{ true };
@@ -298,10 +302,12 @@ struct LockGeometry {
     float innerStandoff = 0.f;     // annulus inner radius (never fight point-blank)
     float engagementRange = 0.f;   // inset outer radius: shots connect reliably
     float standoff = 0.f;          // orbit standoff point distance
+    float targetBand = 0.f;        // ENEMY STANDOFF: the locked target's band radius (0 = none)
 };
-LockGeometry ComputeLockGeometry(const Settings& settings)
+LockGeometry ComputeLockGeometry(const Settings& settings, float targetBand)
 {
     LockGeometry g;
+    g.targetBand = targetBand;
     // Orbit the locked enemy at a standoff = resolved weapon range × 0.85
     // (the SetOrbitRange override feeds the standoff directly when non-zero).
     g.weaponRange = AutoAim::IsProjRangeResolved() ? AutoAim::GetProjRangeTiles() : 6.f;
@@ -316,6 +322,25 @@ LockGeometry ComputeLockGeometry(const Settings& settings)
     // and never past weapon range — the soft goal never aims point-blank.
     const float standoff = settings.orbitRange > 0.f ? settings.orbitRange : g.weaponRange * 0.85f;
     g.standoff = std::clamp(standoff, g.innerStandoff + kUDurablePocketMargin, g.engagementRange);
+
+    // ENEMY STANDOFF: fight from the OUTER part of weapon range, not the middle of
+    // it. 54 % of the owner's 152 logged hits had an enemy within 4 tiles and the
+    // shot that landed was a median of 62 ms old — at mid-ring the dodge simply has
+    // no time. The target's own band (what its fastest shot covers in the reaction
+    // budget) becomes the preferred fight distance, capped by what the weapon can
+    // still reach. A short-range class (engagementRange < kShortRangeTiles) is left
+    // exactly as it was, except that the 2-tile core still applies: a melee build
+    // has no outer ring to retreat to and fencing it off would stop it fighting.
+    if (settings.enemyStandoff != Standoff::Mode::Off && g.targetBand > 0.f &&
+        settings.orbitRange <= 0.f && g.engagementRange >= kShortRangeTiles) {
+        const float want = std::min(g.targetBand, g.engagementRange - kUStandoffRangeInset);
+        g.innerStandoff = std::max(g.innerStandoff,
+                                   std::min(g.targetBand, g.engagementRange) - kUStandoffRingWidth);
+        g.innerStandoff = std::min(g.innerStandoff, g.engagementRange - kUDurablePocketMargin);
+        g.standoff = std::clamp(want, g.innerStandoff, g.engagementRange);
+    }
+    g.innerStandoff = std::max(g.innerStandoff, Standoff::kCoreTiles);
+    g.innerStandoff = std::min(g.innerStandoff, std::max(0.5f, g.engagementRange - kUDurablePocketMargin));
     return g;
 }
 
@@ -447,6 +472,7 @@ Settings ReadSettings()
     s.stepTiles    = stepT <= 0.f ? 0.f : Clamp(stepT, 0.4f, 3.f);
     s.hitScale     = Clamp(g_hitScale.load(std::memory_order_relaxed), 0.25f, 2.5f);
     s.planner      = static_cast<Contact::Policy>(g_planner.load(std::memory_order_relaxed));
+    s.enemyStandoff = static_cast<Standoff::Mode>(g_enemyStandoff.load(std::memory_order_relaxed));
     s.positionUncertainty = Clamp(g_serverPositionError.load(std::memory_order_relaxed), 0.f, 0.35f);
     s.reactMargin  = Clamp(g_reactMargin.load(std::memory_order_relaxed), 0.05f, 2.0f);
     s.safeWalk     = g_safeWalk.load(std::memory_order_relaxed);
@@ -490,7 +516,25 @@ void PublishMinimal(Decision decision, Vec2 player)
 // (cheap via the per-tick hazard memo). `grid` persists across frames (a static in
 // Tick), so unrebuilt wall bits survive. Runs inside the per-tick memo lifetime
 // (BuildMap/ReanchorMap populated it).
-void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls, Movement::Collision::Rule rule)
+// ENEMY STANDOFF: the discs, collected ONCE per publish from the plain enemy list
+// the sensors already built. Nearest-first is implicit — PopulateEnemies keeps the
+// N nearest — and the list is capped so a 26-enemy Monolith pack costs a bounded
+// raster, not a per-cell sweep.
+int CollectStandoffDiscs(const DangerMap& map, Standoff::Disc* out)
+{
+    int n = 0;
+    if (map.enemyStandoff == Standoff::Mode::Off) return 0;
+    for (int i = 0; i < map.enemyCount && n < Standoff::kMaxDiscs; ++i) {
+        const EnemyBlocker& e = map.enemies[i];
+        if (e.standoffCore <= 0.f && e.standoffBand <= 0.f) continue;
+        Standoff::Disc& d = out[n++];
+        d.x = e.pos.x; d.y = e.pos.y; d.core = e.standoffCore; d.band = e.standoffBand;
+    }
+    return n;
+}
+
+void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls, Movement::Collision::Rule rule,
+                 const DangerMap& map)
 {
     grid.center = player;
     grid.squareX0 = static_cast<int>(std::floor(player.x)) - kUOccSquareRad;
@@ -547,6 +591,16 @@ void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls, Movement::
             }
         }
     }
+    // ENEMY STANDOFF bits. Refreshed EVERY call (enemies move; walls do not), and
+    // read only by the GOAL tests — the dodge stays free to cross a band or a core
+    // to escape a shot, which is the difference between a standoff and a cage.
+    Standoff::Disc discs[Standoff::kMaxDiscs];
+    const int discCount = CollectStandoffDiscs(map, discs);
+    Standoff::Rasterize(grid.flags, S,
+                        player.x - static_cast<float>(R) * kUPathCellTiles,
+                        player.y - static_cast<float>(R) * kUPathCellTiles,
+                        kUPathCellTiles, discs, discCount, player.x, player.y,
+                        /*exemptGoal*/false, 0.f, 0.f);
 }
 
 // Fill the navigation A* occupancy (walk-to). Centered on the player; each cell is
@@ -561,7 +615,8 @@ void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls, Movement::
 // from single-tile to the player-box footprint makes walk-to hug walls slightly
 // less — the intended fix for routing the player's edge into a wall the game blocks.
 // Cheap: one mutex lock, kUNavCells hashmap probes, only when a walk-to is active.
-void FillNavGrid(Path::NavGrid& grid, Vec2 player, bool safeWalk, Movement::Collision::Rule rule)
+void FillNavGrid(Path::NavGrid& grid, Vec2 player, bool safeWalk, Movement::Collision::Rule rule,
+                 const DangerMap& map, bool navActive, Vec2 navGoal)
 {
     // Stable tile centres preserve clearance in one-tile corridors; a grid
     // anchored to the player's fractional position can put every cell on a wall edge.
@@ -576,6 +631,17 @@ void FillNavGrid(Path::NavGrid& grid, Vec2 player, bool safeWalk, Movement::Coll
                              halfEdge, /*foldHazard=*/safeWalk, grid.flags);
     for (int i = 0; i < kUNavCells; ++i)
         if (grid.flags[i] & 0x8) grid.flags[i] |= 0x1; // never A* into blank map void
+    // ENEMY STANDOFF. Cores become walls for the route (NavBlocked) and bands a
+    // strong per-cell cost (RunNavSearch), so a walk-to goes AROUND a pack instead
+    // of through it — 68 of the owner's 152 logged hits were taken while a script
+    // was walking the player. The destination's own band is exempted within
+    // kGoalExemptTiles so a bag or portal beside a mob stays reachable; no core
+    // ever is.
+    Standoff::Disc discs[Standoff::kMaxDiscs];
+    const int discCount = CollectStandoffDiscs(map, discs);
+    Standoff::Rasterize(grid.flags, kUNavSide, originX, originY, kUNavCellTiles,
+                        discs, discCount, player.x, player.y,
+                        navActive, navGoal.x, navGoal.y);
 }
 
 // Follow the cached nav route: project the player onto the polyline, then place the
@@ -978,7 +1044,7 @@ void Tick(void* player, float px, float py, float dt)
     bool  ringApproach = false;
     float ringOuter = 0.f, ringInner = 0.f;
     if (!walkActive && !wasdActive && g_map.hasLock) {
-        const LockGeometry lg = ComputeLockGeometry(settings);
+        const LockGeometry lg = ComputeLockGeometry(settings, g_map.lockBand);
         const float dist = Len(Sub(in.player, g_map.lockPos));
         if (g_map.lockId != g_lockApproachId) {
             g_lockApproachId = g_map.lockId;
@@ -1017,6 +1083,16 @@ void Tick(void* player, float px, float py, float dt)
         g_globalAssistance = false;
     g_globalRawGoal = {walkX, walkY};
     g_globalRawActive = globalPointActive;
+    // ENEMY STANDOFF: hand the D* navigator the same discs the nav A* rasterises,
+    // so both navigators route around a pack under one rule.
+    {
+        Standoff::Disc discs[Standoff::kMaxDiscs];
+        const int discCount = CollectStandoffDiscs(g_map, discs);
+        Movement::Nav::Router::StandoffDisc routerDiscs[Standoff::kMaxDiscs];
+        for (int i = 0; i < discCount; ++i)
+            routerDiscs[i] = { discs[i].x, discs[i].y, discs[i].core, discs[i].band };
+        Movement::Nav::Runtime::SetStandoff(routerDiscs, discCount);
+    }
     const auto corridor = Movement::Nav::Runtime::Update({px, py}, {walkX, walkY},
         baseTilesPerSec, globalPointActive, settings.safeWalk);
     const bool sameGlobalRequest = Navigation::SameRouteRequest(
@@ -1183,7 +1259,7 @@ void Tick(void* player, float px, float py, float dt)
         goal.walkTo = true;
         goal.pos = navStep;
     } else if (g_map.hasLock) {
-        const LockGeometry lg = ComputeLockGeometry(settings);
+        const LockGeometry lg = ComputeLockGeometry(settings, g_map.lockBand);
         const float innerStandoff = lg.innerStandoff;
         const float engagementRange = lg.engagementRange;
         const float standoff = lg.standoff;
@@ -1295,7 +1371,7 @@ void Tick(void* player, float px, float py, float dt)
         }
         {
             PhaseTimer _p(DiagTiming::Game().rasterOcc);
-            FillOccGrid(s_snap.grid, gridCenter, true, collisionRule);
+            FillOccGrid(s_snap.grid, gridCenter, true, collisionRule, g_map);
         }
         s_snap.commitment       = g_commitment;
         s_snap.tickId           = g_map.tickId;
@@ -1349,7 +1425,8 @@ void Tick(void* player, float px, float py, float dt)
         s_snap.navAvoidCount    = ActiveNavAvoid(s_snap.navAvoid, GetTickCount64());
         if (s_snap.navActive) {
             PhaseTimer _p(DiagTiming::Game().rasterNav);
-            FillNavGrid(s_snap.navGrid, in.player, settings.safeWalk, collisionRule);
+            FillNavGrid(s_snap.navGrid, in.player, settings.safeWalk, collisionRule,
+                        g_map, true, Vec2{ walkX, walkY });
             if (diagOn) ++DiagTiming::Game().navReplans;
         }
         uint32_t pub = 0;
@@ -1836,7 +1913,7 @@ void Tick(void* player, float px, float py, float dt)
             t.targetId = g_map.lockId;  t.target = g_map.lockPos;  t.hasTarget = true;
         }
         if (g_map.hasLock && (t.objective == T::Objective::Lock || t.objective == T::Objective::LockApproach)) {
-            const LockGeometry lg = ComputeLockGeometry(settings);
+            const LockGeometry lg = ComputeLockGeometry(settings, g_map.lockBand);
             t.ringInner = lg.innerStandoff;
             t.ringOuter = lg.engagementRange;
         }
@@ -1878,6 +1955,16 @@ void Tick(void* player, float px, float py, float dt)
         t.clearance = g_solve.clearance;
         t.commanded = Sub(moveTarget, in.player);
         t.lanes = g_map.laneCount;  t.zones = g_map.zoneCount;  t.enemies = g_map.enemyCount;
+        // ENEMY STANDOFF telemetry: one pass over the enemy list, flag-gated with
+        // the rest of the heartbeat, so it costs nothing in a normal session.
+        t.nearEnemy = -1.f;
+        t.inBand = false;
+        for (int i = 0; i < g_map.enemyCount; ++i) {
+            const EnemyBlocker& e = g_map.enemies[i];
+            const float d = Len(Sub(in.player, e.pos));
+            if (t.nearEnemy < 0.f || d < t.nearEnemy) t.nearEnemy = d;
+            if (e.standoffBand > 0.f && d < e.standoffBand) t.inBand = true;
+        }
         t.workerDodgeMs = g_telemetryWorker.dodgeMs;  t.workerNavMs = g_telemetryWorker.navMs;
         t.workerTimedMs = g_telemetryWorker.timedMs;  t.workerSolveMs = g_telemetryWorker.solveMs;
         t.timedStatus = g_telemetryWorker.timedStatus;
@@ -1976,6 +2063,14 @@ void  SetPlannerPolicy(const char* text)
 Contact::Policy GetPlannerPolicy()
 {
     return static_cast<Contact::Policy>(g_planner.load(std::memory_order_relaxed));
+}
+void  SetEnemyStandoff(const char* text)
+{
+    g_enemyStandoff.store(static_cast<uint8_t>(Standoff::ModeFromText(text)), std::memory_order_relaxed);
+}
+Standoff::Mode GetEnemyStandoff()
+{
+    return static_cast<Standoff::Mode>(g_enemyStandoff.load(std::memory_order_relaxed));
 }
 // Game thread: whatever the last map build read (UDodgeSensors BuildMap, S3.3).
 float GetLiveHitboxMultiplier() { return g_map.targetScale; }

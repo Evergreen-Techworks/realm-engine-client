@@ -6,6 +6,7 @@
 
 #include "features/movement/nav/Collision.h"
 #include "features/movement/contact/Contact.h"
+#include "UDodgeStandoff.h"
 
 // UDodge — unified auto-dodge: PJDodge predictive core + RePP field
 // escape/goal layer. Pure data + inline math. No game/IL2CPP includes.
@@ -387,6 +388,15 @@ constexpr float kUInRangeSlack = 0.20f;  // small grid-quantization grace around
 // must always be able to move outward (see UDodgeSolver/UDodgePathfinder).
 constexpr float kUInnerStandoffFrac     = 0.35f;  // inner radius as a fraction of weapon range (tune in testing)
 constexpr float kUInnerStandoffMinTiles = 2.0f;   // absolute inner-radius floor (tiles)
+// ENEMY STANDOFF ring shaping (UDodgeStandoff.h). The fight is held at the target's
+// own band, pulled just inside what the weapon can still reach, and the goal
+// annulus is narrowed to a ring of this width at the OUTER edge of weapon range —
+// the mid-ring is where the owner's hits happened.
+constexpr float kUStandoffRangeInset = 0.25f;   // hold this far inside engagement range
+constexpr float kUStandoffRingWidth  = 1.5f;    // annulus width at the outer edge
+// Below this engagement range a class has no outer ring to fight from; melee and
+// short-range builds keep today's behaviour (the 2-tile core still applies).
+constexpr float kShortRangeTiles     = 3.0f;
 // Solver inner-standoff penalty per tile a dodge point sits INSIDE the inner ring.
 // At least as strong as kSolveOutRangeW so the score never prefers point-blank.
 constexpr float kSolveInnerW = 1.6f;
@@ -615,9 +625,19 @@ struct EnemyBlocker {
     // still constrains a route, but it is not a live mob whose keep-out the
     // clearance preference should widen — see EnemyAvoidanceRadius.
     bool  passiveScenery = false;
+    // ENEMY STANDOFF (UDodgeStandoff.h), filled by Sensors::PopulateEnemies from
+    // the enemy's TYPE (cached — never a per-frame read). Both are 0 when the
+    // setting is off, and for the locked target's band, whose distance the
+    // engagement geometry owns instead.
+    float standoffCore = 0.f;   // hard for NAVIGATION only (never for the bullet solver)
+    float standoffBand = 0.f;   // strong route cost out to here; 0 = this enemy has none
 };
 
 struct Settings {
+    // udodgeEnemyStandoff. Auto: every shooting enemy carries a hard 2-tile core
+    // and a reaction-time band that navigation routes around, and a locked fight
+    // is held at the outer part of weapon range. Off: the pre-standoff engine.
+    Standoff::Mode enemyStandoff = Standoff::Mode::Auto;
     // udodgePlanner (S3.1). Tactician routes every contact test through
     // Contact.h (the game's proven box, the live hitbox multiplier, the ring
     // approach, the lattice and the spiral edge cost); Classic is the
@@ -810,6 +830,9 @@ inline bool InsideEnemyKeepout(const ZoneThreat& z, Vec2 player, Vec2 p, float p
 }
 
 struct DangerMap {
+    // udodgeEnemyStandoff at build time, carried here for the same reason the
+    // planner policy is: the worker has the map and nothing else.
+    Standoff::Mode enemyStandoff = Standoff::Mode::Auto;
     // The policy this map was built under, and the world it was built in: every
     // Core test reads them from here, on the game thread and on the worker alike
     // (the map is the only thing all of them are guaranteed to hold).
@@ -832,6 +855,12 @@ struct DangerMap {
     bool    hasLock = false;   // autopilot boss lock (same semantics as Snapshot)
     int32_t lockId  = 0;
     Vec2    lockPos{};
+    // ENEMY STANDOFF: the LOCKED target's band radius. It is kept here instead of
+    // on its EnemyBlocker because navigation must NOT wall off the enemy we are
+    // trying to fight — the band only tells the engagement geometry how far out to
+    // hold (ComputeLockGeometry). 0 = no lock, standoff off, or a target that does
+    // not shoot.
+    float   lockBand = 0.f;
 };
 
 // Input for the instantaneous core. No time fields exist — stepTiles is a

@@ -311,7 +311,13 @@ void EvalCell(const Ctx& c, int idx, int gx, int gy)
     s_factor[idx] = SquareFactor(c.s->grid, w);
     s_goal[idx] = (safety >= kUDurablePocketMargin && GoalGateOk(c, w)) ? 1 : 0;
     s_tgoal[idx] = 0;                                  // set lazily, only if the pass tests it
-    s_pend[idx] = PendingZoneLocal(c.s->map, w) ? 1 : 0;
+    // ENEMY STANDOFF (requirement 4): a hold spot inside a NON-target enemy's band
+    // is a SECOND-CLASS goal — excluded while any alternative exists, taken when
+    // none does. That is precisely the pending-zone taint's contract, so it reuses
+    // it rather than adding a distance score that would reward fleeing radially
+    // from the locked target.
+    s_pend[idx] = (PendingZoneLocal(c.s->map, w) ||
+                   (c.s->grid.flags[idx] & Standoff::kBandBit)) ? 1 : 0;
     s_eval[idx] = 2;
 }
 
@@ -868,6 +874,10 @@ bool NavBlocked(const PlannerSnapshot& in, int gx, int gy, bool isStart)
     if (gx < 0 || gx >= kNS || gy < 0 || gy >= kNS) return true;
     if (isStart) return false;
     if (in.navGrid.flags[NavIdx(gx, gy)] & (0x1 | 0x10)) return true;   // wall / FullOccupy rule (bit2 sink = COST, not a wall)
+    // ENEMY STANDOFF core (UDodgeStandoff.h): a wall for the ROUTE. FillNavGrid
+    // never stamps a core the player is already standing in, so the way out of one
+    // is always open — the same escape rule the keep-outs and AoE discs use.
+    if (in.navGrid.flags[NavIdx(gx, gy)] & Standoff::kCoreBit) return true;
     const Vec2 w = NavCellWorld(in.navGrid.center, gx, gy);
     if (EnemyBlockedLocal(in.map, w)) return true;
     // Enemy keep-outs (self blasts, point-blank shooters) are walls for the route:
@@ -990,6 +1000,7 @@ NavSearch RunNavSearch(const PlannerSnapshot& in, int startGx, int startGy, int 
     auto softBlocked = [&](int x, int y) {
         if (x < 0 || x >= kNS || y < 0 || y >= kNS) return true;
         if (hazardIsWall && (in.navGrid.flags[NavIdx(x, y)] & 0x2) != 0) return true;
+        if (in.navGrid.flags[NavIdx(x, y)] & Standoff::kCoreBit) return true;
         const Vec2 w = NavCellWorld(in.navGrid.center, x, y);
         if (EnemyBlockedLocal(in.map, w)) return true;
         for (int i = 0; i < in.map.zoneCount; ++i)
@@ -1044,6 +1055,12 @@ NavSearch RunNavSearch(const PlannerSnapshot& in, int startGx, int startGy, int 
             // catches as bit0. Costing it keeps the coast-hugging preference without
             // fencing the player out of water they can simply wade across.
             if (in.navGrid.flags[nidx] & 0x4) step += kUNavSinkCost;
+            // ENEMY STANDOFF band: the reaction-time ring around a shooting enemy.
+            // Priced ABOVE damaging ground on purpose — a burn tile is survivable
+            // and reactable, a 62 ms shotgun is not — so the route goes round a
+            // pack whenever any way round exists, and only walks the edge of one
+            // when there is none.
+            if (in.navGrid.flags[nidx] & Standoff::kBandBit) step += Standoff::kNavBandCost;
             // Remembered stuck squares (UDodge.cpp stuck memory). A diagonal step
             // pays too when it cuts past one: the follower keeps the player box off
             // them, so a leg clipping one's corner is a leg it would not follow.
