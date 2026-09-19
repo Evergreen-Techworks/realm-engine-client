@@ -606,7 +606,7 @@ void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, Pla
     c.mi.settings = s.settings;
     c.mi.map      = &s.map;     // plain-data alias; .env stays NULL
     c.diskActive  = diskActive;
-    c.strategicLockRoute = diskActive;
+    c.strategicLockRoute = diskActive && s.hasLock;   // never a ring approach: that route is time-checked
     c.diskCenter  = s.lockPos;
     c.diskLimit   = s.weaponRangeTiles + kUInRangeSlack;
     c.diskInner   = s.innerStandoffTiles;   // annulus inner radius (goal-only gate)
@@ -1177,12 +1177,19 @@ static void ComputeDodge(const PlannerSnapshot& in, PlanResult& out)
     MapInput mi{};
     mi.player = in.player; mi.settings = in.settings; mi.map = &in.map;
     const float startSafety = Core::PointSafety(mi, in.player);
+    // THE RING: a lock target's engagement annulus, whether the player is fighting
+    // inside it (hasLock) or still approaching it (ringApproach). Every ring rule
+    // below keys on this one predicate; without a ring nothing here changes.
+    const bool ring = (in.hasLock || in.ringApproach) && in.weaponRangeTiles > 0.f;
     {
         bool startGoal = startSafety >= kUDurablePocketMargin;
-        if (startGoal && in.hasLock && in.weaponRangeTiles > 0.f) {
+        if (startGoal && ring) {
             // ANNULUS short-circuit: a player standing point-blank (inside the inner
             // ring) must NOT count as "already at goal" — it has to route outward.
             // The cell stays traversable, so RunSearch will find an outward goal.
+            // The same holds OUTSIDE the ring: standing where no shot path reaches,
+            // beyond weapon range, is not a goal while a ring is wanted. That stand
+            // ending the search is what parked the player where the shots end.
             const float dB = Len(Sub(in.player, in.lockPos));
             startGoal = dB <= in.weaponRangeTiles + kUInRangeSlack
                      && dB >= in.innerStandoffTiles;
@@ -1198,43 +1205,53 @@ static void ComputeDodge(const PlannerSnapshot& in, PlanResult& out)
                           kUPathMaxRadCells * kUPathCellTiles + kUTemporalCullTiles,
                           s_tctx, Core::ProjectilePlayerHalf(in.settings));
 
-    // IN-RANGE DISK: locked boss gates GOAL cells to the weapon-range disk so the
-    // route keeps the boss hittable. Safety OVERRIDES range: if no in-range durable
-    // pocket is time-reachable, re-search UNCONSTRAINED (leave range to dodge,
-    // return once clear); failing that, degrade to a partial route toward safety.
-    const bool disk = in.hasLock && in.weaponRangeTiles > 0.f;
-
-    // A SPATIAL durable pocket outranks everything, in range or out; only then does
-    // the second-class TEMPORAL goal (finding F) get a say, and only then a partial
-    // route. Keeping that order here is what makes "the spatial pocket must still
-    // win when one is available" true across BOTH searches, not just within one.
+    // IN-RANGE DISK: a ring gates GOAL cells to the weapon-range annulus so the
+    // route keeps the boss hittable. Safety OVERRIDES range: if nothing in the ring
+    // is time-reachable, re-search UNCONSTRAINED (leave range to dodge, return once
+    // clear); failing that, degrade to a partial route toward safety.
+    //
+    // THE LADDER. Being in the ring outranks HOW the spot is safe:
+    //   1. a shot-free cell in the ring;
+    //   2. a cell in the ring that is clear on arrival and for the dwell after it
+    //      (the temporal goal) — reached by a route whose every edge is time-checked;
+    //   3. a shot-free cell outside the ring (outOfRange);
+    //   4. a time-clear cell outside the ring (outOfRange);
+    //   5. partial routes.
+    // Rung 2 used to sit below rung 3. Around a radially firing boss the shot-free
+    // ground is where the shots END, so that order sent the player outward whenever
+    // the ring held no cell that no shot path ever crosses — which in a dense fight
+    // is always. Both are pass/fail safe; the one that keeps the target hittable wins.
     const auto spatialGoal = [](const PlanResult& r) {
         return r.found && !r.partial && !r.tempGoal;
     };
 
     PlanResult primary{};
     primary.forSeq = in.seq;
-    RunSearch(in, disk, startSafety, primary);
-    if (spatialGoal(primary)) {                       // durable in-range pocket, time-feasible
+    RunSearch(in, ring, startSafety, primary);
+    if (spatialGoal(primary)) {                       // shot-free pocket (in the ring when there is one)
+        primary.ringGoal  = ring;
         primary.tempLanes = s_tctx.count;
         out = primary;
         return;
     }
 
-    if (disk) {
+    if (ring) {
+        if (primary.found && primary.tempGoal) {      // time-clear spot IN the ring
+            primary.ringGoal  = true;
+            primary.tempLanes = s_tctx.count;
+            out = primary;
+            return;
+        }
         PlanResult unc{};
         unc.forSeq = in.seq;
         RunSearch(in, false, startSafety, unc);
-        if (spatialGoal(unc)) {                       // durable pocket only outside range
+        if (spatialGoal(unc)) {                       // shot-free pocket only outside range
             unc.outOfRange = true;
             unc.tempLanes  = s_tctx.count;
             out = unc;
             return;
         }
-        // No SPATIAL pocket anywhere. Next best is a temporal goal — in range first
-        // (it keeps the boss hittable), then outside range.
-        if (primary.found && primary.tempGoal) { primary.tempLanes = s_tctx.count; out = primary; return; }
-        if (unc.found && unc.tempGoal) {
+        if (unc.found && unc.tempGoal) {              // time-clear spot only outside range
             unc.outOfRange = true;
             unc.tempLanes  = s_tctx.count;
             out = unc;
