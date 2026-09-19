@@ -12,6 +12,8 @@ struct Entry {
     bool    hasHealthBar;
     bool    isScenery;
     float   shotRangeTiles;
+    float   shotSpeedTilesPerSec;   // ENEMY STANDOFF: the type's fastest projectile (tiles/s)
+    bool    hasProjectiles;         // the type declares at least one projectile
     void*   ptr;
 };
 void Tick();

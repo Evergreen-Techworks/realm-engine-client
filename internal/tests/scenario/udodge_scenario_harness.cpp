@@ -110,7 +110,11 @@ struct Ground { bool noWalk = false, sink = false, push = false; float speed = 0
 struct Obj    { int tx = 0, ty = 0; bool occ = false, full = false, enemyOcc = false; };
 struct Enemy  { int id = 0, type = 0; float x = 0.f, y = 0.f; int hp = 1000, maxHp = 1000;
                 bool healthBar = true, scenery = false, invuln = false;
-                float shotRange = 0.f; };   // longest projectile reach of the type (EnemyTracker::Entry)
+                float shotRange = 0.f;      // longest projectile reach of the type (EnemyTracker::Entry)
+                // ENEMY STANDOFF: the type's fastest projectile, tiles/second, and whether
+                // it has any. A scenario that gives a mob shots sets both.
+                float shotSpeed = 0.f;
+                bool  hasShots = false; };
 struct Bullet { double t0 = 0; float x0 = 0, y0 = 0, vx = 0, vy = 0; float lifeMs = 0, half = 0.4f;
                 int owner = 0, id = 0; bool alive = true; };
 
@@ -138,6 +142,14 @@ struct World {
     uint32_t extraHits = 0;                       // damage the script dealt outside bullets (self blasts)
     int   watchId = 0;                            // enemy whose closest approach is recorded
     float watchMinDist = 1e9f;
+    // ENEMY STANDOFF observation. allMinDist is the closest the player ever got to
+    // ANY live enemy (the core test); bandFrames counts frames spent inside
+    // bandRadius of one (the band test); lockDistances samples the fight distance
+    // during the measured tail.
+    float allMinDist = 1e9f;
+    float bandRadius = 0.f;
+    uint32_t bandFrames = 0;
+    std::vector<float> lockDistances;
     int32_t lockId = 0;
     bool  walkActive = false;
     float walkX = 0, walkY = 0;
@@ -447,6 +459,8 @@ void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s,
     out.projectileSourceUnavailable = false; out.limited = false;
     out.hasLock = false; out.lockId = 0; out.lockPos = {};
     out.planner = s.planner;
+    out.enemyStandoff = s.enemyStandoff;
+    out.lockBand = 0.f;
     out.targetScale = w.targetScale;   // the same world the truth test below uses
     out.colliderTrusted = true;
     for (const Bullet& b : w.bullets) {
@@ -487,9 +501,24 @@ void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s,
             b.pos = { e.x, e.y };
             b.radius = (!e.healthBar || e.scenery) ? 0.5f : 0.8f;
             b.passiveScenery = !e.healthBar || e.scenery;
+            // ENEMY STANDOFF, line for line with UDodgeSensors::FillStandoff.
+            b.standoffCore = 0.f; b.standoffBand = 0.f;
+            if (s.enemyStandoff != Standoff::Mode::Off) {
+                const float band = Standoff::BandRadius(e.shotSpeed, b.radius,
+                    e.hasShots || e.shotRange > 0.f || e.shotSpeed > 0.f,
+                    EnemyHazards::KeepoutRadius(e.type));
+                b.standoffCore = Standoff::CoreRadius(b.passiveScenery, band);
+                b.standoffBand = (lock != 0 && e.id == lock) ? 0.f : std::max(band, b.standoffCore);
+            }
         }
 #ifndef HARNESS_LOCK_LIVENESS
-        if (lock != 0 && e.id == lock) { out.hasLock = true; out.lockId = e.id; out.lockPos = { e.x, e.y }; }
+        if (lock != 0 && e.id == lock) {
+            out.hasLock = true; out.lockId = e.id; out.lockPos = { e.x, e.y };
+            if (s.enemyStandoff != Standoff::Mode::Off)
+                out.lockBand = Standoff::BandRadius(e.shotSpeed, (!e.healthBar || e.scenery) ? 0.5f : 0.8f,
+                    e.hasShots || e.shotRange > 0.f || e.shotSpeed > 0.f,
+                    EnemyHazards::KeepoutRadius(e.type));
+        }
 #endif
         // RebuildZones: enemy-centred keep-outs (hard-coded Brawler, plus learned ones where the tree has them).
 #ifdef HARNESS_TREE_BURST
@@ -518,6 +547,8 @@ void RefreshSnapshot()
         en.id = e.id; en.objType = e.type; en.x = e.x; en.y = e.y; en.hp = e.hp; en.maxHp = e.maxHp;
         en.isInvulnerable = e.invuln; en.hasHealthBar = e.healthBar; en.isScenery = e.scenery;
         en.shotRangeTiles = e.shotRange;
+        en.shotSpeedTilesPerSec = e.shotSpeed;
+        en.hasProjectiles = e.hasShots || e.shotRange > 0.f || e.shotSpeed > 0.f;
         g_snapshot.push_back(en);
     }
 }
@@ -689,6 +720,7 @@ RoutePoint previousGoal;
 double navigationCycle = 0;
 RouteCorridor navigationResult;
 std::vector<float> navigationSpeeds{1.f};
+std::vector<Router::StandoffDisc> standoffDiscs;   // ENEMY STANDOFF discs published by UDodge
 constexpr float coordinateOffset = 512.f;
 }
 bool Enabled()
@@ -713,6 +745,11 @@ void InvalidateGoal()
 }
 void Start() {}
 void Stop() {}
+void SetStandoff(const Router::StandoffDisc* discs, int count)
+{
+    standoffDiscs.assign(discs && count > 0 ? discs : nullptr,
+                         discs && count > 0 ? discs + count : nullptr);
+}
 RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool active,
                      bool hazardBlocked)
 {
@@ -759,6 +796,14 @@ RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool a
     for (size_t speedClass = 0; speedClass < navigationSpeeds.size(); ++speedClass)
         navigationRouter.SetSpeedClass(static_cast<uint8_t>(speedClass), navigationSpeeds[speedClass]);
     navigationRouter.SetBaseSpeed(baseSpeed);
+    {
+        // The discs arrive in world coordinates; the harness router lives on the
+        // same +512 shifted grid as every other coordinate it is given.
+        std::vector<Router::StandoffDisc> shifted = standoffDiscs;
+        for (auto& disc : shifted) { disc.worldX += coordinateOffset; disc.worldY += coordinateOffset; }
+        navigationRouter.SetStandoff(shifted.data(), static_cast<int>(shifted.size()),
+                                     shiftedPlayer.worldX, shiftedPlayer.worldY);
+    }
     if (!goalActive || std::hypot(goal.worldX - previousGoal.worldX, goal.worldY - previousGoal.worldY) > 2.f) {
         navigationRouter.SetGoal(navigationEpoch, ++navigationGoal, shiftedPlayer, shiftedGoal);
         previousGoal = goal;
@@ -1189,6 +1234,16 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
             for (const Enemy& e : w.enemies)
                 if (e.id == w.watchId && e.hp > 0)
                     w.watchMinDist = std::min(w.watchMinDist, Len(Sub(cur, { e.x, e.y })));
+        {
+            bool inBand = false;
+            for (const Enemy& e : w.enemies) {
+                if (e.hp <= 0 && !e.invuln) continue;
+                const float d = Len(Sub(cur, { e.x, e.y }));
+                w.allMinDist = std::min(w.allMinDist, d);
+                if (w.bandRadius > 0.f && d < w.bandRadius) inBand = true;
+            }
+            if (inBand) ++w.bandFrames;
+        }
         // Hits: point player vs Chebyshev half (the production contact model).
         for (Bullet& b : w.bullets) {
             if (!b.alive) continue;
@@ -1231,7 +1286,10 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
                 const float d = Len(Sub(cur, { boss->x, boss->y }));
                 const bool inRange = d <= outer + kUInRangeSlack && d >= inner - 0.25f;
                 if (inRange && r.firstInRangeS < 0) r.firstInRangeS = g_frame / 60.0;
-                if (g_frame > frames / 2) { ++tailFrames; if (inRange) ++inRangeFrames; }
+                if (g_frame > frames / 2) {
+                    ++tailFrames; if (inRange) ++inRangeFrames;
+                    w.lockDistances.push_back(d);   // ENEMY STANDOFF: the fight distance
+                }
             }
         }
     }
@@ -1789,6 +1847,93 @@ void ScenarioWalkPastBomber(const char* name)
 #endif
 }
 
+// ── ENEMY STANDOFF (p_*) ────────────────────────────────────────────────────
+// The owner's rule, measured: 54 % of 152 real hits had an enemy inside 4 tiles,
+// 82 % inside 6, and the shot that landed was a median of 62 ms old. Two things
+// have to hold — a walk-to must go AROUND a pack rather than through it, and a
+// locked fight must be held at the outer part of weapon range rather than mid-ring.
+
+// p_walk_through_pack: the straight line from start to goal runs through the middle
+// of a static shooter pack. Open ground all round, so a detour always exists.
+void ScenarioStandoffPack(const char* name)
+{
+    World w; Floor(w);
+    w.px = 0.5f; w.py = 0.5f;
+    // Six long-range shooters (reach 9 > kBurstRangeMaxTiles, so the existing
+    // point-blank keep-out does NOT apply — the band is what has to do the work).
+    // 8 tiles/s x 0.45 s + 0.8 body = 4.4-tile band, 2.0-tile core.
+    std::vector<int> ids;
+    for (int i = 0; i < 6; ++i) {
+        Enemy mob; mob.id = 980 + i; mob.type = 0x0f10 + i;
+        mob.x = 14.5f + (i % 2) * 2.f; mob.y = 0.5f + static_cast<float>(i / 2 - 1) * 2.f;
+        mob.hp = mob.maxHp = 3000;
+        mob.shotRange = 9.f; mob.shotSpeed = 8.f; mob.hasShots = true;
+        w.enemies.push_back(mob);
+        ids.push_back(mob.id);
+    }
+    w.bandRadius = Standoff::BandRadius(8.f, 0.8f, true, 0.f);
+    double next = 0.0;
+    w.script = [=](World& ww) mutable {
+        if (g_nowMs < next) return;
+        for (const Enemy& e : ww.enemies) {
+            if (e.hp <= 0) continue;
+            if (Len(Sub({ ww.px, ww.py }, { e.x, e.y })) > 9.f) continue;
+            next = g_nowMs + 700.0;
+            const float a = std::atan2(ww.py - e.y, ww.px - e.x);
+            for (int k = -1; k <= 1; ++k) ww.Fire(e.x, e.y, a + k * 0.12f, 8.f, 1400.f, 0.4f, e.id);
+            return;
+        }
+    };
+    Result r = Run(name, w, Goal::WalkTo, { 30.5f, 0.5f }, 60);
+    const double bandSeconds = w.bandFrames / 60.0;
+    // Arrives, never enters a core, and spends essentially no time in a band.
+    r.success = r.success && r.hits == 0 &&
+                w.allMinDist >= Standoff::kCoreTiles - 0.15f && bandSeconds <= 0.5;
+    std::fprintf(stderr, "%s: nearest enemy %.2f (core %.2f), %.2f s in band (r=%.2f)\n",
+                 name, w.allMinDist, Standoff::kCoreTiles, bandSeconds, w.bandRadius);
+    Emit(r);
+}
+
+// p_lock_boss_standoff: a locked boss that shoots fast enough to earn the widest
+// band. The fight must settle in the OUTER THIRD of the weapon ring the pre-standoff
+// engine would have used — that is the whole behavioural claim.
+void ScenarioStandoffFight(const char* name)
+{
+    World w; Floor(w);
+    w.px = 0.5f; w.py = 0.5f;
+    Enemy boss; boss.id = 990; boss.type = 0x0d60; boss.x = 18.5f; boss.y = 0.5f;
+    boss.hp = boss.maxHp = 200000;
+    boss.shotRange = 12.f; boss.shotSpeed = 14.f; boss.hasShots = true;   // band clamps to 6.0
+    w.enemies.push_back(boss);
+    w.lockId = boss.id;
+    double nextRing = 100600.0;
+    int phase = 0;
+    w.script = [=](World& ww) mutable {
+        Enemy& b = ww.enemies[0];
+        if (b.hp <= 0 || g_nowMs < nextRing) return;
+        nextRing = g_nowMs + 1200.0;
+        const float off = (phase++ % 2) ? kTwoPi / 24.f : 0.f;
+        for (int i = 0; i < 12; ++i) ww.Fire(b.x, b.y, off + kTwoPi * i / 12, 5.f, 2600.f, 0.4f, b.id);
+    };
+    Result r = Run(name, w, Goal::Lock, {}, 30);
+    std::vector<float> d = w.lockDistances;
+    double median = 0.0;
+    if (!d.empty()) {
+        std::sort(d.begin(), d.end());
+        median = d[d.size() / 2];
+    }
+    // The ring the PRE-standoff engine used: inner = max(2.0, range x 0.35),
+    // outer = range - 0.75. "Outer third" is measured against that ring, because
+    // that is the mid-ring habit this change exists to break.
+    const float classicInner = std::max(kUInnerStandoffMinTiles, w.weaponRange * kUInnerStandoffFrac);
+    const float outer = std::max(classicInner + kUDurablePocketMargin, w.weaponRange - kUEngagementRangeInset);
+    const double outerThird = classicInner + (outer - classicInner) * 2.0 / 3.0;
+    r.success = r.success && median >= outerThird && median <= outer + kUInRangeSlack;
+    std::fprintf(stderr, "%s: median fight distance %.2f (outer third starts %.2f, outer %.2f)\n",
+                 name, median, outerThird, outer);
+    Emit(r);
+}
+
 // l_lock_boss_*: a locked boss firing rings, two shotgun adds flanking the approach.
 // Mid-fight the boss either dies (removed, shots still in flight) or turns
 // invulnerable and keeps firing. No hit may be taken either way.
@@ -2080,6 +2225,8 @@ int main(int argc, char** argv)
     if (want("k_speedy_walk"))      H::ScenarioSpeedyWalk("k_speedy_walk");
     if (want("k_slowed_water"))     H::ScenarioSlowedWater("k_slowed_water");
     if (want("k_mixed_water_land")) H::ScenarioMixedWaterLand("k_mixed_water_land");
+    if (want("p_walk_through_pack")) H::ScenarioStandoffPack("p_walk_through_pack");
+    if (want("p_lock_boss_standoff"))H::ScenarioStandoffFight("p_lock_boss_standoff");
     if (want("l_walk_past_shotgun"))H::ScenarioWalkPastShotgun("l_walk_past_shotgun");
     if (want("l_walk_past_bomber")) H::ScenarioWalkPastBomber("l_walk_past_bomber");
     if (want("l_lock_boss_dies"))   H::ScenarioLockBossChange("l_lock_boss_dies", true);

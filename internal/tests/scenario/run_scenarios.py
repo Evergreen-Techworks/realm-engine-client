@@ -54,6 +54,7 @@ SCENARIOS = [
     "k_speedy_walk", "k_slowed_water", "k_mixed_water_land",
     "l_walk_past_shotgun", "l_walk_past_bomber", "l_lock_boss_dies", "l_lock_boss_invuln",
     "m_pinch_nowalk", "m_pinch_fulloccupy", "m_pinch_object",
+    "p_walk_through_pack", "p_lock_boss_standoff",
     "z_moveto_no_clamp",
     "n_rooms1_nowalk_forward", "n_rooms1_nowalk_reverse",
     "n_rooms2_nowalk_forward", "n_rooms2_nowalk_reverse",
@@ -68,7 +69,7 @@ STAGE2_REGRESSIONS = ["n_rooms_remote_forward", "n_rooms_remote_reverse"]
 # Tactician acceptance (docs/superpowers/specs/2026-09-18-tactician-design.md, "Acceptance").
 # A boss scenario is one the harness runs with an enemy lock (its row says "lock": true).
 BOSS_SCENARIOS = [
-    "c_u_wall_lock", "d_boss_open_rings", "d_boss_wall_rings", "d_boss_open_dense", "d_boss_wall_dense",
+    "c_u_wall_lock", "p_lock_boss_standoff", "d_boss_open_rings", "d_boss_wall_rings", "d_boss_open_dense", "d_boss_wall_dense",
     *DENSE_VARIANTS,
     "l_lock_boss_dies", "l_lock_boss_invuln",
 ]
