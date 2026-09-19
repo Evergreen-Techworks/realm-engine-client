@@ -12,6 +12,7 @@
 #include "UDodgeDebug.h"
 #include "UDodgeEnemyHazards.h"
 #include "UDodgeTelemetry.h"
+#include "UDodgePredErr.h"
 #include "features/movement/nav/Speed.h"
 
 #include "MovementRuntime.h"
@@ -103,6 +104,13 @@ std::atomic<uint32_t> g_wedgeStampMs{ 0 };
 // Game-update thread only.
 MovementCommitment g_commitment;
 DangerMap  g_map;
+
+// [Diag/PredErr] HitCulprit: closest-approach history for post-hoc hit
+// attribution (UDodgePredErr.h). OFF unless diagOn; game-update thread only.
+PredErr::HitCulprit::Ring g_hitHistory;
+// [Diag/Ground]: edge-triggered damaging-ground steps (UDodgePredErr.h). OFF
+// unless diagOn; game-update thread only.
+PredErr::GroundDiag::State g_groundDiag;
 
 // ── Decision telemetry (UDodgeTelemetry.h) ───────────────────────────────────
 // OFF unless DiagTiming::On() (RE_ASSETS\diag-timing.flag, or the developer "Diag
@@ -374,6 +382,13 @@ void DiagLogHit(int32_t prevHp, int32_t hp, int32_t maxHp, Vec2 player, const Se
     for (int i = 0; i < g_map.enemyCount; ++i)
         enemyDist = std::min(enemyDist, Len(Sub(g_map.enemies[i].pos, player)));
 
+    // HitCulprit: append the closest-approach ring's best match — the shot that
+    // came nearest the game's own hit test in the frames just before this HP
+    // drop, tracked or not. The two nearest lanes above are g_map's CURRENT
+    // state, which frequently no longer contains the hitting shot at all.
+    used = PredErr::HitCulprit::AppendCulprit(PredErr::HitCulprit::FindCulprit(g_hitHistory, now),
+                                              lanes, used, sizeof(lanes));
+
     DiagTiming::Logf("[Diag/Hit] hp %d->%d (-%d of %d) at (%.2f,%.2f) lastDecision=%d move=%d"
         " targetDist=%.2f standClr=%.2f lanes=%d zones=%d nearestActiveZoneGap=%.2f nearestEnemy=%.2f"
         " walk=%d wedged=%d lock=%d planner=%s hitbox=%.2f colliderTrusted=%d%s",
@@ -382,6 +397,46 @@ void DiagLogHit(int32_t prevHp, int32_t hp, int32_t maxHp, Vec2 player, const Se
         g_map.laneCount, g_map.zoneCount, zoneGap, enemyDist, walkActive ? 1 : 0,
         g_wedged.load(std::memory_order_relaxed) ? 1 : 0, g_map.hasLock ? 1 : 0,
         Contact::PolicyName(g_map.planner), g_map.targetScale, g_map.colliderTrusted ? 1 : 0, lanes);
+}
+
+// [Diag/PredErr] HitCulprit: record this tick's nearest kNearestN lanes into
+// the closest-approach ring (UDodgePredErr.h), so a later HP drop can look
+// backward through recent frames instead of only at the map at that instant
+// (which frequently no longer holds the hitting shot). Called once per tick,
+// right after the map sync, only while diagOn. No allocation: a small
+// insertion sort into fixed local arrays.
+void RecordApproachHistory(const DangerMap& map, Vec2 player, uint64_t nowMs)
+{
+    using PredErr::HitCulprit::kNearestN;
+    int   nearIdx[kNearestN];
+    float nearD[kNearestN];
+    int   n = 0;
+    for (int i = 0; i < map.laneCount; ++i) {
+        const LaneThreat& L = map.lanes[i];
+        if (L.pointCount <= 0) continue;
+        const float d = Cheb(L.points[0].x - player.x, L.points[0].y - player.y);
+        if (n >= kNearestN && d >= nearD[kNearestN - 1]) continue;
+        int pos = n < kNearestN ? n : kNearestN - 1;
+        while (pos > 0 && nearD[pos - 1] > d) {
+            nearD[pos] = nearD[pos - 1]; nearIdx[pos] = nearIdx[pos - 1]; --pos;
+        }
+        nearD[pos] = d; nearIdx[pos] = i;
+        if (n < kNearestN) ++n;
+    }
+    for (int k = 0; k < n; ++k) {
+        const LaneThreat& L = map.lanes[nearIdx[k]];
+        float tilesPerSec = 0.f;
+        if (L.pointCount >= 2 && L.pointTimesMs[1] > L.pointTimesMs[0])
+            tilesPerSec = Len(Sub(L.points[1], L.points[0])) * 1000.f / (L.pointTimesMs[1] - L.pointTimesMs[0]);
+        uint32_t ownerType = 0;
+        for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot())
+            if (e.id == static_cast<int32_t>(L.ownerObjId) || e.id == L.attackerObjId) {
+                ownerType = static_cast<uint32_t>(e.objType);
+                break;
+            }
+        PredErr::HitCulprit::Record(g_hitHistory, { L.bulletId, L.attackerObjId, L.ownerObjId }, ownerType,
+                                    L.hitHalf, tilesPerSec, nearD[k], L.beam, L.provisional, nowMs);
+    }
 }
 
 Settings ReadSettings()
@@ -766,10 +821,10 @@ void Tick(void* player, float px, float py, float dt)
         tickOk = Sensors::ReadWorldTick(tick);
         bool synced = false;
         if (tickOk && g_map.tickValid && g_map.tickId == tick)
-            synced = Sensors::ReanchorMap(g_map, px, py, settings);
+            synced = Sensors::ReanchorMap(g_map, px, py, settings, diagOn);
         rebuilt = !synced;
         if (rebuilt) {
-            Sensors::BuildMap(g_map, px, py, settings);
+            Sensors::BuildMap(g_map, px, py, settings, diagOn);
             g_map.tickId = tick;
             g_map.tickValid = tickOk;
         }
@@ -781,6 +836,7 @@ void Tick(void* player, float px, float py, float dt)
         gs.maxZones   = std::max(gs.maxZones, g_map.zoneCount);
         gs.maxEnemies = std::max(gs.maxEnemies, g_map.enemyCount);
         if (g_map.limited) ++gs.mapLimited;
+        RecordApproachHistory(g_map, { px, py }, GetTickCount64());
     }
     if (g_map.projectileSourceUnavailable) {
         g_commitment.Reset();
@@ -1827,7 +1883,19 @@ void Tick(void* player, float px, float py, float dt)
         t.timedStatus = g_telemetryWorker.timedStatus;
         t.timedReused = g_telemetryWorker.timedReused;
         t.timedBudgetHit = g_telemetryWorker.timedBudgetHit;
+        const int groundTileX = static_cast<int>(std::floor(px));
+        const int groundTileY = static_cast<int>(std::floor(py));
+        const int groundDmg = WorldTAB::GetTileDamageLive(groundTileX, groundTileY);
+        t.onHazard = groundDmg > 0;
         T::Emit(g_telemetry, t, &DbgFileLogWrite);
+
+        // [Diag/Ground]: edge-triggered damaging-ground steps (UDodgePredErr.h).
+        // Reuses this frame's own telemetry sample for the decision fields —
+        // no separate recomputation.
+        PredErr::GroundDiag::Step(g_groundDiag, groundTileX, groundTileY, groundDmg,
+                                  Sensors::IsHazardAt(px, py), settings.safeWalk,
+                                  WorldTAB::IsLiveHazardActive(), T::Name(t.solve), T::Name(t.source),
+                                  T::Name(t.objective), t.nowMs, &DbgFileLogWrite);
     }
 
     // The per-phase breakdown is emitted every 2 s by the update detour

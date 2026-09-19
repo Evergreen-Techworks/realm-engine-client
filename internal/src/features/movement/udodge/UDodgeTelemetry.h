@@ -134,6 +134,9 @@ struct Sample {
     float    workerDodgeMs = 0.f, workerNavMs = 0.f, workerTimedMs = 0.f, workerSolveMs = 0.f;
     uint8_t  timedStatus = 0;        // SpacetimeDodge::Status
     bool     timedReused = false, timedBudgetHit = false;
+    // The player's own tile this frame is a damaging one (WorldTAB::GetTileDamageLive
+    // > 0). Carried on the heartbeat only ([Diag/Ground] has the per-transition detail).
+    bool     onHazard = false;
 };
 
 inline constexpr uint64_t kHeartbeatMs = 1000;
@@ -357,11 +360,13 @@ inline size_t Format(const Sample& s, uint32_t why, bool replan, bool reversal, 
           s.workerDodgeMs + s.workerNavMs + s.workerTimedMs + s.workerSolveMs,
           s.workerDodgeMs, s.workerNavMs, s.workerTimedMs, s.workerSolveMs,
           TimedStatusName(s.timedStatus), s.timedReused ? 1 : 0, s.timedBudgetHit ? 1 : 0);
-    if (window)
+    if (window) {
         w.Add(" win{frames=%u moved=%.2f out=%.2f in=%.2f tang=%.2f holds=%u vetoes=%u reversals=%u"
               " replans=%u changes=%u}",
               window->frames, window->moved, window->radialOut, window->radialIn, window->tangential,
               window->holdFrames, window->vetoes, window->reversals, window->replans, window->changes);
+        w.Add(" on_hazard=%d", s.onHazard ? 1 : 0);
+    }
     w.Add(" dropped=%u", dropped);
     return w.len;
 }
