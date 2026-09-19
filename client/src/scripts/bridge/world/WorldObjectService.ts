@@ -3,9 +3,26 @@ import type { GameObject, Portal, ObjectCategory } from '@realmengine/sdk';
 import type { BridgeDeps } from '../BridgeDeps.js';
 import type { TrackedEntity } from '../../../state/GameWorldState.js';
 import { StatType } from '../../../constants/StatType.js';
+import { Logger } from '../../../util/Logger.js';
 
 const REALM_CAPACITY = 85;
 const REALM_PORTAL_TYPES = new Set([0x0704, 0x070e, 0x0712, 0x071c]);
+
+/**
+ * An attempt that produced neither a map load nor a refusal within this window
+ * went unanswered — let a retry through instead of latching forever.
+ */
+const PORTAL_ATTEMPT_TIMEOUT_MS = 5000;
+/**
+ * Hard floor on how often this connection sends USEPORTAL, independent of the
+ * attempt latch above. Rapid automated portal use has gotten this project's
+ * egress IP temp-banned before — keep it human-paced no matter what the caller does.
+ */
+const PORTAL_MIN_SEND_INTERVAL_MS = 3000;
+/** A drop reason logs once immediately, then at most once per this interval. */
+const PORTAL_DROP_LOG_INTERVAL_MS = 10000;
+/** Fallback dedupe store for the (practically nonexistent) case there is no client to hang state on. */
+const noClientDropLogAt: Record<string, number> = {};
 
 /**
  * Canonical projection from unified packet world-state + game-data metadata to
@@ -67,23 +84,70 @@ export class WorldObjectService {
     return name.replace(/\s+portal$/i, '').trim();
   }
 
+  /**
+   * Logs a USEPORTAL drop with its reason, rate-limited per reason so a fast
+   * retry loop cannot flood the log: first occurrence logs immediately, then
+   * at most once every PORTAL_DROP_LOG_INTERVAL_MS for that same reason.
+   */
+  private logPortalDrop(client: BridgeDeps['clientRef']['current'], objectId: number, reasonKind: string, detail: string): void {
+    const now = Date.now();
+    const store = client ? (client.portalDropLogAt ??= {}) : noClientDropLogAt;
+    const last = store[reasonKind];
+    if (last !== undefined && now - last < PORTAL_DROP_LOG_INTERVAL_MS) return;
+    store[reasonKind] = now;
+    Logger.log('Portal', `USEPORTAL drop objectId=${objectId} reason=${detail}`);
+  }
+
   private enterPortal(objectId: number, owner: BridgeDeps['clientRef']['current'], generation: number | undefined): boolean {
     const client = this.deps.clientRef.current;
-    if (!client?.connected || !this.deps.worldState.getEntity(objectId)) return false;
-    if (client !== owner || client.admission?.generation !== generation) return false;
+    const now = Date.now();
+    if (!client?.connected || !this.deps.worldState.getEntity(objectId)) {
+      this.logPortalDrop(client, objectId, 'not-connected', 'not-connected');
+      return false;
+    }
+    if (client !== owner || client.admission?.generation !== generation) {
+      this.logPortalDrop(client, objectId, 'stale-owner', 'stale-owner');
+      return false;
+    }
     const admission = client.admission;
-    if (!admission || !['loaded', 'entry-refused'].includes(admission.phase)) return false;
-    if (admission.phase === 'entry-refused' && admission.portalId === objectId && (admission.retryAt ?? Infinity) > Date.now()) return false;
-    if (client.lastAttemptedPortalId !== null) return false;
+    if (!admission || !['loaded', 'entry-refused'].includes(admission.phase)) {
+      this.logPortalDrop(client, objectId, 'phase', `phase=${admission?.phase ?? 'none'}`);
+      return false;
+    }
+    if (admission.phase === 'entry-refused' && admission.portalId === objectId && (admission.retryAt ?? Infinity) > now) {
+      this.logPortalDrop(client, objectId, 'refused-until', `refused-until=${admission.retryAt}`);
+      return false;
+    }
+    if (client.lastAttemptedPortalId !== null) {
+      const pendingMs = now - (client.lastPortalAttemptAt ?? 0);
+      if (pendingMs < PORTAL_ATTEMPT_TIMEOUT_MS) {
+        this.logPortalDrop(client, objectId, 'attempt-pending', `attempt-pending ${pendingMs}ms`);
+        return false;
+      }
+      // The last attempt produced neither a map load nor a refusal within the
+      // timeout: it went unanswered. Do not theorise why here — just stop
+      // latching forever and let a retry through, on its own pace below.
+      client.lastAttemptedPortalId = null;
+    }
+    const sinceLastSend = now - (client.lastPortalAttemptAt ?? 0);
+    if (sinceLastSend < PORTAL_MIN_SEND_INTERVAL_MS) {
+      this.logPortalDrop(client, objectId, 'attempt-pending', `attempt-pending ${sinceLastSend}ms`);
+      return false;
+    }
     try {
       const packet = this.deps.proxy.packetFactory.createByName('USEPORTAL');
       packet.data.objectId = objectId;
       packet.modified = true;
       client.lastAttemptedPortalId = objectId;
+      client.lastPortalAttemptAt = now;
+      client.portalAttemptCount = client.portalAttemptObjectId === objectId ? (client.portalAttemptCount ?? 0) + 1 : 1;
+      client.portalAttemptObjectId = objectId;
       client.sendToServer(packet);
+      Logger.log('Portal', `USEPORTAL sent objectId=${objectId} attempt=${client.portalAttemptCount}`);
       return true;
     } catch {
       client.lastAttemptedPortalId = null;
+      this.logPortalDrop(client, objectId, 'serialize-error', 'serialize-error');
       return false;
     }
   }
