@@ -18,8 +18,8 @@ const source = rawSource
 const contextHelpersSource = rawSource.split('export default class Farmer')[0]
   .replace("import { RealmEngine } from '@realmengine/sdk';", '')
   .replace("import OryxRunner from './oryx-runner.mjs';", '');
-const { formatStatusContextSuffix, buildStatusContextSuffix } = new Function(
-  `${contextHelpersSource}\nreturn { formatStatusContextSuffix, buildStatusContextSuffix };`,
+const { formatStatusContextSuffix, buildStatusContextSuffix, normalizeStatusForChangeCheck } = new Function(
+  `${contextHelpersSource}\nreturn { formatStatusContextSuffix, buildStatusContextSuffix, normalizeStatusForChangeCheck };`,
 )();
 function fixture() {
   let enemies: any[] = [];
@@ -1202,6 +1202,47 @@ describe('status context suffix (Test Lab)', () => {
       f.farmer.setStatus('Booting');
       expect(f.sdk.log.info).toHaveBeenLastCalledWith('state: Booting | ctx pos=0.0,0.0 goal=1.0,1.0 d=1.4 enemy=- quest=-');
       expect(f.sdk.log.info).toHaveBeenCalledTimes(2);
+    });
+
+    it('normalizeStatusForChangeCheck blanks every digit run so number-only differences compare equal', () => {
+      expect(normalizeStatusForChangeCheck('Leveling: Bandit Leader -> (643, 1658) - 104 tiles'))
+        .toBe(normalizeStatusForChangeCheck('Leveling: Bandit Leader -> (644, 1660) - 103 tiles'));
+      expect(normalizeStatusForChangeCheck('Fighting: Bandit Leader'))
+        .not.toBe(normalizeStatusForChangeCheck('Leveling: Bandit Leader -> (644, 1660) - 103 tiles'));
+    });
+
+    it('number-only churn (coordinates/tile-count moving) logs at most once per second', () => {
+      vi.useFakeTimers(); vi.setSystemTime(10000);
+      const f = fixture();
+      const status = (n) => `Leveling: Bandit Leader -> (${640 + n}, ${1658 + n}) - ${104 - n} tiles`;
+
+      f.farmer.setStatus(status(0));
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(1); // first ever -> immediate
+
+      vi.setSystemTime(10100);
+      f.farmer.setStatus(status(1));
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(1); // <1s since last log -> throttled
+
+      vi.setSystemTime(10300);
+      f.farmer.setStatus(status(2));
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(1); // still <1s -> throttled
+
+      vi.setSystemTime(11050); // >=1000ms since the 10000 log
+      f.farmer.setStatus(status(3));
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(2);
+      expect(f.sdk.log.info).toHaveBeenLastCalledWith(expect.stringContaining(status(3)));
+    });
+
+    it('a real (non-digit) change logs immediately, even inside the number-only throttle window', () => {
+      vi.useFakeTimers(); vi.setSystemTime(10000);
+      const f = fixture();
+      f.farmer.setStatus('Leveling: Bandit Leader -> (643, 1658) - 104 tiles');
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(10100); // well inside the 1s number-only throttle window
+      f.farmer.setStatus('Fighting: Bandit Leader');
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(2);
+      expect(f.sdk.log.info).toHaveBeenLastCalledWith(expect.stringContaining('state: Fighting: Bandit Leader'));
     });
   });
 });

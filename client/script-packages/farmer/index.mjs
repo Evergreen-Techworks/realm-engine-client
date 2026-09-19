@@ -82,6 +82,22 @@ const QUEST_UNSEEN_COMMIT_MS = 60000;
 // per distinct message and at most this often while the same message repeats, so a
 // long dwell on one status is visible after the fact instead of only live.
 const STATUS_LOG_HEARTBEAT_MS = 5000;
+// A status like "Leveling: Bandit Leader -> (643, 1658) - 104 tiles" changes
+// every tick purely because the coordinates/tile-count move — that used to
+// count as "a distinct message" and log at ~5/s. Comparing with digits
+// blanked out (see normalizeStatusForChangeCheck) tells a real change
+// (new phase, new target) apart from the same situation with fresher
+// numbers; only the latter is throttled to this interval instead of logged
+// immediately.
+const STATUS_LOG_MIN_INTERVAL_MS = 1000;
+
+/** Pure: collapses every run of digits to '#' so two status strings that
+ *  differ only in numbers (coordinates, tile counts, countdown seconds, ...)
+ *  compare equal. Used by setStatus to tell "the situation changed" apart
+ *  from "the same situation, a moment later, with fresh numbers". */
+function normalizeStatusForChangeCheck(message) {
+  return message.replace(/\d+/g, '#');
+}
 
 // ── Test Lab telemetry ────────────────────────────────────────────────────────
 // The persisted/dashboard `state: <message>` line (see setStatus below) gets a
@@ -162,6 +178,7 @@ export default class Farmer {
     this.eventHoldSince = null;      // when an arrived event's boss was first seen dead or gone
     this.encounterGiveUps = new Map(); // boss objectId -> encounters that ended with nothing targetable
     this.lastLoggedStatus = null;
+    this.lastLoggedStatusNormalized = null;
     this.lastStatusLogAt = 0;
   }
 
@@ -192,9 +209,24 @@ export default class Farmer {
     RealmEngine.ui.status(message);
     if (!message) return;
     const now = Date.now();
-    if (message !== this.lastLoggedStatus || now - this.lastStatusLogAt >= STATUS_LOG_HEARTBEAT_MS) {
+    const normalized = normalizeStatusForChangeCheck(message);
+    let shouldLog;
+    if (normalized !== this.lastLoggedStatusNormalized) {
+      // A real change (new phase, new target, or the very first status) —
+      // never throttled.
+      shouldLog = true;
+    } else if (message !== this.lastLoggedStatus) {
+      // Same situation, only the digits moved (coordinates, tile count,
+      // countdown, ...): at most one line per STATUS_LOG_MIN_INTERVAL_MS.
+      shouldLog = now - this.lastStatusLogAt >= STATUS_LOG_MIN_INTERVAL_MS;
+    } else {
+      // The exact same message: the existing heartbeat.
+      shouldLog = now - this.lastStatusLogAt >= STATUS_LOG_HEARTBEAT_MS;
+    }
+    if (shouldLog) {
       RealmEngine.log.info(`state: ${message}${buildStatusContextSuffix(() => this.collectStatusContext())}`);
       this.lastLoggedStatus = message;
+      this.lastLoggedStatusNormalized = normalized;
       this.lastStatusLogAt = now;
     }
   }
