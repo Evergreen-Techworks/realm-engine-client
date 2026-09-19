@@ -21,28 +21,37 @@ static void Check(bool ok, const char* name)
 
 int main()
 {
-    // (a) Two candidates tie on time-to-danger (within kSolveFallbackTieMs):
+    // (a) Three candidates tie on time-to-danger (within kSolveFallbackTieMs):
     // one steps radially OUTWARD from the reference direction, one steps
-    // TANGENTIAL to it. With the switch on, the tangential step must win; with
-    // it off, today's plain (time, val) reduction keeps the first-seen
-    // candidate on an exact tie, i.e. the outward one.
+    // TANGENTIAL to it, one steps radially INWARD. Controller ruling
+    // 2026-09-19: radial motion is bad in BOTH directions (owner ruling
+    // 2026-09-18), so the tangential step must win against EITHER radial
+    // candidate — an inward step must never beat a tangential one just for
+    // being "less outward" than the outward one. With the switch off, today's
+    // plain (time, val) reduction keeps the first-seen candidate on an exact
+    // tie, i.e. the outward one.
     {
-        FallbackCandidate cands[2];
-        cands[0].dir = { 1.f, 0.f };   // radially outward (dot 1.0 with radialRef)
+        FallbackCandidate cands[3];
+        cands[0].dir = { 1.f, 0.f };    // radially outward (dot +1.0 with radialRef)
         cands[0].moveDist = 1.0f;
         cands[0].val = 5.f;
         cands[0].safeTime = 300.f;
-        cands[1].dir = { 0.f, 1.f };   // tangential (dot 0.0 with radialRef)
+        cands[1].dir = { 0.f, 1.f };    // tangential (dot 0.0 with radialRef)
         cands[1].moveDist = 1.0f;
         cands[1].val = 5.f;
-        cands[1].safeTime = 300.f;     // exact tie, well inside the 60 ms band
+        cands[1].safeTime = 300.f;      // exact tie, well inside the 60 ms band
+        cands[2].dir = { -1.f, 0.f };   // radially INWARD (dot -1.0 with radialRef)
+        cands[2].moveDist = 1.0f;
+        cands[2].val = 5.f;
+        cands[2].safeTime = 300.f;      // exact tie too
         const Vec2 radialRef{ 1.f, 0.f };
 
-        const int offPick = SelectFallbackCandidate(cands, 2, radialRef, /*sidestepOn=*/false, /*standTime=*/0.f);
+        const int offPick = SelectFallbackCandidate(cands, 3, radialRef, /*sidestepOn=*/false, /*standTime=*/0.f);
         Check(offPick == 0, "switch off: today's pick is the first-seen (radially outward) candidate");
 
-        const int onPick = SelectFallbackCandidate(cands, 2, radialRef, /*sidestepOn=*/true, /*standTime=*/0.f);
-        Check(onPick == 1, "switch on: a time-to-danger tie is broken toward the tangential step");
+        const int onPick = SelectFallbackCandidate(cands, 3, radialRef, /*sidestepOn=*/true, /*standTime=*/0.f);
+        Check(onPick == 1, "switch on: a time-to-danger tie is broken toward the tangential step "
+                           "over BOTH the outward and the inward candidate");
     }
 
     // (b) A candidate that lives 200 ms longer than standing still must be

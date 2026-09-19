@@ -209,10 +209,12 @@ struct FallbackCandidate {
 // sidestepOn == true (udodgeFallbackSidestep):
 //   1. Latest safeTime first, as before.
 //   2. Within kSolveFallbackTieMs of the best safeTime, prefer the candidate
-//      with the smaller radially-OUTWARD component against `radialRef` (the
+//      with the smaller ABSOLUTE radial component against `radialRef` (the
 //      unit vector pointing away from the lock target, or the mean direction
 //      the threatening lanes are travelling when unlocked; pass {} when
-//      neither is available, which disables this tie-break only).
+//      neither is available, which disables this tie-break only) — i.e. the
+//      most tangential step, never one that is merely "less outward" while
+//      still radially INWARD. Radial motion is bad in both directions.
 //   3. Remaining ties broken by val, as before.
 //   4. A candidate whose safeTime is shorter than `standTime` (standing still)
 //      is never selected — if every candidate is worse than standing, returns
