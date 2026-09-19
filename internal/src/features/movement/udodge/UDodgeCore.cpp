@@ -656,13 +656,34 @@ void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2
         if (L.pointCount <= 0) continue;
         // Cull against the SOURCE polyline, not isolated march samples. A fast
         // shot can cross the entire search region between two sampled endpoints.
-        float minD = Len(Sub(L.points[0], cullCenter));
-        float maxSpeed = 0.f;
-        for (int j = 1; j < L.pointCount; ++j) {
-            minD = std::min(minD, PointSegDistEuclid(cullCenter, L.points[j - 1], L.points[j]));
-            const float dt = L.pointTimesMs[j] - L.pointTimesMs[j - 1];
-            if (dt > 1e-3f)
-                maxSpeed = std::max(maxSpeed, Len(Sub(L.points[j], L.points[j - 1])) / dt);
+        //
+        // Item 4 (navigation finish plan): this loop runs on EVERY Build() call —
+        // three call sites, every game-thread frame (RevalidateAndSolve
+        // unconditionally, Solve conditionally, plus the worker's own pathfinder
+        // pass) — over EVERY lane, including the ones about to be culled. A
+        // runtime-VERIFIED constant-velocity lane (hasLinearMotion, set by
+        // UDodgeLaneMotion.h's DetectLinear — the overwhelmingly common case: boss
+        // rings, aimed volleys and every straight shot) is EXACTLY collinear, so its
+        // minimum distance to cullCenter over the whole traced polyline is exactly
+        // the point-to-segment distance between its first and last traced point —
+        // no need to walk every intermediate sample. This is not an approximation:
+        // for a straight line the per-point scan below and this closed form agree
+        // exactly (the per-point version is actually a discretization of the same
+        // continuous segment). Curved/beam lanes are unaffected: they fall through
+        // to the original per-point scan, unchanged.
+        float minD, maxSpeed;
+        if (L.hasLinearMotion && !L.beam) {
+            minD = PointSegDistEuclid(cullCenter, L.points[0], L.points[L.pointCount - 1]);
+            maxSpeed = Len(L.linearVelocity);
+        } else {
+            minD = Len(Sub(L.points[0], cullCenter));
+            maxSpeed = 0.f;
+            for (int j = 1; j < L.pointCount; ++j) {
+                minD = std::min(minD, PointSegDistEuclid(cullCenter, L.points[j - 1], L.points[j]));
+                const float dt = L.pointTimesMs[j] - L.pointTimesMs[j - 1];
+                if (dt > 1e-3f)
+                    maxSpeed = std::max(maxSpeed, Len(Sub(L.points[j], L.points[j - 1])) / dt);
+            }
         }
         // BEAMS (Slice 4a): T unscaled under BOTH policies — the laser job carries no
         // multiplier slot at all, so neither hitScale nor the live collider value may
