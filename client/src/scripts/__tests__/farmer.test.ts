@@ -169,6 +169,52 @@ it('abandons only the matching unreachable travel goal and does not immediately 
   farmer.resetMap('Other');
   expect(farmer.navigateToPosition(quest.position)).toBe(true);
 });
+it('approaches a distant quest boss to weapon range instead of walking onto its tile', () => {
+  // A shooting enemy's native standoff gives it a 2-tile impassable core, so a
+  // destination exactly on its position never resolves ("unreachable" forever).
+  // The farmer must aim for the fighting ring around it instead.
+  const { farmer, sdk, quest } = fixture();
+  quest.position.x = 20;
+  farmer.onLoop();
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 12, y: 0 });
+});
+it('does not blacklist the fighting-range approach when only the enemy tile itself was reported unreachable', () => {
+  const { farmer, sdk, quest } = fixture();
+  quest.position.x = 20;
+  farmer.questGoal = quest;
+  // Something upstream asked to walk onto the enemy's own tile and native
+  // standoff refused it — that must not poison the fighting-range approach
+  // the farmer actually uses from onLoop.
+  farmer.navigateToPosition(quest.position);
+  farmer.handleNavigationStatus({ state: 'unreachable', position: quest.position, reason: 'stuck' });
+  expect(farmer.canNavigate(farmer.fightPosition(quest.position, 20))).toBe(true);
+});
+it('does not release a quest target merely because it is momentarily unresolvable while the server still names it', () => {
+  // Native standoff can hold a fight further out or route around a pack,
+  // dropping an object from the local snapshot without it dying — even well
+  // inside QUEST_VISIBLE_RANGE. The authoritative signal is the server's
+  // quest pointer, not local resolvability.
+  const { farmer, sdk, quest } = fixture();
+  sdk.world.objects.getQuestTargetId = () => quest.objectId;
+  sdk.world.objects.getById = () => undefined;
+  sdk.world.objects.getQuestObject = () => null; // isolate: a drop-and-repick would surface as null
+  farmer.questGoal = quest;
+  for (let now = 10000; now < 40000; now += 3100) {
+    expect(farmer.getQuestGoal(now)).toBe(quest); // well past the old flat 3 s grace
+  }
+});
+it('still releases a nearby quest target once the server names a different quest and it stays unresolvable', () => {
+  const { farmer, sdk, quest } = fixture();
+  let serverQuest = quest.objectId;
+  sdk.world.objects.getQuestTargetId = () => serverQuest;
+  sdk.world.objects.getById = () => undefined;
+  sdk.world.objects.getQuestObject = () => null; // isolate the drop from any re-pick
+  farmer.questGoal = quest;
+  expect(farmer.getQuestGoal(10000)).toBe(quest);
+  serverQuest = 999;
+  expect(farmer.getQuestGoal(10100)).toBe(quest); // short grace for the flip
+  expect(farmer.getQuestGoal(13200)).toBeNull(); // grace elapsed
+});
 it('keeps unrelated encounter ownership and unsubscribes navigation on reset and stop', () => {
   const { farmer, sdk, quest } = fixture();
   const unsubscribe = vi.fn();
@@ -607,7 +653,8 @@ it('at level 20 prioritizes purple/white markers over the ordinary quest and vis
   f.sdk.world.objects.getById = (id: number) => objects.find(o => o.objectId === id);
   f.setEnemies([mini]); f.farmer.onLoop();
   expect(f.farmer.eventGoal.objectId).toBe(40);
-  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(event.position);
+  // Weapon range from the event boss (100,0), not its own tile: see fightPosition.
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 92, y: 0 });
   expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalled();
   expect(f.farmer.centerGoal).toBeNull(); // event travel immediately overrides center fallback
   event.hp = 0; vi.setSystemTime(11100); f.farmer.onLoop();
@@ -678,7 +725,8 @@ it('switches a distant dead event even after its object drops and while teleport
   f.farmer.onLoop();
   expect(f.farmer.eventGoal.objectId).toBe(41);
   expect(f.farmer.finishedEvents.has(40)).toBe(true);
-  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(next.position);
+  // Weapon range from next's tile (200,0), not its own tile: see fightPosition.
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 192, y: 0 });
 });
 
 it('pins an arrived event through its death/loot window, even if displaced from the boss', () => {
@@ -911,13 +959,11 @@ it('living adds cannot extend a confirmed kill past the loot window', () => {
   expect(f.farmer.eventGoal.objectId).toBe(41);
 });
 
-it('releases an event boss that vanishes completely after being engaged within the confirmed-death window, not the missing-boss window', () => {
-  // A corpse that despawns immediately can go straight from live to unresolvable:
-  // no hp<=0 snapshot, no captured DAMAGE(kill) packet for it either. Before the
-  // fix this fell back to the 30 s "still might be alive" wait instead of the 10 s
-  // confirmed-death wait, and handleBossEncounter spent that time reporting
-  // "waiting for adds or vulnerable boss" / "waiting for encounter visibility" —
-  // reported live as "it sits there thinking there are adds to clear."
+it('does not release an event boss on absence alone, even after being engaged — vanish is not death', () => {
+  // Owner ruling 2026-09-19: vanishing from the local object table is NEVER
+  // death evidence by itself — native standoff can hold a fight further out or
+  // route around a pack, dropping an object from the snapshot without it
+  // dying. Absence alone must wait the full 30 s "missing boss" window.
   vi.useFakeTimers(); vi.setSystemTime(10000);
   const f = fixture(); f.sdk.self.getLevel = () => 20;
   const boss = { ...f.quest, objectId: 40, isEventBoss: true };
@@ -927,15 +973,63 @@ it('releases an event boss that vanishes completely after being engaged within t
   f.sdk.world.objects.getById = (id: number) => objects.find(o => o.objectId === id);
   f.setEnemies([boss]); f.farmer.onLoop();
   expect(f.farmer.eventArrived).toBe(true);
-  // The boss disappears entirely — not hp<=0, just gone from world state — while
-  // never having sent DAMAGE(kill=true) or an HP update we captured.
+  // The boss disappears entirely — not hp<=0, just gone from world state, no
+  // DAMAGE(kill=true) captured, and no loot bag corroborates it.
   objects = [next];
   f.setEnemies([]); vi.setSystemTime(11000); f.farmer.onLoop();
-  // 10.5 s after it vanished: past the 10 s confirmed-death window, well short of
-  // the 30 s missing-boss window this used to fall back to.
+  // 10.5 s after it vanished: past the old (wrong) 10 s confirmed-death window.
+  // Absence alone must still be pending — not released yet.
+  vi.setSystemTime(21500); f.farmer.onLoop();
+  expect(f.farmer.finishedEvents.has(40)).toBe(false);
+  expect(f.farmer.eventGoal.objectId).toBe(40);
+  // 30.5 s after it vanished: the full missing-boss window elapses, so it
+  // releases on the timeout alone (no positive evidence ever arrived).
+  vi.setSystemTime(41500); f.farmer.onLoop();
+  expect(f.farmer.finishedEvents.has(40)).toBe(true);
+  expect(f.farmer.eventGoal.objectId).toBe(41);
+});
+it('releases a vanished event boss early when a loot bag corroborates the kill at its last position', () => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const f = fixture(); f.sdk.self.getLevel = () => 20;
+  const boss = { ...f.quest, objectId: 40, isEventBoss: true };
+  const next = { ...boss, objectId: 41, position: { x: 200, y: 0 } };
+  let objects = [boss, next];
+  f.sdk.world.objects.getAll = () => objects;
+  f.sdk.world.objects.getById = (id: number) => objects.find(o => o.objectId === id);
+  f.setEnemies([boss]); f.farmer.onLoop();
+  expect(f.farmer.eventArrived).toBe(true);
+  objects = [next];
+  f.setEnemies([]);
+  // A bag drops right where the boss was last seen (f.quest.position is (6,0)).
+  f.sdk.loot.getBags = () => [{ objectId: 90, rarity: 'white', position: { x: 6, y: 1 }, items: [] }];
+  vi.setSystemTime(11000); f.farmer.onLoop();
+  // 10.5 s after it vanished: the corroborated wait (10 s) has elapsed.
   vi.setSystemTime(21500); f.farmer.onLoop();
   expect(f.farmer.finishedEvents.has(40)).toBe(true);
   expect(f.farmer.eventGoal.objectId).toBe(41);
+});
+
+it('does not confirm a boss dead merely because it once was arrived, when it vanishes only after backing off', () => {
+  // Native standoff can hold a fight further out or route around a pack well
+  // after arrival, so a boss that is simply out of local range right now must
+  // not be declared dead just because eventArrived was set earlier.
+  const f = fixture(); f.sdk.self.getLevel = () => 20;
+  const boss = { ...f.quest, objectId: 40, isEventBoss: true };
+  let objects = [boss];
+  f.sdk.world.objects.getAll = () => objects;
+  f.sdk.world.objects.getById = (id: number) => objects.find(o => o.objectId === id);
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  f.setEnemies([boss]); f.farmer.onLoop();
+  expect(f.farmer.eventArrived).toBe(true);
+  // Displaced 24 tiles out (boss.position is (6,0), the fixture default), then
+  // the boss vanishes entirely — not confirmed dead, and not currently close.
+  f.sdk.self.distanceTo = (p: any) => Math.hypot(p.x - 30, p.y);
+  objects = []; f.setEnemies([]); vi.setSystemTime(11000); f.farmer.onLoop();
+  // Past the 10 s confirmed-death window this used to wrongly take (sticky
+  // eventArrived), still short of the 30 s missing-boss window it must take.
+  vi.setSystemTime(21500); f.farmer.onLoop();
+  expect(f.farmer.eventGoal?.objectId).toBe(40);
+  expect(f.farmer.finishedEvents.has(40)).toBe(false);
 });
 
 it.each(['packet', 'hp'])('releases a dead event combat lock immediately after %s evidence, even when displaced', (evidence) => {
@@ -988,14 +1082,15 @@ it('re-picks a far committed quest once the server names another quest and the o
   f.sdk.world.objects.getQuestTargetId = () => serverQuest;
   f.sdk.walking.canTeleport = () => false;
   f.farmer.onLoop();
-  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(f.quest.position);
+  // Weapon range from the quest's tile (100,0), not its own tile: see fightPosition.
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 92, y: 0 });
   visible = []; vi.setSystemTime(70000); f.farmer.onLoop();
   expect(f.farmer.questGoal.objectId).toBe(10);         // out of view, but the server still names it
   serverQuest = 11; visible = [other]; vi.setSystemTime(71000); f.farmer.onLoop();
   expect(f.farmer.questGoal.objectId).toBe(10);         // short grace for a flip
   vi.setSystemTime(74500); f.farmer.onLoop();
   expect(f.farmer.questGoal.objectId).toBe(11);
-  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(other.position);
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: -52, y: 0 });
 });
 
 it('prefers a targetable enemy over a bigger locked one that can no longer be damaged', () => {

@@ -159,6 +159,20 @@ export default class Farmer {
     return !this.unreachablePositions.some(entry => Math.hypot(entry.x - position.x, entry.y - position.y) < 2);
   }
 
+  // Walk to weapon range of a shooting enemy, not onto its own tile. Native
+  // ENEMY STANDOFF gives every shooting enemy a 2-tile impassable core, so a
+  // destination exactly on the enemy's position never resolves — the route
+  // gets asymptotically close and the native layer reports it unreachable
+  // forever (see UDodgeStandoff.h). Aim for the TARGET_RADIUS ring around it
+  // instead, along the line back to our current position, mirroring the ring
+  // handleBossAdds already returns to when it is pulled off a boss.
+  fightPosition(position, distance) {
+    if (!(distance > 0)) return position;
+    const standoff = Math.min(TARGET_RADIUS, distance);
+    const dx = RealmEngine.self.getX() - position.x, dy = RealmEngine.self.getY() - position.y;
+    return { x: position.x + dx / distance * standoff, y: position.y + dy / distance * standoff };
+  }
+
   navigateToPosition(position) {
     if (!this.canNavigate(position)) return false;
     const accepted = RealmEngine.dodge.navigateToPosition(position);
@@ -860,17 +874,19 @@ export default class Farmer {
       const distance = RealmEngine.self.distanceTo(this.eventGoal.position);
       if (distance <= 12) this.eventArrived = true;
       const live = RealmEngine.world.objects.getById(this.eventGoal.objectId);
-      // A corpse that despawns immediately never shows hp<=0 and may never carry a
-      // DAMAGE(kill) packet we captured either, so it can go straight from live to
-      // unresolvable. Once we have arrived and fought it, "gone completely" beside
-      // its own last position is itself the death evidence — treat it as confirmed
-      // dead (the 10 s loot/phase window below) rather than merely missing (30 s).
-      const vanished = !live && this.eventArrived;
+      // Owner ruling 2026-09-19: vanishing from the local object table is NEVER
+      // death evidence on its own — native standoff can hold a fight further out
+      // or route us around a pack, dropping an object from the snapshot without
+      // it dying. Death requires positive evidence: an explicit kill signal, or
+      // an hp<=0 snapshot while still resolvable. A corpse that despawns
+      // instantly may show neither, so a loot bag at its last known position
+      // corroborates (without proving) a kill and only shortens the wait below.
       const dead = RealmEngine.world.objects.isDead?.(this.eventGoal.objectId)
-        || (live && live.hp <= 0 && live.maxHp > 0)
-        || vanished;
+        || (live && live.hp <= 0 && live.maxHp > 0);
+      const bagAtLastPosition = !live && !dead && RealmEngine.loot.getBags()
+        .some(bag => Math.hypot(bag.position.x - this.eventGoal.position.x, bag.position.y - this.eventGoal.position.y) <= 3);
       if (live && !dead) { this.eventGoal = live; this.eventMissingAt = null; this.eventHoldSince = null; }
-      else if (dead || this.eventArrived || distance <= 12) {
+      else if (dead || bagAtLastPosition || this.eventArrived || distance <= 12) {
         // One object can be just a phase/controller. Stay local if the event
         // replaces it, rather than treating that object's death as travel permission.
         const replacement = this.eventArrived && this.eventCandidates.find(o =>
@@ -891,11 +907,15 @@ export default class Farmer {
         const overHold = this.eventHoldSince !== null && now - this.eventHoldSince >= EVENT_HOLD_MAX_MS;
         if (addsAlive && !overHold) this.eventMissingAt = null;
         else if (this.eventMissingAt === null) this.eventMissingAt = now;
-        // A remote kill can switch immediately. After arrival, allow time for
-        // phase swaps and delayed bag spawns; handleLoot still runs every loop.
-        const waitMs = this.eventArrived ? (dead ? 10000 : 30000) : (dead ? 0 : 30000);
+        // A remote kill can switch immediately. A corroborating bag shortens the
+        // "might still be alive" wait without treating absence as proof. Neither
+        // signal available: wait the full window for phase swaps/delayed drops;
+        // handleLoot still runs every loop, so a late bag is not missed.
+        const waitMs = dead ? (this.eventArrived ? 10000 : 0) : (bagAtLastPosition ? 10000 : 30000);
         if (overHold || (!addsAlive && this.eventMissingAt !== null && now - this.eventMissingAt >= waitMs)) {
-          RealmEngine.log.info(`Realm Farmer: event ended — ${this.eventGoal.name}; selecting another boss.`);
+          const reason = dead ? 'kill signal' : bagAtLastPosition ? 'loot bag at last position' : overHold ? 'hold window elapsed' : 'missing-boss timeout';
+          RealmEngine.log.info(`Realm Farmer: event ended — ${this.eventGoal.name}; selecting another boss (${reason}).`);
+          this.setStatus(`${this.eventGoal.name}: released — ${reason}`);
           this.finishedEvents.add(this.eventGoal.objectId);
           this.eventGoal = null; this.eventArrived = false; this.eventMissingAt = null; this.eventHoldSince = null;
           this.bossEncounter = null;
@@ -959,29 +979,26 @@ export default class Farmer {
         this.questMissingAt = 0;
         return live;
       }
-      if (distance > QUEST_VISIBLE_RANGE) {
-        // BEYOND VISIBILITY its absence proves nothing, so the protocol decides: the
-        // server names the current quest (QUESTOBJECTID). While that is still ours,
-        // keep the commitment however long the walk. Once it names another quest (or
-        // none) the coordinate is stale: after a short grace for a flip, re-pick.
-        // Without that signal, re-pick after QUEST_UNSEEN_COMMIT_MS rather than
-        // walking to a dead boss's last coordinate indefinitely.
-        const serverQuestId = RealmEngine.world.objects.getQuestTargetId?.();
-        const known = typeof serverQuestId === 'number';
-        if (known && serverQuestId === this.questGoal.objectId) {
-          this.questMissingAt = 0;
-          return this.questGoal;
-        }
-        if (!this.questMissingAt) this.questMissingAt = now;
-        if (now - this.questMissingAt < (known ? QUEST_MISSING_GRACE_MS : QUEST_UNSEEN_COMMIT_MS)) return this.questGoal;
-      } else {
-        // WITHIN VISIBILITY the object SHOULD be in the snapshot, so a sustained
-        // absence is the kill it looks like. (The gate used to be QUEST_AREA_ARRIVE,
-        // 4 tiles, but quest mobs die from weapon range, 5-8 tiles out, so the
-        // liveness check never ran on the kill that mattered.)
-        if (!this.questMissingAt) this.questMissingAt = now;
-        if (now - this.questMissingAt < QUEST_MISSING_GRACE_MS) return this.questGoal;
+      // Local absence proves nothing on its own, at any distance: native standoff
+      // can now hold a fight further out or route around a pack, dropping an
+      // object from the local snapshot without it dying, even well inside
+      // QUEST_VISIBLE_RANGE. The protocol decides: while the server still names
+      // this object as the active quest (QUESTOBJECTID), it is alive no matter
+      // what the local object table says.
+      const serverQuestId = RealmEngine.world.objects.getQuestTargetId?.();
+      const known = typeof serverQuestId === 'number';
+      if (known && serverQuestId === this.questGoal.objectId) {
+        this.questMissingAt = 0;
+        return this.questGoal;
       }
+      // No authoritative signal, or the server has already moved on: fall back to
+      // a grace timer before re-picking. Once the server points elsewhere (or is
+      // silent and the object is nearby) a short grace is enough; only "we never
+      // had the signal and it's far away" gets the long commit, rather than
+      // walking to a dead boss's last coordinate indefinitely.
+      if (!this.questMissingAt) this.questMissingAt = now;
+      const grace = (!known && distance > QUEST_VISIBLE_RANGE) ? QUEST_UNSEEN_COMMIT_MS : QUEST_MISSING_GRACE_MS;
+      if (now - this.questMissingAt < grace) return this.questGoal;
       this.questGoal = null;
       this.questMissingAt = 0;
     }
@@ -1100,7 +1117,7 @@ export default class Farmer {
           // exactly where walking is worst: across water and around map-scale
           // obstacles the bounded nav window cannot plan around at all.
           if (this.tryBeaconTeleport(now, quest)) return LOOP_MS;
-          this.navigateToPosition(quest.position);
+          this.navigateToPosition(this.fightPosition(quest.position, distance));
         }
         this.setStatus(level < 20
           ? `${distance > QUEST_AREA_ARRIVE ? 'Leveling' : 'Fighting'}: ${quest.name} → (${quest.position.x.toFixed(0)}, ${quest.position.y.toFixed(0)}) · ${distance.toFixed(0)} tiles`
