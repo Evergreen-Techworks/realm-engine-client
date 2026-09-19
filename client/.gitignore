@@ -159,6 +159,10 @@ data/images/
 
 data/.local-build-hash
 
+# Commit stamp for the startup build marker (scripts/stamp-build-info.mjs).
+# Regenerated per build; a missing file just logs commit=unknown.
+data/build-info.json
+
 /release/
 
 winhttp-proxy/*.dll
