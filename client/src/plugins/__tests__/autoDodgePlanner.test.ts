@@ -3,7 +3,7 @@ import { register } from '../../../plugins/auto-dodge.js';
 import type { PluginContext } from '../../../plugins/api.js';
 import { setDllFeatureSender } from '../../bridge/DllFeatureBus.js';
 
-// Tactician Slice 3: the udodgePlanner switch (tactician | classic, default tactician).
+// Tactician Slice 3: the udodgePlanner switch (classic | tactician, default classic).
 describe('auto-dodge udodgePlanner', () => {
   afterEach(() => setDllFeatureSender(null));
 
@@ -30,23 +30,23 @@ describe('auto-dodge udodgePlanner', () => {
     return { configs, callbacks, events, sent };
   }
 
-  it('is a unified-mode select that defaults to tactician', () => {
+  it('is a unified-mode select that defaults to classic', () => {
     const { configs } = load();
     const setting = configs.get('udodgePlanner');
     expect(setting).toBeDefined();
     expect(setting.label).toBe('[UDodge] Planner');
     expect(setting.type).toBe('select');
-    expect(setting.value).toBe('tactician');
-    expect(setting.options.map((o: { value: string }) => o.value)).toEqual(['tactician', 'classic']);
+    expect(setting.value).toBe('classic');
+    expect(setting.options.map((o: { value: string }) => o.value)).toEqual(['classic', 'tactician']);
     expect(setting.visibleWhen).toEqual({ key: 'dodgeMode', value: 'unified' });
   });
 
   it('sends the chosen policy to the DLL as text', () => {
     const { callbacks, sent } = load();
-    callbacks.get('udodgePlanner')!('classic');
-    expect(sent).toContainEqual(['udodgePlanner', 'classic']);
+    callbacks.get('udodgePlanner')!('tactician');
+    expect(sent).toContainEqual(['udodgePlanner', 'tactician']);
     callbacks.get('udodgePlanner')!('anything-else');
-    expect(sent.at(-1)).toEqual(['udodgePlanner', 'tactician']);
+    expect(sent.at(-1)).toEqual(['udodgePlanner', 'classic']);
   });
 
   it('re-sends the saved policy when the client connects', () => {
