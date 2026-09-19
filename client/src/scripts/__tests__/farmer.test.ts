@@ -911,6 +911,33 @@ it('living adds cannot extend a confirmed kill past the loot window', () => {
   expect(f.farmer.eventGoal.objectId).toBe(41);
 });
 
+it('releases an event boss that vanishes completely after being engaged within the confirmed-death window, not the missing-boss window', () => {
+  // A corpse that despawns immediately can go straight from live to unresolvable:
+  // no hp<=0 snapshot, no captured DAMAGE(kill) packet for it either. Before the
+  // fix this fell back to the 30 s "still might be alive" wait instead of the 10 s
+  // confirmed-death wait, and handleBossEncounter spent that time reporting
+  // "waiting for adds or vulnerable boss" / "waiting for encounter visibility" —
+  // reported live as "it sits there thinking there are adds to clear."
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const f = fixture(); f.sdk.self.getLevel = () => 20;
+  const boss = { ...f.quest, objectId: 40, isEventBoss: true };
+  const next = { ...boss, objectId: 41, position: { x: 200, y: 0 } };
+  let objects = [boss, next];
+  f.sdk.world.objects.getAll = () => objects;
+  f.sdk.world.objects.getById = (id: number) => objects.find(o => o.objectId === id);
+  f.setEnemies([boss]); f.farmer.onLoop();
+  expect(f.farmer.eventArrived).toBe(true);
+  // The boss disappears entirely — not hp<=0, just gone from world state — while
+  // never having sent DAMAGE(kill=true) or an HP update we captured.
+  objects = [next];
+  f.setEnemies([]); vi.setSystemTime(11000); f.farmer.onLoop();
+  // 10.5 s after it vanished: past the 10 s confirmed-death window, well short of
+  // the 30 s missing-boss window this used to fall back to.
+  vi.setSystemTime(21500); f.farmer.onLoop();
+  expect(f.farmer.finishedEvents.has(40)).toBe(true);
+  expect(f.farmer.eventGoal.objectId).toBe(41);
+});
+
 it.each(['packet', 'hp'])('releases a dead event combat lock immediately after %s evidence, even when displaced', (evidence) => {
   vi.useFakeTimers(); vi.setSystemTime(10000);
   const fixtureState = fixture(); fixtureState.sdk.self.getLevel = () => 20;
