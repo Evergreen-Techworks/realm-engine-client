@@ -66,8 +66,9 @@ BOSS_SCENARIOS = [
     "l_lock_boss_dies", "l_lock_boss_invuln",
 ]
 TACTICIAN_IN_RANGE_MIN = {"d_boss_open_dense": 0.60, "d_boss_wall_dense": 0.50}   # with hits == 0
-TACTICIAN_RADIAL_OUT_MAX = 0.15   # every boss scenario
+TACTICIAN_RADIAL_OUT_MAX = 0.10   # every boss scenario (ledger ruling 2026-09-18; was 0.15)
 TACTICIAN_REPLANS_MAX = 2.0       # every boss scenario, per second
+TACTICIAN_REVERSALS_MAX = 0.5     # every boss scenario, per second (ledger ruling 2026-09-18)
 
 TABLE_COLUMNS = {   # column -> decimals, in table order
     "hits": 0, "in_range_frac": 2, "radial_out_frac": 4, "replans_per_s": 3, "time_to_first_in_range_s": 2,
@@ -119,6 +120,9 @@ def tactician_acceptance(rows, rules):
                   f"(required <= {TACTICIAN_RADIAL_OUT_MAX:.2f}, over {row['threat_move_tiles']} threatened tiles)")
             judge(row["replans_per_s"] <= TACTICIAN_REPLANS_MAX,
                   f"{name} [{rule}]: replans_per_s {row['replans_per_s']:.3f} (required <= {TACTICIAN_REPLANS_MAX:g})")
+            judge(row["heading_reversals_per_s"] <= TACTICIAN_REVERSALS_MAX,
+                  f"{name} [{rule}]: heading_reversals_per_s {row['heading_reversals_per_s']:.2f} "
+                  f"(required <= {TACTICIAN_REVERSALS_MAX:g})")
     for row in rows:   # a locked scenario the list above does not know is a boss scenario too
         if row.get("lock") and row["scenario"] not in BOSS_SCENARIOS:
             failed.append(f"{row['scenario']} [{row['rule']}]: runs with a lock but is not in BOSS_SCENARIOS")
@@ -131,7 +135,7 @@ TELEMETRY_KEYS = ["t", "why", "mode", "rule", "nav", "corridor", "map_pending", 
                   "enemies", "worker_ms", "timed", "reused", "budget_hit", "dropped"]
 TELEMETRY_MAX_LINES_PER_S = 8 + 3 + 1 + 1   # the three change classes' ceilings plus the heartbeat
 ROW_TIMING_FIELDS = {"tick_ms_avg", "tick_ms_max", "nav_ms_avg", "nav_ms_max", "dodge_ms_avg", "dodge_ms_max",
-                     "cycle_ms_avg", "cycle_ms_max"}
+                     "cycle_ms_avg", "cycle_ms_max", "dodge_ms_p95", "cycle_ms_p95"}
 
 
 def telemetry_check(binary, scan):

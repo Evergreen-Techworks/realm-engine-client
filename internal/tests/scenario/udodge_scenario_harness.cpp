@@ -85,6 +85,7 @@
 #define HARNESS_SHARED_WORKER_CYCLE 1
 #endif
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <random>
@@ -512,7 +513,14 @@ struct WorkerStats { uint32_t cycles = 0; double navMsSum = 0, navMsMax = 0, dod
                      uint32_t timedPlans = 0;       // the planner answered with a plan (waiting or moving)
                      uint32_t timedReused = 0;      // ...of which the plan retained from an earlier cycle was kept
                      uint32_t timedBudgetHits = 0;  // a search stopped on its expansion count or deadline
-                     uint32_t timedSolves = 0; };   // the worker's solve took its step from the planner's advice
+                     uint32_t timedSolves = 0;      // the worker's solve took its step from the planner's advice
+                     // Ring plans, per worker cycle (Tactician Slice 2; observation only):
+                     uint32_t ringPublishes = 0;    // the snapshot asked for a ring approach
+                     uint32_t ringGoalPlans = 0;    // the plan's goal lies in the ring...
+                     uint32_t ringGoalTemporal = 0; // ...of which on the time-aware goal
+                     uint32_t outOfRangePlans = 0;  // the plan left the ring for ground outside it
+                     uint32_t startIsGoalPlans = 0; // the search ended on the player's own cell
+                     std::vector<double> dodgeMs, cycleMs; };   // every cycle's cost, for the p95
 WorkerStats g_worker;
 struct TickStats { uint32_t n = 0; double sum = 0, max = 0; };
 TickStats g_tick;
@@ -988,6 +996,16 @@ uint32_t PublishSnapshot(const Path::PlannerSnapshot& snap)
     }
 #endif
     if (s_result.solve.timedEscape) ++ws.timedSolves;
+    ws.dodgeMs.push_back(s_result.plan.computeDodgeMs); ws.cycleMs.push_back(ms);
+    if (s_result.plan.startIsGoal) ++ws.startIsGoalPlans;
+    if (s_result.plan.found && s_result.plan.outOfRange) ++ws.outOfRangePlans;
+#ifdef UDODGE_PATH_RING
+    if (snap.ringApproach) ++ws.ringPublishes;
+    if (s_result.plan.found && s_result.plan.ringGoal) {
+        ++ws.ringGoalPlans;
+        if (s_result.plan.tempGoal) ++ws.ringGoalTemporal;
+    }
+#endif
     ws.dodgeMsSum += s_result.plan.computeDodgeMs;
     ws.dodgeMsMax = std::max(ws.dodgeMsMax, static_cast<double>(s_result.plan.computeDodgeMs));
     if (snap.navActive) {
@@ -1158,6 +1176,11 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
             const float bx = b.x0 + b.vx * age, by = b.y0 + b.vy * age;
             if (!TruthSquareOpen(w, FloorI(bx), FloorI(by))) { b.alive = false; continue; }   // walls stop shots
             if (std::max(std::fabs(bx - cur.x), std::fabs(by - cur.y)) < b.half) {
+                if (std::getenv("HARNESS_TRACE_HITS"))   // observation only: which shot, where, how old
+                    std::fprintf(stderr, "  [hit t=%.3f] player=(%.3f,%.3f) moved_from=(%.3f,%.3f) bullet=(%.3f,%.3f) "
+                        "v=(%.4f,%.4f) half=%.2f age_ms=%.0f life_ms=%.0f\n",
+                        (g_nowMs - 100000.0) / 1000.0, cur.x, cur.y, before.x, before.y, bx, by,
+                        b.vx, b.vy, b.half, age, b.lifeMs);
                 ++r.hits; b.alive = false; ++w.bulletVersion;
             }
         }
@@ -1210,6 +1233,11 @@ void Emit(const Result& r)
     const double navAvg = g_worker.navRuns ? g_worker.navMsSum / g_worker.navRuns : 0;
     const double dodgeAvg = g_worker.cycles ? g_worker.dodgeMsSum / g_worker.cycles : 0;
     const double cycleAvg = g_worker.cycles ? g_worker.cycleMsSum / g_worker.cycles : 0;
+    const auto p95 = [](std::vector<double> v) {   // nearest-rank 95th percentile; 0 with no samples
+        if (v.empty()) return 0.0;
+        std::sort(v.begin(), v.end());
+        return v[std::min(v.size() - 1, static_cast<size_t>(std::ceil(0.95 * v.size())) - 1)];
+    };
     // 0 when nothing was moved under lock + live lane, and when no time was simulated.
     const double radialOutFrac = r.threatMoveTiles > 1e-9 ? r.radialOutTiles / r.threatMoveTiles : 0.0;
     const double replansPerS = r.simS > 0 ? (g_plan.replans + g_plan.navReplans) / r.simS : 0.0;
@@ -1225,7 +1253,10 @@ void Emit(const Result& r)
                 "\"in_range_frames\":%llu,\"in_range_tail_frames\":%llu,"
                 "\"heading_reversals_per_s\":%.2f,"
                 "\"timed_plans\":%u,\"timed_reused\":%u,\"timed_budget_hits\":%u,\"timed_solves\":%u,"
-                "\"diag_lines\":%lu}\n",
+                "\"diag_lines\":%lu,"
+                "\"dodge_ms_p95\":%.3f,\"cycle_ms_p95\":%.3f,"
+                "\"ring_publishes\":%u,\"ring_goal_plans\":%u,\"ring_goal_temporal\":%u,"
+                "\"out_of_range_plans\":%u,\"start_is_goal_plans\":%u}\n",
                 r.name.c_str(), r.success ? "true" : "false", r.timeS, r.pathTiles, r.finalDist, r.stuckS, r.hits,
                 r.inRangeFrac, g_move.refused, g_move.overspeed, std::min(g_move.maxStepRatio, 999.0),
                 tickAvg, g_tick.max, g_worker.navRuns, navAvg, g_worker.navMsMax,
@@ -1236,7 +1267,10 @@ void Emit(const Result& r)
                 static_cast<unsigned long long>(r.tailFrames),
                 r.simS > 0 ? r.headingReversals / r.simS : 0.0,
                 g_worker.timedPlans, g_worker.timedReused, g_worker.timedBudgetHits, g_worker.timedSolves,
-                DbgFileLogWriteCount());
+                DbgFileLogWriteCount(),
+                p95(g_worker.dodgeMs), p95(g_worker.cycleMs),
+                g_worker.ringPublishes, g_worker.ringGoalPlans, g_worker.ringGoalTemporal,
+                g_worker.outOfRangePlans, g_worker.startIsGoalPlans);
     std::fflush(stdout);
 }
 
