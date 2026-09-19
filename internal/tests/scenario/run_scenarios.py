@@ -31,9 +31,14 @@ HERE = Path(__file__).resolve().parent
 # cuts and the follower pads its sweep, so today the route never takes that corner.
 # m_pinch_object: the same corner between two OccupySquare objects.
 # Under navCollisionRule=game the DLL uses the game's point rule, so both pinches pass.
+# d_boss_*_dense_x065 / _x100 are the same two fights in the two worlds that matter
+# (the owner's armed collider and the game's default hit box) — the same known
+# limitation, reported under both policies and never asserted.
+DENSE_VARIANTS = ["d_boss_open_dense_x100", "d_boss_wall_dense_x100",
+                  "d_boss_open_dense_x065", "d_boss_wall_dense_x065"]
 KNOWN_LIMITATIONS = {
-    "legacy": {"d_boss_open_dense", "d_boss_wall_dense", "m_pinch_nowalk", "m_pinch_object"},
-    "game":   {"d_boss_open_dense", "d_boss_wall_dense"},
+    "legacy": {"d_boss_open_dense", "d_boss_wall_dense", "m_pinch_nowalk", "m_pinch_object", *DENSE_VARIANTS},
+    "game":   {"d_boss_open_dense", "d_boss_wall_dense", *DENSE_VARIANTS},
 }
 
 SCENARIOS = [
@@ -41,6 +46,7 @@ SCENARIOS = [
     "b_tree_cluster", "b_tree_cluster2",
     "c_u_wall", "c_u_wall_lock",
     "d_boss_open_rings", "d_boss_wall_rings", "d_boss_open_dense", "d_boss_wall_dense",
+    "d_boss_open_dense_x100", "d_boss_wall_dense_x100", "d_boss_open_dense_x065", "d_boss_wall_dense_x065",
     "e_corridor1_nowalk", "e_corridor1_fullocc", "e_corridor2_fullocc",
     "f_damaging_row", "f_lava_detour", "f_lava_pressure", "g_fullocc_gap", "h_learned_keepout", "j_hidden_blocker",
     "i_tilelist_revisit", "i_tilelist_frontier",
@@ -63,9 +69,12 @@ STAGE2_REGRESSIONS = ["n_rooms_remote_forward", "n_rooms_remote_reverse"]
 # A boss scenario is one the harness runs with an enemy lock (its row says "lock": true).
 BOSS_SCENARIOS = [
     "c_u_wall_lock", "d_boss_open_rings", "d_boss_wall_rings", "d_boss_open_dense", "d_boss_wall_dense",
+    *DENSE_VARIANTS,
     "l_lock_boss_dies", "l_lock_boss_invuln",
 ]
-TACTICIAN_IN_RANGE_MIN = {"d_boss_open_dense": 0.60, "d_boss_wall_dense": 0.50}   # with hits == 0
+TACTICIAN_IN_RANGE_MIN = {"d_boss_open_dense": 0.60, "d_boss_wall_dense": 0.50,
+                          "d_boss_open_dense_x100": 0.60, "d_boss_wall_dense_x100": 0.50,
+                          "d_boss_open_dense_x065": 0.60, "d_boss_wall_dense_x065": 0.50}   # with hits == 0
 TACTICIAN_RADIAL_OUT_MAX = 0.10   # every boss scenario (ledger ruling 2026-09-18; was 0.15)
 TACTICIAN_REPLANS_MAX = 2.0       # every boss scenario, per second
 TACTICIAN_REVERSALS_MAX = 0.5     # every boss scenario, per second (ledger ruling 2026-09-18)
@@ -214,6 +223,9 @@ def main():
     ap.add_argument("--rule", choices=["legacy", "game", "both"], default="both",
                     help="navCollisionRule to run under (a tree without nav/Collision.h runs legacy only)")
     ap.add_argument("--navigator", choices=["legacy", "dstar"], default="legacy")
+    ap.add_argument("--policy", choices=["tactician", "classic"], default="classic",
+                    help="udodgePlanner the harness runs under. Default classic, so every existing "
+                         "assertion and every recorded table keeps measuring the engine it measured before")
     ap.add_argument("--scan-mode", type=int, default=0,
                     help="tile list selection: 1 first 65536, 2 newest 65536 + window, 3 whole list windowed; 0 = detect")
     args = ap.parse_args()
@@ -282,7 +294,7 @@ def main():
             for name in scenarios:
                 if args.only and name != args.only:
                     continue
-                out = subprocess.run([str(binary), name, str(scan), rule], check=True,
+                out = subprocess.run([str(binary), name, str(scan), rule, args.policy], check=True,
                                      env={**os.environ, "HARNESS_NAVIGATOR": args.navigator},
                                      capture_output=True, text=True).stdout.strip()
                 if not out:
@@ -292,6 +304,7 @@ def main():
                     row["tree"] = args.label
                     row["scan_mode"] = scan
                     row["rule"] = rule
+                    row["policy"] = args.policy
                     rows.append(row)
                     if args.metrics or not (args.check or args.table or args.tactician_acceptance):
                         print(json.dumps(row), flush=True)
