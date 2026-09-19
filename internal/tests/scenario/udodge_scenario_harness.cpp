@@ -141,6 +141,10 @@ struct World {
     bool  walkActive = false;
     float walkX = 0, walkY = 0;
     float weaponRange = 7.0f;
+    // The world's OWN collisionRadiusMultiplier for the player (Tactician S3.5):
+    // truth and the solver are told the same number. 1.0 is the game default;
+    // 0.65 is the owner's and the shipped seed's armed collider.
+    float targetScale = 1.0f;
     std::function<void(World&)> script;           // per-frame scenario behaviour
 
     void SetGround(int tx, int ty, Ground g)
@@ -437,6 +441,8 @@ void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s)
     out.projectileSourceUnavailable = false; out.limited = false;
     out.hasLock = false; out.lockId = 0; out.lockPos = {};
     out.planner = s.planner;
+    out.targetScale = w.targetScale;   // the same world the truth test below uses
+    out.colliderTrusted = true;
     for (const Bullet& b : w.bullets) {
         float age = 0.f, rem = 0.f; Vec2 live{};
         if (!LaneVisible(b, playerX, playerY, age, rem, live) || out.laneCount >= kMaxProjectiles) continue;
@@ -1176,7 +1182,9 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
             if (age > b.lifeMs) { b.alive = false; continue; }
             const float bx = b.x0 + b.vx * age, by = b.y0 + b.vy * age;
             if (!TruthSquareOpen(w, FloorI(bx), FloorI(by))) { b.alive = false; continue; }   // walls stop shots
-            if (std::max(std::fabs(bx - cur.x), std::fabs(by - cur.y)) < b.half) {
+            // TRUTH (S3.5) = the game's proven rule: per-axis, NON-strict, player a
+            // point, box = T x this world's collisionRadiusMultiplier.
+            if (Contact::Hit(bx - cur.x, by - cur.y, Contact::TruthHalf(b.half, w.targetScale))) {
                 if (std::getenv("HARNESS_TRACE_HITS"))   // observation only: which shot, where, how old
                     std::fprintf(stderr, "  [hit t=%.3f] player=(%.3f,%.3f) moved_from=(%.3f,%.3f) bullet=(%.3f,%.3f) "
                         "v=(%.4f,%.4f) half=%.2f age_ms=%.0f life_ms=%.0f\n",
@@ -1361,9 +1369,11 @@ void ScenarioULock(const char* name)
 }
 
 // (d) locked boss firing rings (+ aimed triples when dense), optionally behind a wall segment
-void ScenarioBoss(const char* name, bool wall, int ringCount, double ringMs, bool aimed)
+void ScenarioBoss(const char* name, bool wall, int ringCount, double ringMs, bool aimed,
+                  float targetScale = 1.0f)
 {
     World w; Floor(w);
+    w.targetScale = targetScale;
     if (wall) for (int y = -4; y <= 4; ++y) w.PutObj(9, y, true);
     w.px = 0.5f; w.py = 0.5f;
     Enemy boss; boss.id = 901; boss.type = 0x0d51; boss.x = 16.5f; boss.y = 0.5f; boss.hp = boss.maxHp = 50000;
@@ -1996,6 +2006,9 @@ int main(int argc, char** argv)
 #ifdef HARNESS_NAV_FOUNDATION
     if (argc > 3) Movement::Collision::SetRuleText(argv[3]);
 #endif
+    // udodgePlanner (S3.1). Default CLASSIC here, so an invocation that predates
+    // the switch runs exactly the engine it always did.
+    UDodge::SetPlannerPolicy(argc > 4 ? argv[4] : "classic");
     auto want = [&](const char* n) { return only.empty() || only == n; };
     if (only == "bench_raster") { H::BenchRaster(); return 0; }
     if (only == "bench_nav")    { H::BenchNav(); return 0; }
@@ -2012,6 +2025,13 @@ int main(int argc, char** argv)
     if (want("d_boss_wall_rings"))  H::ScenarioBoss("d_boss_wall_rings", true, 8, 1000, false);
     if (want("d_boss_open_dense"))  H::ScenarioBoss("d_boss_open_dense", false, 16, 800, true);
     if (want("d_boss_wall_dense"))  H::ScenarioBoss("d_boss_wall_dense", true, 16, 800, true);
+    // The same two fights in the two worlds that matter (S3.5): the game's default
+    // hit box, and the owner's armed collider. x100 is the same world as the two
+    // rows above — kept as its own row so the pair reads at a glance.
+    if (want("d_boss_open_dense_x100")) H::ScenarioBoss("d_boss_open_dense_x100", false, 16, 800, true, 1.0f);
+    if (want("d_boss_wall_dense_x100")) H::ScenarioBoss("d_boss_wall_dense_x100", true, 16, 800, true, 1.0f);
+    if (want("d_boss_open_dense_x065")) H::ScenarioBoss("d_boss_open_dense_x065", false, 16, 800, true, 0.65f);
+    if (want("d_boss_wall_dense_x065")) H::ScenarioBoss("d_boss_wall_dense_x065", true, 16, 800, true, 0.65f);
     if (want("e_corridor1_nowalk")) H::ScenarioCorridor("e_corridor1_nowalk", 1, false);
     if (want("e_corridor1_fullocc"))H::ScenarioCorridor("e_corridor1_fullocc", 1, true);
     if (want("e_corridor2_fullocc"))H::ScenarioCorridor("e_corridor2_fullocc", 2, true);
