@@ -32,8 +32,13 @@ const TS_PATH = resolve(__dirname, '..', 'src', 'bridge', 'contract.ts');
 /** Below this, assume the FH macro shape changed rather than that keys vanished. */
 const MIN_EXPECTED_CPP_KEYS = 100;
 
-/** Keys declared through the FH/FH_BOOL/FH_INT/... handler-table macros. */
-const FH_MACRO_KEY = /FH(?:_BOOL|_INT|_INT_BOOL|_FLOAT|_TEXT)?\s*\(\s*"([A-Za-z0-9_]+)"/g;
+/**
+ * Keys declared through the FH/FH_BOOL/FH_INT/... handler-table macros.
+ * FH_DEFERRED (item 4b, measurement only) is the same handler shape as FH —
+ * it just opts a key out of FH's automatic BridgeLatencyDiag::NoteApplied
+ * stamp because its real apply point is elsewhere (see FeatureCommandRegistry.cpp).
+ */
+const FH_MACRO_KEY = /FH(?:_BOOL|_INT|_INT_BOOL|_FLOAT|_TEXT|_DEFERRED)?\s*\(\s*"([A-Za-z0-9_]+)"/g;
 /** Keys matched by hand with `f.Is("...")` inside an FH body. */
 const F_IS_KEY = /f\.Is\("([A-Za-z0-9_]+)"\)/g;
 

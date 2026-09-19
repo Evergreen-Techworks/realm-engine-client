@@ -63,6 +63,7 @@ import { InternalBridge } from './bridge/InternalBridge.js';
 import { setDllFeatureSender } from './bridge/DllFeatureBus.js';
 import { attachHiddenHelperTypeSync } from './bridge/HiddenHelperTypes.js';
 import { Logger } from './util/Logger.js';
+import { pollEventLoopDiag } from './diag/EventLoopDiag.js';
 import { ensureRotmgMetadataXml } from './util/ensureRotmgMetadataXml.js';
 import { startServices } from './startup/startServices.js';
 import { startMetadataEnrichment, type MetadataStatus } from './startup/metadataEnrichment.js';
@@ -355,9 +356,17 @@ async function main() {
   };
   proxy.once('listenStarted', () => markReady('proxy-listening'));
   internalBridge.once('listening', () => markReady('pipe-listening'));
+  // item 4b (measurement only): re-check RE_ASSETS/diag-timing.flag every 2s
+  // (matching DiagTiming::PollFlag's native cadence — see util/DiagGate.ts)
+  // and start/stop the event-loop delay monitor accordingly. No-op cost when
+  // the flag is absent, same as every other [Diag/*] probe in this task.
+  const diagPollTimer = setInterval(pollEventLoopDiag, 2000);
+  diagPollTimer.unref?.();
+
   const shutdown = async () => {
     if (startupController.signal.aborted) return;
     startupController.abort();
+    clearInterval(diagPollTimer);
     devServer?.stop();
     Logger.log('Main', 'Shutting down...');
     scriptHost?.stopAll();
