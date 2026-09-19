@@ -701,8 +701,10 @@ void InvalidateGoal()
 }
 void Start() {}
 void Stop() {}
-RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool active)
+RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool active,
+                     bool hazardBlocked)
 {
+    navigationRouter.SetHazardBlocked(hazardBlocked);   // S3.11: safeWalk walls off damaging ground
     if (!Enabled()) return {};
     if (!active) { goalActive = false; return {}; }
     if (H::capturePending) {

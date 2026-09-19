@@ -962,7 +962,7 @@ void Tick(void* player, float px, float py, float dt)
     g_globalRawGoal = {walkX, walkY};
     g_globalRawActive = globalPointActive;
     const auto corridor = Movement::Nav::Runtime::Update({px, py}, {walkX, walkY},
-        baseTilesPerSec, globalPointActive);
+        baseTilesPerSec, globalPointActive, settings.safeWalk);
     const bool sameGlobalRequest = Navigation::SameRouteRequest(
         Movement::Nav::Runtime::Enabled() && globalPointActive && g_globalAssistance,
         corridor.epoch, corridor.goalId, g_globalCorridorEpoch, g_globalCorridorGoalId);

@@ -114,6 +114,18 @@ public:
         return true;
     }
 
+    // safeWalk (S3.11): damaging ground is a WALL, not a 3-second surcharge. The
+    // bot must never walk onto lava/venom while the user asked it not to, however
+    // long the detour. Only the TARGET of an edge is refused, so a player who is
+    // already standing on damaging ground can still leave it by any shortest way.
+    bool SetHazardBlocked(bool blocked)
+    {
+        if (hazardBlocked_ == blocked) return true;
+        hazardBlocked_ = blocked;
+        if (active_) SetGoal(epoch_, goalId_, start_, goal_);
+        return true;
+    }
+
     bool SetBaseSpeed(float tilesPerSec)
     {
         if (!std::isfinite(tilesPerSec) || tilesPerSec <= 0.f) return false;
@@ -314,6 +326,7 @@ private:
             return Infinity();
         const auto source = memory_.GetCell(fromX, fromY).ground;
         const auto target = memory_.GetCell(toX, toY).ground;
+        if (hazardBlocked_ && (target.flags & TileOccupancy::kTileDamaging)) return Infinity();
         const float sourceFactor = (source.flags & TileOccupancy::kTileKnown) ? speedFactors_[source.speedClass] : 1.f / 1.2f;
         const float targetFactor = (target.flags & TileOccupancy::kTileKnown) ? speedFactors_[target.speedClass] : 1.f / 1.2f;
         return Speed::EdgeMs(baseSpeed_ / 1000.f, sourceFactor, targetFactor, diagonal ? 1.41421356237f : 1.f) / 1000.f +
@@ -462,6 +475,7 @@ private:
     RoutePoint start_, goal_;
     uint32_t startIndex_ = 0, goalIndex_ = 0;
     bool active_ = false, limited_ = false;
+    bool  hazardBlocked_ = false;   // safeWalk: damaging ground is impassable
     float keyModifier_ = 0.f, maxSpeedFactor_ = 1.f, baseSpeed_ = 6.f;
     std::array<float, 256> speedFactors_;
     size_t maxNodes_, lastExpansions_ = 0;

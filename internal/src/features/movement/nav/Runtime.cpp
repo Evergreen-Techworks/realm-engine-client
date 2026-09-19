@@ -33,6 +33,7 @@ struct Request {
     RoutePoint player, goal;
     float baseSpeed = 6.f;
     bool active = false;
+    bool hazardBlocked = false;   // safeWalk: damaging ground is a wall for the D* router
 };
 struct Result {
     RouteCorridor corridor;
@@ -253,6 +254,7 @@ void Work()
         }
         if (!Enabled() || !request.active || request.epoch != epoch.load(std::memory_order_acquire)) continue;
         router.SetBaseSpeed(request.baseSpeed);
+        router.SetHazardBlocked(request.hazardBlocked);
         if (acceptedRevision != request.revision) {
             if (!router.SetGoal(request.epoch, request.goalId, request.player, request.goal)) continue;
             acceptedRevision = request.revision;
@@ -394,7 +396,8 @@ void Stop()
     resetCapture.store(true, std::memory_order_release);
 }
 
-RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool active)
+RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool active,
+                     bool hazardBlocked)
 {
     RouteCorridor output;
     if (resetCapture.exchange(false, std::memory_order_acq_rel)) {
@@ -431,6 +434,7 @@ RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool a
     }
     currentRequest.player = player;
     currentRequest.baseSpeed = baseSpeed;
+    currentRequest.hazardBlocked = hazardBlocked;
     output.epoch = current.epoch;
     output.goalId = currentRequest.goalId;
     output.state = active ? RouteState::Repairing : RouteState::Idle;

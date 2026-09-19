@@ -1029,10 +1029,12 @@ NavSearch RunNavSearch(const PlannerSnapshot& in, int startGx, int startGy, int 
             const int   nidx = NavIdx(nx, ny);
             if (s_navClosed[nidx]) continue;
             float step = (kDx[d] != 0 && kDy[d] != 0) ? kUPathRoot2 : 1.f;
-            // Hazard (bit1: DAMAGING ground) is a SOFT cost on the least-damage pass —
-            // route around it when a clean path is cheaper, but still traverse it when
-            // that's the only way out (so a lava-floored arena never boxes the
-            // planner in). The bounded clean pass treats it as a wall (ComputeNav).
+            // Hazard (bit1: DAMAGING ground). With safeWalk ON this line is never
+            // reached: `blocked` above refuses the cell outright (hazardIsWall is
+            // in.settings.safeWalk — S3.11: damaging ground is a hard wall in every
+            // layer, under both planner policies, and only the player's OWN cell is
+            // ever expandable). With safeWalk off it stays a soft cost, so a route
+            // still prefers clean ground when one is cheaper.
             if (in.navGrid.flags[nidx] & 0x2) step += kUNavHazardCost;
             // Sink/slow ground (shallow water, quicksand, honey): a COST, not a wall.
             // It used to be hard-blocked alongside walls, which made the planner refuse
