@@ -1103,10 +1103,18 @@ export default class Farmer {
       this.setStatus(`Walking to ${portal.name} (${portal.playerCount}/85)`);
     } else {
       RealmEngine.dodge.clearWaypoint();
-      this.setStatus(`Entering ${portal.name} (${portal.playerCount}/85)`);
-      if (now - this.lastPortalUseAt >= PORTAL_RETRY_MS) {
-        this.lastPortalUseAt = now;
-        portal.enter();
+      if (portal.availability === 'full') {
+        const waitS = Math.max(0, Math.ceil(((portal.retryAt ?? now) - now) / 1000));
+        this.setStatus(`Portal refused — retrying in ${waitS}s`);
+      } else {
+        let pending = now - this.lastPortalUseAt < PORTAL_RETRY_MS;
+        if (!pending) {
+          this.lastPortalUseAt = now;
+          pending = portal.enter();
+        }
+        this.setStatus(pending
+          ? `Entering ${portal.name} (${portal.playerCount}/85)`
+          : `Waiting to enter ${portal.name} (${portal.playerCount}/85)`);
       }
     }
   }
