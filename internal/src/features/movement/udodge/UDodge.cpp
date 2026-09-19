@@ -911,6 +911,16 @@ void Tick(void* player, float px, float py, float dt)
     constexpr float kLockApproachInsetTiles = 0.75f;  // the route's goal disk sits this far inside
     float navGoalRadius = 0.f;
     bool  lockApproach = false;
+    // RING APPROACH (Tactician Slice 2). The walk-to A* that carries the approach is
+    // projectile-blind, and during it the snapshot carries no lock, so the dodge
+    // pathfinder used to treat any shot-free stand as "done" — around a radially
+    // firing boss that is where the shots end, outside weapon range. Once the ring's
+    // outer edge is inside the dodge window the snapshot asks for a route INTO the
+    // ring (time-checked like every dodge route). Farther out nothing changes: the
+    // walk-to still carries the long approach, and it stays active underneath.
+    constexpr float kRingPlanReachTiles = kUPathMaxRadCells * kUPathCellTiles - 2.0f;
+    bool  ringApproach = false;
+    float ringOuter = 0.f, ringInner = 0.f;
     if (!walkActive && !wasdActive && g_map.hasLock) {
         const LockGeometry lg = ComputeLockGeometry(settings);
         const float dist = Len(Sub(in.player, g_map.lockPos));
@@ -930,6 +940,12 @@ void Tick(void* player, float px, float py, float dt)
             walkActive = true;
             lockApproach = true;
             navGoalRadius = std::max(0.5f, lg.engagementRange - kLockApproachInsetTiles);
+            if (settings.planner == Contact::Policy::Tactician &&
+                dist - lg.engagementRange <= kRingPlanReachTiles) {
+                ringApproach = true;
+                ringOuter = lg.engagementRange;   // the two values the in-range orbit publishes
+                ringInner = lg.innerStandoff;     // (goal.maxRange / goal.innerStandoff below)
+            }
             if (diagOn) ++DiagTiming::Game().lockApproachFrames;
         } else {
             g_lockApproachGoalValid = false;
@@ -1204,7 +1220,17 @@ void Tick(void* player, float px, float py, float dt)
             std::max(std::fabs(in.player.x - goal.lockPos.x),
                      std::fabs(in.player.y - goal.lockPos.y)) <= kGridEdgeMarginTiles;
         const bool lockedCenter = goal.fromLock && goal.maxRange > 0.f && playerInGrid;
-        const Vec2 gridCenter   = lockedCenter ? goal.lockPos : in.player;
+        Vec2 gridCenter         = lockedCenter ? goal.lockPos : in.player;
+        // LATTICE (Tactician S3.8). The window's cells sit at centre + k x cell, so a
+        // centre that drifts with the player re-cuts the plane every publish: the cell
+        // the previous goal fell in is a different point each time, the commitment
+        // hysteresis cannot recognise its own goal, and the route jitters. Snapping the
+        // centre to the 0.5-tile lattice makes every publish share one cell grid, so a
+        // goal re-snaps to itself while the player moves through it.
+        if (settings.planner == Contact::Policy::Tactician) {
+            gridCenter.x = std::round(gridCenter.x / kUPathCellTiles) * kUPathCellTiles;
+            gridCenter.y = std::round(gridCenter.y / kUPathCellTiles) * kUPathCellTiles;
+        }
         {
             PhaseTimer _p(DiagTiming::Game().rasterOcc);
             FillOccGrid(s_snap.grid, gridCenter, true, collisionRule);
@@ -1232,6 +1258,14 @@ void Tick(void* player, float px, float py, float dt)
         s_snap.lockPos          = goal.lockPos;
         s_snap.weaponRangeTiles = goal.fromLock ? goal.maxRange : 0.f;
         s_snap.innerStandoffTiles = goal.fromLock ? goal.innerStandoff : 0.f;
+        // A lock approach is a walk-to (goal.fromLock is off), so the ring travels on
+        // its own flag. The grid stays player-centred: the ring's near side is inside it.
+        s_snap.ringApproach     = ringApproach;
+        if (ringApproach) {
+            s_snap.lockPos            = g_map.lockPos;
+            s_snap.weaponRangeTiles   = ringOuter;
+            s_snap.innerStandoffTiles = ringInner;
+        }
         // Plan-commitment hysteresis (plan 76): carry the last accepted route goal
         // into the snapshot so the worker Dijkstra prefers it among near-equal
         // options. g_route still holds the PREVIOUS tick's route here (it is refreshed
@@ -1383,17 +1417,30 @@ void Tick(void* player, float px, float py, float dt)
         navStep = NavStepFromCache(g_navCache, in.player,
             std::max(b, 1.f) * kUNavLookaheadBudgets, dev, nearEnd, in);
     }
+    // RING ROUTE: while a lock approach has a fresh dodge route whose goal lies in
+    // the ring, this frame steers by THAT route's step target, not the corridor's.
+    // No second follower: the step target sits ~kUStepLookaheadBudgets budgets ahead
+    // and is replaced every publish, exactly as the in-ring orbit consumes it. The
+    // solver's walk-to step still has to pass every floor (walls, bodies, blasts,
+    // Temporal::PathClear); when it does not, the pre-position branch, the timed
+    // advice and the reflex decide as before. Any frame without such a route — none
+    // delivered, stale, or the follower waiting on the A* — is today's walk-to.
+    const bool ringRoute = settings.planner == Contact::Policy::Tactician &&
+        lockApproach && goal.walkTo && !navWaiting &&
+        g_route.found && g_route.ringGoal &&
+        g_lastPubSeq >= g_route.forSeq && (g_lastPubSeq - g_route.forSeq) <= kUPlanMaxStaleSeq;
+    const Vec2 steerStep = ringRoute ? g_route.stepTarget : navStep;
     const auto navHandoff = Navigation::FinishRefresh(goal.walkTo, wasNavWaiting, navWaiting,
         g_navCache.valid, in.player, navStep, rebuilt || tickChanged || throttleFallback,
         commitmentChanged, rejectedFreshWalk,
-        (acceptedWalkSolve && LenSq(Sub(acceptedWalkStep, navWaiting ? in.player : navStep))
+        (acceptedWalkSolve && LenSq(Sub(acceptedWalkStep, navWaiting ? in.player : steerStep))
             > kUNavAnchorArriveTiles * kUNavAnchorArriveTiles)
         || (!UsesGameRule(in) && Navigation::TravelStepConsumed(goal.walkTo, g_navCache.valid, navWaiting,
             g_solve.shouldMove && g_solve.kind == Solver::SolveKind::Safe,
-            in.player, g_solve.target, navStep, in.speed * Clamp(dt * 1000.f, 1.f, 250.f))));
+            in.player, g_solve.target, steerStep, in.speed * Clamp(dt * 1000.f, 1.f, 250.f))));
     if (goal.walkTo) {
         navStep = navHandoff.step;
-        goal.pos = navStep;
+        goal.pos = ringRoute ? steerStep : navStep;
     }
 
     // Staleness gate: only feed the solver a route recent enough to trust as a
@@ -1740,10 +1787,12 @@ void Tick(void* player, float px, float py, float dt)
         t.navRouteDelivered = navCacheRefreshed;
         const bool routeFresh = g_route.forSeq != 0 && g_lastPubSeq >= g_route.forSeq &&
                                 (g_lastPubSeq - g_route.forSeq) <= kUPlanMaxStaleSeq;
+        t.ringApproach = ringApproach;
         t.plan = (!g_route.found && !g_route.startIsGoal) ? T::Plan::None
                : !routeFresh          ? T::Plan::Stale
                : g_route.startIsGoal  ? T::Plan::StartIsGoal
                : g_route.partial      ? T::Plan::Partial
+               : g_route.ringGoal     ? (g_route.tempGoal ? T::Plan::RingTemporal : T::Plan::RingRoute)
                : g_route.tempGoal     ? T::Plan::TemporalGoal : T::Plan::Route;
         t.planGoalValid = g_route.found;
         t.planGoal = g_route.goalPos;
@@ -1753,7 +1802,8 @@ void Tick(void* player, float px, float py, float dt)
                 : g_solve.kind == Solver::SolveKind::Fallback ? T::Solve::Fallback
                 : g_solve.timedEscape  ? T::Solve::Timed
                 : g_solve.prePosition  ? (g_solve.followedRoute ? T::Solve::DodgeRoute : T::Solve::Lateral)
-                : g_solve.followedRoute ? T::Solve::NavRoute : T::Solve::Solver;
+                : g_solve.followedRoute ? (ringRoute ? T::Solve::RingRoute : T::Solve::NavRoute)
+                : T::Solve::Solver;
         const bool adopted = g_solveSeq != g_telemetryWorker.seenSolveSeq;
         g_telemetryWorker.seenSolveSeq = g_solveSeq;
         t.source = reflexVeto ? T::Source::ReflexVeto

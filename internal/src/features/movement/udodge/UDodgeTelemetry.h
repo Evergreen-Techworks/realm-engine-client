@@ -47,10 +47,17 @@
 //   plan          the dodge pathfinder's last accepted answer: none |
 //                 start_is_goal (the stand already is a durable pocket, nothing
 //                 routed) | route | partial | temporal_goal | stale (too old to use)
+//                 | ring_route (a route to a shot-free cell inside the lock target's
+//                 ring) | ring_temporal (a route to an in-ring cell that is clear on
+//                 arrival and for the dwell after it)
+//   ring_approach 1 while the published snapshot asks the pathfinder to plan into the
+//                 lock target's ring during a lock approach (PlannerSnapshot::ringApproach)
 //   solve         what picked this frame's step: hold | timed_wait | surrounded |
 //                 nav_route (walk-to corridor step) | dodge_route (step along the
 //                 dodge route) | lateral (pre-position sidestep) | timed (temporal
 //                 planner advice) | solver (reflex pick among safe cells) | fallback
+//                 | ring_route (the walk-to step was aimed at the ring route's step
+//                 target instead of the corridor's)
 //   src           who decided: worker (accepted this frame) | live (game-thread
 //                 solve) | reflex_veto (this frame's map invalidated the standing
 //                 decision and the game thread re-solved) | cached (earlier frame)
@@ -83,8 +90,8 @@ namespace UDodge { namespace Telemetry {
 
 enum class Objective : uint8_t { None, Steer, WalkTo, Follow, LockApproach, Lock };
 enum class NavRoute  : uint8_t { None, Direct, Cached, Waiting };
-enum class Plan      : uint8_t { None, StartIsGoal, Route, Partial, TemporalGoal, Stale };
-enum class Solve     : uint8_t { Hold, TimedWait, Surrounded, NavRoute, DodgeRoute, Lateral, Timed, Solver, Fallback };
+enum class Plan      : uint8_t { None, StartIsGoal, Route, Partial, TemporalGoal, Stale, RingRoute, RingTemporal };
+enum class Solve     : uint8_t { Hold, TimedWait, Surrounded, NavRoute, DodgeRoute, Lateral, Timed, Solver, Fallback, RingRoute };
 enum class Source    : uint8_t { Cached, Worker, Live, ReflexVeto };
 enum class Drive     : uint8_t { None, Ok, BlockedEnemy, BlockedPath, Refused };
 
@@ -112,6 +119,7 @@ struct Sample {
     bool     navPartial = false;
     bool     navRouteDelivered = false;   // the worker's nav route replaced the cache this frame
     // Dodge pathfinder and solver.
+    bool     ringApproach = false;   // the snapshot being published asks for a ring approach (PlannerSnapshot::ringApproach)
     Plan     plan = Plan::None;
     bool     planGoalValid = false;  // a committed dodge goal cell exists (g_route.found)
     Vec2     planGoal{};
@@ -164,6 +172,7 @@ struct State {
     uint8_t  corridorState = 0;
     NavRoute navRoute = NavRoute::None;
     Plan     plan = Plan::None;
+    bool     ringApproach = false;
     Solve    solve = Solve::Hold;
     Drive    drive = Drive::None;
     // Replan and reversal memory.
@@ -198,6 +207,7 @@ inline const char* Name(Plan v)
         case Plan::None: return "none";       case Plan::StartIsGoal: return "start_is_goal";
         case Plan::Route: return "route";     case Plan::Partial: return "partial";
         case Plan::TemporalGoal: return "temporal_goal"; case Plan::Stale: return "stale";
+        case Plan::RingRoute: return "ring_route";       case Plan::RingTemporal: return "ring_temporal";
     }
     return "?";
 }
@@ -208,7 +218,7 @@ inline const char* Name(Solve v)
         case Solve::Surrounded: return "surrounded"; case Solve::NavRoute: return "nav_route";
         case Solve::DodgeRoute: return "dodge_route"; case Solve::Lateral: return "lateral";
         case Solve::Timed: return "timed";          case Solve::Solver: return "solver";
-        case Solve::Fallback: return "fallback";
+        case Solve::Fallback: return "fallback";       case Solve::RingRoute: return "ring_route";
     }
     return "?";
 }
@@ -331,7 +341,7 @@ inline size_t Format(const Sample& s, uint32_t why, bool replan, bool reversal, 
     if (s.goalActive) w.Add(" goal=(%.2f,%.2f)", s.goal.x, s.goal.y);
     else w.Add(" goal=-");
     w.Add(" navroute=%s wpts=%d partial=%d", Name(s.navRoute), s.navWpts, s.navPartial ? 1 : 0);
-    w.Add(" plan=%s", Name(s.plan));
+    w.Add(" ring_approach=%d plan=%s", s.ringApproach ? 1 : 0, Name(s.plan));
     if (s.planGoalValid) w.Add(" plan_goal=(%.2f,%.2f)", s.planGoal.x, s.planGoal.y);
     w.Add(" solve=%s src=%s drive=%s", Name(s.solve), Name(s.source), Name(s.drive));
     if (s.clearance < 1e8f) w.Add(" clr=%.2f", s.clearance);   // kHugeClearance: nothing near
@@ -373,7 +383,7 @@ inline size_t Step(State& state, const Sample& s, char* out, size_t cap)
             s.globalAssist != state.globalAssist || s.corridorState != state.corridorState ||
             s.ruleGame != state.ruleGame) why |= kWhyNav;
         if (s.navRoute != state.navRoute) why |= kWhyRoute;
-        if (s.plan != state.plan) why |= kWhyPlan;
+        if (s.plan != state.plan || s.ringApproach != state.ringApproach) why |= kWhyPlan;
         if (s.solve != state.solve) why |= kWhySolve;
         if (s.drive != state.drive) why |= kWhyDrive;
     }
@@ -426,6 +436,7 @@ inline size_t Step(State& state, const Sample& s, char* out, size_t cap)
     state.globalAssist = s.globalAssist; state.corridorState = s.corridorState;
     state.ruleGame = s.ruleGame;
     state.navRoute = s.navRoute;         state.plan = s.plan;
+    state.ringApproach = s.ringApproach;
     state.solve = s.solve;               state.drive = s.drive;
 
     const bool heartbeat = s.objective != Objective::None && s.nowMs - state.lastHeartbeatMs >= kHeartbeatMs;

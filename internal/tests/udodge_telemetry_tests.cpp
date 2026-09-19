@@ -207,6 +207,14 @@ int main()
         s.solve = T::Solve::Hold; s.commanded = {};       Check(changed("why=solve") && Has(line.c_str(), "solve=hold"), "step source change");
         s.drive = T::Drive::BlockedPath;                  Check(changed("why=drive") && Has(line.c_str(), "drive=blocked_path"), "drive result change");
         s.source = T::Source::ReflexVeto;                 Check(changed("veto") && Has(line.c_str(), "src=reflex_veto"), "a reflex veto is an event");
+        // A ring plan is visible (Tactician Slice 2): the snapshot asking for a ring, the
+        // route into it on a shot-free cell or on the time-aware goal, and the step taken from it.
+        Check(Has(line.c_str(), " ring_approach=0 "), "every line says whether a ring approach is being published");
+        s.ringApproach = true;                            Check(changed("why=plan") && Has(line.c_str(), " ring_approach=1 "), "publishing a ring approach is a plan change");
+        s.plan = T::Plan::RingTemporal;                   Check(changed("why=plan") && Has(line.c_str(), " plan=ring_temporal "), "an in-ring route on the time-aware goal has its own plan value");
+        s.plan = T::Plan::RingRoute;                      Check(changed("why=plan") && Has(line.c_str(), " plan=ring_route "), "an in-ring route on a shot-free cell has its own plan value");
+        s.solve = T::Solve::RingRoute; s.commanded = { -0.1f, 0.f };
+        Check(changed("why=solve") && Has(line.c_str(), " solve=ring_route "), "a step taken from the ring route is not reported as a walk-to corridor step");
     }
 
     // ── Rate limits: per class, and what was dropped is reported ─────────────
