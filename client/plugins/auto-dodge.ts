@@ -368,6 +368,15 @@ export function register(ctx: PluginContext) {
   // routes every projectile-contact test through the game's own proven box (the
   // live hitbox multiplier included) and turns on the ring approach, the lattice
   // and the spiral edge cost; 'classic' is the pre-Slice-3 engine, unchanged.
+  // ENEMY STANDOFF: never walk near enemies, on top of them, or in front of them.
+  // 'auto' gives every shooting enemy a hard 2-tile core and a reaction-time band
+  // that walk-to routes around, and holds a locked fight at the outer part of
+  // weapon range; 'off' is the pre-standoff engine.
+  registerModeSetting('unified', 'udodgeEnemyStandoff', {
+    label: '[UDodge] Enemy standoff',
+    type: 'select', value: 'auto',
+    options: [{ label: 'Auto', value: 'auto' }, { label: 'Off', value: 'off' }],
+  }, (v: string) => sendDllFeature('udodgeEnemyStandoff', v === 'off' ? 'off' : 'auto'));
   registerModeSetting('unified', 'udodgePlanner', {
     label: '[UDodge] Planner',
     type: 'select', value: 'classic',
@@ -635,6 +644,8 @@ export function register(ctx: PluginContext) {
                      'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
     sendDllFeature('udodgePlanner', ctx.getSetting<string>('udodgePlanner') === 'tactician' ? 'tactician' : 'classic');
+    sendDllFeature('udodgeEnemyStandoff',
+                   ctx.getSetting<string>('udodgeEnemyStandoff') === 'off' ? 'off' : 'auto');
     sendDllFeature('navCollisionRule', ctx.getSetting<string>('navCollisionRule') === 'game' ? 'game' : 'legacy');
     sendDllFeature('navNavigator', ctx.getSetting<string>('navNavigator') === 'dstar' ? 'dstar' : 'legacy');
     updateMoveEnvelopeArming();
