@@ -1436,12 +1436,18 @@ void Tick(void* player, float px, float py, float dt)
         // FullOccupy object is refused, and a route made of such cells is one the
         // game declines move after move (measured: d_boss_wall_rings [game] stuck
         // 36 s with 1981 refused moves on the unoffset lattice).
-        // Item 1 S3: the same artefact churns the committed dodge goal under
-        // Classic too (it is exactly what the harness's `replans` counter and
-        // [Diag/Nav]'s `replan=1` measure — a goal cell that moved only because
-        // the grid it was read from moved). Route commitment extends the snap to
-        // Classic; the switch off keeps Classic byte for byte.
-        if (settings.planner == Contact::Policy::Tactician || settings.routeCommit) {
+        // Item 1 S3 was tried and REVERTED (see the navigation finish plan
+        // ledger): extending this snap to Classic measurably regressed
+        // e_corridor1_fullocc under navCollisionRule=legacy (4.78s -> 12.78s,
+        // 0 -> 5 extra nav re-plans; a 1-tile-wide FullOccupy corridor, where
+        // the legacy player-box+padding rule is tight enough that the
+        // lattice-snapped dodge grid centre stops lining up with the
+        // corridor's walkable cells the way the unsnapped, player-centred
+        // grid did). Reproduced 3x on the affected commit, absent on the
+        // commit before it (isolated by archiving both trees and diffing
+        // run_scenarios.py --metrics). Classic keeps the pre-Item-1 grid
+        // centring unconditionally; only Tactician gets the lattice snap.
+        if (settings.planner == Contact::Policy::Tactician) {
             constexpr float kHalfCell = kUPathCellTiles * 0.5f;
             gridCenter.x = std::round((gridCenter.x - kHalfCell) / kUPathCellTiles) * kUPathCellTiles + kHalfCell;
             gridCenter.y = std::round((gridCenter.y - kHalfCell) / kUPathCellTiles) * kUPathCellTiles + kHalfCell;
