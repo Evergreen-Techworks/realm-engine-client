@@ -14,6 +14,7 @@
 #include "DangerPlanner.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
 #include "features/combat/enemytracker/LockLiveness.h"
+#include "features/movement/collider/PlayerCollider.h"
 #include "features/movement/nav/Collision.h"
 #include "features/movement/sensors/TileSensor.h"
 #include "gui/tabs/TestTAB.h"
@@ -989,6 +990,20 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
     out.lockId = 0;
     out.lockPos = {};
     out.planner = settings.planner;
+    // LIVE HIT BOX (S3.3). One read per map build of the multiplier the game's own
+    // hit test uses — the value the collider feature writes when armed, the game's
+    // own otherwise. Untrusted offset or unreadable => 1.0, the game default and
+    // the larger box. Under tactician this replaces udodgeHitScale as the belief
+    // about how big a shot is; classic ignores it.
+    out.targetScale = 1.f;
+    out.colliderTrusted = false;
+    {
+        float live = 1.f;
+        if (PlayerCollider::ReadLiveMultiplier(GameState::GetLocalPtr(), live)) {
+            out.targetScale = std::clamp(live, 0.05f, 4.f);
+            out.colliderTrusted = true;
+        }
+    }
     s_hazardMemo.Clear();
     // tickId/tickValid deliberately untouched — the caller owns the stamp.
 
