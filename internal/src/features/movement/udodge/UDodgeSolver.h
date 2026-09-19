@@ -1,6 +1,7 @@
 #pragma once
 #include "UDodgeTypes.h"
 #include "UDodgePathfinder.h"   // Path::PlanResult — the worker's lookahead route
+#include "UDodgeCore.h"         // Core::Temporal::Ctx — SharedCtx below
 
 // UDodge per-tick safe-position solver (plan 64). Each server tick it computes
 // the player position — within the legal per-tick move budget — that lies
@@ -68,6 +69,26 @@ namespace UDodge { namespace Solver {
 // admission tests still run on whatever candidates ARE produced, unchanged.
 void SetFrameDegraded(bool degraded);
 bool GetFrameDegraded();
+
+// Item 4 follow-up (navigation finish plan, controller 2026-09-19): UDodge::Tick's
+// liveSolve and revalidate phases call Core::Temporal::Build with IDENTICAL
+// inputs whenever both run in the same Tick -- same in.map (one DangerMap
+// generation per tick; only sync/BuildMap-ReanchorMap can change it, and that
+// runs once, before either phase), same in.player (read once per Tick, never
+// mutated before either call), same kUTemporalCullTiles, same
+// in.settings.hitScale/positionUncertainty and Core::ProjectilePlayerHalf(in.settings)
+// (pure functions of in.settings, itself read once per Tick), same map->planner.
+// A caller that owns one of these per game-thread frame passes it in; Solve()/
+// RevalidateAndSolve() build into it lazily (the first call in the tick builds,
+// the second reuses) instead of each keeping its own thread_local Ctx. GAME
+// THREAD ONLY: the worker thread's own Solve() call (UDodgeWorkerCycle.h) never
+// passes one and is completely unaffected -- passing nullptr (the default)
+// reproduces today's behaviour exactly, including the thread_local storage (a
+// Ctx is up to 96 KB; it is never put on the stack).
+struct SharedCtx {
+    Core::Temporal::Ctx ctx;
+    bool built = false;
+};
 
 struct Goal {
     bool groupActive = false;
@@ -185,9 +206,11 @@ struct SolveResult {
 //                     default-constructed (found=false) PlanResult when the worker
 //                     is cold / the route is too stale → pure immediate dodge.
 //   state.lastMoveDir is read (commitment term) and updated (chosen heading).
+// `shared`: see SharedCtx above. nullptr (default) = today's behaviour exactly
+// (a thread_local Ctx, rebuilt every call).
 void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
            const Path::PlanResult& route, CoreState& state, SolveResult& out,
-           const TimedAdvice& timed = {});
+           const TimedAdvice& timed = {}, SharedCtx* shared = nullptr);
 
 // Validate the committed decision on the current map and replace it immediately
 // if unsafe. Rebuilt maps also recheck a held position's prediction horizon.
@@ -195,7 +218,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
 bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
                         const Path::PlanResult& route, CoreState& state,
                         SolveResult& committed, bool mapRebuilt,
-                        const TimedAdvice& timed = {});
+                        const TimedAdvice& timed = {}, SharedCtx* shared = nullptr);
 
 // ── Navigation finish plan, item 2: "no safe move, sidestep, do not bolt" ───
 // The reduced view of a least-bad Fallback candidate that the ranking needs —

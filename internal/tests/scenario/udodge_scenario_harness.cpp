@@ -1186,6 +1186,15 @@ void ApplyUserSettings()
         UDodge::SetFallbackSidestep(!(v && std::string(v) == "off"));
     }
     if (std::getenv("HARNESS_DIAG")) UDodge::SetDiagTiming(true);   // exercise the field diagnostics
+    // Item 4 follow-up: udodgeFrameBudget reads WALL-CLOCK time (DiagTiming::NowMs()),
+    // which is not reproducible host-to-host or even run-to-run on a loaded host — it
+    // is deliberately excluded from every exactness/differential proof below by
+    // forcing it off, so a scenario diff can never be a timing artefact of the ceiling
+    // rather than the change actually under test.
+    {
+        const char* v = std::getenv("HARNESS_FRAME_BUDGET");
+        if (v && std::string(v) == "off") UDodge::SetFrameBudget("off");
+    }
     // Item 4 (navigation finish plan): force every Tick's solver phase to run
     // degraded (outer ring only), regardless of measured elapsed time, so the
     // degraded candidate set itself can be exercised and diffed against the

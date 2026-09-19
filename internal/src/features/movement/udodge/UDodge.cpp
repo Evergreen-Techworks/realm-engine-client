@@ -300,6 +300,12 @@ constexpr float kNavEndTiles      = 3.0f;   // within this of the route's end �
 // Per-tick safe-position solver result — game-thread-owned, cached for one
 // server tick and re-validated (or re-solved) every frame (plan 64).
 Solver::SolveResult g_solve;
+// Item 4 follow-up (navigation finish plan, controller 2026-09-19): the
+// liveSolve and revalidate phases below call Core::Temporal::Build with
+// identical inputs when both run this Tick — see SharedCtx's contract in
+// UDodgeSolver.h. Game-thread-only (this whole file is); reset to "not built"
+// at the top of every Tick, never cleared mid-tick.
+Solver::SharedCtx g_sharedTemporalCtx;
 // Latest temporal-planner advice accepted from the worker, with the publish
 // sequence it was computed for so the same staleness gate as the grid route
 // applies. Advisory: the solver re-tests it against every hard floor.
@@ -894,6 +900,8 @@ void Tick(void* player, float px, float py, float dt)
     // read (DiagTiming::NowMs(), the same clock the phase timers already use) — cheap
     // enough to always take, so "off" costs the same as before this switch existed.
     const double tickStartMs = DiagTiming::NowMs();
+    // Item 4 follow-up: this Tick has not built the shared temporal context yet.
+    g_sharedTemporalCtx.built = false;
 
     const Settings settings = ReadSettings();
     const SteerInput::SteerState steer = SteerInput::Get();
@@ -1782,7 +1790,7 @@ void Tick(void* player, float px, float py, float dt)
     }
     if (navHandoff.solve || groupChanged) {
         PhaseTimer _p(DiagTiming::Game().liveSolve);
-        Solver::Solve(in, b, goal, routeForSolve, proposedState, g_solve, timedForSolve);
+        Solver::Solve(in, b, goal, routeForSolve, proposedState, g_solve, timedForSolve, &g_sharedTemporalCtx);
     }
 
     // Normal temporal solving is performed with the path search on the worker.
@@ -1826,7 +1834,7 @@ void Tick(void* player, float px, float py, float dt)
         PhaseTimer _p(DiagTiming::Game().revalidate);
         CoreState safetyState = g_commitment.state;
         if (Solver::RevalidateAndSolve(in, b, goal, routeForSolve, safetyState, g_solve, rebuilt,
-                                       timedForSolve)) {
+                                       timedForSolve, &g_sharedTemporalCtx)) {
             proposedState = safetyState;
             if (diagOn) { ++DiagTiming::Game().revalidateResolves; reflexVeto = true; }
         }
