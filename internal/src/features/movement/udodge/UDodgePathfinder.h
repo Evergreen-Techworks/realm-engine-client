@@ -2,6 +2,10 @@
 #include "UDodgeCommitment.h"
 #include "UDodgeTypes.h"
 
+// PlannerSnapshot::ringApproach and PlanResult::ringGoal exist (Tactician Slice 2). The host
+// scenario harness builds against older trees too and keys its ring observations on this.
+#define UDODGE_PATH_RING 1
+
 // UDodge grid pathfinder (plan 65; TIME-EXPANDED per plan 64 temporal model) — a
 // bounded local grid Dijkstra that finds a WAYPOINT ROUTE around obstacles to the
 // nearest durable-safe area, the piece the straight-line per-tick solver cannot
