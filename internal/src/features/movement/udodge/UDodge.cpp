@@ -1436,7 +1436,12 @@ void Tick(void* player, float px, float py, float dt)
         // FullOccupy object is refused, and a route made of such cells is one the
         // game declines move after move (measured: d_boss_wall_rings [game] stuck
         // 36 s with 1981 refused moves on the unoffset lattice).
-        if (settings.planner == Contact::Policy::Tactician) {
+        // Item 1 S3: the same artefact churns the committed dodge goal under
+        // Classic too (it is exactly what the harness's `replans` counter and
+        // [Diag/Nav]'s `replan=1` measure — a goal cell that moved only because
+        // the grid it was read from moved). Route commitment extends the snap to
+        // Classic; the switch off keeps Classic byte for byte.
+        if (settings.planner == Contact::Policy::Tactician || settings.routeCommit) {
             constexpr float kHalfCell = kUPathCellTiles * 0.5f;
             gridCenter.x = std::round((gridCenter.x - kHalfCell) / kUPathCellTiles) * kUPathCellTiles + kHalfCell;
             gridCenter.y = std::round((gridCenter.y - kHalfCell) / kUPathCellTiles) * kUPathCellTiles + kHalfCell;
