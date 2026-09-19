@@ -371,10 +371,12 @@ export function register(ctx: PluginContext) {
   // ENEMY STANDOFF: never walk near enemies, on top of them, or in front of them.
   // 'auto' gives every shooting enemy a hard 2-tile core and a reaction-time band
   // that walk-to routes around, and holds a locked fight at the outer part of
-  // weapon range; 'off' is the pre-standoff engine.
+  // weapon range; 'off' is the pre-standoff engine. Default off (owner ruling
+  // 2026-09-19: unproven behaviour ships behind a switch, default off, after
+  // private 1.0.18 dodged worse with this on).
   registerModeSetting('unified', 'udodgeEnemyStandoff', {
     label: '[UDodge] Enemy standoff',
-    type: 'select', value: 'auto',
+    type: 'select', value: 'off',
     options: [{ label: 'Auto', value: 'auto' }, { label: 'Off', value: 'off' }],
   }, (v: string) => sendDllFeature('udodgeEnemyStandoff', v === 'off' ? 'off' : 'auto'));
   registerModeSetting('unified', 'udodgePlanner', {
@@ -385,9 +387,11 @@ export function register(ctx: PluginContext) {
   // Navigation finish plan, Item 1: once a walk-to / lock-approach route is
   // accepted, keep following it through a reflex detour (rejoin at the nearest
   // forward point) instead of re-planning on every few-tile deviation, and
-  // re-plan only on a real trigger. Default on; off reproduces the pre-Item-1
-  // follower exactly. Lands under both udodgePlanner policies.
-  registerModeSetting('unified', 'udodgeRouteCommit', onOff('[UDodge] Route commitment', 'on'),
+  // re-plan only on a real trigger. Off (default) reproduces the pre-Item-1
+  // follower exactly. Lands under both udodgePlanner policies. Default off
+  // (owner ruling 2026-09-19: unproven behaviour ships behind a switch,
+  // default off, after private 1.0.18 dodged worse with this on).
+  registerModeSetting('unified', 'udodgeRouteCommit', onOff('[UDodge] Route commitment', 'off'),
     (v: string) => sendDllFeature('udodgeRouteCommit', v === 'off' ? 'off' : 'on'));
   // Navigation rebuild Stage 1: 'game' walks by the game's own point collision (diagonal
   // squeezes between walls, no player box); 'legacy' keeps the old box. Legacy until
@@ -404,18 +408,23 @@ export function register(ctx: PluginContext) {
   }, (value: string) => sendDllFeature('navNavigator', value === 'dstar' ? 'dstar' : 'legacy'));
   // Navigation finish plan, item 2: on a Fallback/Surrounded solve (no safe
   // reachable cell), sidestep tangentially instead of bolting radially outward
-  // or settling for a sub-jitter step. Off = today's plain least-bad pick.
+  // or settling for a sub-jitter step. Off (default) = today's plain
+  // least-bad pick. Default off (owner ruling 2026-09-19: unproven behaviour
+  // ships behind a switch, default off, after private 1.0.18 dodged worse
+  // with this on).
   registerModeSetting('unified', 'udodgeFallbackSidestep',
-    onOff('[UDodge] Fallback sidestep', 'on'),
+    onOff('[UDodge] Fallback sidestep', 'off'),
     (v: string) => sendDllFeature('udodgeFallbackSidestep', v === 'on' ? 1 : 0));
   // Navigation finish plan, item 4: when a Tick has already spent longer than
   // the frame-cost ceiling before the solver phases, degrade the candidate
   // ring for that frame only (never a safety floor, never ReanchorMap, never a
-  // lane the relevance cull already kept). 'off' disables the ceiling entirely
-  // (today's behaviour, no per-frame budget check).
+  // lane the relevance cull already kept). 'off' (default) disables the
+  // ceiling entirely (today's behaviour, no per-frame budget check). Default
+  // off (owner ruling 2026-09-19: unproven behaviour ships behind a switch,
+  // default off, after private 1.0.18 dodged worse with this on).
   registerModeSetting('unified', 'udodgeFrameBudget', {
     label: '[UDodge] Frame budget',
-    type: 'select', value: 'auto',
+    type: 'select', value: 'off',
     options: [{ label: 'Auto', value: 'auto' }, { label: 'Off', value: 'off' }],
   }, (v: string) => sendDllFeature('udodgeFrameBudget', v === 'off' ? 'off' : 'auto'));
 
