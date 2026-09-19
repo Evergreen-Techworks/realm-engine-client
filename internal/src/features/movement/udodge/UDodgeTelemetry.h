@@ -94,6 +94,15 @@ enum class Plan      : uint8_t { None, StartIsGoal, Route, Partial, TemporalGoal
 enum class Solve     : uint8_t { Hold, TimedWait, Surrounded, NavRoute, DodgeRoute, Lateral, Timed, Solver, Fallback, RingRoute };
 enum class Source    : uint8_t { Cached, Worker, Live, ReflexVeto };
 enum class Drive     : uint8_t { None, Ok, BlockedEnemy, BlockedPath, Refused };
+// Item 1 S2/S4 (navigation finish plan): why the walk-to / lock-approach route
+// follower re-planned this tick, or None on a frame that kept following the
+// committed route. The four triggers the plan names (Invalidated, Objective-
+// Changed, Arrival, NoProgress) plus two pre-existing hard-safety triggers
+// (GoalMoved: the lock-approach goal itself moved; Blocked: a fresh occupancy/
+// keep-out read invalidated the route immediately, not by distance).
+enum class ReplanReason : uint8_t {
+    None, Invalidated, ObjectiveChanged, Arrival, NoProgress, GoalMoved, Blocked
+};
 
 // One frame of UDodge::Tick, as plain data. Filled only while telemetry is on.
 struct Sample {
@@ -118,6 +127,16 @@ struct Sample {
     int      navWpts = 0;
     bool     navPartial = false;
     bool     navRouteDelivered = false;   // the worker's nav route replaced the cache this frame
+    // Item 1 S4 (navigation finish plan): route commitment. routeId is 0 while no
+    // walk-to/lock-approach route is committed and bumps each time a genuinely
+    // new one replaces it — stable across ticks that just follow it. rejoin is
+    // true on a frame that steered by a detour-then-rejoin point on the
+    // committed route (Navigation::Follow found the route reachable well past
+    // the old deviation threshold) rather than re-planning. replanReason is why
+    // navRouteDelivered/planGoal changed this tick, or None otherwise.
+    uint64_t     routeId = 0;
+    bool         rejoin = false;
+    ReplanReason replanReason = ReplanReason::None;
     // Dodge pathfinder and solver.
     bool     ringApproach = false;   // the snapshot being published asks for a ring approach (PlannerSnapshot::ringApproach)
     Plan     plan = Plan::None;
@@ -248,6 +267,16 @@ inline const char* Name(Drive v)
     }
     return "?";
 }
+inline const char* Name(ReplanReason v)
+{
+    switch (v) {
+        case ReplanReason::None: return "none"; case ReplanReason::Invalidated: return "invalidated";
+        case ReplanReason::ObjectiveChanged: return "objective_changed"; case ReplanReason::Arrival: return "arrival";
+        case ReplanReason::NoProgress: return "no_progress"; case ReplanReason::GoalMoved: return "goal_moved";
+        case ReplanReason::Blocked: return "blocked";
+    }
+    return "?";
+}
 inline const char* DodgeModeName(int mode)
 {
     static const char* const names[] = { "off", "xdodge", "rollout_grid", "rollout_quad",
@@ -362,6 +391,11 @@ inline size_t Format(const Sample& s, uint32_t why, bool replan, bool reversal, 
         w.Add(" cmd=%.3f radial=- tang=-", length);
     w.Add(" replan=%d reversal=%d lanes=%d zones=%d enemies=%d", replan ? 1 : 0, reversal ? 1 : 0,
           s.lanes, s.zones, s.enemies);
+    // Item 1 S4: route commitment (route_id stable across follow-only frames;
+    // rejoin=1 on a detour that rejoined the route instead of re-planning;
+    // replan_reason names why this frame's replan flag above is set).
+    w.Add(" route_id=%llu rejoin=%d replan_reason=%s",
+          static_cast<unsigned long long>(s.routeId), s.rejoin ? 1 : 0, Name(s.replanReason));
     if (s.nearEnemy >= 0.f) w.Add(" near_enemy=%.2f", s.nearEnemy);
     else                    w.Add(" near_enemy=-");
     w.Add(" in_band=%d", s.inBand ? 1 : 0);

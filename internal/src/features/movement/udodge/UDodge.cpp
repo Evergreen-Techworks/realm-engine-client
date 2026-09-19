@@ -1169,7 +1169,7 @@ void Tick(void* player, float px, float py, float dt)
     // Follow the cached route and only re-run the A* on a real trigger. navStep is
     // the steering target ~lookahead budgets ahead along the cached polyline.
     bool navReplan = false;
-    ReplanReason navReplanReason = ReplanReason::None;
+    Telemetry::ReplanReason navReplanReason = Telemetry::ReplanReason::None;
     bool navRejoin = false;   // Item 1 S4 telemetry: a detour rejoined the route instead of re-planning
     const bool wasNavWaiting = g_navAwaiting;
     bool navWaiting = g_navAwaiting;
@@ -1203,11 +1203,11 @@ void Tick(void* player, float px, float py, float dt)
             LenSq(Sub(in.player, wg)) > kNavEndTiles * kNavEndTiles);                    // at route end but not the goal
         navRejoin = settings.routeCommit && routeConnected && dev > kNavDeviateTiles;
         navReplan = goalMoved || !g_navCache.valid || objectiveChanged || routeInvalidated || routeExhausted;
-        if (goalMoved)               navReplanReason = ReplanReason::GoalMoved;
-        else if (!g_navCache.valid)  navReplanReason = ReplanReason::Invalidated;
-        else if (objectiveChanged)   navReplanReason = ReplanReason::ObjectiveChanged;
-        else if (routeInvalidated)   navReplanReason = ReplanReason::Invalidated;
-        else if (routeExhausted)     navReplanReason = ReplanReason::Arrival;
+        if (goalMoved)               navReplanReason = Telemetry::ReplanReason::GoalMoved;
+        else if (!g_navCache.valid)  navReplanReason = Telemetry::ReplanReason::Invalidated;
+        else if (objectiveChanged)   navReplanReason = Telemetry::ReplanReason::ObjectiveChanged;
+        else if (routeInvalidated)   navReplanReason = Telemetry::ReplanReason::Invalidated;
+        else if (routeExhausted)     navReplanReason = Telemetry::ReplanReason::Arrival;
         g_lastRouteObjective = objective;
 
         // Blocked corridor: replan immediately. Small alternating nudges do
@@ -1272,7 +1272,7 @@ void Tick(void* player, float px, float py, float dt)
         }
         if (blocked || stalled) {
             navReplan = true;
-            navReplanReason = blocked ? ReplanReason::Blocked : ReplanReason::NoProgress;
+            navReplanReason = blocked ? Telemetry::ReplanReason::Blocked : Telemetry::ReplanReason::NoProgress;
             g_navAwaiting = navWaiting = true;
             g_navCache.valid = false;
             navStep = in.player;
@@ -2002,6 +2002,12 @@ void Tick(void* player, float px, float py, float dt)
         t.navWpts = g_navCache.valid ? g_navCache.n : 0;
         t.navPartial = g_navCache.valid && g_navCache.partial;
         t.navRouteDelivered = navCacheRefreshed;
+        // Item 1 S4: route_id/rejoin/replan_reason are computed unconditionally
+        // above (they gate real navReplan behaviour, not just this log), so
+        // diagnostics-off vs on stays identical apart from the log line itself.
+        t.routeId = g_navCache.valid ? g_routeId : 0;
+        t.rejoin = navRejoin;
+        t.replanReason = navReplanReason;
         const bool routeFresh = g_route.forSeq != 0 && g_lastPubSeq >= g_route.forSeq &&
                                 (g_lastPubSeq - g_route.forSeq) <= kUPlanMaxStaleSeq;
         t.ringApproach = ringApproach;

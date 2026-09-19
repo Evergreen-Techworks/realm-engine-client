@@ -121,6 +121,8 @@ int main()
               "plan class, step source, decider and drive result");
         Check(Has(l, " cmd=0.100 radial=+1.00 tang=+0.00 "), "a step straight away from the target is radial +1");
         Check(Has(l, " replan=0 reversal=0 lanes=48 zones=0 enemies=1 "), "flags and live threats");
+        Check(Has(l, " route_id=0 rejoin=0 replan_reason=none "),
+              "route commitment fields default to no committed route (Item 1 S4)");
         Check(Has(l, " worker_ms=1.31(dodge=0.02 nav=0.00 timed=1.10 solve=0.19) timed=waiting reused=1 budget_hit=0 "),
               "worker cycle ms and the temporal planner's outcome");
         Check(Has(l, " dropped=0") && !Has(l, "win{"), "a change line carries no window");
@@ -311,6 +313,16 @@ int main()
         Check(g_sinkCalls == 3, "an idle frame's reason is written once a second");
         Check(std::strcmp(g_lastLine, "[Diag/Nav] t=52016 why=idle reason=projectile_source_unavailable") == 0,
               "the idle line carries its time and reason");
+    }
+
+    // ── Route commitment fields (Item 1 S4) ──────────────────────────────────
+    {
+        T::State state{};
+        T::Sample s = Approach(100000);
+        s.routeId = 3; s.rejoin = true; s.replanReason = T::ReplanReason::NoProgress;
+        StepLine(state, s, line);
+        Check(Has(line.c_str(), " route_id=3 rejoin=1 replan_reason=no_progress "),
+              "route commitment fields render a committed route, a rejoin and why it would replan");
     }
 
     // ── A short buffer truncates; it never overruns ──────────────────────────
