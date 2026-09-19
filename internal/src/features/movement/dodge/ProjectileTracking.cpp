@@ -32,6 +32,10 @@ static std::atomic<float> g_flashSpeedMulAtomic{1.f};
 // lives here; the decision of whether it applies to a given shot belongs to
 // ShotOrigin::Resolve (features/projectiles/ShotOrigin.cpp).
 static std::atomic<float> g_localMuzzleOffsetTiles{0.3f};
+// Shot ownership witnesses (see the isEnemyShot rule in the spawn detour).
+static std::atomic<bool>     g_ownerFlagSeenTrue{false};
+static std::atomic<uint32_t> g_enemyShotsSeen{0};
+static std::atomic<uint32_t> g_allyShotsSkipped{0};
 static constexpr float kMuzzleMinTiles    = 0.3f;
 static constexpr float kMuzzleMaxTiles    = 2.225f;
 
@@ -229,11 +233,27 @@ void* __fastcall SpawnProjectileDetour(
 
     bool ownerIsEnemy = false;
     const bool ownerClassified = TryReadObjectPropertiesIsEnemy(objProps, ownerIsEnemy);
-    // Broadened: store any shot the owner is classed enemy OR that can hit the
-    // player, regardless of the (occasionally stale) OP_IsEnemy classified flag.
-    // A dodge must see everything that can hit the player; own outgoing shots are
-    // already excluded by the isLocalShot guard. Shared with PJDodge (intended).
-    const bool isEnemyShot = !isLocalShot && (ownerIsEnemy || canHitPlayer);
+    // The OWNER decides: a shot is hostile when its owner's ObjectProperties.isEnemy
+    // is set. The earlier "ownerIsEnemy || canHitPlayer" broadening made every OTHER
+    // PLAYER's shot a threat (canHitPlayer is true for them), which flooded the lane
+    // model in group fights (512-lane cap, no gaps, frame cost). OP_IsEnemy is
+    // name-resolved per build now, so it is no longer the stale flag that broadening
+    // worked around. canHitPlayer is consulted ONLY when the owner cannot be
+    // classified (unreadable props): an unknown shot is still dodged, never ignored.
+    // Own outgoing shots are excluded by the isLocalShot guard. Shared with PJDodge.
+    // FAIL-SAFE: the owner flag is trusted only after it has read TRUE at least once
+    // this session. If the isEnemy read were broken (always false) the rule above
+    // would blind the dodge; until an enemy-owned shot has been seen, the old broad
+    // rule (anything that can hit the player) stays in force.
+    if (!isLocalShot && ownerClassified && ownerIsEnemy)
+        g_ownerFlagSeenTrue.store(true, std::memory_order_relaxed);
+    const bool trustOwnerFlag = ownerClassified && g_ownerFlagSeenTrue.load(std::memory_order_relaxed);
+    const bool isEnemyShot = !isLocalShot &&
+        (trustOwnerFlag ? ownerIsEnemy : (ownerIsEnemy || canHitPlayer));
+    if (!isLocalShot) {
+        if (isEnemyShot) g_enemyShotsSeen.fetch_add(1, std::memory_order_relaxed);
+        else if (canHitPlayer) g_allyShotsSkipped.fetch_add(1, std::memory_order_relaxed);
+    }
     if (!isLocalShot && !isEnemyShot)
         return ret;
 
@@ -326,6 +346,10 @@ void* __fastcall SpawnProjectileDetour(
 } // namespace
 
 namespace ProjectileTracking {
+
+uint32_t EnemyShotsSeen()    { return g_enemyShotsSeen.load(std::memory_order_relaxed); }
+uint32_t AllyShotsSkipped()  { return g_allyShotsSkipped.load(std::memory_order_relaxed); }
+bool     OwnerFlagTrusted()  { return g_ownerFlagSeenTrue.load(std::memory_order_relaxed); }
 
 static void* g_spawnTarget = nullptr;
 
