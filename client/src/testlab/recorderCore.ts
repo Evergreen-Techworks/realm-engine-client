@@ -107,6 +107,19 @@ export interface ProjDefRecord {
   acceleration?: number;
   accelerationDelay?: number;
   speedClamp?: number;
+  /**
+   * Contract addition (2026-09-19, item 4): set (and `true`) only when
+   * GameData had no projectile definition for this (`otype`, `bt`) pair — a
+   * lookup miss the recorder previously stayed silent about (the `shot`
+   * records for that pair just had no matching `projdef` line at all). 49 of
+   * ~700 `shot` records in the first real session had no `projdef`; this
+   * makes the miss itself a first-class, once-per-pair record instead of an
+   * absence someone has to notice by cross-referencing `shot.otype`/`bt`
+   * against every `projdef` seen. `oname`/`speed`/`life`/`size` are `null`
+   * on a `missing` record — there is no definition to report them from.
+   * Absent (not `false`) on every ordinary resolved `projdef` record.
+   */
+  missing?: true;
 }
 
 export interface ShotRecord {
@@ -207,6 +220,26 @@ function bool(v: unknown): boolean | null {
   return typeof v === 'boolean' ? v : null;
 }
 
+/**
+ * Rounds a coordinate/distance/angle field to `decimals` places; `null`
+ * passes through unchanged. A raw player-position float (from the packet
+ * itself, or from `Math.hypot()` on two of them) can carry 13+ decimal
+ * digits (`1017.0716552734375`) that are pure floating-point noise for a
+ * game whose positions are tile-scale — this keeps the file compact without
+ * changing the contract's "still floats" shape (a rounded 3-decimal number
+ * is still a float, just a smaller one to print and to compress).
+ */
+function round(v: number | null, decimals: number): number | null {
+  if (v === null) return null;
+  const factor = 10 ** decimals;
+  return Math.round(v * factor) / factor;
+}
+
+/** Positions and distances (tiles): 3 decimals — sub-millimeter at tile scale. */
+const COORD_DECIMALS = 3;
+/** Angles (radians): 5 decimals — well under a hundredth of a degree. */
+const ANGLE_DECIMALS = 5;
+
 // ── per-record builders ──────────────────────────────────────────────────
 
 export function buildStartRecord(t: number, build: TestlabBuildInfo): StartRecord {
@@ -225,14 +258,16 @@ export function buildMapRecord(t: number, data: any): MapRecord {
 /** `data` is a client→server MOVE packet's `.data`. */
 export function buildMoveRecord(t: number, data: any): MoveRecord {
   const rawRecords: any[] = Array.isArray(data?.records) ? data.records : [];
-  const recs: MoveRec[] = rawRecords.map((r) => [num(r?.time) ?? 0, num(r?.x) ?? 0, num(r?.y) ?? 0] as MoveRec);
+  const recs: MoveRec[] = rawRecords.map(
+    (r) => [num(r?.time) ?? 0, round(num(r?.x), COORD_DECIMALS) ?? 0, round(num(r?.y), COORD_DECIMALS) ?? 0] as MoveRec,
+  );
   const last = rawRecords.length > 0 ? rawRecords[rawRecords.length - 1] : null;
   return {
     k: 'move',
     t,
     tick: num(data?.tickId),
-    x: last ? num(last.x) : null,
-    y: last ? num(last.y) : null,
+    x: last ? round(num(last.x), COORD_DECIMALS) : null,
+    y: last ? round(num(last.y), COORD_DECIMALS) : null,
     recs,
   };
 }
@@ -287,6 +322,15 @@ export function buildProjDefRecord(t: number, otype: number, bt: number, def: Pr
   return rec;
 }
 
+/**
+ * `otype`/`bt` are known (world state resolved the shot's owner type, and the
+ * packet carried a bullet type) but GameData had no projectile definition
+ * for that pair — see {@link ProjDefRecord.missing}.
+ */
+export function buildMissingProjDefRecord(t: number, otype: number, bt: number): ProjDefRecord {
+  return { k: 'projdef', t, otype, bt, oname: null, speed: null, life: null, size: null, missing: true };
+}
+
 /** `data` is an ENEMYSHOOT packet's `.data`; `otype` is the owner's resolved object type. */
 export function buildShotRecord(t: number, data: any, otype: number | null): ShotRecord {
   const numShots = data?.numShots;
@@ -298,12 +342,12 @@ export function buildShotRecord(t: number, data: any, otype: number | null): Sho
     oid: num(data?.ownerId),
     otype,
     bt: num(data?.bulletType),
-    x: num(data?.position?.x),
-    y: num(data?.position?.y),
-    a: num(data?.angle),
+    x: round(num(data?.position?.x), COORD_DECIMALS),
+    y: round(num(data?.position?.y), COORD_DECIMALS),
+    a: round(num(data?.angle), ANGLE_DECIMALS),
     dmg: num(data?.damage),
     n,
-    ainc: num(data?.angleInc),
+    ainc: round(num(data?.angleInc), ANGLE_DECIMALS),
   };
 }
 
@@ -335,10 +379,10 @@ export function buildHitRecord(t: number, data: any, lookup: HitLookup): HitReco
     bid: num(data?.bulletId),
     oid: num(data?.objectId),
     otype: lookup.otype,
-    x: lookup.x,
-    y: lookup.y,
-    odist: lookup.odist,
-    edist: lookup.edist,
+    x: round(lookup.x, COORD_DECIMALS),
+    y: round(lookup.y, COORD_DECIMALS),
+    odist: round(lookup.odist, COORD_DECIMALS),
+    edist: round(lookup.edist, COORD_DECIMALS),
     hp: lookup.hp,
     maxhp: lookup.maxhp,
   };
@@ -346,7 +390,7 @@ export function buildHitRecord(t: number, data: any, lookup: HitLookup): HitReco
 
 /** `data` is a client→server GROUNDDAMAGE packet's `.data`. */
 export function buildGroundRecord(t: number, data: any): GroundRecord {
-  return { k: 'ground', t, x: num(data?.position?.x), y: num(data?.position?.y) };
+  return { k: 'ground', t, x: round(num(data?.position?.x), COORD_DECIMALS), y: round(num(data?.position?.y), COORD_DECIMALS) };
 }
 
 /**
@@ -436,9 +480,17 @@ export function dispatchPacket(
       const otype = ctx.ownerType ?? null;
       const bt = num(data?.bulletType);
       const out: TestlabRecord[] = [];
-      if (otype != null && bt != null && ctx.projectile && !tracker.hasEmitted(otype, bt)) {
-        out.push(buildProjDefRecord(t, otype, bt, ctx.projectile));
-        tracker.markEmitted(otype, bt);
+      if (otype != null && bt != null && !tracker.hasEmitted(otype, bt)) {
+        if (ctx.projectile) {
+          out.push(buildProjDefRecord(t, otype, bt, ctx.projectile));
+          tracker.markEmitted(otype, bt);
+        } else {
+          // GameData lookup miss: report which (otype, bt) pair could not be
+          // resolved instead of silently omitting the projdef line — see
+          // ProjDefRecord.missing.
+          out.push(buildMissingProjDefRecord(t, otype, bt));
+          tracker.markEmitted(otype, bt);
+        }
       }
       out.push(buildShotRecord(t, data, otype));
       return out;
