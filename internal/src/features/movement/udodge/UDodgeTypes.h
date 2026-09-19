@@ -644,6 +644,16 @@ struct Settings {
     // pre-Slice-3 engine, unchanged. Captured into the PlannerSnapshot at
     // publish time so one snapshot is planned under one policy.
     Contact::Policy planner = Contact::Policy::Classic;
+    // udodgeRouteCommit (navigation finish plan, Item 1). true (default): once a
+    // walk-to / lock-approach route is accepted, keep following it through a
+    // reflex detour (rejoin at the nearest forward point) instead of dropping it
+    // on every few-tile deviation, and re-plan only on a real trigger (route
+    // invalidated, objective changed, arrival, or no progress for 1.5 s). Also
+    // snaps the dodge grid centre to the 0.5-tile lattice under Classic, the way
+    // Tactician already does, so the committed dodge goal re-snaps to itself.
+    // false reproduces the pre-Item-1 engine exactly. Lands under both planner
+    // policies.
+    bool  routeCommit = true;
     // PROJECTILE CONTACT MODEL. true (default): the player is a POINT and the
     // per-shot threshold T (runtime Chebyshev half, else CollisionMult × 0.5) is
     // the whole hit box — |dx| < T && |dy| < T. This adopts the model from the

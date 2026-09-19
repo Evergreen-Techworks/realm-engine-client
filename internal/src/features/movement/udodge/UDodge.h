@@ -65,6 +65,11 @@ void  SetHitScale(float s);           float GetHitScale();
 // udodgePlanner: "classic" = the pre-Slice-3 engine, anything else = tactician.
 void  SetPlannerPolicy(const char* text);
 Contact::Policy GetPlannerPolicy();
+// udodgeRouteCommit (navigation finish plan, Item 1). "off" = today's follower
+// (5-tile deviation → re-plan, no objective-changed trigger, no lattice snap
+// under Classic); anything else (default) = route commitment on.
+void  SetRouteCommit(const char* text);
+bool  GetRouteCommit();
 // udodgeEnemyStandoff: "off" = the pre-standoff engine, anything else = auto.
 void  SetEnemyStandoff(const char* text);
 Standoff::Mode GetEnemyStandoff();
