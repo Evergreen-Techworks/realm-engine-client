@@ -323,6 +323,9 @@ async function main() {
       scriptSession,
       emitScriptLog: (scriptId, line, level) => {
         devServer?.broadcastScriptLog(scriptId, line, level);
+        // Persist script output too, so a session can be read after the fact
+        // (the dashboard websocket was the only sink).
+        Logger.log(`Script:${scriptId}`, level && level !== 'info' ? `[${level}] ${line}` : line);
       },
       emitScriptPanelMessage: (msg) => {
         devServer?.broadcastScriptPanelMessage(msg);
