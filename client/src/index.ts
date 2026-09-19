@@ -63,6 +63,7 @@ import { InternalBridge } from './bridge/InternalBridge.js';
 import { setDllFeatureSender } from './bridge/DllFeatureBus.js';
 import { attachHiddenHelperTypeSync } from './bridge/HiddenHelperTypes.js';
 import { Logger } from './util/Logger.js';
+import { formatBuildInfoLine, readBuildInfoFile } from './util/buildInfo.js';
 import { pollEventLoopDiag } from './diag/EventLoopDiag.js';
 import { ensureRotmgMetadataXml } from './util/ensureRotmgMetadataXml.js';
 import { startServices } from './startup/startServices.js';
@@ -121,6 +122,18 @@ async function main() {
   const devMode = true; // Dashboard always runs — there is no headless mode.
 
   Logger.log('Main', 'RotMG MITM Proxy starting...');
+  // Test Lab task A2: one machine-readable marker so a persisted proxy-log
+  // session can be matched to a build without guessing. version is whatever
+  // main.cjs already passes as REALM_ENGINE_VERSION (app.getVersion()) — do not
+  // invent a second version source. commit comes from a stamp file that only
+  // exists when scripts/stamp-build-info.mjs ran in the git worktree before the
+  // source was mirrored to the (non-git) build root; a missing/malformed file
+  // must never throw or delay startup, so this whole line is best-effort.
+  try {
+    Logger.log('Main', formatBuildInfoLine(process.env.REALM_ENGINE_VERSION ?? '', readBuildInfoFile(ROOT)));
+  } catch (err) {
+    Logger.warn('Main', `Failed to log build info: ${(err as Error).message}`);
+  }
 
   // 0. Install game hook (DLL injection for connection redirect)
   const clientDataConfig = loadClientDataConfig();
