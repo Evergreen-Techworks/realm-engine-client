@@ -91,6 +91,45 @@ Vec2 FlowDir(const MapInput& in)
     return { std::cos(angle), std::sin(angle) };
 }
 
+// Navigation finish plan, item 2: the Fallback tie-break's "outward" reference
+// direction when no lock is held — the mean SIGNED travel direction of the
+// lanes actually threatening the current stand (unlike FlowDir, this is not
+// sign-independent: it points the way those lanes are moving). A lane
+// "threatens the stand" when its closest painted point comes within its own
+// contact half (+ the player footprint) of the player — the same lanes that
+// are capable of putting the reflex into Fallback in the first place, not
+// every lane on the map. {} when nothing qualifies.
+Vec2 MeanThreatDir(const MapInput& in)
+{
+    if (!in.map) return {};
+    Vec2 sum{};
+    for (int i = 0; i < in.map->laneCount; ++i) {
+        const LaneThreat& L = in.map->lanes[i];
+        if (L.pointCount < 1) continue;
+        const float half = L.hitHalf * in.settings.hitScale;
+        float bestD = kHugeClearance;
+        int   bestIdx = 0;
+        for (int j = 0; j < L.pointCount; ++j) {
+            const float d = std::max(std::fabs(in.player.x - L.points[j].x),
+                                      std::fabs(in.player.y - L.points[j].y));
+            if (d < bestD) { bestD = d; bestIdx = j; }
+        }
+        if (bestD > half + kUPlayerHalf) continue;   // nowhere near threatening the stand
+        Vec2 dir{};
+        if (L.hasLinearMotion) {
+            dir = L.linearVelocity;
+        } else if (L.pointCount >= 2) {
+            const int j2 = std::min(bestIdx + 1, L.pointCount - 1);
+            const int j1 = j2 > 0 ? j2 - 1 : 0;
+            dir = Sub(L.points[j2], L.points[j1]);
+        }
+        if (LenSq(dir) < 1e-8f) continue;
+        const float w = 1.f / (0.5f + bestD);
+        sum = Add(sum, Mul(Normalize(dir), w));
+    }
+    return sum;
+}
+
 // ── General enemy standoff support (kSolveStandoffW / kSolveStandoffBand) ───
 // The nearby enemies whose bodies the standoff score term keeps us off. Built
 // ONCE per solve and culled to the bodies a candidate could possibly be scored
@@ -892,10 +931,24 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     const float standClr = Core::PointSafety(in, in.player);
     const float playerToPocket = pocketFound ? Len(Sub(in.player, pocketPos)) : 0.f;
     int best2 = -1;
-    float best2Val = -kHugeClearance;
     float best2Time = -1.f;
     const float standTime = Core::Temporal::TimeToDanger(ctx, in.player, in.speed,
                                                        in.player, kUDwellMs);
+    // Item 2 (udodgeFallbackSidestep) tie-break reference: away from the lock
+    // target, or (unlocked) the direction the threatening lanes are travelling.
+    // Only computed when the switch is on — off keeps today's behaviour exactly.
+    Vec2 radialRef{};
+    if (in.settings.fallbackSidestep) {
+        if (goal.fromLock && LenSq(Sub(in.player, goal.lockPos)) > 1e-6f) {
+            radialRef = Normalize(Sub(in.player, goal.lockPos));
+        } else {
+            const Vec2 meanDir = MeanThreatDir(in);
+            if (LenSq(meanDir) > 1e-6f) radialRef = Normalize(meanDir);
+        }
+    }
+    FallbackCandidate fbCands[kMaxCandidates];
+    int fbOrig[kMaxCandidates];
+    int fbCount = 0;
     for (int i = 0; i < n; ++i) {
         // Escaping a body may require several budgets. Admit outward progress
         // only; do not cross another body or relax physical map collision.
@@ -915,14 +968,19 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
                                    Len(Sub(cands[i].pos, route.retreatPos));
             val += kSolveFallbackBackW * backProg;
         }
-        // Avoid an earlier projectile collision before optimizing destination
-        // clearance. If every path is already exposed, geometry still selects
-        // progress out instead of freezing inside the threat.
-        if (safeTime > best2Time || (safeTime == best2Time && val > best2Val)) {
-            best2Time = safeTime;
-            best2Val = val;
-            best2 = i;
-        }
+        fbCands[fbCount] = FallbackCandidate{ cands[i].dir, cands[i].moveDist, val, safeTime };
+        fbOrig[fbCount] = i;
+        ++fbCount;
+    }
+    // Avoid an earlier projectile collision before optimizing destination
+    // clearance. If every path is already exposed, geometry still selects
+    // progress out instead of freezing inside the threat. See
+    // SelectFallbackCandidate for the udodgeFallbackSidestep ranking.
+    const int pick = SelectFallbackCandidate(fbCands, fbCount, radialRef,
+                                             in.settings.fallbackSidestep, standTime);
+    if (pick >= 0) {
+        best2 = fbOrig[pick];
+        best2Time = fbCands[pick].safeTime;
     }
 
     if (best2 >= 0) {
@@ -958,6 +1016,71 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     out.clearance = standClr;
     out.pendingCost = Core::PendingZoneCost(in, in.player);
     out.shouldMove = false;
+}
+
+int SelectFallbackCandidate(const FallbackCandidate* cands, int n, Vec2 radialRef,
+                            bool sidestepOn, float standTime)
+{
+    if (n <= 0 || !cands) return -1;
+    if (!sidestepOn) {
+        // Today's inline reduction, unchanged: latest safeTime wins; an exact
+        // safeTime tie is broken by the higher val; the first candidate seen
+        // keeps an exact (time, val) tie.
+        int best = -1;
+        float bestTime = -1.f, bestVal = -kHugeClearance;
+        for (int i = 0; i < n; ++i) {
+            if (cands[i].safeTime > bestTime ||
+                (cands[i].safeTime == bestTime && cands[i].val > bestVal)) {
+                bestTime = cands[i].safeTime;
+                bestVal = cands[i].val;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    const bool haveRadialRef = LenSq(radialRef) > 1e-6f;
+    // true when `a` should be preferred to `b`: latest time-to-danger first,
+    // then (within the tie band) the smaller radially-outward component, then
+    // the higher val. An exact tie on every term keeps the incumbent `b`.
+    const auto better = [&](const FallbackCandidate& a, const FallbackCandidate& b) -> bool {
+        const float dt = a.safeTime - b.safeTime;
+        if (dt > kSolveFallbackTieMs) return true;
+        if (dt < -kSolveFallbackTieMs) return false;
+        if (haveRadialRef) {
+            const float ra = Dot(a.dir, radialRef);
+            const float rb = Dot(b.dir, radialRef);
+            if (ra < rb - 1e-4f) return true;
+            if (rb < ra - 1e-4f) return false;
+        }
+        return a.val > b.val;
+    };
+
+    // Rule: never select a step whose time-to-danger is shorter than standing
+    // still would be. If nothing clears that floor, report "nothing selected"
+    // so the caller's existing Surrounded fallback (hold, standClr) applies —
+    // this never relaxes a safety floor, it only refuses to prefer a worse pick.
+    int best = -1;
+    for (int i = 0; i < n; ++i) {
+        if (cands[i].safeTime + 1e-4f < standTime) continue;
+        if (best < 0 || better(cands[i], cands[best])) best = i;
+    }
+    if (best < 0) return -1;
+
+    // Minimum displacement: a pick under kSolveFallbackMinMoveTiles loses to any
+    // OTHER candidate that also clears the standTime floor and moves at least
+    // that far (ranked the same way), so the reflex sidesteps for real instead
+    // of settling for a jitter merely because it happened to rank first.
+    if (cands[best].moveDist < kSolveFallbackMinMoveTiles) {
+        int alt = -1;
+        for (int i = 0; i < n; ++i) {
+            if (i == best || cands[i].moveDist < kSolveFallbackMinMoveTiles) continue;
+            if (cands[i].safeTime + 1e-4f < standTime) continue;
+            if (alt < 0 || better(cands[i], cands[alt])) alt = i;
+        }
+        if (alt >= 0) best = alt;
+    }
+    return best;
 }
 
 bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& goal,

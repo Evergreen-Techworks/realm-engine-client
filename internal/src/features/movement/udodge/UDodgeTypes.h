@@ -306,6 +306,16 @@ constexpr int   kUPocketAngles   = 24;    // angular samples per ring (15° reso
 constexpr float kSolveFallbackPocketW = 0.5f; // fallback: bias the least-bad step toward the pocket/gap
 constexpr float kSolveFallbackBackW   = 0.35f; // no-safe-cell fallback: prefer the known corridor behind us
 
+// Navigation finish plan, item 2 (udodgeFallbackSidestep): when the least-bad
+// Fallback candidates tie on time-to-danger within this window, prefer the one
+// with the smaller radially-OUTWARD component instead of bolting straight away
+// from the threat. See UDodgeSolver::SelectFallbackCandidate.
+constexpr float kSolveFallbackTieMs = 60.f;
+// A Fallback pick under this displacement is a near-stationary jitter; it loses
+// to any candidate that lives at least as long as standing still and moves at
+// least this far, so the reflex sidesteps instead of vibrating in place.
+constexpr float kSolveFallbackMinMoveTiles = 0.05f;
+
 // ── Temporal lookahead (plan 64 ext; baked, NO user sliders) ─────────────────
 // The static durable-pocket test above treats each lane (bullet's whole forward
 // path) as permanently dangerous — spatially safe but over-conservative: it
@@ -686,6 +696,15 @@ struct Settings {
                              // (resolved weapon range × 0.85)        [0 | 2, 16]
     int   planRadius = 20;   // planner window radius (grid cells) [8, 40]
                              // shrinks the rasterized window to cut cost
+    // udodgeFallbackSidestep (navigation finish plan, item 2). true (default):
+    // Solver::Solve's Fallback branch ranks its least-bad candidates by latest
+    // time-to-danger, then within kSolveFallbackTieMs breaks the tie toward the
+    // smaller radially-outward step (relative to the lock target, or the mean
+    // threatening-lane direction when unlocked) instead of bolting straight out,
+    // never selects a step shorter-lived than standing still, and will not settle
+    // for a sub-kSolveFallbackMinMoveTiles jitter when a longer-lived candidate
+    // exists. false = today's plain max-time/clearance pick, unchanged.
+    bool  fallbackSidestep = true;
 };
 
 // Keep-out radius around one enemy body: its physical radius plus the player's

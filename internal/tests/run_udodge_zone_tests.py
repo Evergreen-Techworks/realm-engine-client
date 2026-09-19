@@ -22,7 +22,7 @@ inline void QueryPerformanceCounter(LARGE_INTEGER* p) {
                  "udodge_speed_expiry_tests", "udodge_commitment_tests", "udodge_navigation_tests",
                  "udodge_timed_tests", "udodge_prune_tests", "udodge_pathing_rules_tests",
                  "udodge_worker_clock_tests", "udodge_telemetry_tests", "udodge_prederr_tests",
-                 "udodge_temporal_broadphase_tests"):
+                 "udodge_temporal_broadphase_tests", "udodge_fallback_sidestep_tests"):
         binary = build / test
         extra = [str(core / "UDodgeWorker.cpp"), str(spacetime / "SpacetimeCore.cpp")] \
             if test == "udodge_commitment_tests" else []

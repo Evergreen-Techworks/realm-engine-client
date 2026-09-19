@@ -395,6 +395,12 @@ export function register(ctx: PluginContext) {
     type: 'select', value: 'legacy',
     options: [{ label: 'Legacy (local routes)', value: 'legacy' }, { label: 'D* Lite (persistent map)', value: 'dstar' }],
   }, (value: string) => sendDllFeature('navNavigator', value === 'dstar' ? 'dstar' : 'legacy'));
+  // Navigation finish plan, item 2: on a Fallback/Surrounded solve (no safe
+  // reachable cell), sidestep tangentially instead of bolting radially outward
+  // or settling for a sub-jitter step. Off = today's plain least-bad pick.
+  registerModeSetting('unified', 'udodgeFallbackSidestep',
+    onOff('[UDodge] Fallback sidestep', 'on'),
+    (v: string) => sendDllFeature('udodgeFallbackSidestep', v === 'on' ? 1 : 0));
 
   // Keep observing MOVE even outside Unified mode so switching modes starts
   // from the last position actually sent, never from an invented anchor.
@@ -648,6 +654,8 @@ export function register(ctx: PluginContext) {
                    ctx.getSetting<string>('udodgeEnemyStandoff') === 'off' ? 'off' : 'auto');
     sendDllFeature('navCollisionRule', ctx.getSetting<string>('navCollisionRule') === 'game' ? 'game' : 'legacy');
     sendDllFeature('navNavigator', ctx.getSetting<string>('navNavigator') === 'dstar' ? 'dstar' : 'legacy');
+    sendDllFeature('udodgeFallbackSidestep',
+                   ctx.getSetting<string>('udodgeFallbackSidestep') === 'off' ? 0 : 1);
     updateMoveEnvelopeArming();
     // Re-apply the 60fps cap here too. The onEnabledChange / clientConnected
     // handlers were the only places setting targetFrameRate, so if the cap
