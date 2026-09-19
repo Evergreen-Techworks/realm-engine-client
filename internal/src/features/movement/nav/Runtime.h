@@ -12,6 +12,7 @@ void NotifySceneReset();
 void InvalidateGoal();
 void Start();
 void Stop();
-RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool active);
+RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool active,
+                     bool hazardBlocked = false);   // hazardBlocked = udodge safeWalk (S3.11)
 
 } } }
