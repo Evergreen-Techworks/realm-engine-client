@@ -219,6 +219,7 @@
     <ClInclude Include="src\features\movement\udodge\UDodgeWorkerCycle.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeTelemetry.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgePredErr.h" />
+    <ClInclude Include="src\features\movement\udodge\UDodgeStandoff.h" />
     <ClInclude Include="src\features\movement\contact\Contact.h" />
     <ClInclude Include="src\features\movement\udodge\UDodge.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeDebug.h" />

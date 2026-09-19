@@ -34,6 +34,10 @@ struct Request {
     float baseSpeed = 6.f;
     bool active = false;
     bool hazardBlocked = false;   // safeWalk: damaging ground is a wall for the D* router
+    // ENEMY STANDOFF discs, carried with the request so one cycle plans against
+    // one set (the same reason the planner policy rides the dodge snapshot).
+    std::array<Router::StandoffDisc, 48> standoff{};
+    int standoffCount = 0;
 };
 struct Result {
     RouteCorridor corridor;
@@ -45,6 +49,10 @@ struct Delivery {
     std::array<float, 256> speedFactors;
     Request request;
 };
+
+std::mutex standoffMutex;
+std::array<Router::StandoffDisc, 48> standoffDiscs{};
+int standoffCount = 0;
 
 std::atomic<bool> enabled{false};
 std::atomic<bool> resetCapture{true};
@@ -255,6 +263,8 @@ void Work()
         if (!Enabled() || !request.active || request.epoch != epoch.load(std::memory_order_acquire)) continue;
         router.SetBaseSpeed(request.baseSpeed);
         router.SetHazardBlocked(request.hazardBlocked);
+        router.SetStandoff(request.standoff.data(), request.standoffCount,
+                           request.player.worldX, request.player.worldY);
         if (acceptedRevision != request.revision) {
             if (!router.SetGoal(request.epoch, request.goalId, request.player, request.goal)) continue;
             acceptedRevision = request.revision;
@@ -396,6 +406,15 @@ void Stop()
     resetCapture.store(true, std::memory_order_release);
 }
 
+void SetStandoff(const Router::StandoffDisc* discs, int count)
+{
+    std::lock_guard<std::mutex> lock(standoffMutex);
+    standoffCount = 0;
+    if (!discs || count <= 0) return;
+    standoffCount = std::min(count, static_cast<int>(standoffDiscs.size()));
+    for (int i = 0; i < standoffCount; ++i) standoffDiscs[i] = discs[i];
+}
+
 RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool active,
                      bool hazardBlocked)
 {
@@ -435,6 +454,11 @@ RouteCorridor Update(RoutePoint player, RoutePoint goal, float baseSpeed, bool a
     currentRequest.player = player;
     currentRequest.baseSpeed = baseSpeed;
     currentRequest.hazardBlocked = hazardBlocked;
+    {
+        std::lock_guard<std::mutex> lock(standoffMutex);
+        currentRequest.standoff = standoffDiscs;
+        currentRequest.standoffCount = standoffCount;
+    }
     output.epoch = current.epoch;
     output.goalId = currentRequest.goalId;
     output.state = active ? RouteState::Repairing : RouteState::Idle;

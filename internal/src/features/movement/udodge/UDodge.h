@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "features/movement/contact/Contact.h"
+#include "features/movement/udodge/UDodgeStandoff.h"
 
 // UDodge — unified auto-dodge (DodgeMode 7).
 //
@@ -64,6 +65,9 @@ void  SetHitScale(float s);           float GetHitScale();
 // udodgePlanner: "classic" = the pre-Slice-3 engine, anything else = tactician.
 void  SetPlannerPolicy(const char* text);
 Contact::Policy GetPlannerPolicy();
+// udodgeEnemyStandoff: "off" = the pre-standoff engine, anything else = auto.
+void  SetEnemyStandoff(const char* text);
+Standoff::Mode GetEnemyStandoff();
 // The live player hitbox multiplier the last BuildMap read, and whether the
 // collider offset it came from is metadata-trusted (diagnostics).
 float GetLiveHitboxMultiplier();      bool GetLiveHitboxTrusted();

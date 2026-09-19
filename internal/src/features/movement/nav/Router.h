@@ -118,6 +118,71 @@ public:
     // bot must never walk onto lava/venom while the user asked it not to, however
     // long the detour. Only the TARGET of an edge is refused, so a player who is
     // already standing on damaging ground can still leave it by any shortest way.
+    // ENEMY STANDOFF (udodge/UDodgeStandoff.h) for the D* navigator. The discs are
+    // rasterised ONCE into a flat overlay the size of the map; EdgeCost then does a
+    // single array lookup, never a loop over enemies. Cores are impassable, bands
+    // carry kStandoffBandCost. Cells whose class CHANGED are repaired incrementally
+    // (UpdateVertex), exactly as an observed map change is — re-seeding the whole
+    // plan every time a mob takes a step would never converge.
+    struct StandoffDisc { float worldX = 0.f, worldY = 0.f, core = 0.f, band = 0.f; };
+    static constexpr float kStandoffBandCost = 8.f;   // matches UDodge::Standoff::kNavBandCost
+
+    bool SetStandoff(const StandoffDisc* discs, int count, float playerWorldX, float playerWorldY)
+    {
+        if (width_ <= 0 || height_ <= 0) return false;
+        scratch_.clear();
+        for (int i = 0; i < count && discs; ++i) {
+            const auto& disc = discs[i];
+            Stamp(disc.worldX, disc.worldY, disc.band, kBand);
+            const float deltaX = playerWorldX - disc.worldX, deltaY = playerWorldY - disc.worldY;
+            if (disc.core > 0.f && deltaX * deltaX + deltaY * deltaY >= disc.core * disc.core)
+                Stamp(disc.worldX, disc.worldY, disc.core, kCore);
+        }
+        // Collapse duplicates (overlapping discs) into one entry per cell.
+        std::sort(scratch_.begin(), scratch_.end(),
+                  [](const Marked& a, const Marked& b) { return a.index < b.index; });
+        size_t write = 0;
+        for (size_t read = 0; read < scratch_.size(); ++read) {
+            if (write > 0 && scratch_[write - 1].index == scratch_[read].index)
+                scratch_[write - 1].bits |= scratch_[read].bits;
+            else scratch_[write++] = scratch_[read];
+        }
+        scratch_.resize(write);
+        if (scratch_ == standoff_) return true;
+
+        // Repair only the cells whose class actually changed (a linear merge of two
+        // sorted lists), then their neighbours — the same incremental path Apply
+        // uses for an observed map change.
+        std::vector<uint32_t> affected;
+        const auto touch = [&](uint32_t index) {
+            if (!active_) return;
+            const int column = Column(index), row = Row(index);
+            for (int offsetY = -1; offsetY <= 1; ++offsetY)
+                for (int offsetX = -1; offsetX <= 1; ++offsetX)
+                    if (InBounds(column + offsetX, row + offsetY) &&
+                        nodes_.find(Index(column + offsetX, row + offsetY)) != nodes_.end())
+                        affected.push_back(Index(column + offsetX, row + offsetY));
+        };
+        size_t oldAt = 0, newAt = 0;
+        while (oldAt < standoff_.size() || newAt < scratch_.size()) {
+            if (newAt >= scratch_.size() || (oldAt < standoff_.size() && standoff_[oldAt].index < scratch_[newAt].index))
+                touch(standoff_[oldAt++].index);
+            else if (oldAt >= standoff_.size() || scratch_[newAt].index < standoff_[oldAt].index)
+                touch(scratch_[newAt++].index);
+            else {
+                if (standoff_[oldAt].bits != scratch_[newAt].bits) touch(scratch_[newAt].index);
+                ++oldAt; ++newAt;
+            }
+        }
+        standoff_ = scratch_;
+        if (affected.empty()) return true;
+        std::sort(affected.begin(), affected.end());
+        affected.erase(std::unique(affected.begin(), affected.end()), affected.end());
+        for (const auto index : affected) UpdateVertex(index);
+        state_ = RouteState::Repairing;
+        return true;
+    }
+
     bool SetHazardBlocked(bool blocked)
     {
         if (hazardBlocked_ == blocked) return true;
@@ -327,10 +392,14 @@ private:
         const auto source = memory_.GetCell(fromX, fromY).ground;
         const auto target = memory_.GetCell(toX, toY).ground;
         if (hazardBlocked_ && (target.flags & TileOccupancy::kTileDamaging)) return Infinity();
+        // ENEMY STANDOFF: one byte lookup, filled by SetStandoff.
+        const uint8_t standoff = StandoffAt(to);
+        if (standoff & kCore) return Infinity();
         const float sourceFactor = (source.flags & TileOccupancy::kTileKnown) ? speedFactors_[source.speedClass] : 1.f / 1.2f;
         const float targetFactor = (target.flags & TileOccupancy::kTileKnown) ? speedFactors_[target.speedClass] : 1.f / 1.2f;
         return Speed::EdgeMs(baseSpeed_ / 1000.f, sourceFactor, targetFactor, diagonal ? 1.41421356237f : 1.f) / 1000.f +
-            ((target.flags & TileOccupancy::kTileDamaging) ? 3.f : 0.f);
+            ((target.flags & TileOccupancy::kTileDamaging) ? 3.f : 0.f) +
+            ((standoff & kBand) ? kStandoffBandCost : 0.f);
     }
 
     float Heuristic(uint32_t from, uint32_t to) const
@@ -475,6 +544,43 @@ private:
     RoutePoint start_, goal_;
     uint32_t startIndex_ = 0, goalIndex_ = 0;
     bool active_ = false, limited_ = false;
+    static constexpr uint8_t kCore = 0x1, kBand = 0x2;
+    // The standoff overlay is a SPARSE sorted list, not a full-map byte array: a
+    // 2048x2048 map would be 4 MB to allocate and rescan every cycle, while the
+    // discs themselves never cover more than a few thousand cells.
+    struct Marked {
+        uint32_t index = 0; uint8_t bits = 0;
+        bool operator==(const Marked& other) const { return index == other.index && bits == other.bits; }
+    };
+    std::vector<Marked> standoff_;   // sorted by index; the live overlay
+    std::vector<Marked> scratch_;    // next raster, diffed against standoff_
+
+    uint8_t StandoffAt(uint32_t index) const
+    {
+        const auto found = std::lower_bound(standoff_.begin(), standoff_.end(), index,
+            [](const Marked& entry, uint32_t value) { return entry.index < value; });
+        return (found != standoff_.end() && found->index == index) ? found->bits : static_cast<uint8_t>(0);
+    }
+
+    // Stamp one disc into `scratch_`. Bounded by the disc's own area — the whole
+    // point is that this never becomes cells x enemies.
+    void Stamp(float worldX, float worldY, float radius, uint8_t bit)
+    {
+        if (radius <= 0.f) return;
+        const int centreColumn = static_cast<int>(std::floor(worldX));
+        const int centreRow = static_cast<int>(std::floor(worldY));
+        const int span = static_cast<int>(std::ceil(radius));
+        const float radiusSquared = radius * radius;
+        for (int row = centreRow - span; row <= centreRow + span; ++row)
+            for (int column = centreColumn - span; column <= centreColumn + span; ++column) {
+                if (!InBounds(column, row)) continue;
+                const float deltaX = static_cast<float>(column) + 0.5f - worldX;
+                const float deltaY = static_cast<float>(row) + 0.5f - worldY;
+                if (deltaX * deltaX + deltaY * deltaY < radiusSquared)
+                    scratch_.push_back(Marked{ Index(column, row), bit });
+            }
+    }
+
     bool  hazardBlocked_ = false;   // safeWalk: damaging ground is impassable
     float keyModifier_ = 0.f, maxSpeedFactor_ = 1.f, baseSpeed_ = 6.f;
     std::array<float, 256> speedFactors_;

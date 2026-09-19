@@ -157,6 +157,39 @@ static float SehProjectileReachTiles(void* projectiles, uintptr_t count)
     } __except (EXCEPTION_EXECUTE_HANDLER) { return 0.f; }
 }
 
+// FASTEST projectile of a type, in TILES PER SECOND — the speed the enemy-standoff
+// band is sized from (UDodgeStandoff::BandRadius). ProjectileProperties.Speed is
+// the game's raw units: rawSpeed / 10000 is tiles per MILLISECOND (see
+// AimMath::IntegratedProjectileDistance), so tiles per second is rawSpeed / 10.
+// Parametric projectiles declare no linear speed; their magnitude over their
+// lifetime is the equivalent. 0 = nothing readable. Called once per object type
+// (the caller caches the result), never per frame.
+static float SehProjectileSpeedTilesPerSec(void* projectiles, uintptr_t count)
+{
+    __try {
+        if (!Mem::AddrOk(projectiles) || count == 0) return 0.f;
+        if (count > 16) count = 16;
+        float best = 0.f;
+        for (uintptr_t i = 0; i < count; ++i) {
+            void* pp = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(projectiles) + 0x20 + i * sizeof(void*));  // raw-access-ok: Il2CppArray element, shared SEH
+            if (!Mem::AddrOk(pp)) continue;
+            Game::ProjProps props(pp);
+            float tilesPerSec = 0.f;
+            if (props.IsParametric()) {
+                const float lifeMs = ProjectileTracking::NormalizeProjectileLifetimeMs(props.Lifetime());
+                const float mag = props.Magnitude();
+                if (lifeMs > 1.f && std::isfinite(lifeMs) && std::isfinite(mag) && mag > 0.f)
+                    tilesPerSec = mag * 1000.f / lifeMs;
+            } else {
+                const int32_t speed = props.Speed();
+                if (speed > 0 && speed < 500000) tilesPerSec = static_cast<float>(speed) / 10.f;
+            }
+            if (std::isfinite(tilesPerSec) && tilesPerSec > best && tilesPerSec < 200.f) best = tilesPerSec;
+        }
+        return best;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return 0.f; }
+}
+
 // Returns true if the dict entry describes an enemy the snapshot keeps; `why`
 // says which rule dropped it otherwise (EnemyClassify.h). Soft properties
 // (invulnerable, hasHealthBar, scenery) are always populated so callers can apply
@@ -260,7 +293,10 @@ static thread_local std::vector<EnemyTracker::Entry> s_snapshot;
 static thread_local uint64_t                 s_snapshotGen = 0;
 // Projectile reach per object type. ObjectProperties are shared per type and
 // immutable, so one read per type per session is exact. Builder-owned.
-static std::unordered_map<int32_t, float> s_reachByType;
+// One cache entry per object type: everything the standoff and the burst keep-out
+// need from a type's projectile table, read once.
+struct TypeShots { float reachTiles = 0.f; float speedTilesPerSec = 0.f; bool hasProjectiles = false; };
+static std::unordered_map<int32_t, TypeShots> s_reachByType;
 static std::atomic<int32_t>  s_localPlayerObjectId{ 0 };
 static std::atomic<ULONGLONG> s_lastTickMs{ 0 };
 
@@ -369,10 +405,16 @@ static void BuildLocked(ULONGLONG now, EnemyTracker::WatchVerdict& watch)
         e.ptr            = cand.ptr;
         {
             auto reach = s_reachByType.find(cand.objType);
-            if (reach == s_reachByType.end())
-                reach = s_reachByType.emplace(cand.objType,
-                    SehProjectileReachTiles(cand.projectiles, cand.projectileCount)).first;
-            e.shotRangeTiles = reach->second;
+            if (reach == s_reachByType.end()) {
+                TypeShots shots;
+                shots.reachTiles       = SehProjectileReachTiles(cand.projectiles, cand.projectileCount);
+                shots.speedTilesPerSec = SehProjectileSpeedTilesPerSec(cand.projectiles, cand.projectileCount);
+                shots.hasProjectiles   = cand.projectileCount > 0;
+                reach = s_reachByType.emplace(cand.objType, shots).first;
+            }
+            e.shotRangeTiles       = reach->second.reachTiles;
+            e.shotSpeedTilesPerSec = reach->second.speedTilesPerSec;
+            e.hasProjectiles       = reach->second.hasProjectiles;
         }
 
         // Populate velocity from the just-updated map

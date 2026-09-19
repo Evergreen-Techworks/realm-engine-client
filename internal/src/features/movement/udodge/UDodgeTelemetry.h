@@ -130,6 +130,12 @@ struct Sample {
     Vec2     commanded{};            // this frame's MoveTo target minus the player
     // World.
     int      lanes = 0, zones = 0, enemies = 0;
+    // ENEMY STANDOFF: distance to the nearest live enemy body, and whether the
+    // player is standing inside anybody's band right now. These are the two
+    // numbers the owner's 152-hit analysis turned on (54 % of hits had an enemy
+    // inside 4 tiles), so a session's log can be scored the same way.
+    float    nearEnemy = -1.f;   // tiles; < 0 = no enemy in the map
+    bool     inBand = false;
     // The latest worker cycle handed to the game thread.
     float    workerDodgeMs = 0.f, workerNavMs = 0.f, workerTimedMs = 0.f, workerSolveMs = 0.f;
     uint8_t  timedStatus = 0;        // SpacetimeDodge::Status
@@ -356,6 +362,9 @@ inline size_t Format(const Sample& s, uint32_t why, bool replan, bool reversal, 
         w.Add(" cmd=%.3f radial=- tang=-", length);
     w.Add(" replan=%d reversal=%d lanes=%d zones=%d enemies=%d", replan ? 1 : 0, reversal ? 1 : 0,
           s.lanes, s.zones, s.enemies);
+    if (s.nearEnemy >= 0.f) w.Add(" near_enemy=%.2f", s.nearEnemy);
+    else                    w.Add(" near_enemy=-");
+    w.Add(" in_band=%d", s.inBand ? 1 : 0);
     w.Add(" worker_ms=%.2f(dodge=%.2f nav=%.2f timed=%.2f solve=%.2f) timed=%s reused=%d budget_hit=%d",
           s.workerDodgeMs + s.workerNavMs + s.workerTimedMs + s.workerSolveMs,
           s.workerDodgeMs, s.workerNavMs, s.workerTimedMs, s.workerSolveMs,
