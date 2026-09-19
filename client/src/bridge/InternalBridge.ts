@@ -21,6 +21,9 @@ import { BRIDGE, DllMessageType } from './contract.js';
 import { decodeThreatPayload, publishDllThreats } from './DllThreatBus.js';
 import { decodeAimPayload, publishDllAim } from './DllAimBus.js';
 import { decodeNavigationStatus, publishNavigationStatus } from './DllNavigationBus.js';
+import { DiagGate } from '../util/DiagGate.js';
+import { LatencyAggregator } from '../util/DiagAggregator.js';
+import { RateLimiter } from '../util/DiagRateLimit.js';
 
 const PIPE_PATH = BRIDGE.DEV_PIPE_NAME;
 
@@ -32,6 +35,20 @@ function isWindowsNamedPipeHost(): boolean {
 const HEARTBEAT_INTERVAL = 5000;
 const MAX_MISSES = 3;
 const IS_PROD = process.env.REALM_ENGINE_PROD === '1';
+
+// item 4b (measurement only): client-side half of the bridge command latency
+// probe. This measures setFeature()'s own call -> pipe-write span (JSON
+// encode + socket.write), on the Node clock only — it never tries to
+// reconcile with the DLL's clock. The DLL side measures its own
+// receive->apply delta independently (BridgeLatencyDiag.h) and logs to
+// native-trace.log; the two share the [Diag/Bridge] tag but are read
+// side-by-side, not joined. See the item 4b report for why: there is no
+// existing per-command ack to round-trip against, and adding one would be a
+// wire-protocol change this measurement-only task avoids.
+const BRIDGE_SLOW_MS = 100;
+const bridgeSendLatency = new LatencyAggregator('Diag/Bridge');
+const bridgeSlowLineLimiter = new RateLimiter(5, 5000);
+let bridgeSendSeq = 0;
 
 export interface DllMessage {
   type: string;
@@ -147,7 +164,21 @@ export class InternalBridge extends EventEmitter {
     if (key !== 'internalUnloadDll' && key !== 'scriptNavigationGoal') {
       this.lastSentFeatures.set(key, { ...msg });
     }
+    if (!DiagGate.on()) {
+      this.send(msg);
+      return;
+    }
+    // item 4b: local-only sequence number for correlating log lines within a
+    // session — never sent over the wire (see the comment above the module
+    // constants for why this doesn't round-trip against the DLL).
+    const seq = ++bridgeSendSeq;
+    const t0 = performance.now();
     this.send(msg);
+    const elapsedMs = performance.now() - t0;
+    bridgeSendLatency.record(elapsedMs);
+    if (elapsedMs > BRIDGE_SLOW_MS && bridgeSlowLineLimiter.allow()) {
+      Logger.log('Diag/Bridge', `key=${key} seq=${seq} send=${elapsedMs.toFixed(1)}ms (>${BRIDGE_SLOW_MS}ms)`);
+    }
   }
 
   // ── Private ──────────────────────────────────────────────────────────────

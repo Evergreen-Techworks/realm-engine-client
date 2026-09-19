@@ -42,6 +42,7 @@
 #include "FeatureRuntime.h"
 #include "FloatingTextService.h"
 #include "FeatureCommandRegistry.h"
+#include "BridgeLatencyDiag.h"
 
 bool FeatureCommand::Is(const char* name) const { return strcmp(key, name) == 0; }
 bool FeatureCommand::Bool() const { return strcmp(value, "true") == 0 || strcmp(value, "1") == 0; }
@@ -86,7 +87,16 @@ namespace {
         return false;
     }
 
-#define FH(key, body) { key, [](const FeatureCommand& f)->bool { body; return true; } }
+// item 4b (measurement only): FH stamps the apply-side timestamp right after
+// the handler runs, matched against the receive stamp ParseSetFeatureCommand
+// took when the command came off the pipe (IpcBridge.cpp). For the ~150 keys
+// applied immediately here this is a same-thread, same-call delta (expected
+// ~0 — it exists to catch a handler that unexpectedly blocks). walkTargetX/Y/
+// Active use FH_DEFERRED instead: their real apply point is the game-thread
+// FeatureRuntime::ApplyWalkTargetFeatureState() one frame later, which stamps
+// itself — see BridgeLatencyDiag.h for why the two are split.
+#define FH(key, body) { key, [](const FeatureCommand& f)->bool { body; BridgeLatencyDiag::NoteApplied(key); return true; } }
+#define FH_DEFERRED(key, body) { key, [](const FeatureCommand& f)->bool { body; return true; } }
 #define FH_BOOL(key, fn) FH(key, fn(f.Bool()))
 #define FH_INT(key, fn) FH(key, fn(f.Int()))
 #define FH_INT_BOOL(key, fn) FH(key, fn(f.Int() != 0))
@@ -318,9 +328,9 @@ namespace {
             FH("socketHotkeyActive",      FeatureState::SetSocketHotkeyActive(f.Bool())),
             FH("socketHotkey",            FeatureState::SetSocketHotkeyVk(ResolveHotkeyVkInternal(f.value))),
             FH("pluginToggleHotkeys",     FeatureRuntime::ApplyPluginToggleHotkeys(f.value)),
-            FH("walkTargetX",             FeatureState::SetWalkTarget(f.Float(), FeatureState::GetWalkTargetY(), FeatureState::GetWalkTargetActive())),
-            FH("walkTargetY",             FeatureState::SetWalkTarget(FeatureState::GetWalkTargetX(), f.Float(), FeatureState::GetWalkTargetActive())),
-            FH("walkTargetActive",        FeatureState::SetWalkTarget(FeatureState::GetWalkTargetX(), FeatureState::GetWalkTargetY(), f.Bool())),
+            FH_DEFERRED("walkTargetX",             FeatureState::SetWalkTarget(f.Float(), FeatureState::GetWalkTargetY(), FeatureState::GetWalkTargetActive())),
+            FH_DEFERRED("walkTargetY",             FeatureState::SetWalkTarget(FeatureState::GetWalkTargetX(), f.Float(), FeatureState::GetWalkTargetActive())),
+            FH_DEFERRED("walkTargetActive",        FeatureState::SetWalkTarget(FeatureState::GetWalkTargetX(), FeatureState::GetWalkTargetY(), f.Bool())),
             FH("cameraZoomActive",        FeatureState::SetCameraZoom(f.Bool(), FeatureState::GetCameraZoomValue())),
             FH("cameraZoomValue",         FeatureState::SetCameraZoom(FeatureState::GetCameraZoomActive(), f.Float())),
             FH("cameraAngleActive",       FeatureState::SetCameraAngle(f.Bool(), FeatureState::GetCameraAngleValue())),
@@ -374,6 +384,7 @@ namespace {
 #undef FH_INT_BOOL
 #undef FH_INT
 #undef FH_BOOL
+#undef FH_DEFERRED
 #undef FH
 
 } // namespace

@@ -33,6 +33,7 @@
 #include "FeatureState.h"
 #include "FeatureRuntime.h"
 #include "FeatureCommandRegistry.h"
+#include "BridgeLatencyDiag.h"
 
 // Debug logging
 
@@ -225,6 +226,7 @@ static bool ParseSetFeatureCommand(char* json, FeatureCommand* out)
         return false;
     }
     DBG_FILE_LOG("[IpcBridge] setFeature: key=" << out->key << " valueType=" << out->valueType << " value=" << out->value);
+    BridgeLatencyDiag::NoteReceived(out->key);  // item 4b: measurement only
     return true;
 }
 

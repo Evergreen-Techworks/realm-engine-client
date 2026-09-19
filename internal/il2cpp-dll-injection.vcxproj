@@ -193,6 +193,7 @@
     <ClInclude Include="src\core\il2cpp\pch-il2cpp.h" />
     <ClInclude Include="src\platform\dx11\Dx11.h" />
     <ClInclude Include="src\core\ipc\IpcBridge.h" />
+    <ClInclude Include="src\core\ipc\BridgeLatencyDiag.h" />
     <ClInclude Include="src\core\ipc\IpcFraming.h" />
     <ClInclude Include="src\core\ipc\IpcJson.h" />
     <ClInclude Include="src\core\ipc\IpcMessages.h" />

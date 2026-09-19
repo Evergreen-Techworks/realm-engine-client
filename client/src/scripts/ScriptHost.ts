@@ -6,6 +6,9 @@ import { SDKBridge } from './bridge/index.js';
 import type { BridgeDeps, ScriptLogLevel, ScriptPanelInboundEvent } from './bridge/BridgeDeps.js';
 import { Logger } from '../util/Logger.js';
 import { DebugManager } from '../util/DebugManager.js';
+import { DiagGate } from '../util/DiagGate.js';
+import { DiagContext } from '../util/DiagContext.js';
+import { LatencyAggregator } from '../util/DiagAggregator.js';
 
 export interface ScriptInfo {
   id: string;
@@ -306,9 +309,22 @@ export class ScriptHost {
       });
 
       const startedAt = Date.now();
+      // item 4b, part D (measurement only): the *actual* period between
+      // schedule() invocations, not the `delay` a script asked for — event
+      // loop congestion between one setTimeout firing and the next shows up
+      // here as a gap wider than the requested delay.
+      const tickAgg = new LatencyAggregator('Diag/ScriptTick', 5000, () => `id=${id}`);
+      let lastScheduleAt: number | null = null;
       const schedule = () => {
         if (!this.running.has(id)) return;
+        if (DiagGate.on()) {
+          const now = performance.now();
+          if (lastScheduleAt !== null) tickAgg.record(now - lastScheduleAt);
+          lastScheduleAt = now;
+        }
         this.withScriptId(id, () => {
+          const diagOn = DiagGate.on();
+          if (diagOn) DiagContext.current = `script:${id}`;
           try {
             const delay = instance.onLoop();
             if (typeof delay === 'number' && delay < 0) {
@@ -321,6 +337,8 @@ export class ScriptHost {
           } catch (err: any) {
             this.log(id, `Error in onLoop: ${err.message}`, 'error');
             this.stop(id);
+          } finally {
+            if (diagOn) DiagContext.current = 'idle';
           }
         });
       };
