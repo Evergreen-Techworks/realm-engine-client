@@ -262,10 +262,14 @@ export class PluginContext {
   updateSettingOptions(key: string, options: SettingOption[]): boolean {
     const setting = this._settings.get(key);
     if (!setting || setting.type !== 'select') return false;
-    setting.options = options.map((option) => ({
+    const next = options.map((option) => ({
       ...option,
       ...(option.metadata ? { metadata: { ...option.metadata } } : {}),
     }));
+    // Every notification makes the dashboard rebuild its Plugins page, closing
+    // any dropdown the user has open, so an identical list is not a change.
+    if (JSON.stringify(next) === JSON.stringify(setting.options ?? null)) return true;
+    setting.options = next;
     this.onSettingOptionsChanged?.(this.pluginId, key);
     return true;
   }
