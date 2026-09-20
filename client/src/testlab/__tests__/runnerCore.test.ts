@@ -10,7 +10,7 @@ import {
   consumedRequestFileName,
   resultFileName,
   throwawayConfigId,
-  buildLaunchBroadcast,
+  isSafeId,
   buildThrowawayConfigSnapshot,
   buildRejectedResult,
   RunnerStateMachine,
@@ -178,22 +178,63 @@ describe('extractRunIdForConsumedName / file naming', () => {
   });
 });
 
-describe('buildLaunchBroadcast', () => {
-  it('contains no credential-shaped fields, only runId/accountLabel/serverName', () => {
-    const request: RunRequest = {
-      v: 1,
-      runId: 'r1',
-      createdUtc: '2026-09-20T03:15:00Z',
-      accountLabel: 'lab-1',
-      serverName: 'USEast',
-      scriptId: undefined,
-      minutes: 5,
-      plugins: undefined,
-      stopOn: undefined,
-    };
-    const msg = buildLaunchBroadcast(request);
-    expect(msg).toEqual({ type: 'testlabLaunch', runId: 'r1', accountLabel: 'lab-1', serverName: 'USEast' });
-    expect(Object.keys(msg).sort()).toEqual(['accountLabel', 'runId', 'serverName', 'type'].sort());
+describe('parseRunRequest — path-unsafe ids are rejected outright', () => {
+  it('rejects a runId containing a path separator or traversal segment', () => {
+    for (const bad of ['../../etc/passwd', '..', 'a/b', 'a\\b', '.hidden', 'x'.repeat(65)]) {
+      const result = parseRunRequest(validRequestJson({ runId: bad }), NOW);
+      expect(result).toMatchObject({ ok: false, reason: 'unsafe-id', detail: 'runId' });
+    }
+  });
+
+  it('rejects an unsafe scriptId', () => {
+    const result = parseRunRequest(validRequestJson({ scriptId: '../../evil' }), NOW);
+    expect(result).toMatchObject({ ok: false, reason: 'unsafe-id', detail: 'scriptId' });
+  });
+
+  it('accepts a safe scriptId', () => {
+    const result = parseRunRequest(validRequestJson({ scriptId: 'dead-church-farmer' }), NOW);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.request.scriptId).toBe('dead-church-farmer');
+  });
+
+  it('rejects an unsafe plugin id in the overrides map', () => {
+    const result = parseRunRequest(validRequestJson({ plugins: { '../../evil': { enabled: true } } }), NOW);
+    expect(result).toMatchObject({ ok: false, reason: 'unsafe-id' });
+  });
+
+  it('a runId that would escape testlabDir once wrapped into a result/consumed filename is caught before any file naming happens', () => {
+    // Regression for the exact vector: a runId containing real path
+    // separators, embedded inside "run-result.<runId>.json", used to escape
+    // the testlab directory once passed through path.join/normalize.
+    const result = parseRunRequest(validRequestJson({ runId: '../../../../Windows/System32/evil' }), NOW);
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('isSafeId', () => {
+  it('accepts realistic ids', () => {
+    for (const id of ['20260920T031500Z-ab12', 'farmer', 'dead-church-farmer', 'testlab-recorder', 'a', '1']) {
+      expect(isSafeId(id)).toBe(true);
+    }
+  });
+
+  it('rejects traversal, absolute-ish, leading-dot, oversized, and non-string values', () => {
+    expect(isSafeId('..')).toBe(false);
+    expect(isSafeId('../x')).toBe(false);
+    expect(isSafeId('a/../b')).toBe(false);
+    expect(isSafeId('/etc/passwd')).toBe(false);
+    expect(isSafeId('a/b')).toBe(false);
+    expect(isSafeId('a\\b')).toBe(false);
+    expect(isSafeId('.hidden')).toBe(false);
+    expect(isSafeId('')).toBe(false);
+    expect(isSafeId('x'.repeat(65))).toBe(false);
+    expect(isSafeId(undefined)).toBe(false);
+    expect(isSafeId(123)).toBe(false);
+    expect(isSafeId(null)).toBe(false);
+  });
+
+  it('accepts exactly 64 characters', () => {
+    expect(isSafeId('x'.repeat(64))).toBe(true);
   });
 });
 
