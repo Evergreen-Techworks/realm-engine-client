@@ -17,13 +17,31 @@ function clearRecorderBus() {
   delete (globalThis as unknown as Record<string, unknown>)[RECORDER_BUS_SLOT_KEY];
 }
 
+/** The real Auto Dodge shapes this suite exercises against, read through the
+ *  general `describeOtherPluginSetting` hook — kept minimal (not the whole
+ *  744-line plugin) but structurally identical to what `getSettings()` would
+ *  hand back for these two real keys. */
+const DEFAULT_DESCRIPTIONS: Record<string, any> = {
+  udodgeEnemyStandoff: {
+    type: 'select',
+    options: [{ value: 'off' }, { value: 'auto' }],
+    visibleWhen: { key: 'dodgeMode', value: 'unified' },
+  },
+  dodgeMode: {
+    type: 'select',
+    options: [{ value: 'off' }, { value: 'xdodge' }, { value: 'unified' }, { value: 'zdodge' }],
+    // dodgeMode itself is never gated on anything.
+  },
+};
+
 /**
  * A fake PluginContext that actually implements the enabled-setter ->
  * onEnabledChange-callback wiring the real PluginContext has (needed to
  * exercise the plugin's self-revert-on-refusal path), plus the cross-plugin
- * get/update-other-plugin-setting surface PluginContext exposes for this.
+ * get/update/describe-other-plugin-setting surface PluginContext exposes for
+ * this.
  */
-function load(opts: { otherSettings?: Record<string, unknown> } = {}) {
+function load(opts: { otherSettings?: Record<string, unknown>; descriptions?: Record<string, any> } = {}) {
   const settings = new Map<string, unknown>();
   const settingConfigs = new Map<string, any>();
   const changeCallbacks = new Map<string, (value: unknown) => void>();
@@ -33,6 +51,7 @@ function load(opts: { otherSettings?: Record<string, unknown> } = {}) {
   const logs: string[] = [];
   const otherPluginUpdates: Array<[string, string, unknown]> = [];
   const otherSettings = new Map<string, unknown>(Object.entries(opts.otherSettings ?? { dodgeMode: 'unified', udodgeEnemyStandoff: 'off' }));
+  const descriptions = new Map<string, any>(Object.entries(opts.descriptions ?? DEFAULT_DESCRIPTIONS));
   let _enabled = false;
 
   const ctx = {
@@ -62,6 +81,7 @@ function load(opts: { otherSettings?: Record<string, unknown> } = {}) {
       otherSettings.set(key, value);
       return true;
     }),
+    describeOtherPluginSetting: vi.fn((_pluginId: string, key: string) => descriptions.get(key)),
     dashboardLog: vi.fn((msg: string) => dashboardLogs.push(msg)),
     log: vi.fn((msg: string) => logs.push(msg)),
     onEnabledChange: vi.fn((cb: (enabled: boolean) => void) => enabledCallbacks.push(cb)),
@@ -78,6 +98,7 @@ function load(opts: { otherSettings?: Record<string, unknown> } = {}) {
     logs,
     otherPluginUpdates,
     otherSettings,
+    descriptions,
     runCleanup: () => cleanupFns.forEach((fn) => fn()),
     setEnabled: (v: boolean) => {
       (ctx as unknown as { enabled: boolean }).enabled = v;
@@ -88,19 +109,19 @@ function load(opts: { otherSettings?: Record<string, unknown> } = {}) {
 describe('Test Lab A/B interleaver plugin', () => {
   afterEach(() => {
     clearRecorderBus();
+    vi.useRealTimers();
   });
 
-  it('registers default DISABLED with the four real Auto Dodge switch keys', () => {
+  it('registers default DISABLED with a free-text target key (not a fixed switch list)', () => {
     setRecorderBus(true);
     const h = load();
     expect(h.ctx.enabled).toBe(false);
     const targetConfig = h.settingConfigs.get('target');
-    expect(targetConfig.type).toBe('select');
-    expect(targetConfig.options.map((o: { value: string }) => o.value).sort()).toEqual(
-      ['udodgeEnemyStandoff', 'udodgeFallbackSidestep', 'udodgeFrameBudget', 'udodgeRouteCommit'].sort(),
-    );
+    expect(targetConfig.type).toBe('text');
+    expect(h.settings.get('target')).toBe('udodgeEnemyStandoff');
+    expect(h.settingConfigs.get('valueA').type).toBe('text');
     expect(h.settings.get('valueA')).toBe('off');
-    expect(h.settings.get('valueB')).toBe('auto'); // Enemy standoff's on value is 'auto', not 'on'.
+    expect(h.settings.get('valueB')).toBe('auto');
     expect(h.settings.get('blockMinutes')).toBe(3);
     h.runCleanup();
   });
@@ -115,13 +136,40 @@ describe('Test Lab A/B interleaver plugin', () => {
     h.runCleanup();
   });
 
-  it('does not start when Dodge mode is not Unified', () => {
+  it('refuses an unknown target key', () => {
+    setRecorderBus(true);
+    const h = load();
+    h.settings.set('target', 'notARealSetting');
+    h.setEnabled(true);
+    expect(h.otherPluginUpdates).toEqual([]);
+    expect(h.dashboardLogs.at(-1)).toMatch(/Unknown Auto Dodge setting "notARealSetting"/);
+    expect(h.ctx.enabled).toBe(false);
+    h.runCleanup();
+  });
+
+  it('does not start when the target is gated to a dodgeMode the plugin is not currently in', () => {
     setRecorderBus(true);
     const h = load({ otherSettings: { dodgeMode: 'xdodge', udodgeEnemyStandoff: 'off' } });
     h.setEnabled(true);
     expect(h.otherPluginUpdates).toEqual([]);
-    expect(h.dashboardLogs.at(-1)).toMatch(/Dodge mode is not Unified/);
+    expect(h.dashboardLogs.at(-1)).toMatch(/only applies when dodgeMode=unified/);
+    expect(h.dashboardLogs.at(-1)).toMatch(/xdodge/);
     expect(h.ctx.enabled).toBe(false);
+    h.runCleanup();
+  });
+
+  it('allows dodgeMode itself as a target regardless of the current mode', () => {
+    setRecorderBus(true);
+    const h = load({ otherSettings: { dodgeMode: 'xdodge' } });
+    h.settings.set('target', 'dodgeMode');
+    h.settings.set('valueA', 'xdodge');
+    h.settings.set('valueB', 'unified');
+    h.setEnabled(true);
+    expect(h.otherPluginUpdates.length).toBeGreaterThan(0);
+    const [pluginId, key, value] = h.otherPluginUpdates[0];
+    expect(pluginId).toBe('auto-dodge');
+    expect(key).toBe('dodgeMode');
+    expect(['xdodge', 'unified']).toContain(value);
     h.runCleanup();
   });
 
@@ -133,6 +181,17 @@ describe('Test Lab A/B interleaver plugin', () => {
     h.setEnabled(true);
     expect(h.otherPluginUpdates).toEqual([]);
     expect(h.dashboardLogs.at(-1)).toMatch(/nothing to compare/);
+    expect(h.ctx.enabled).toBe(false);
+    h.runCleanup();
+  });
+
+  it('does not start when a requested value is not legal for the target', () => {
+    setRecorderBus(true);
+    const h = load();
+    h.settings.set('valueB', 'bogus');
+    h.setEnabled(true);
+    expect(h.otherPluginUpdates).toEqual([]);
+    expect(h.dashboardLogs.at(-1)).toMatch(/bogus/);
     expect(h.ctx.enabled).toBe(false);
     h.runCleanup();
   });
@@ -174,7 +233,7 @@ describe('Test Lab A/B interleaver plugin', () => {
     h.runCleanup();
   });
 
-  it('restores the original value on disable and marks ab.stop', () => {
+  it('restores the original value on disable, marks ab.stop with the reason, and logs why it stopped', () => {
     const writer = setRecorderBus(true);
     const h = load({ otherSettings: { dodgeMode: 'unified', udodgeEnemyStandoff: 'off' } });
     h.setEnabled(true);
@@ -185,11 +244,16 @@ describe('Test Lab A/B interleaver plugin', () => {
     expect(lastForKey?.[2]).toBe('off');
 
     const stopRecord = writer!.writeLine.mock.calls.map((c: unknown[]) => c[0]).find((r: any) => r.key === 'ab.stop');
-    expect(stopRecord).toMatchObject({ k: 'arm', key: 'ab.stop', value: { key: 'udodgeEnemyStandoff', restored: 'off' } });
+    expect(stopRecord).toMatchObject({
+      k: 'arm',
+      key: 'ab.stop',
+      value: { key: 'udodgeEnemyStandoff', restored: 'off', reason: 'disabled-by-user' },
+    });
+    expect(h.logs.at(-1)).toBe('[TestLabAB] stopped reason=disabled-by-user restored=off');
     h.runCleanup();
   });
 
-  it('restores on plugin unload (registerCleanup) even without an explicit disable', () => {
+  it('restores on plugin unload (registerCleanup) even without an explicit disable, and logs reason=plugin-unload', () => {
     setRecorderBus(true);
     const h = load({ otherSettings: { dodgeMode: 'unified', udodgeEnemyStandoff: 'off' } });
     h.setEnabled(true);
@@ -197,6 +261,7 @@ describe('Test Lab A/B interleaver plugin', () => {
     h.runCleanup();
     const lastForKey = [...h.otherPluginUpdates].reverse().find(([, key]) => key === 'udodgeEnemyStandoff');
     expect(lastForKey?.[2]).toBe('off');
+    expect(h.logs.at(-1)).toBe('[TestLabAB] stopped reason=plugin-unload restored=off');
   });
 
   it('never throws when the recorder bus slot is entirely absent', () => {
@@ -207,12 +272,92 @@ describe('Test Lab A/B interleaver plugin', () => {
     h.runCleanup();
   });
 
-  it('re-defaults valueA/valueB when the target changes', () => {
+  it('delays the arm mark by SETTLE_MS after a dodgeMode flip, but applies the value and logs the flip immediately', () => {
+    vi.useFakeTimers();
+    const writer = setRecorderBus(true);
+    const h = load({ otherSettings: { dodgeMode: 'xdodge' } });
+    h.settings.set('target', 'dodgeMode');
+    h.settings.set('valueA', 'xdodge');
+    h.settings.set('valueB', 'unified');
+    h.setEnabled(true);
+
+    // Applied and logged immediately.
+    expect(h.otherPluginUpdates.some(([, key]) => key === 'dodgeMode')).toBe(true);
+    expect(h.logs.at(-1)).toMatch(/^\[TestLabAB\] dodgeMode=(xdodge|unified) block=0 seed=\d+$/);
+
+    // The per-arm mark (keyed 'dodgeMode') has NOT been written yet.
+    const dodgeModeMarks = () => writer!.writeLine.mock.calls.map((c: unknown[]) => c[0]).filter((r: any) => r.key === 'dodgeMode');
+    expect(dodgeModeMarks().length).toBe(0);
+
+    vi.advanceTimersByTime(1999);
+    expect(dodgeModeMarks().length).toBe(0);
+
+    vi.advanceTimersByTime(1);
+    expect(dodgeModeMarks().length).toBe(1);
+
+    h.runCleanup();
+  });
+
+  it('stops mid-run with reason=recorder-disabled when the recorder is turned off during a run', () => {
+    vi.useFakeTimers();
+    const writer = setRecorderBus(true);
+    const h = load();
+    h.setEnabled(true);
+    setRecorderBus(false, writer);
+
+    vi.advanceTimersByTime(5000); // TICK_MS
+
+    expect(h.ctx.enabled).toBe(false);
+    expect(h.logs.at(-1)).toBe('[TestLabAB] stopped reason=recorder-disabled restored=off');
+    // Restore is unconditional even though the recorder (now off) can't record it.
+    const lastForKey = [...h.otherPluginUpdates].reverse().find(([, key]) => key === 'udodgeEnemyStandoff');
+    expect(lastForKey?.[2]).toBe('off');
+  });
+
+  it('stops mid-run with reason=target-invalid when dodgeMode changes away from a mode-gated target', () => {
+    vi.useFakeTimers();
+    setRecorderBus(true);
+    const h = load({ otherSettings: { dodgeMode: 'unified', udodgeEnemyStandoff: 'off' } });
+    h.setEnabled(true);
+    h.otherSettings.set('dodgeMode', 'xdodge'); // something else changed the mode mid-run
+
+    vi.advanceTimersByTime(5000); // TICK_MS
+
+    expect(h.ctx.enabled).toBe(false);
+    expect(h.logs.at(-1)).toMatch(/^\[TestLabAB\] stopped reason=target-invalid restored=/);
+    const lastForKey = [...h.otherPluginUpdates].reverse().find(([, key]) => key === 'udodgeEnemyStandoff');
+    expect(lastForKey?.[2]).toBe('off');
+  });
+
+  it('stops mid-run with reason=target-invalid when the target setting disappears entirely', () => {
+    vi.useFakeTimers();
     setRecorderBus(true);
     const h = load();
-    h.ctx.updateSetting('target', 'udodgeRouteCommit');
-    expect(h.settings.get('valueA')).toBe('off');
-    expect(h.settings.get('valueB')).toBe('on');
-    h.runCleanup();
+    h.setEnabled(true);
+    h.descriptions.delete('udodgeEnemyStandoff'); // e.g. Auto Dodge unloaded/changed shape
+
+    vi.advanceTimersByTime(5000);
+
+    expect(h.ctx.enabled).toBe(false);
+    expect(h.logs.at(-1)).toMatch(/^\[TestLabAB\] stopped reason=target-invalid restored=/);
+    const lastForKey = [...h.otherPluginUpdates].reverse().find(([, key]) => key === 'udodgeEnemyStandoff');
+    expect(lastForKey?.[2]).toBe('off');
+  });
+
+  it('stops mid-run with reason=error:<message> when something in the tick throws, and still restores', () => {
+    vi.useFakeTimers();
+    setRecorderBus(true);
+    const h = load();
+    h.setEnabled(true);
+    (h.ctx as any).describeOtherPluginSetting = vi.fn(() => {
+      throw new Error('boom');
+    });
+
+    vi.advanceTimersByTime(5000);
+
+    expect(h.ctx.enabled).toBe(false);
+    expect(h.logs.at(-1)).toBe('[TestLabAB] stopped reason=error:boom restored=off');
+    const lastForKey = [...h.otherPluginUpdates].reverse().find(([, key]) => key === 'udodgeEnemyStandoff');
+    expect(lastForKey?.[2]).toBe('off');
   });
 });
