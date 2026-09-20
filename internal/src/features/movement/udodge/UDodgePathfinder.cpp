@@ -25,7 +25,13 @@ namespace {
 // ── Fixed scratch (worker thread only — never re-entered) ────────────────────
 // g(cell) IS THE ARRIVAL TIME (ms) along the route — the Dijkstra cost is TIME,
 // not distance (speed-aware / time-expanded search).
-float   s_cost[kUPathMaxCells];   // best known ARRIVAL TIME (ms) at the cell
+float   s_cost[kUPathMaxCells];   // best known SEARCH COST at the cell: the arrival
+                                  // time, times the spiral preference under tactician
+                                  // (S3.7). Classic leaves it exactly the arrival time.
+float   s_time[kUPathMaxCells];   // the real ARRIVAL TIME (ms) along the same route —
+                                  // what every temporal gate and the published
+                                  // goalArriveMs must use. Identical to s_cost under
+                                  // classic, float for float.
 int     s_prev[kUPathMaxCells];   // predecessor cell index (path reconstruction)
 uint8_t s_done[kUPathMaxCells];   // 1 = finalized (popped) this pass
 uint8_t s_eval[kUPathMaxCells];   // 0 = unevaluated, 1 = blocked, 2 = open
@@ -227,11 +233,6 @@ struct Ctx {
     const PlannerSnapshot* s = nullptr;
     MapInput mi{};            // .env NULL, .map aliases the plain snapshot copy — plain-data only
     bool  diskActive = false;
-    // A locked approach is a durable TOPOLOGY route: walls, enemy bodies and
-    // active zones shape it, while the immediate solver handles moving bullets.
-    // Otherwise every new shot rewrites the entire approach before it can be
-    // consumed and the player never commits into weapon range.
-    bool  strategicLockRoute = false;
     bool  preferRetreat = false; // breadcrumb is active only when forward topology is closed
     Vec2  diskCenter{};
     float diskLimit = 0.f;    // weaponRange + slack (annulus OUTER radius)
@@ -305,14 +306,18 @@ void EvalCell(const Ctx& c, int idx, int gx, int gy)
         s_eval[idx] = 1;
         return;
     }
-    const float safety = c.strategicLockRoute
-        ? kUDurablePocketMargin
-        : Core::PointSafety(c.mi, w);
+    const float safety = Core::PointSafety(c.mi, w);
     s_safe[idx] = safety;
     s_factor[idx] = SquareFactor(c.s->grid, w);
     s_goal[idx] = (safety >= kUDurablePocketMargin && GoalGateOk(c, w)) ? 1 : 0;
     s_tgoal[idx] = 0;                                  // set lazily, only if the pass tests it
-    s_pend[idx] = PendingZoneLocal(c.s->map, w) ? 1 : 0;
+    // ENEMY STANDOFF (requirement 4): a hold spot inside a NON-target enemy's band
+    // is a SECOND-CLASS goal — excluded while any alternative exists, taken when
+    // none does. That is precisely the pending-zone taint's contract, so it reuses
+    // it rather than adding a distance score that would reward fleeing radially
+    // from the locked target.
+    s_pend[idx] = (PendingZoneLocal(c.s->map, w) ||
+                   (c.s->grid.flags[idx] & Standoff::kBandBit)) ? 1 : 0;
     s_eval[idx] = 2;
 }
 
@@ -381,7 +386,8 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
                int& tempGoalIdx, float& tempGoalMs)
 {
     for (int i = 0; i < kUPathMaxCells; ++i) {
-        s_cost[i] = kHugeClearance; s_prev[i] = -1; s_done[i] = 0; s_eval[i] = 0;
+        s_cost[i] = kHugeClearance; s_time[i] = kHugeClearance;
+        s_prev[i] = -1; s_done[i] = 0; s_eval[i] = 0;
     }
     HeapClear();
     partialIdx = -1;
@@ -398,6 +404,18 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
     s_tgoal[start] = 0; s_pend[start] = 0;
     s_factor[start] = SquareFactor(c.s->grid, CellWorld(center, start % kS, start / kS));
     s_cost[start] = 0.f;                                // arrival time at the start = 0
+    s_time[start] = 0.f;
+
+    // ── SPIRAL, NEVER RADIAL (Tactician S3.7) ──────────────────────────────
+    // While a ring is wanted and shots are live, RANK routes that travel around the
+    // target above routes that travel along the line to it: an edge's cost is its
+    // time x (1 + 0.75 x |dot(edge direction, bearing to the target)|), so a
+    // tangential edge is unchanged and a purely radial one is 1.75x dearer. This is
+    // ranking only — every pass/fail gate below still uses the real arrival time
+    // (s_time), so nothing is admitted or refused that was not before; the search
+    // simply prefers to circle rather than to charge or to flee.
+    const bool spiral = c.s->planner == Contact::Policy::Tactician &&
+                        c.diskActive && c.s->map.laneCount > 0;
     HeapPush(0.f, start);
 
     int found = -1;
@@ -418,7 +436,7 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
         // stays -1 and is dropped) — RunSearch then decides whether to keep it.
         if (cur != start && s_eval[cur] == 2 && cur == c.prevGoalCell) {
             prevGoalIdx = cur;
-            prevGoalMs  = cost;
+            prevGoalMs  = cost;   // search cost: only ever compared with other search costs
         }
 
         if (cur != start && s_eval[cur] == 2 && s_goal[cur]) {
@@ -489,7 +507,7 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
             // stricter of the two. Core::ZoneClear because Temporal is lane-blind —
             // without it a cell dead-centre in a live blast reads perfectly clear.
             if (GoalGateOk(c, wc) && Core::ZoneClear(c.mi, wc) &&
-                Core::Temporal::ArrivalClear(s_tctx, wc, cost, cost + kUDwellMs)) {
+                Core::Temporal::ArrivalClear(s_tctx, wc, s_time[cur], s_time[cur] + kUDwellMs)) {
                 s_tgoal[cur] = 1;
                 if (tempGoalIdx < 0) { tempGoalIdx = cur; tempGoalMs = cost; }
             }
@@ -541,16 +559,16 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
             const float stepDist = (kDx[k] != 0 && kDy[k] != 0)
                                        ? kUPathCellTiles * kUPathRoot2 : kUPathCellTiles;
             // Edge cost is TIME: how long the player takes to cross this edge.
-            const float tB = s_cost[cur] + (c.baseTilesPerMs > 0.f
+            const float edgeMs = (c.baseTilesPerMs > 0.f
                 ? Movement::Speed::EdgeMs(c.baseTilesPerMs, s_factor[cur], s_factor[ni], stepDist)
                 : stepDist * c.timePerTile);
+            const float tB = s_time[cur] + edgeMs;
             // SPEED-AWARE GATE: only walk into B if the player, arriving at tB
             // (having left cur at s_cost[cur]), is clear of every bullet there.
             const Vec2 wB = CellWorld(center, nx, ny);
             const Vec2 wA = CellWorld(center, cgx, cgy);
             float tArr = tB;
-            if (!c.strategicLockRoute &&
-                !Core::Temporal::EdgeClear(s_tctx, wA, wB, s_cost[cur], tB)) {
+            if (!Core::Temporal::EdgeClear(s_tctx, wA, wB, s_time[cur], tB)) {
                 // ── BOUNDED WAIT EDGE (finding F) ───────────────────────────
                 // Leaving NOW walks into a bullet. Try leaving one or two temporal
                 // slices later instead — "stand here, let the wall pass, then go".
@@ -561,11 +579,11 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
                 // kUPathMaxWaitSlices extra ArrivalClear calls on an edge that has
                 // ALREADY failed — a passing edge costs exactly what it did before.
                 if (waitSlices < 0)
-                    waitSlices = ClearWaitSlices(c, CellWorld(center, cgx, cgy), s_cost[cur]);
+                    waitSlices = ClearWaitSlices(c, CellWorld(center, cgx, cgy), s_time[cur]);
                 int w = 1;
                 for (; w <= waitSlices; ++w) {
                     const float d = static_cast<float>(w) * kUTemporalStepMs;
-                    if (Core::Temporal::EdgeClear(s_tctx, wA, wB, s_cost[cur] + d, tB + d)) break;
+                    if (Core::Temporal::EdgeClear(s_tctx, wA, wB, s_time[cur] + d, tB + d)) break;
                 }
                 if (w > waitSlices) continue;   // no admissible departure delay — edge stays blocked
                 tArr = tB + static_cast<float>(w) * kUTemporalStepMs;
@@ -584,10 +602,28 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
             // the route EXIST so the player is aimed at the gap instead of being
             // dragged toward open space; the pause is produced by the safety floor.
             // goalArriveMs does include the wait, so the arrival time stays honest.
-            if (tArr < s_cost[ni]) {
-                s_cost[ni] = tArr;
+            // The spiral preference prices the EDGE, not the clock: the wait (if any)
+            // is already inside tArr - s_time[cur], and it is time the player really
+            // spends, so it is priced as it is.
+            float costB = tArr;   // classic: the search cost IS the arrival time
+            if (spiral) {
+                float bias = 1.f;
+                const Vec2 toTarget = Sub(c.diskCenter, wA);
+                const float d = Len(toTarget);
+                if (d > 1e-3f) {
+                    const float inv = 1.f / (d * std::sqrt(static_cast<float>(
+                        kDx[k] * kDx[k] + kDy[k] * kDy[k])));
+                    const float dot = (static_cast<float>(kDx[k]) * toTarget.x +
+                                       static_cast<float>(kDy[k]) * toTarget.y) * inv;
+                    bias = 1.f + 0.75f * std::fabs(dot);
+                }
+                costB = s_cost[cur] + (tArr - s_time[cur]) * bias;
+            }
+            if (costB < s_cost[ni]) {
+                s_cost[ni] = costB;
+                s_time[ni] = tArr;
                 s_prev[ni] = cur;
-                HeapPush(tArr, ni);
+                HeapPush(costB, ni);
             }
         }
     }
@@ -606,7 +642,6 @@ void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, Pla
     c.mi.settings = s.settings;
     c.mi.map      = &s.map;     // plain-data alias; .env stays NULL
     c.diskActive  = diskActive;
-    c.strategicLockRoute = diskActive;
     c.diskCenter  = s.lockPos;
     c.diskLimit   = s.weaponRangeTiles + kUInRangeSlack;
     c.diskInner   = s.innerStandoffTiles;   // annulus inner radius (goal-only gate)
@@ -721,7 +756,7 @@ void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, Pla
     out.found       = true;
     out.partial     = isPartial;
     out.tempGoal    = isTempGoal;
-    out.goalArriveMs = s_cost[target];   // predicted arrival TIME along the route (ms)
+    out.goalArriveMs = s_time[target];   // predicted arrival TIME along the route (ms)
     out.waypoints   = n;
     out.goalPos     = CellWorld(center, target % kS, target / kS);
 
@@ -839,6 +874,10 @@ bool NavBlocked(const PlannerSnapshot& in, int gx, int gy, bool isStart)
     if (gx < 0 || gx >= kNS || gy < 0 || gy >= kNS) return true;
     if (isStart) return false;
     if (in.navGrid.flags[NavIdx(gx, gy)] & (0x1 | 0x10)) return true;   // wall / FullOccupy rule (bit2 sink = COST, not a wall)
+    // ENEMY STANDOFF core (UDodgeStandoff.h): a wall for the ROUTE. FillNavGrid
+    // never stamps a core the player is already standing in, so the way out of one
+    // is always open — the same escape rule the keep-outs and AoE discs use.
+    if (in.navGrid.flags[NavIdx(gx, gy)] & Standoff::kCoreBit) return true;
     const Vec2 w = NavCellWorld(in.navGrid.center, gx, gy);
     if (EnemyBlockedLocal(in.map, w)) return true;
     // Enemy keep-outs (self blasts, point-blank shooters) are walls for the route:
@@ -881,13 +920,6 @@ float NavOctile(int ax, int ay, int bx, int by)
     const int dx = std::abs(ax - bx), dy = std::abs(ay - by);
     return static_cast<float>(std::max(dx, dy)) +
            (kUPathRoot2 - 1.f) * static_cast<float>(std::min(dx, dy));
-}
-
-// Admissible remaining-cost estimate (cells) from `idx` to the goal (disk).
-float goalHCells(const PlannerSnapshot& in, int idx, int goalGx, int goalGy)
-{
-    return std::max(0.f, NavOctile(idx % kNS, idx / kNS, goalGx, goalGy) -
-                         std::max(0.f, in.navGoalRadius) / kUNavCellTiles);
 }
 
 // One goal-directed A* pass over the nav grid (worker scratch s_nav*). With
@@ -968,6 +1000,7 @@ NavSearch RunNavSearch(const PlannerSnapshot& in, int startGx, int startGy, int 
     auto softBlocked = [&](int x, int y) {
         if (x < 0 || x >= kNS || y < 0 || y >= kNS) return true;
         if (hazardIsWall && (in.navGrid.flags[NavIdx(x, y)] & 0x2) != 0) return true;
+        if (in.navGrid.flags[NavIdx(x, y)] & Standoff::kCoreBit) return true;
         const Vec2 w = NavCellWorld(in.navGrid.center, x, y);
         if (EnemyBlockedLocal(in.map, w)) return true;
         for (int i = 0; i < in.map.zoneCount; ++i)
@@ -1007,10 +1040,12 @@ NavSearch RunNavSearch(const PlannerSnapshot& in, int startGx, int startGy, int 
             const int   nidx = NavIdx(nx, ny);
             if (s_navClosed[nidx]) continue;
             float step = (kDx[d] != 0 && kDy[d] != 0) ? kUPathRoot2 : 1.f;
-            // Hazard (bit1: DAMAGING ground) is a SOFT cost on the least-damage pass —
-            // route around it when a clean path is cheaper, but still traverse it when
-            // that's the only way out (so a lava-floored arena never boxes the
-            // planner in). The bounded clean pass treats it as a wall (ComputeNav).
+            // Hazard (bit1: DAMAGING ground). With safeWalk ON this line is never
+            // reached: `blocked` above refuses the cell outright (hazardIsWall is
+            // in.settings.safeWalk — S3.11: damaging ground is a hard wall in every
+            // layer, under both planner policies, and only the player's OWN cell is
+            // ever expandable). With safeWalk off it stays a soft cost, so a route
+            // still prefers clean ground when one is cheaper.
             if (in.navGrid.flags[nidx] & 0x2) step += kUNavHazardCost;
             // Sink/slow ground (shallow water, quicksand, honey): a COST, not a wall.
             // It used to be hard-blocked alongside walls, which made the planner refuse
@@ -1020,6 +1055,12 @@ NavSearch RunNavSearch(const PlannerSnapshot& in, int startGx, int startGy, int 
             // catches as bit0. Costing it keeps the coast-hugging preference without
             // fencing the player out of water they can simply wade across.
             if (in.navGrid.flags[nidx] & 0x4) step += kUNavSinkCost;
+            // ENEMY STANDOFF band: the reaction-time ring around a shooting enemy.
+            // Priced ABOVE damaging ground on purpose — a burn tile is survivable
+            // and reactable, a 62 ms shotgun is not — so the route goes round a
+            // pack whenever any way round exists, and only walks the edge of one
+            // when there is none.
+            if (in.navGrid.flags[nidx] & Standoff::kBandBit) step += Standoff::kNavBandCost;
             // Remembered stuck squares (UDodge.cpp stuck memory). A diagonal step
             // pays too when it cuts past one: the follower keeps the player box off
             // them, so a leg clipping one's corner is a leg it would not follow.
@@ -1082,50 +1123,19 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
     startGx = std::clamp(startGx, 0, kNS - 1);
     startGy = std::clamp(startGy, 0, kNS - 1);
 
-    // Damaging ground and safe-walk. The live follower and the solver hard-refuse
-    // damaging ground under safe-walk, so a route that merely PRICES it (the old
-    // single pass) was a route the player could not follow: it paced at the edge
-    // while the stall timer re-planned onto the same corridor. So:
-    //   1. the least-damaging route is searched first (damaging ground priced at
-    //      kUNavHazardCost) — on open ground it touches none and this is the only pass;
-    //   2. when it does cross damaging ground, a clean search (damaging ground as a
-    //      wall) is run, bounded by that route's cost plus kHazardDetourSlack: a
-    //      clean route that is not much longer wins;
-    //   3. otherwise the crossing route stands, flagged navCrossesHazard, and the game
-    //      thread follows it with safe-walk relaxed.
-    constexpr float kHazardDetourWinCells = 4.f;
-    constexpr float kHazardDetourSlack    = 12.f;   // tiles of detour worth taking to stay clean
     static int s_navChain[kUNavCells];       // worker-thread scratch (single-threaded)
-    static int s_navSoftChain[kUNavCells];
     const auto buildChain = [&](int target, int* chain) {
         int n = 0;
         for (int c = target; c != -1 && n < kUNavCells; c = s_navPrev[c]) chain[n++] = c;
         return n;
     };
-    NavSearch search = RunNavSearch(in, startGx, startGy, goalGx, goalGy, false);
+    NavSearch search = RunNavSearch(in, startGx, startGy, goalGx, goalGy, in.settings.safeWalk);
     int totalPops = search.pops;
     int len = search.target == search.start ? 0 : buildChain(search.target, s_navChain);
     bool crossesHazard = false;
-    if (in.settings.safeWalk && len >= 2) {
+    if (len >= 2) {
         for (int i = 0; i < len && !crossesHazard; ++i)
             crossesHazard = (in.navGrid.flags[s_navChain[i]] & 0x2) != 0;
-    }
-    if (crossesHazard) {
-        const NavSearch soft = search;
-        const int softLen = len;
-        std::copy(s_navChain, s_navChain + softLen, s_navSoftChain);
-        const float bound = s_navG[soft.target] + goalHCells(in, soft.target, goalGx, goalGy) + kHazardDetourSlack;
-        const NavSearch clean = RunNavSearch(in, startGx, startGy, goalGx, goalGy, true, bound);
-        totalPops += clean.pops;
-        const bool cleanWins = clean.target != clean.start &&
-            (clean.reached || (!soft.reached && clean.targetH <= soft.targetH + kHazardDetourWinCells));
-        if (cleanWins) {
-            search = clean;
-            len = buildChain(clean.target, s_navChain);
-            crossesHazard = false;
-        } else {
-            std::copy(s_navSoftChain, s_navSoftChain + softLen, s_navChain);
-        }
     }
     const bool reached = search.reached;
     const int  start = search.start;
@@ -1179,7 +1189,6 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
     // reads its snapshot; no game-object calls are made here.
     MapInput navInput{};
     navInput.settings = in.settings;
-    if (crossesHazard) navInput.settings.safeWalk = false;   // the route itself crosses it
     navInput.env.occFlags = in.navGrid.flags;
     navInput.env.occCenter = center;
     navInput.env.occSide = kNS;
@@ -1193,9 +1202,9 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
         navInput.env.squareY0 = squares.ty0;
         navInput.env.squareSide = squares.side;
     }
-    float deviation = 0.f; bool nearEnd = false;
+    float deviation = 0.f; bool nearEnd = false; bool connected = false;
     out.navStepTarget = Navigation::Follow(out.navWpts, wn, in.player,
-        std::max(in.moveBudget, 1.f) * kUNavLookaheadBudgets, deviation, nearEnd,
+        std::max(in.moveBudget, 1.f) * kUNavLookaheadBudgets, deviation, nearEnd, connected,
         [&](Vec2 from, Vec2 to) {
             return OccupancyPathClear(navInput, from, to) &&
                    Navigation::AvoidClear(in.navAvoid, in.navAvoidCount, from, to);
@@ -1216,12 +1225,19 @@ static void ComputeDodge(const PlannerSnapshot& in, PlanResult& out)
     MapInput mi{};
     mi.player = in.player; mi.settings = in.settings; mi.map = &in.map;
     const float startSafety = Core::PointSafety(mi, in.player);
+    // THE RING: a lock target's engagement annulus, whether the player is fighting
+    // inside it (hasLock) or still approaching it (ringApproach). Every ring rule
+    // below keys on this one predicate; without a ring nothing here changes.
+    const bool ring = (in.hasLock || in.ringApproach) && in.weaponRangeTiles > 0.f;
     {
         bool startGoal = startSafety >= kUDurablePocketMargin;
-        if (startGoal && in.hasLock && in.weaponRangeTiles > 0.f) {
+        if (startGoal && ring) {
             // ANNULUS short-circuit: a player standing point-blank (inside the inner
             // ring) must NOT count as "already at goal" — it has to route outward.
             // The cell stays traversable, so RunSearch will find an outward goal.
+            // The same holds OUTSIDE the ring: standing where no shot path reaches,
+            // beyond weapon range, is not a goal while a ring is wanted. That stand
+            // ending the search is what parked the player where the shots end.
             const float dB = Len(Sub(in.player, in.lockPos));
             startGoal = dB <= in.weaponRangeTiles + kUInRangeSlack
                      && dB >= in.innerStandoffTiles;
@@ -1237,43 +1253,53 @@ static void ComputeDodge(const PlannerSnapshot& in, PlanResult& out)
                           kUPathMaxRadCells * kUPathCellTiles + kUTemporalCullTiles,
                           s_tctx, Core::ProjectilePlayerHalf(in.settings));
 
-    // IN-RANGE DISK: locked boss gates GOAL cells to the weapon-range disk so the
-    // route keeps the boss hittable. Safety OVERRIDES range: if no in-range durable
-    // pocket is time-reachable, re-search UNCONSTRAINED (leave range to dodge,
-    // return once clear); failing that, degrade to a partial route toward safety.
-    const bool disk = in.hasLock && in.weaponRangeTiles > 0.f;
-
-    // A SPATIAL durable pocket outranks everything, in range or out; only then does
-    // the second-class TEMPORAL goal (finding F) get a say, and only then a partial
-    // route. Keeping that order here is what makes "the spatial pocket must still
-    // win when one is available" true across BOTH searches, not just within one.
+    // IN-RANGE DISK: a ring gates GOAL cells to the weapon-range annulus so the
+    // route keeps the boss hittable. Safety OVERRIDES range: if nothing in the ring
+    // is time-reachable, re-search UNCONSTRAINED (leave range to dodge, return once
+    // clear); failing that, degrade to a partial route toward safety.
+    //
+    // THE LADDER. Being in the ring outranks HOW the spot is safe:
+    //   1. a shot-free cell in the ring;
+    //   2. a cell in the ring that is clear on arrival and for the dwell after it
+    //      (the temporal goal) — reached by a route whose every edge is time-checked;
+    //   3. a shot-free cell outside the ring (outOfRange);
+    //   4. a time-clear cell outside the ring (outOfRange);
+    //   5. partial routes.
+    // Rung 2 used to sit below rung 3. Around a radially firing boss the shot-free
+    // ground is where the shots END, so that order sent the player outward whenever
+    // the ring held no cell that no shot path ever crosses — which in a dense fight
+    // is always. Both are pass/fail safe; the one that keeps the target hittable wins.
     const auto spatialGoal = [](const PlanResult& r) {
         return r.found && !r.partial && !r.tempGoal;
     };
 
     PlanResult primary{};
     primary.forSeq = in.seq;
-    RunSearch(in, disk, startSafety, primary);
-    if (spatialGoal(primary)) {                       // durable in-range pocket, time-feasible
+    RunSearch(in, ring, startSafety, primary);
+    if (spatialGoal(primary)) {                       // shot-free pocket (in the ring when there is one)
+        primary.ringGoal  = ring;
         primary.tempLanes = s_tctx.count;
         out = primary;
         return;
     }
 
-    if (disk) {
+    if (ring) {
+        if (primary.found && primary.tempGoal) {      // time-clear spot IN the ring
+            primary.ringGoal  = true;
+            primary.tempLanes = s_tctx.count;
+            out = primary;
+            return;
+        }
         PlanResult unc{};
         unc.forSeq = in.seq;
         RunSearch(in, false, startSafety, unc);
-        if (spatialGoal(unc)) {                       // durable pocket only outside range
+        if (spatialGoal(unc)) {                       // shot-free pocket only outside range
             unc.outOfRange = true;
             unc.tempLanes  = s_tctx.count;
             out = unc;
             return;
         }
-        // No SPATIAL pocket anywhere. Next best is a temporal goal — in range first
-        // (it keeps the boss hittable), then outside range.
-        if (primary.found && primary.tempGoal) { primary.tempLanes = s_tctx.count; out = primary; return; }
-        if (unc.found && unc.tempGoal) {
+        if (unc.found && unc.tempGoal) {              // time-clear spot only outside range
             unc.outOfRange = true;
             unc.tempLanes  = s_tctx.count;
             out = unc;

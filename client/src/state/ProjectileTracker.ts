@@ -112,9 +112,12 @@ export class ProjectileTracker {
       // has not streamed yet. The DLL deduplicates this provisional record once
       // its authoritative projectile hook sees the same owner/bullet pair.
       const d = projDef;
+      // The trailing laser length lets the DLL recover a laser as a BEAM. It has
+      // Speed 0 in the data, so without it the fallback modelled it as a slow dot.
       sendDllFeature('udodgePacketShot', [
         ownerId, (bulletId + i) & 0xffff, position.x, position.y, shotAngle,
-        d?.speed ?? 0, d?.lifetimeMs ?? 0, d?.hitRadius ?? 0.5,
+        d?.speed ?? 0, d?.lifetimeMs ?? 0, d?.collisionHalf ?? 0.5,
+        d?.laserDistance ?? 0,
       ].join(','));
     }
   }

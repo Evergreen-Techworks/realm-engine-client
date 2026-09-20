@@ -31,13 +31,16 @@ bool StepClear(float ax, float ay, float bx, float by);
 bool ReadWorldTick(uint32_t& outTickId);
 
 // Full layout rebuild from live game state (game-update thread only).
-// Does NOT stamp tickId/tickValid — the caller owns the stamp.
-void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& settings);
+// Does NOT stamp tickId/tickValid — the caller owns the stamp. `diagOn` gates
+// the [Diag/PredErr] calibration telemetry (UDodgePredErr.h); false is the
+// production default and costs one predictable branch per shot.
+void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& settings, bool diagOn = false);
 
 // Mid-tick refresh: re-anchor every lane to its projectile's LIVE position,
 // re-derive zones. Returns false when the live projectile set no longer
 // matches the map's lane set (spawn/retire) — caller must BuildMap instead.
-// Enemies/boss-lock intentionally NOT refreshed (layout is per-tick).
-bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& settings);
+// Enemies/boss-lock intentionally NOT refreshed (layout is per-tick). `diagOn`
+// as above.
+bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& settings, bool diagOn = false);
 
 } } // namespace UDodge::Sensors

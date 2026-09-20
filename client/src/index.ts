@@ -63,6 +63,8 @@ import { InternalBridge } from './bridge/InternalBridge.js';
 import { setDllFeatureSender } from './bridge/DllFeatureBus.js';
 import { attachHiddenHelperTypeSync } from './bridge/HiddenHelperTypes.js';
 import { Logger } from './util/Logger.js';
+import { formatBuildInfoLine, readBuildInfoFile } from './util/buildInfo.js';
+import { pollEventLoopDiag } from './diag/EventLoopDiag.js';
 import { ensureRotmgMetadataXml } from './util/ensureRotmgMetadataXml.js';
 import { startServices } from './startup/startServices.js';
 import { startMetadataEnrichment, type MetadataStatus } from './startup/metadataEnrichment.js';
@@ -120,6 +122,18 @@ async function main() {
   const devMode = true; // Dashboard always runs — there is no headless mode.
 
   Logger.log('Main', 'RotMG MITM Proxy starting...');
+  // Test Lab task A2: one machine-readable marker so a persisted proxy-log
+  // session can be matched to a build without guessing. version is whatever
+  // main.cjs already passes as REALM_ENGINE_VERSION (app.getVersion()) — do not
+  // invent a second version source. commit comes from a stamp file that only
+  // exists when scripts/stamp-build-info.mjs ran in the git worktree before the
+  // source was mirrored to the (non-git) build root; a missing/malformed file
+  // must never throw or delay startup, so this whole line is best-effort.
+  try {
+    Logger.log('Main', formatBuildInfoLine(process.env.REALM_ENGINE_VERSION ?? '', readBuildInfoFile(ROOT)));
+  } catch (err) {
+    Logger.warn('Main', `Failed to log build info: ${(err as Error).message}`);
+  }
 
   // 0. Install game hook (DLL injection for connection redirect)
   const clientDataConfig = loadClientDataConfig();
@@ -288,6 +302,12 @@ async function main() {
   );
 
 
+  // Constructed here (rather than after the dashboard block below) so the script
+  // bridge deps built inside it can carry a reference for reconnect-driven
+  // resends (e.g. MovementController re-arming a live navigation goal) — see
+  // the dllBridge wiring a few lines down. listen() is still called later.
+  const internalBridge = new InternalBridge('admin-dev');
+
   // 6. Dev dashboard FIRST — Electron only waits ~10s for http://localhost:3000; metadata fetch can be slow
   let devServer: DevServer | undefined;
   let scriptHost: ScriptHost | undefined;
@@ -320,9 +340,13 @@ async function main() {
       partyRoster,
       gameData,
       proxy,
+      dllBridge: internalBridge,
       scriptSession,
       emitScriptLog: (scriptId, line, level) => {
         devServer?.broadcastScriptLog(scriptId, line, level);
+        // Persist script output too, so a session can be read after the fact
+        // (the dashboard websocket was the only sink).
+        Logger.log(`Script:${scriptId}`, level && level !== 'info' ? `[${level}] ${line}` : line);
       },
       emitScriptPanelMessage: (msg) => {
         devServer?.broadcastScriptPanelMessage(msg);
@@ -335,7 +359,6 @@ async function main() {
     devServer.start(4440);
   }
 
-  const internalBridge = new InternalBridge('admin-dev');
   setDllFeatureSender((key, value) => internalBridge.setFeature(key, value));
   // objects.xml hidden helpers (invisible spawners/triggers) for the native enemy
   // lock and auto-aim: sent now, on every DLL (re)connect, and on game-data reload.
@@ -352,15 +375,24 @@ async function main() {
   };
   proxy.once('listenStarted', () => markReady('proxy-listening'));
   internalBridge.once('listening', () => markReady('pipe-listening'));
+  // item 4b (measurement only): re-check RE_ASSETS/diag-timing.flag every 2s
+  // (matching DiagTiming::PollFlag's native cadence — see util/DiagGate.ts)
+  // and start/stop the event-loop delay monitor accordingly. No-op cost when
+  // the flag is absent, same as every other [Diag/*] probe in this task.
+  const diagPollTimer = setInterval(pollEventLoopDiag, 2000);
+  diagPollTimer.unref?.();
+
   /**
    * `exitCode` defaults to 0 (the normal clean shutdown every existing
    * caller gets) — SIGINT/SIGTERM below always call this with no argument,
    * deliberately, so nothing the signal event itself might pass through
-   * could ever change the exit code.
+   * could ever change the exit code. A caller that needs a different code
+   * (see `requestAppShutdown` below) passes it explicitly.
    */
   const shutdown = async (exitCode = 0) => {
     if (startupController.signal.aborted) return;
     startupController.abort();
+    clearInterval(diagPollTimer);
     devServer?.stop();
     Logger.log('Main', 'Shutting down...');
     scriptHost?.stopAll();
@@ -373,6 +405,26 @@ async function main() {
   };
   process.on('SIGINT', () => { void shutdown(); });
   process.on('SIGTERM', () => { void shutdown(); });
+
+  // Generic host services (script start/stop, plugin-config read/write/
+  // apply, launch-by-label, app shutdown) for any bundled plugin that needs
+  // them — wired before pluginManager.loadAll() runs (see startServices
+  // below). requestAppShutdown reuses this same graceful shutdown, with a
+  // hard timeout so a hang anywhere in it (e.g. hooker.uninstall()) still
+  // exits with the requested code rather than leaving the process running.
+  if (devServer) {
+    pluginManager.setHostAccess({
+      ...devServer.getPluginHostAccess(),
+      requestAppShutdown: (exitCode: number) => {
+        const forceTimer = setTimeout(() => {
+          Logger.warn('Main', 'Graceful shutdown timed out; forcing exit.');
+          process.exit(exitCode);
+        }, 8000);
+        forceTimer.unref?.();
+        void shutdown(exitCode).catch(() => process.exit(exitCode));
+      },
+    });
+  }
 
   void startMetadataEnrichment({
     signal: startupController.signal,

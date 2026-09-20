@@ -132,6 +132,7 @@
     <ClInclude Include="src\core\il2cpp\Il2CppContainers.h" />
     <ClInclude Include="src\platform\dx11\Dx11.h" />
     <ClInclude Include="src\core\ipc\IpcBridge.h" />
+    <ClInclude Include="src\core\ipc\BridgeLatencyDiag.h" />
     <ClInclude Include="src\core\ipc\IpcFraming.h" />
     <ClInclude Include="src\core\ipc\IpcJson.h" />
     <ClInclude Include="src\core\ipc\IpcMessages.h" />
@@ -217,6 +218,12 @@
     <ClInclude Include="src\features\movement\udodge\UDodgePathfinder.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeWorker.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeWorkerCycle.h" />
+    <ClInclude Include="src\features\movement\udodge\UDodgeTelemetry.h" />
+    <ClInclude Include="src\features\movement\udodge\UDodgePredErr.h" />
+    <ClInclude Include="src\features\movement\udodge\UDodgeGoalOwner.h" />
+    <ClInclude Include="src\features\movement\udodge\UDodgeMapDiag.h" />
+    <ClInclude Include="src\features\movement\udodge\UDodgeStandoff.h" />
+    <ClInclude Include="src\features\movement\contact\Contact.h" />
     <ClInclude Include="src\features\movement\udodge\UDodge.h" />
     <ClInclude Include="src\features\movement\udodge\UDodgeDebug.h" />
     <ClInclude Include="src\features\movement\sensors\TileSensor.h" />

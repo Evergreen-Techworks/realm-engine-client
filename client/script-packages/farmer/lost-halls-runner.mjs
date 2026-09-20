@@ -1,4 +1,5 @@
 import OryxRunner from './oryx-runner.mjs';
+import MbcGroupPositioning from './mbc-group-positioning.mjs';
 
 const norm = s => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -29,6 +30,9 @@ export default class LostHallsRunner extends OryxRunner {
 
   reset(map = '') {
     super.reset(map);
+    this.groupPositioning = new MbcGroupPositioning();
+    this.travelGroupPositioning = new MbcGroupPositioning();
+    this.sdk.dodge.clearGroupPreference?.();
     this.stage = ({ losthalls: 'halls', thevoid: 'void', void: 'void', cultisthideout: 'cult' })[norm(map)] ?? null;
     this.landmarks = new Map();
     this.flames = new Map();
@@ -48,6 +52,7 @@ export default class LostHallsRunner extends OryxRunner {
     this.terminalQuietAt = null;
     this.vialUsed = false;
     this.titanReadyAt = null;
+    this.lastDamageableBoss = null;
   }
 
   status(text) {
@@ -154,6 +159,7 @@ export default class LostHallsRunner extends OryxRunner {
   }
 
   combatTick(enemies, now) {
+    enemies = enemies.filter(enemy => !this.sdk.world.objects.isDead?.(enemy.objectId));
     const bosses = enemies.filter(e => e.hp > 0 && this.isBoss(e) && !this.dead.has(e.objectId)
       && this.reachable(e.position) && (this.sdk.self.distanceTo(e.position) <= 20 || e.objectId === this.encounter)
       && !(this.stage === 'halls' && this.mode === 'cult' && !e.isTargetable && this.collectedFlames.size < 3));
@@ -161,13 +167,61 @@ export default class LostHallsRunner extends OryxRunner {
     const priority = enemies.filter(e => e.hp > 0 && e.isTargetable && LATE_ADD.test(e.name)
       && this.reachable(e.position) && this.sdk.self.distanceTo(e.position) <= 16)
       .sort((a, b) => this.sdk.self.distanceTo(a.position) - this.sdk.self.distanceTo(b.position))[0];
-    if (priority) { this.fight(priority, now, priority.name); return true; }
+    if (priority) {
+      this.sdk.dodge.clearGroupPreference?.();
+      const mbc = bosses.find(enemy => COLOSSUS.test(enemy.name));
+      const group = mbc && this.groupPositioning.select({
+        players: this.sdk.world.objects.getPlayers?.() ?? [], selfName: this.sdk.self.getName?.(),
+        origin: { x: this.sdk.self.getX(), y: this.sdk.self.getY() }, now, graph: this.graph(),
+      });
+      if (group && (group.waypoint || this.sdk.self.distanceTo(priority.position) > 8)) {
+        this.stopCombat();
+        if (group.waypoint) this.sdk.dodge.navigateToPosition(group.waypoint);
+        else this.sdk.dodge.clearWaypoint();
+        this.status('Marble Colossus: staying with the group during cores');
+        return true;
+      }
+      this.fight(priority, now, priority.name); return true;
+    }
     const boss = bosses.sort((a, b) => Number(b.isTargetable) - Number(a.isTargetable)
       || Number(b.objectId === this.encounter) - Number(a.objectId === this.encounter)
       || this.sdk.self.distanceTo(a.position) - this.sdk.self.distanceTo(b.position))[0];
     if (boss) {
       this.encounter = boss.objectId;
-      if (boss.isTargetable) { this.fight(boss, now, boss.name); return true; }
+      if (boss.isTargetable) {
+        this.lastDamageableBoss = { objectId: boss.objectId, at: now };
+        this.fight(boss, now, boss.name);
+        if (COLOSSUS.test(boss.name) && this.farmer.lockId === boss.objectId && this.sdk.dodge.setGroupPreference) {
+          const group = this.groupPositioning.select({
+            players: this.sdk.world.objects.getPlayers?.() ?? [], selfName: this.sdk.self.getName?.(),
+            origin: { x: this.sdk.self.getX(), y: this.sdk.self.getY() }, now, graph: this.graph(),
+          });
+          if (group?.waypoint) this.sdk.dodge.setGroupPreference(boss.objectId, group.waypoint.x, group.waypoint.y);
+          else this.sdk.dodge.clearGroupPreference?.();
+        } else this.sdk.dodge.clearGroupPreference?.();
+        return true;
+      }
+      this.sdk.dodge.clearGroupPreference?.();
+      if (COLOSSUS.test(boss.name)) {
+        this.stopCombat();
+        const group = this.groupPositioning.select({
+          players: this.sdk.world.objects.getPlayers?.() ?? [], selfName: this.sdk.self.getName?.(),
+          origin: { x: this.sdk.self.getX(), y: this.sdk.self.getY() }, now, graph: this.graph(),
+        });
+        if (group?.waypoint) this.sdk.dodge.navigateToPosition(group.waypoint);
+        else this.sdk.dodge.clearWaypoint();
+        this.status(group ? 'Marble Colossus: staying with the group through the phase'
+          : 'Marble Colossus: dodging while waiting for the next vulnerable phase');
+        return true;
+      }
+    }
+    this.sdk.dodge.clearGroupPreference?.();
+    if (this.lastDamageableBoss?.objectId === this.encounter
+      && !this.dead.has(this.encounter) && !this.sdk.world.objects.isDead?.(this.encounter)
+      && now - this.lastDamageableBoss.at < 3000) {
+      this.stopCombat(); this.sdk.dodge.clearWaypoint();
+      this.status('holding boss encounter through a brief phase change');
+      return true;
     }
     const ordinary = enemies.filter(e => e.hp > 0 && e.isTargetable && !this.dead.has(e.objectId)
       && !HAZARD.test(e.name) && !this.isBoss(e) && !TITAN.test(e.name) && !COLOSSUS.test(e.name) && !DEFENDER.test(e.name)
@@ -236,6 +290,11 @@ export default class LostHallsRunner extends OryxRunner {
   tick(now) {
     if (!this.stage) return false;
     const sdk = this.sdk, f = this.farmer;
+    const groupBoss = sdk.enemies.getAll().find(enemy => COLOSSUS.test(enemy.name) && enemy.hp > 0
+      && !sdk.world.objects.isDead?.(enemy.objectId));
+    if (!groupBoss || sdk.self.getHP() <= 0 || this.stage !== 'halls' || this.mode !== 'void') {
+      this.groupPositioning.reset(); sdk.dodge.clearGroupPreference?.();
+    }
     if ((this.stage === 'void' && this.mode !== 'void') || (this.stage === 'cult' && this.mode !== 'cult')) {
       this.exit(now, 'wrong branch entered; returning to find Lost Halls'); return true;
     }
@@ -276,6 +335,22 @@ export default class LostHallsRunner extends OryxRunner {
       return true;
     }
     this.terminalQuietAt = null;
+    if (this.stage === 'halls' && this.mode === 'void' && !enemies.some(enemy =>
+      enemy.hp > 0 && this.isBoss(enemy) && !sdk.world.objects.isDead?.(enemy.objectId)
+      && sdk.self.distanceTo(enemy.position) <= 12 && this.reachable(enemy.position))) {
+      const group = this.travelGroupPositioning.select({
+        players: sdk.world.objects.getPlayers?.() ?? [], selfName: sdk.self.getName?.(),
+        origin: { x: sdk.self.getX(), y: sdk.self.getY() }, now, graph: this.graph(),
+      });
+      if (group) {
+        this.stopCombat();
+        sdk.dodge.clearGroupPreference?.();
+        if (group.waypoint) sdk.dodge.navigateToPosition(group.waypoint);
+        else sdk.dodge.clearWaypoint();
+        this.status('following the group toward Marble Defender');
+        return true;
+      }
+    } else this.travelGroupPositioning.reset();
     if (this.combatTick(enemies, now)) return true;
     this.stopCombat();
     if (this.stage === 'halls' && this.collectFlames(objects, now)) return true;

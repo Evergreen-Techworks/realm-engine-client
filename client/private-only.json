@@ -1,0 +1,18 @@
+{
+  "marker": "TESTLAB_PRIVATE_ONLY",
+  "paths": [
+    "plugins/testlab-recorder.ts",
+    "src/testlab/recorderCore.ts",
+    "src/testlab/recorderWriter.ts",
+    "src/testlab/__tests__/recorderCore.test.ts",
+    "src/testlab/__tests__/recorderWriter.test.ts",
+    "plugins/testlab-interleaver.ts",
+    "src/testlab/interleaverCore.ts",
+    "src/testlab/__tests__/interleaverCore.test.ts",
+    "src/plugins/__tests__/testlabInterleaver.test.ts",
+    "plugins/testlab-runner.ts",
+    "src/testlab/runnerCore.ts",
+    "src/testlab/__tests__/runnerCore.test.ts",
+    "src/plugins/__tests__/testlabRunner.test.ts"
+  ]
+}

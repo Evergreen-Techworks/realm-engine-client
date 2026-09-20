@@ -3,6 +3,7 @@
 #include <windows.h>
 #include "main.h"
 #include "InitHooks.h"
+#include "DbgFileLog.h"
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
 {
@@ -14,6 +15,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         break;
 
     case DLL_PROCESS_DETACH:
+        // Item 4 (navigation finish plan): DbgFileLogWrite buffers now; flush
+        // whatever is still queued before the DLL goes away. try_lock inside
+        // (DbgFileLogEnterCrashMode), so this cannot hang the loader lock.
+        DbgFileLogEnterCrashMode();
         if (lpReserved == nullptr) {
             DetourUninitialization();
         }

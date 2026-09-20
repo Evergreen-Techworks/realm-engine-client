@@ -364,6 +364,35 @@ export function register(ctx: PluginContext) {
   registerModeSetting('unified', 'udodgeMoveEnvelope',
     onOff('[UDodge] Server-safe outbound MOVE envelope', 'on'),
     () => updateMoveEnvelopeArming());
+  // Tactician Slice 3: which planner the DLL's unified engine runs. 'tactician'
+  // routes every projectile-contact test through the game's own proven box (the
+  // live hitbox multiplier included) and turns on the ring approach, the lattice
+  // and the spiral edge cost; 'classic' is the pre-Slice-3 engine, unchanged.
+  // ENEMY STANDOFF: never walk near enemies, on top of them, or in front of them.
+  // 'auto' gives every shooting enemy a hard 2-tile core and a reaction-time band
+  // that walk-to routes around, and holds a locked fight at the outer part of
+  // weapon range; 'off' is the pre-standoff engine. Default off (owner ruling
+  // 2026-09-19: unproven behaviour ships behind a switch, default off, after
+  // private 1.0.18 dodged worse with this on).
+  registerModeSetting('unified', 'udodgeEnemyStandoff', {
+    label: '[UDodge] Enemy standoff',
+    type: 'select', value: 'off',
+    options: [{ label: 'Auto', value: 'auto' }, { label: 'Off', value: 'off' }],
+  }, (v: string) => sendDllFeature('udodgeEnemyStandoff', v === 'off' ? 'off' : 'auto'));
+  registerModeSetting('unified', 'udodgePlanner', {
+    label: '[UDodge] Planner',
+    type: 'select', value: 'classic',
+    options: [{ label: 'Classic', value: 'classic' }, { label: 'Tactician (experimental)', value: 'tactician' }],
+  }, (v: string) => sendDllFeature('udodgePlanner', v === 'tactician' ? 'tactician' : 'classic'));
+  // Navigation finish plan, Item 1: once a walk-to / lock-approach route is
+  // accepted, keep following it through a reflex detour (rejoin at the nearest
+  // forward point) instead of re-planning on every few-tile deviation, and
+  // re-plan only on a real trigger. Off (default) reproduces the pre-Item-1
+  // follower exactly. Lands under both udodgePlanner policies. Default off
+  // (owner ruling 2026-09-19: unproven behaviour ships behind a switch,
+  // default off, after private 1.0.18 dodged worse with this on).
+  registerModeSetting('unified', 'udodgeRouteCommit', onOff('[UDodge] Route commitment', 'off'),
+    (v: string) => sendDllFeature('udodgeRouteCommit', v === 'off' ? 'off' : 'on'));
   // Navigation rebuild Stage 1: 'game' walks by the game's own point collision (diagonal
   // squeezes between walls, no player box); 'legacy' keeps the old box. Legacy until
   // the user confirms 'game' in play.
@@ -372,6 +401,32 @@ export function register(ctx: PluginContext) {
     type: 'select', value: 'legacy',
     options: [{ label: 'Legacy (box)', value: 'legacy' }, { label: 'Game (point rule)', value: 'game' }],
   }, (v: string) => sendDllFeature('navCollisionRule', v === 'game' ? 'game' : 'legacy'));
+  registerModeSetting('unified', 'navNavigator', {
+    label: '[UDodge] Map navigation (point travel; experimental)',
+    type: 'select', value: 'legacy',
+    options: [{ label: 'Legacy (local routes)', value: 'legacy' }, { label: 'D* Lite (persistent map)', value: 'dstar' }],
+  }, (value: string) => sendDllFeature('navNavigator', value === 'dstar' ? 'dstar' : 'legacy'));
+  // Navigation finish plan, item 2: on a Fallback/Surrounded solve (no safe
+  // reachable cell), sidestep tangentially instead of bolting radially outward
+  // or settling for a sub-jitter step. Off (default) = today's plain
+  // least-bad pick. Default off (owner ruling 2026-09-19: unproven behaviour
+  // ships behind a switch, default off, after private 1.0.18 dodged worse
+  // with this on).
+  registerModeSetting('unified', 'udodgeFallbackSidestep',
+    onOff('[UDodge] Fallback sidestep', 'off'),
+    (v: string) => sendDllFeature('udodgeFallbackSidestep', v === 'on' ? 1 : 0));
+  // Navigation finish plan, item 4: when a Tick has already spent longer than
+  // the frame-cost ceiling before the solver phases, degrade the candidate
+  // ring for that frame only (never a safety floor, never ReanchorMap, never a
+  // lane the relevance cull already kept). 'off' (default) disables the
+  // ceiling entirely (today's behaviour, no per-frame budget check). Default
+  // off (owner ruling 2026-09-19: unproven behaviour ships behind a switch,
+  // default off, after private 1.0.18 dodged worse with this on).
+  registerModeSetting('unified', 'udodgeFrameBudget', {
+    label: '[UDodge] Frame budget',
+    type: 'select', value: 'off',
+    options: [{ label: 'Auto', value: 'auto' }, { label: 'Off', value: 'off' }],
+  }, (v: string) => sendDllFeature('udodgeFrameBudget', v === 'off' ? 'off' : 'auto'));
 
   // Keep observing MOVE even outside Unified mode so switching modes starts
   // from the last position actually sent, never from an invented anchor.
@@ -620,7 +675,16 @@ export function register(ctx: PluginContext) {
                      'udodgeFieldEscape', 'udodgeLockFollow', 'udodgeFollowLantern',
                      'udodgeAutopilot', 'udodgeDebugOverlay', 'udodgeDrawPath'] as const)
       sendDllFeature(k, ctx.getSetting<string>(k) === 'on' ? 1 : 0);
+    sendDllFeature('udodgePlanner', ctx.getSetting<string>('udodgePlanner') === 'tactician' ? 'tactician' : 'classic');
+    sendDllFeature('udodgeRouteCommit', ctx.getSetting<string>('udodgeRouteCommit') === 'off' ? 'off' : 'on');
+    sendDllFeature('udodgeEnemyStandoff',
+                   ctx.getSetting<string>('udodgeEnemyStandoff') === 'off' ? 'off' : 'auto');
     sendDllFeature('navCollisionRule', ctx.getSetting<string>('navCollisionRule') === 'game' ? 'game' : 'legacy');
+    sendDllFeature('navNavigator', ctx.getSetting<string>('navNavigator') === 'dstar' ? 'dstar' : 'legacy');
+    sendDllFeature('udodgeFallbackSidestep',
+                   ctx.getSetting<string>('udodgeFallbackSidestep') === 'off' ? 0 : 1);
+    sendDllFeature('udodgeFrameBudget',
+                   ctx.getSetting<string>('udodgeFrameBudget') === 'off' ? 'off' : 'auto');
     updateMoveEnvelopeArming();
     // Re-apply the 60fps cap here too. The onEnabledChange / clientConnected
     // handlers were the only places setting targetFrameRate, so if the cap

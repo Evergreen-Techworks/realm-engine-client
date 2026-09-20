@@ -1,6 +1,6 @@
 export { RealmEngine } from './RealmEngine';
 export { Dodge } from './dodge/Dodge';
-export type { DodgeMode } from './dodge/Dodge';
+export type { DodgeMode, NavigationStatus } from './dodge/Dodge';
 export type { Script } from './Script';
 export type {
   UserPluginContext,

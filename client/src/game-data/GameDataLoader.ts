@@ -14,8 +14,9 @@ export interface ProjectileDef {
   damage: number;
   speed: number;
   lifetimeMs: number;
-  /** Collision radius in tiles (scaled from XML <Size>, base 0.15 at size 100). */
+  /** Legacy visual-size radius estimate in tiles (base 0.15 at size 100). */
   hitRadius: number;
+  collisionHalf: number;
   armorPiercing: boolean;
   multiHit: boolean;
   passesCover: boolean;
@@ -31,6 +32,13 @@ export interface ProjectileDef {
   acceleration: number;
   accelerationDelay: number;
   speedClamp: number;
+  /**
+   * objects.xml <Laser> length in tiles (0 = not a laser). A laser has Speed 0
+   * and LifetimeMS 200, so without this length a shot recovered from ENEMYSHOOT
+   * alone cannot be modelled as a beam at all — the DLL used to treat it as a
+   * slow moving dot at the emitter.
+   */
+  laserDistance: number;
 }
 
 export type ObjectCategory =
@@ -484,6 +492,9 @@ export class GameDataLoader {
           const rawSize = Number(proj.Size ?? 100);
           const size = Number.isFinite(rawSize) && rawSize > 0 ? rawSize : 100;
           const hitRadius = 0.15 * (size / 100);
+          const rawCollisionMult = Number(proj.CollisionMult ?? 1);
+          const collisionHalf = Number.isFinite(rawCollisionMult) && rawCollisionMult > 0 && rawCollisionMult <= 20
+            ? rawCollisionMult * 0.5 : 0.5;
 
           const conditionEffects: { effect: string; durationSec: number }[] = [];
           if (proj.ConditionEffect) {
@@ -507,6 +518,7 @@ export class GameDataLoader {
             speed: Number(proj.Speed ?? 0),
             lifetimeMs: Number(proj.LifetimeMS ?? 0),
             hitRadius,
+            collisionHalf,
             armorPiercing: proj.ArmorPiercing !== undefined,
             multiHit: proj.MultiHit !== undefined,
             passesCover: proj.PassesCover !== undefined,
@@ -521,6 +533,10 @@ export class GameDataLoader {
             acceleration: Number(proj.Acceleration ?? 0),
             accelerationDelay: Number(proj.AccelerationDelay ?? 0),
             speedClamp: Number(proj.SpeedClamp ?? 0),
+            laserDistance: (() => {
+              const v = Number(proj.Laser ?? 0);
+              return Number.isFinite(v) && v > 0 ? v : 0;
+            })(),
           });
         }
       }

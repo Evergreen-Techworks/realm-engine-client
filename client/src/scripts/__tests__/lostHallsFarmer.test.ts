@@ -1,10 +1,13 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+afterEach(() => vi.useRealTimers());
 
 const read = (path: string) => readFileSync(new URL(`../../../script-packages/${path}`, import.meta.url), 'utf8')
   .replace(/^import .*;\n/gm, '').replace('export default class', 'return class');
 const OryxRunner = new Function(read('farmer/oryx-runner.mjs'))();
-const Runner = new Function('OryxRunner', read('farmer/lost-halls-runner.mjs'))(OryxRunner);
+const MbcGroupPositioning = new Function(read('farmer/mbc-group-positioning.mjs'))();
+const Runner = new Function('OryxRunner', 'MbcGroupPositioning', read('farmer/lost-halls-runner.mjs'))(OryxRunner, MbcGroupPositioning);
 const mob = (name: string, objectId = 10, x = 5.5, y = 0.5): any => ({
   name, objectId, objectType: 1, hp: 100, maxHp: 100, isTargetable: true, position: { x, y },
 });
@@ -42,7 +45,131 @@ function floor(f: ReturnType<typeof fixture>, width: number, height: number) {
   }));
 }
 
+it('stays with the group instead of chasing corridor mobs on the way to Marble Defender', () => {
+  const f = fixture(); floor(f, 16, 2);
+  f.sdk.self.getName = () => 'Owner';
+  f.sdk.world.objects.getPlayers = () => [1, 2, 3].map(objectId => ({
+    objectId, name: `Other${objectId}`, hp: 100, lastUpdate: 10000, position: { x: 6.5, y: 0.5 },
+  }));
+  f.state.enemies = [mob('Lost Halls Golem', 70, 3.5)];
+  f.runner.tick(10000);
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 1.5, y: 0.5 });
+  expect(f.sdk.combat.aimAt).not.toHaveBeenCalled();
+  expect(f.sdk.ui.status).toHaveBeenLastCalledWith(expect.stringContaining('following the group toward Marble Defender'));
+  f.state.position.x = 6.5;
+  f.sdk.dodge.navigateToPosition.mockClear(); f.runner.tick(10100);
+  expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+  expect(f.sdk.combat.aimAt).not.toHaveBeenCalled();
+  f.state.enemies = [mob('Marble Defender', 71, 8.5)]; f.runner.tick(10200);
+  expect(f.sdk.combat.aimAt).toHaveBeenLastCalledWith(71);
+});
+
 describe('Lost Halls route selection and unlocks', () => {
+  it.each(['void', 'cult'])('%s ignores stale dead priority and ordinary adds', (mode) => {
+    const fixtureState = fixture(mode);
+    floor(fixtureState, 12, 2);
+    const priority = mob(mode === 'void' ? 'Marble Core' : 'Molek', 70);
+    const ordinary = mob('Lost Halls Golem', 71);
+    fixtureState.state.dead.add(priority.objectId);
+    fixtureState.state.dead.add(ordinary.objectId);
+    expect(fixtureState.runner.combatTick([priority, ordinary], 10000)).toBe(false);
+    expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalled();
+    expect(fixtureState.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+  });
+  it('does not switch from a briefly invulnerable MBC to an unrelated add', () => {
+    const fixtureState = fixture(); floor(fixtureState, 12, 2);
+    const boss = mob('Marble Colossus');
+    const add = mob('Lost Halls Golem', 71);
+    fixtureState.runner.combatTick([boss, add], 10000);
+    boss.isTargetable = false;
+    fixtureState.sdk.dodge.lockEnemy.mockClear();
+    expect(fixtureState.runner.combatTick([boss, add], 10100)).toBe(true);
+    expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(add.objectId);
+    expect(fixtureState.farmer.setFiring).toHaveBeenLastCalledWith(false);
+    fixtureState.runner.combatTick([boss, add], 13100);
+    expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(add.objectId);
+  });
+  it.each(['void', 'cult'])('%s releases phase grace immediately on confirmed boss death', (mode) => {
+    const fixtureState = fixture(mode); floor(fixtureState, 12, 2);
+    const boss = mob(mode === 'void' ? 'Marble Colossus' : 'Agonized Titan');
+    const add = mob('Lost Halls Golem', 71);
+    fixtureState.runner.combatTick([boss], 10000);
+    fixtureState.state.dead.add(boss.objectId);
+    fixtureState.sdk.dodge.lockEnemy.mockClear();
+    fixtureState.runner.combatTick([boss, add], 10100);
+    expect(fixtureState.sdk.dodge.lockEnemy).toHaveBeenCalledWith(add.objectId);
+    expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(boss.objectId);
+  });
+  it('still prioritizes a live Marble Core during the MBC phase grace', () => {
+    const fixtureState = fixture(); floor(fixtureState, 12, 2);
+    const boss = mob('Marble Colossus');
+    fixtureState.runner.combatTick([boss], 10000);
+    boss.isTargetable = false;
+    const core = mob('Marble Core', 71);
+    fixtureState.runner.combatTick([boss, core], 10100);
+    expect(fixtureState.sdk.dodge.lockEnemy).toHaveBeenLastCalledWith(core.objectId);
+  });
+  it('keeps MBC aiming and follows the reachable group without a fake lock during invulnerability', () => {
+    const f = fixture(); floor(f, 12, 2);
+    f.sdk.self.getName = () => 'Owner';
+    f.sdk.world.objects.getPlayers = () => [1, 2, 3].map(id => ({
+      objectId: id, name: `Other${id}`, hp: 100, lastUpdate: 10000,
+      position: { x: 6.3 + id * 0.1, y: 0.5 },
+    }));
+    f.sdk.dodge.setGroupPreference = vi.fn(); f.sdk.dodge.clearGroupPreference = vi.fn();
+    const boss = mob('Marble Colossus'); f.state.enemies = [boss];
+    f.runner.tick(10000);
+    expect(f.sdk.combat.aimAt).toHaveBeenCalledWith(boss.objectId);
+    expect(f.sdk.dodge.setGroupPreference).toHaveBeenCalledWith(boss.objectId, 1.5, 0.5);
+    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+    boss.isTargetable = false; f.runner.tick(10100);
+    expect(f.sdk.dodge.clearGroupPreference).toHaveBeenCalled();
+    expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 1.5, y: 0.5 });
+    expect(f.farmer.lockId).toBe(0);
+    expect(f.farmer.setFiring).toHaveBeenLastCalledWith(false);
+    f.sdk.dodge.navigateToPosition.mockClear();
+    f.runner.tick(12000);
+    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+    expect(f.sdk.dodge.clearWaypoint).toHaveBeenCalled();
+    boss.isTargetable = true; f.sdk.dodge.clearWaypoint.mockClear(); f.runner.tick(12100);
+    expect(f.sdk.dodge.clearWaypoint).toHaveBeenCalled();
+    expect(f.farmer.lockId).toBe(boss.objectId);
+    expect(f.farmer.setFiring).toHaveBeenLastCalledWith(true);
+    f.runner.reset('Nexus'); expect(f.runner.groupPositioning.anchorId).toBeNull();
+  });
+  it('keeps group movement ownership when a core appears and attacks it after regrouping', () => {
+    const f = fixture(); floor(f, 12, 2);
+    f.sdk.self.getName = () => 'Owner';
+    f.sdk.world.objects.getPlayers = () => [1, 2, 3].map(id => ({
+      objectId: id, name: `Other${id}`, hp: 100, lastUpdate: 10000, position: { x: 6.5, y: 0.5 },
+    }));
+    const boss = mob('Marble Colossus'); boss.isTargetable = false;
+    f.state.enemies = [boss]; f.runner.tick(10000);
+    expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 1.5, y: 0.5 });
+    f.sdk.dodge.navigateToPosition.mockClear(); f.sdk.dodge.clearWaypoint.mockClear();
+    f.state.enemies.push(mob('Marble Core', 71)); f.runner.tick(10100);
+    expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(71);
+    expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 1.5, y: 0.5 });
+    f.state.position.x = 6.5; f.runner.tick(10150);
+    expect(f.sdk.dodge.lockEnemy).toHaveBeenLastCalledWith(71);
+    f.sdk.dodge.navigateToPosition.mockClear();
+    f.state.dead.add(boss.objectId); f.runner.tick(10200);
+    expect(f.runner.groupPositioning.anchorId).toBeNull();
+    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+  });
+  it('does not follow a group through damaging terrain during an MBC phase', () => {
+    const f = fixture(); floor(f, 12, 2);
+    const boss = mob('Marble Colossus', 10, 2.5); boss.isTargetable = false;
+    f.state.enemies = [boss];
+    f.state.tiles.filter((tile: any) => Math.floor(tile.position.x) === 4).forEach((tile: any) => { tile.damaging = true; });
+    f.sdk.self.getName = () => 'Owner';
+    f.sdk.world.objects.getPlayers = () => [1, 2, 3].map(id => ({
+      objectId: id, name: `Other${id}`, hp: 100, lastUpdate: 10000, position: { x: 6.5, y: 0.5 },
+    }));
+    f.runner.tick(10000);
+    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+    expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalled();
+  });
   it.each([['void', 'The Void', 'Cultist Hideout'], ['cult', 'Cultist Hideout', 'The Void']])(
     '%s follows only its selected branch', (mode, destination, other) => {
       const f = fixture(mode), p = portal(destination), wrong = portal(other);
@@ -192,6 +319,35 @@ describe('Void sectors and phase actors', () => {
 });
 
 describe('new Farmer package integration', () => {
+  it.each(['void', 'cult'])('%s waits in Nexus, approaches a popped Lost Halls, and stops if it disappears', (mode) => {
+    vi.useFakeTimers(); vi.setSystemTime(10000);
+    const f = fixture(mode, 'Nexus');
+    const Farmer = new Function('RealmEngine', 'OryxRunner', read('farmer/index.mjs'))(f.sdk, OryxRunner);
+    const Base = new Function('RealmEngine', 'Farmer', 'LostHallsRunner', read('farmer/lost-halls-farmer.mjs'))(f.sdk, Farmer, Runner);
+    const script = new Base(mode);
+    const realm = { ...portal('Realm'), isRealm: true };
+    const closed = portal('Lost Halls', 'Closed Lost Halls Portal');
+    f.state.portals = [realm, closed];
+    script.onLoop(); script.onLoop();
+    expect(realm.enter).not.toHaveBeenCalled();
+    expect(closed.enter).not.toHaveBeenCalled();
+    expect(f.sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+    expect(f.sdk.ui.status).toHaveBeenLastCalledWith(expect.stringContaining('waiting in Nexus'));
+    const halls = portal('Lost Halls'); halls.position = { x: 10.5, y: 0.5 };
+    f.state.portals.push(halls); script.onLoop();
+    expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(halls.position);
+    expect(halls.enter).not.toHaveBeenCalled();
+    f.state.portals = [realm]; f.sdk.dodge.clearWaypoint.mockClear(); script.onLoop();
+    expect(f.sdk.dodge.clearWaypoint).toHaveBeenCalled();
+    expect(realm.enter).not.toHaveBeenCalled();
+    f.state.portals.push(halls); f.state.position = { ...halls.position };
+    script.onLoop(); script.onLoop();
+    expect(halls.enter).toHaveBeenCalledOnce();
+    vi.setSystemTime(13000); script.onLoop();
+    expect(halls.enter).toHaveBeenCalledTimes(2);
+    f.state.map = 'Lost Halls'; f.state.portals = []; script.onLoop();
+    expect(script.halls.stage).toBe('halls');
+  });
   it.each([['lost-halls-void-farmer', 'void'], ['lost-halls-cult-farmer', 'cult']])(
     '%s instantiates its route and prioritizes Lost Halls portals', (folder, mode) => {
       const f = fixture(mode, 'Realm');

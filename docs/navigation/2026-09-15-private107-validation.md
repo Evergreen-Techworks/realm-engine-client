@@ -1,0 +1,13 @@
+# Private 1.0.7 integration validation
+
+2026-09-15 Integrated global runtime `67a39f1` as `026fae0` onto the combined private candidate. Resolved two additive UDodge conflicts by preserving both MBC group preference and global runtime initialization. No client push.
+
+2026-09-15 SDK build, production/test typechecks, bridge contract, packet drift and full client suite pass: 66 files, 629 tests. Full native host suite passes, including 350 router, 57 map memory and 19 actual runtime checks. Large runtime fixture measured maximum worker cycle 3.023 ms, p95 cycle 2.962 ms and p95 repair 1.885 ms on this host; not an in-game timing guarantee.
+
+2026-09-15 Normal production-loop scenarios pass with both legacy and experimental D* navigation: legacy collision 43 assertions / four existing limitations; game collision 45 / two. The two dense-boss engagement limitations remain. Four large-room D* results and source-adapter limitations are recorded in `2026-09-15-global-routing-integration.md`.
+
+2026-09-15 Live game identity still matches the three pinned hashes. All 66 changed Windows paths match base `9cdc818` or are new; backed up original files and hashes under `C:\realm-engine-pinned\source-backup-private107-026fae0` before selective copying. Preserved unrelated files and profiles. Started explicit-version private 1.0.7 build from merged private pipeline without Upload/Notify or release-sequence allocation. Native Windows compilation, artifact verification and delivery are pending; no gameplay approval claimed.
+
+2026-09-15 Windows native compilation and portable packaging completed successfully. Receipt status is `candidate_requires_gameplay_test`; bindings 143 fields / 41 methods / 17 omitted, matching the prior private candidate, with 133 code-proven field offsets. Source receipt preserves three existing Windows-only differences and 18 local/generated files; it does not claim exact Git-source equality. Built sources include global runtime, opt-in control and group preference; no Present/DodgeBody diagnostic instrumentation found.
+
+2026-09-15 Delivered `C:\realm-engine-portable\Realm Engine 1.0.7 Private (RotMG 86ad651b).exe`, SHA256 `a0cc9d0a96d73f8688f2592e726751e8bfbfef9cf9b1611758f06b9c07414638`. Evidence, test/build logs, artifact copy and previous 1.0.6 rollback reside in `C:\realm-engine-pinned\portable-evidence-private107-026fae0`. Profiles preserved; no processes killed. Unsigned, not uploaded, not gameplay-approved. Enable Unified mode's Map navigation → D* Lite (persistent map) to test global point routing; legacy remains the default. Full-arena combat positioning and dense-shot engagement limitations remain unfinished.

@@ -17,6 +17,7 @@
     "download-game-xml": "tsx scripts/download-rotmg-xml-cli.ts",
     "gen:packets": "node scripts/gen-packet-artifacts.mjs",
     "check:packets": "node scripts/check-packet-drift.mjs",
+    "stamp-build-info": "node scripts/stamp-build-info.mjs",
     "dist": "npm run build:native && npm run build:prod && electron-builder --win",
     "dist:installer": "npm run build:native && npm run build:prod && electron-builder --win nsis",
     "dist:portable": "npm run build:native && npm run build:prod && electron-builder --win portable",

@@ -5,6 +5,8 @@
 #include <algorithm>
 
 #include "features/movement/nav/Collision.h"
+#include "features/movement/contact/Contact.h"
+#include "UDodgeStandoff.h"
 
 // UDodge — unified auto-dodge: PJDodge predictive core + RePP field
 // escape/goal layer. Pure data + inline math. No game/IL2CPP includes.
@@ -18,6 +20,7 @@ constexpr int   kStandCandidate  = 0;
 constexpr int   kFieldCandidate  = kDirectionCount + 2;   // 34
 constexpr int   kCandidateCount  = kDirectionCount + 3;   // 35
 constexpr float kTwoPi           = 6.28318530717958647692f;
+constexpr float kUMaxProjectileHalf = Contact::kMaxHalfTiles;   // one clamp for every layer
 
 // ── Map capacities (fixed buffers — zero per-frame heap allocation) ─────────
 // Dense exaltation/O3 patterns can exceed the old 96-shot buffer. Overflow was
@@ -303,6 +306,17 @@ constexpr int   kUPocketAngles   = 24;    // angular samples per ring (15° reso
 constexpr float kSolveFallbackPocketW = 0.5f; // fallback: bias the least-bad step toward the pocket/gap
 constexpr float kSolveFallbackBackW   = 0.35f; // no-safe-cell fallback: prefer the known corridor behind us
 
+// Navigation finish plan, item 2 (udodgeFallbackSidestep): when the least-bad
+// Fallback candidates tie on time-to-danger within this window, prefer the
+// most tangential one (smaller ABSOLUTE radial component) instead of bolting
+// straight away from the threat OR cutting straight in — radial is bad in
+// both directions. See UDodgeSolver::SelectFallbackCandidate.
+constexpr float kSolveFallbackTieMs = 60.f;
+// A Fallback pick under this displacement is a near-stationary jitter; it loses
+// to any candidate that lives at least as long as standing still and moves at
+// least this far, so the reflex sidesteps instead of vibrating in place.
+constexpr float kSolveFallbackMinMoveTiles = 0.05f;
+
 // ── Temporal lookahead (plan 64 ext; baked, NO user sliders) ─────────────────
 // The static durable-pocket test above treats each lane (bullet's whole forward
 // path) as permanently dangerous — spatially safe but over-conservative: it
@@ -385,6 +399,15 @@ constexpr float kUInRangeSlack = 0.20f;  // small grid-quantization grace around
 // must always be able to move outward (see UDodgeSolver/UDodgePathfinder).
 constexpr float kUInnerStandoffFrac     = 0.35f;  // inner radius as a fraction of weapon range (tune in testing)
 constexpr float kUInnerStandoffMinTiles = 2.0f;   // absolute inner-radius floor (tiles)
+// ENEMY STANDOFF ring shaping (UDodgeStandoff.h). The fight is held at the target's
+// own band, pulled just inside what the weapon can still reach, and the goal
+// annulus is narrowed to a ring of this width at the OUTER edge of weapon range —
+// the mid-ring is where the owner's hits happened.
+constexpr float kUStandoffRangeInset = 0.25f;   // hold this far inside engagement range
+constexpr float kUStandoffRingWidth  = 1.5f;    // annulus width at the outer edge
+// Below this engagement range a class has no outer ring to fight from; melee and
+// short-range builds keep today's behaviour (the 2-tile core still applies).
+constexpr float kShortRangeTiles     = 3.0f;
 // Solver inner-standoff penalty per tile a dodge point sits INSIDE the inner ring.
 // At least as strong as kSolveOutRangeW so the score never prefers point-blank.
 constexpr float kSolveInnerW = 1.6f;
@@ -613,9 +636,40 @@ struct EnemyBlocker {
     // still constrains a route, but it is not a live mob whose keep-out the
     // clearance preference should widen — see EnemyAvoidanceRadius.
     bool  passiveScenery = false;
+    // ENEMY STANDOFF (UDodgeStandoff.h), filled by Sensors::PopulateEnemies from
+    // the enemy's TYPE (cached — never a per-frame read). Both are 0 when the
+    // setting is off, and for the locked target's band, whose distance the
+    // engagement geometry owns instead.
+    float standoffCore = 0.f;   // hard for NAVIGATION only (never for the bullet solver)
+    float standoffBand = 0.f;   // strong route cost out to here; 0 = this enemy has none
 };
 
 struct Settings {
+    // udodgeEnemyStandoff. Default OFF (owner ruling 2026-09-19: unproven
+    // behaviour ships behind a switch, default off, after private 1.0.18
+    // dodged worse with this on). Auto: every shooting enemy carries a hard
+    // 2-tile core and a reaction-time band that navigation routes around,
+    // and a locked fight is held at the outer part of weapon range. Off: the
+    // pre-standoff engine.
+    Standoff::Mode enemyStandoff = Standoff::Mode::Off;
+    // udodgePlanner (S3.1). Tactician routes every contact test through
+    // Contact.h (the game's proven box, the live hitbox multiplier, the ring
+    // approach, the lattice and the spiral edge cost); Classic is the
+    // pre-Slice-3 engine, unchanged. Captured into the PlannerSnapshot at
+    // publish time so one snapshot is planned under one policy.
+    Contact::Policy planner = Contact::Policy::Classic;
+    // udodgeRouteCommit (navigation finish plan, Item 1). Default OFF (owner
+    // ruling 2026-09-19: unproven behaviour ships behind a switch, default
+    // off, after private 1.0.18 dodged worse with this on). true: once a
+    // walk-to / lock-approach route is accepted, keep following it through a
+    // reflex detour (rejoin at the nearest forward point) instead of dropping it
+    // on every few-tile deviation, and re-plan only on a real trigger (route
+    // invalidated, objective changed, arrival, or no progress for 1.5 s). Also
+    // snaps the dodge grid centre to the 0.5-tile lattice under Classic, the way
+    // Tactician already does, so the committed dodge goal re-snaps to itself.
+    // false (default) reproduces the pre-Item-1 engine exactly. Lands under
+    // both planner policies.
+    bool  routeCommit = false;
     // PROJECTILE CONTACT MODEL. true (default): the player is a POINT and the
     // per-shot threshold T (runtime Chebyshev half, else CollisionMult × 0.5) is
     // the whole hit box — |dx| < T && |dy| < T. This adopts the model from the
@@ -658,6 +712,18 @@ struct Settings {
                              // (resolved weapon range × 0.85)        [0 | 2, 16]
     int   planRadius = 20;   // planner window radius (grid cells) [8, 40]
                              // shrinks the rasterized window to cut cost
+    // udodgeFallbackSidestep (navigation finish plan, item 2). Default OFF
+    // (owner ruling 2026-09-19: unproven behaviour ships behind a switch,
+    // default off, after private 1.0.18 dodged worse with this on). true:
+    // Solver::Solve's Fallback branch ranks its least-bad candidates by latest
+    // time-to-danger, then within kSolveFallbackTieMs breaks the tie toward the
+    // most tangential step (smaller ABSOLUTE radial component relative to the
+    // lock target, or the mean threatening-lane direction when unlocked) instead
+    // of bolting straight out OR cutting straight in — radial is bad both ways —
+    // never selects a step shorter-lived than standing still, and will not settle
+    // for a sub-kSolveFallbackMinMoveTiles jitter when a longer-lived candidate
+    // exists. false (default) = today's plain max-time/clearance pick, unchanged.
+    bool  fallbackSidestep = false;
 };
 
 // Keep-out radius around one enemy body: its physical radius plus the player's
@@ -802,6 +868,20 @@ inline bool InsideEnemyKeepout(const ZoneThreat& z, Vec2 player, Vec2 p, float p
 }
 
 struct DangerMap {
+    // udodgeEnemyStandoff at build time, carried here for the same reason the
+    // planner policy is: the worker has the map and nothing else. Default OFF
+    // (owner ruling 2026-09-19), matching Settings::enemyStandoff; a real
+    // BuildMap always overwrites this from Settings before use.
+    Standoff::Mode enemyStandoff = Standoff::Mode::Off;
+    // The policy this map was built under, and the world it was built in: every
+    // Core test reads them from here, on the game thread and on the worker alike
+    // (the map is the only thing all of them are guaranteed to hold).
+    Contact::Policy planner = Contact::Policy::Classic;
+    // LIVE ObjectProperties.collisionRadiusMultiplier of the local player, read
+    // once per BuildMap (S3.3); 1.0 when unreadable or the collider offset is
+    // untrusted, which is the game's own default and the larger box.
+    float    targetScale = 1.f;
+    bool     colliderTrusted = false;   // the read came from a metadata-trusted offset
     uint32_t tickId    = 0;      // WM_TickId this layout was built from
     bool     tickValid = false;  // false => tick source unreadable (fail-safe mode)
     LaneThreat lanes[kMaxProjectiles]{};
@@ -815,6 +895,12 @@ struct DangerMap {
     bool    hasLock = false;   // autopilot boss lock (same semantics as Snapshot)
     int32_t lockId  = 0;
     Vec2    lockPos{};
+    // ENEMY STANDOFF: the LOCKED target's band radius. It is kept here instead of
+    // on its EnemyBlocker because navigation must NOT wall off the enemy we are
+    // trying to fight — the band only tells the engagement geometry how far out to
+    // hold (ComputeLockGeometry). 0 = no lock, standoff off, or a target that does
+    // not shoot.
+    float   lockBand = 0.f;
 };
 
 // Input for the instantaneous core. No time fields exist — stepTiles is a

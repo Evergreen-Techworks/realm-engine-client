@@ -464,9 +464,9 @@ function startProxy() {
     }
     proxyProcess = null;
     // A dedicated exit code (never used by a normal SIGINT/SIGTERM/crash
-    // exit) means the proxy process itself asked to take the whole app down
-    // with it, e.g. via a graceful self-shutdown request. A normal clean
-    // exit (0) and every other code/signal behave exactly as before.
+    // exit) means the proxy asked to take the whole app down with it — used
+    // by the unattended run mode once it has finished on its own. A normal
+    // clean exit (0) and every other code/signal behave exactly as before.
     if (code === PROXY_EXIT_QUIT_APP) {
       app.quit();
     }

@@ -21,6 +21,68 @@ export type PluginCategory =
   | 'utility'
   | 'admin';
 
+/**
+ * Optional host-service surface for a bundled plugin that needs to run a
+ * script package or temporarily swap the live plugin configuration without
+ * reaching into DevServer's internals directly. Unset (`ctx.hostAccess ===
+ * null`) unless `PluginManager.setHostAccess()` was called before this
+ * plugin loaded — every caller must handle that case.
+ */
+export interface PluginHostAccess {
+  /** The plugin-config id currently active (e.g. `'default'`). */
+  getActivePluginConfigId(): string;
+  /** A snapshot of every plugin's current live state, named `name`. */
+  buildPluginConfigSnapshot(name: string): unknown;
+  /** Write `snapshot` to `<configsDir>/<sanitizedId>.json` and apply it live. */
+  writeAndLoadPluginConfig(id: string, snapshot: unknown): { ok: boolean; message: string; id: string };
+  /** Apply the config already saved at `<configsDir>/<id>.json` — same effect as `POST /api/configs/load`. */
+  loadPluginConfigById(id: string): { ok: boolean; message: string };
+  /** Remove `<configsDir>/<id>.json` if present. Never throws. */
+  deletePluginConfigFile(id: string): void;
+  /** Start a script package by id through ScriptHost. */
+  startScript(id: string): Promise<{ ok: boolean; error?: string }>;
+  /** Stop a running script package by id through ScriptHost. */
+  stopScript(id: string): { ok: boolean; error?: string };
+  /**
+   * Launch a saved account (matched by its display label, case/whitespace-
+   * and separator-insensitive — `lab-1`, `Lab 1`, `lab_1` and `LAB1` all
+   * match the same saved `lab1`) exactly as its own Launch button would —
+   * looked up and launched entirely server-side. Credentials never leave
+   * this call: the caller only ever receives ok/error/pid, plus, on a
+   * failed match, how many of how many saved accounts matched
+   * (`matchCount`/`totalAccounts`) — counts only, never a label or e-mail —
+   * so a caller can explain the failure without leaking account data.
+   * `'account-ambiguous'` means more than one saved account matched; this
+   * method never guesses which one was meant.
+   */
+  launchSavedAccountByLabel(
+    label: string,
+    serverName?: string,
+  ): Promise<{
+    ok: boolean;
+    error?: 'account-not-found' | 'account-ambiguous' | 'launch-failed';
+    pid?: number;
+    matchCount?: number;
+    totalAccounts?: number;
+  }>;
+  /**
+   * Whether the native DLL bridge is currently connected (past the `hello`
+   * handshake) — read-only, small, and generic: any plugin that needs to
+   * know before sending the DLL something time-sensitive can check it, with
+   * no Test-Lab-specific meaning attached. `false` includes "never
+   * connected", "mid-handshake" and "disconnected after a prior session".
+   */
+  isNativeBridgeReady(): boolean;
+  /**
+   * Ask the host process to shut down gracefully (script host, dashboard,
+   * proxy, game hook) and then exit with `exitCode`. Fire-and-forget from
+   * the caller's perspective — the process is going away shortly after this
+   * returns, one way or another (a timeout forces the exit if graceful
+   * shutdown hangs).
+   */
+  requestAppShutdown(exitCode: number): void;
+}
+
 export interface SettingOption {
   label: string;
   value: string;
@@ -74,6 +136,19 @@ export interface SettingDef {
 }
 
 /**
+ * The slice of a `SettingDef` needed to validate/coerce a request against it
+ * from another plugin, without exposing its current value, label or
+ * callback. See `PluginContext.onDescribeOtherPluginSetting`.
+ */
+export interface OtherPluginSettingDescription {
+  type: SettingDef['type'];
+  options?: SettingOption[];
+  min?: number;
+  max?: number;
+  visibleWhen?: SettingDef['visibleWhen'];
+}
+
+/**
  * API surface provided to each plugin.
  * Plugins receive this in their `register()` function.
  */
@@ -98,6 +173,46 @@ export class PluginContext {
 
   /** Callback set by PluginManager when dashboard setting definitions change. */
   public onSettingOptionsChanged: ((pluginId: string, key: string) => void) | null = null;
+
+  /**
+   * Callback set by PluginManager: read a live setting value from a
+   * DIFFERENT loaded plugin's context (`PluginManager.getPlugins()`'s
+   * per-plugin `settings`, read via that plugin's own `getSetting`). Powers
+   * a small set of cross-plugin controllers (e.g. the Test Lab A/B
+   * interleaver reading Auto Dodge's `dodgeMode`) that need to check another
+   * plugin's current value without importing that plugin's module.
+   */
+  public onGetOtherPluginSetting: ((pluginId: string, key: string) => any) | null = null;
+
+  /**
+   * Callback set by PluginManager: update a setting on a DIFFERENT loaded
+   * plugin via `PluginManager.updateSetting(pluginId, key, value)` — the
+   * exact same call the dashboard's `updateSetting` websocket message
+   * (DevServer.ts) and a config replay (PluginConfigService.
+   * applyPluginConfigSnapshot) both make, so the target plugin's own
+   * `updateSetting` runs (type coercion + its registered onChange callback)
+   * exactly as it would from a dashboard click. Unlike those two callers,
+   * this does NOT itself schedule an autosave — see
+   * `updateOtherPluginSetting`'s doc comment.
+   */
+  public onUpdateOtherPluginSetting: ((pluginId: string, key: string, value: any) => boolean) | null = null;
+
+  /**
+   * Callback set by PluginManager: describe a DIFFERENT loaded plugin's
+   * registered setting — its type plus whichever of `options`/`min`/`max`/
+   * `visibleWhen` apply — without reading its current value. Small and
+   * read-only: it never applies or changes anything by itself. Lets a
+   * controller validate/coerce a free-text setting key + requested values
+   * against the target plugin's real definition (legal `select` options,
+   * numeric bounds, the modes a `visibleWhen`-gated setting is even active
+   * in) before touching it, the same way the dashboard already renders those
+   * constraints from `getSettings()` — this just exposes one setting's slice
+   * of that to another plugin.
+   */
+  public onDescribeOtherPluginSetting: ((pluginId: string, key: string) => OtherPluginSettingDescription | undefined) | null = null;
+
+  /** Set by PluginManager when `setHostAccess()` was called before this plugin loaded. See {@link PluginHostAccess}. */
+  public hostAccess: PluginHostAccess | null = null;
 
   /** Game data (objects.xml parsed). Available after proxy startup. */
   public readonly gameData: GameDataLoader | null;
@@ -223,6 +338,58 @@ export class PluginContext {
   /** Get current value of a setting. */
   getSetting<T = any>(key: string): T {
     return this._settings.get(key)?.value;
+  }
+
+  /**
+   * Read a setting's current value from a DIFFERENT loaded plugin (see
+   * `onGetOtherPluginSetting`). Returns `undefined` when no such wiring is
+   * available (e.g. a bare/test context) or the plugin/key doesn't exist.
+   * Never throws.
+   */
+  getOtherPluginSetting<T = any>(pluginId: string, key: string): T | undefined {
+    try {
+      return this.onGetOtherPluginSetting?.(pluginId, key);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Update a setting on a DIFFERENT loaded plugin through the real
+   * PluginManager.updateSetting() path (see `onUpdateOtherPluginSetting`) —
+   * so the DLL receives the change exactly as it would from a dashboard
+   * click on that plugin's own setting. Returns false when no such wiring is
+   * available or the update was rejected (unknown plugin/key). Never throws.
+   *
+   * Deliberately does NOT trigger `PluginConfigService.scheduleAutosave()` —
+   * that only fires from DevServer's own websocket-message handlers (the
+   * `updateSetting` message and friends), not from `PluginManager.
+   * updateSetting()` itself. A caller that flips a switch through this path
+   * many times in one session does not, by itself, cause each flip to be
+   * persisted to the owner's profile; an autosave triggered by an unrelated
+   * settings change elsewhere in the same session will still snapshot
+   * whatever value is live at that moment, same as it always has.
+   */
+  updateOtherPluginSetting(pluginId: string, key: string, value: any): boolean {
+    try {
+      return this.onUpdateOtherPluginSetting?.(pluginId, key, value) ?? false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Describe a setting registered on a DIFFERENT loaded plugin — its type
+   * plus whichever of `options`/`min`/`max`/`visibleWhen` apply (see
+   * `onDescribeOtherPluginSetting`). Returns `undefined` when no such wiring
+   * is available or the plugin/key doesn't exist. Never throws.
+   */
+  describeOtherPluginSetting(pluginId: string, key: string): OtherPluginSettingDescription | undefined {
+    try {
+      return this.onDescribeOtherPluginSetting?.(pluginId, key);
+    } catch {
+      return undefined;
+    }
   }
 
   /** Update a setting value (called by dashboard). */

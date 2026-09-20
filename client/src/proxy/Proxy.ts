@@ -10,6 +10,8 @@ import { PacketFactory } from '../packets/PacketFactory.js';
 import { type Packet } from '../packets/Packet.js';
 import { State } from '../state/State.js';
 import { Logger } from '../util/Logger.js';
+import { DiagGate } from '../util/DiagGate.js';
+import { DiagContext } from '../util/DiagContext.js';
 
 const TARGET_FILE = join(tmpdir(), 'rotmg_proxy_target.txt');
 const TARGET_FILE_PREFIX = 'rotmg_proxy_target_';
@@ -43,6 +45,10 @@ export class Proxy extends EventEmitter {
 
   // Track which hooks belong to which plugin for unloading
   private pluginHooks = new Map<string, { packets: Map<string, PacketHandler[]>; commands: Map<string, CommandHandler[]> }>();
+
+  // item 4b (measurement only): handler -> owning pluginId, so firePacketHooks
+  // can label DiagContext without changing the packetHooks storage shape.
+  private hookOwners = new WeakMap<PacketHandler, string>();
 
 
   constructor(
@@ -115,6 +121,7 @@ export class Proxy extends EventEmitter {
     const list = this.packetHooks.get(packetName)!;
     if (prepend) list.unshift(handler);
     else list.push(handler);
+    if (pluginId) this.hookOwners.set(handler, pluginId);
 
     // Track for plugin unloading
     if (pluginId) {
@@ -228,13 +235,20 @@ export class Proxy extends EventEmitter {
     const handlers = this.packetHooks.get(packet.name);
     if (!handlers || handlers.length === 0) return;
 
+    // item 4b (measurement only): mark what's executing so the event-loop
+    // diag (diag/EventLoopDiag.ts) can name the culprit on a slow sample.
+    // Gated by DiagGate so this costs nothing beyond one Date.now() compare
+    // per packet when the flag is off.
+    const diagOn = DiagGate.on();
     for (const handler of handlers) {
+      if (diagOn) DiagContext.current = `hook:${this.hookOwners.get(handler) ?? 'anonymous'}:${packet.name}`;
       try {
         handler(client, packet);
       } catch (err) {
         Logger.error('Proxy', `Packet hook error for ${packet.name}`, err as Error);
       }
     }
+    if (diagOn) DiagContext.current = 'idle';
   }
 
   /** Read the original server IP from the legacy shared temp file (fallback). */

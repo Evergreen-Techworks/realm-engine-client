@@ -7,6 +7,13 @@
 #include <cmath>
 
 namespace UDodge { namespace Solver {
+
+namespace {
+thread_local bool t_frameDegraded = false;
+}
+void SetFrameDegraded(bool degraded) { t_frameDegraded = degraded; }
+bool GetFrameDegraded() { return t_frameDegraded; }
+
 namespace {
 
 // The solver's HARD safety constraint is Core::PointSafety / Core::PointSafe,
@@ -89,6 +96,45 @@ Vec2 FlowDir(const MapInput& in)
     if (total <= 1e-6f) return {};
     const float angle = 0.5f * std::atan2(2.f * xy, xx - yy);
     return { std::cos(angle), std::sin(angle) };
+}
+
+// Navigation finish plan, item 2: the Fallback tie-break's "outward" reference
+// direction when no lock is held — the mean SIGNED travel direction of the
+// lanes actually threatening the current stand (unlike FlowDir, this is not
+// sign-independent: it points the way those lanes are moving). A lane
+// "threatens the stand" when its closest painted point comes within its own
+// contact half (+ the player footprint) of the player — the same lanes that
+// are capable of putting the reflex into Fallback in the first place, not
+// every lane on the map. {} when nothing qualifies.
+Vec2 MeanThreatDir(const MapInput& in)
+{
+    if (!in.map) return {};
+    Vec2 sum{};
+    for (int i = 0; i < in.map->laneCount; ++i) {
+        const LaneThreat& L = in.map->lanes[i];
+        if (L.pointCount < 1) continue;
+        const float half = L.hitHalf * in.settings.hitScale;
+        float bestD = kHugeClearance;
+        int   bestIdx = 0;
+        for (int j = 0; j < L.pointCount; ++j) {
+            const float d = std::max(std::fabs(in.player.x - L.points[j].x),
+                                      std::fabs(in.player.y - L.points[j].y));
+            if (d < bestD) { bestD = d; bestIdx = j; }
+        }
+        if (bestD > half + kUPlayerHalf) continue;   // nowhere near threatening the stand
+        Vec2 dir{};
+        if (L.hasLinearMotion) {
+            dir = L.linearVelocity;
+        } else if (L.pointCount >= 2) {
+            const int j2 = std::min(bestIdx + 1, L.pointCount - 1);
+            const int j1 = j2 > 0 ? j2 - 1 : 0;
+            dir = Sub(L.points[j2], L.points[j1]);
+        }
+        if (LenSq(dir) < 1e-8f) continue;
+        const float w = 1.f / (0.5f + bestD);
+        sum = Add(sum, Mul(Normalize(dir), w));
+    }
+    return sum;
 }
 
 // ── General enemy standoff support (kSolveStandoffW / kSolveStandoffBand) ───
@@ -184,6 +230,9 @@ float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
         const float ramp = std::clamp((c.clr - kULatencyPad) / kUScoreStyleBand, 0.f, 1.f);
         const float goalWeight = kSolveGoalW + (goal.fromLock ? kSolveLockGoalW : 0.f);
         score += goalWeight * progress * ramp;
+    }
+    if (goal.groupActive && goal.fromLock && !goal.walkTo) {
+        score += 0.75f * std::clamp(Len(Sub(player, goal.groupPos)) - Len(Sub(c.pos, goal.groupPos)), -1.f, 1.f);
     }
 
     // RePP-style perpendicular sidestep: reward moving ACROSS the incoming
@@ -288,8 +337,18 @@ int BuildCandidates(const MapInput& in, float b, const Goal& goal,
     out[n].stand = true;
     ++n;
 
-    // Polar rings.
-    for (int ri = 0; ri < kSolveRings; ++ri) {
+    // Polar rings. Item 4 (navigation finish plan): when this Tick is over its
+    // frame budget, keep only the OUTER ring (the full move-budget headings —
+    // the best escape reach, and still 32 candidates around the compass) and
+    // drop the three inner rings, cutting the temporal ranking pass below by
+    // ~4x for this frame only. Never removes the stand point, the goal-
+    // direction point or the pocket-direction point (the search below still
+    // ranks a full compass of headings; only the finer-radius resolution is
+    // lost for one frame), and never touches Evaluate's occupancy/safety
+    // floors or the temporal admission tests every surviving candidate is
+    // still put through.
+    const int ringStart = GetFrameDegraded() ? kSolveRings - 1 : 0;
+    for (int ri = ringStart; ri < kSolveRings; ++ri) {
         const float r = b * kRingFrac[ri];
         for (int k = 0; k < kSolveAngles; ++k) {
             const float ang = kTwoPi * static_cast<float>(k) / static_cast<float>(kSolveAngles);
@@ -436,7 +495,7 @@ bool IsDurablePocketTemporal(const MapInput& in, const Core::Temporal::Ctx& ctx,
 
 void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
            const Path::PlanResult& route, CoreState& state, SolveResult& out,
-           const TimedAdvice& timed)
+           const TimedAdvice& timed, SharedCtx* shared)
 {
     out = SolveResult{};
     if (!in.map) { out.kind = SolveKind::Hold; return; }
@@ -458,10 +517,18 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     // then find the nearest cell where the STRAIGHT walk to it — and holding
     // there — dodges the moving bullets in TIME. This threads gaps the static
     // whole-path test cannot, and it drives the pre-positioning below.
-    static thread_local Core::Temporal::Ctx ctx;
-    Core::Temporal::Build(*in.map, in.settings.hitScale, in.settings.positionUncertainty,
-                          in.player, kUTemporalCullTiles, ctx,
-                          Core::ProjectilePlayerHalf(in.settings));
+    // Item 4 follow-up: build into the caller's SharedCtx (game-thread liveSolve
+    // and revalidate) when given one and it is not already built this tick;
+    // otherwise the original thread_local, rebuilt-every-call behaviour (worker
+    // thread, harness fallback path — anything not passing `shared`).
+    static thread_local Core::Temporal::Ctx localCtx;
+    Core::Temporal::Ctx& ctx = shared ? shared->ctx : localCtx;
+    if (!shared || !shared->built) {
+        Core::Temporal::Build(*in.map, in.settings.hitScale, in.settings.positionUncertainty,
+                              in.player, kUTemporalCullTiles, ctx,
+                              Core::ProjectilePlayerHalf(in.settings));
+        if (shared) shared->built = true;
+    }
     out.tempLanes = static_cast<uint16_t>(ctx.count);
     // How far into the horizon this context is EVIDENCE for every lane. Computed
     // once per solve (one int compare per lane), consumed only by the durability
@@ -474,6 +541,26 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     // a route out instead of waiting. This is the immediate-reflex floor for the
     // stand: temporal only ever makes us hold LESS than instantaneous safety.
     const bool standDurable = IsDurablePocketTemporal(in, ctx, in.player, true);
+    if (standDurable && goal.groupActive && goal.fromLock && !goal.walkTo) {
+        const Vec2 towardGroup = Sub(goal.groupPos, in.player);
+        const float groupDistance = Len(towardGroup);
+        if (groupDistance > 0.1f) {
+            const Vec2 groupDirection = Mul(towardGroup, 1.f / groupDistance);
+            const Vec2 groupStep = Add(in.player, Mul(groupDirection, std::min(groupDistance, b)));
+            if (CanOccupyAt(in, groupStep) && OccupancyPathClear(in, in.player, groupStep)
+                && !Core::EnemyPathBlocked(in, in.player, groupStep)
+                && Core::ZonePathClear(in, in.player, groupStep)
+                && Core::Temporal::PathClear(ctx, in.player, in.speed, groupStep)
+                && IsDurablePocketTemporal(in, ctx, groupStep, true)
+                && Core::PendingZoneCost(in, groupStep) <= Core::PendingZoneCost(in, in.player)) {
+                out.kind = SolveKind::Safe; out.target = groupStep; out.shouldMove = true;
+                out.clearance = Core::PointSafety(in, groupStep);
+                state.lastMoveDir = groupDirection;
+                state.dampStreak = 0;
+                return;
+            }
+        }
+    }
 
     // ── Grid route from the WORKER thread (lookahead direction / goal bias) ──
     // The bounded grid Dijkstra that routes AROUND obstacles to the nearest
@@ -869,10 +956,24 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     const float standClr = Core::PointSafety(in, in.player);
     const float playerToPocket = pocketFound ? Len(Sub(in.player, pocketPos)) : 0.f;
     int best2 = -1;
-    float best2Val = -kHugeClearance;
     float best2Time = -1.f;
     const float standTime = Core::Temporal::TimeToDanger(ctx, in.player, in.speed,
                                                        in.player, kUDwellMs);
+    // Item 2 (udodgeFallbackSidestep) tie-break reference: away from the lock
+    // target, or (unlocked) the direction the threatening lanes are travelling.
+    // Only computed when the switch is on — off keeps today's behaviour exactly.
+    Vec2 radialRef{};
+    if (in.settings.fallbackSidestep) {
+        if (goal.fromLock && LenSq(Sub(in.player, goal.lockPos)) > 1e-6f) {
+            radialRef = Normalize(Sub(in.player, goal.lockPos));
+        } else {
+            const Vec2 meanDir = MeanThreatDir(in);
+            if (LenSq(meanDir) > 1e-6f) radialRef = Normalize(meanDir);
+        }
+    }
+    FallbackCandidate fbCands[kMaxCandidates];
+    int fbOrig[kMaxCandidates];
+    int fbCount = 0;
     for (int i = 0; i < n; ++i) {
         // Escaping a body may require several budgets. Admit outward progress
         // only; do not cross another body or relax physical map collision.
@@ -892,14 +993,19 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
                                    Len(Sub(cands[i].pos, route.retreatPos));
             val += kSolveFallbackBackW * backProg;
         }
-        // Avoid an earlier projectile collision before optimizing destination
-        // clearance. If every path is already exposed, geometry still selects
-        // progress out instead of freezing inside the threat.
-        if (safeTime > best2Time || (safeTime == best2Time && val > best2Val)) {
-            best2Time = safeTime;
-            best2Val = val;
-            best2 = i;
-        }
+        fbCands[fbCount] = FallbackCandidate{ cands[i].dir, cands[i].moveDist, val, safeTime };
+        fbOrig[fbCount] = i;
+        ++fbCount;
+    }
+    // Avoid an earlier projectile collision before optimizing destination
+    // clearance. If every path is already exposed, geometry still selects
+    // progress out instead of freezing inside the threat. See
+    // SelectFallbackCandidate for the udodgeFallbackSidestep ranking.
+    const int pick = SelectFallbackCandidate(fbCands, fbCount, radialRef,
+                                             in.settings.fallbackSidestep, standTime);
+    if (pick >= 0) {
+        best2 = fbOrig[pick];
+        best2Time = fbCands[pick].safeTime;
     }
 
     if (best2 >= 0) {
@@ -937,19 +1043,95 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     out.shouldMove = false;
 }
 
+int SelectFallbackCandidate(const FallbackCandidate* cands, int n, Vec2 radialRef,
+                            bool sidestepOn, float standTime)
+{
+    if (n <= 0 || !cands) return -1;
+    if (!sidestepOn) {
+        // Today's inline reduction, unchanged: latest safeTime wins; an exact
+        // safeTime tie is broken by the higher val; the first candidate seen
+        // keeps an exact (time, val) tie.
+        int best = -1;
+        float bestTime = -1.f, bestVal = -kHugeClearance;
+        for (int i = 0; i < n; ++i) {
+            if (cands[i].safeTime > bestTime ||
+                (cands[i].safeTime == bestTime && cands[i].val > bestVal)) {
+                bestTime = cands[i].safeTime;
+                bestVal = cands[i].val;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    const bool haveRadialRef = LenSq(radialRef) > 1e-6f;
+    // true when `a` should be preferred to `b`: latest time-to-danger first,
+    // then (within the tie band) the smaller ABSOLUTE radial component — most
+    // tangential first. Controller ruling 2026-09-19: radial motion is bad in
+    // BOTH directions (owner ruling 2026-09-18, "radial is the worst move...
+    // spiral, not radial"), so this must never prefer a step that is merely
+    // "less outward" than another when it is actually radially INWARD — an
+    // inward step must never beat a tangential one. Ranking on the signed
+    // value (an earlier version of this function) let an inward pick win a
+    // tie against a tangential one and regressed a hit on d_boss_open_dense
+    // [legacy]; |Dot| fixes that. Remaining ties broken by the higher val. An
+    // exact tie on every term keeps the incumbent `b`.
+    const auto better = [&](const FallbackCandidate& a, const FallbackCandidate& b) -> bool {
+        const float dt = a.safeTime - b.safeTime;
+        if (dt > kSolveFallbackTieMs) return true;
+        if (dt < -kSolveFallbackTieMs) return false;
+        if (haveRadialRef) {
+            const float ra = std::fabs(Dot(a.dir, radialRef));
+            const float rb = std::fabs(Dot(b.dir, radialRef));
+            if (ra < rb - 1e-4f) return true;
+            if (rb < ra - 1e-4f) return false;
+        }
+        return a.val > b.val;
+    };
+
+    // Rule: never select a step whose time-to-danger is shorter than standing
+    // still would be. If nothing clears that floor, report "nothing selected"
+    // so the caller's existing Surrounded fallback (hold, standClr) applies —
+    // this never relaxes a safety floor, it only refuses to prefer a worse pick.
+    int best = -1;
+    for (int i = 0; i < n; ++i) {
+        if (cands[i].safeTime + 1e-4f < standTime) continue;
+        if (best < 0 || better(cands[i], cands[best])) best = i;
+    }
+    if (best < 0) return -1;
+
+    // Minimum displacement: a pick under kSolveFallbackMinMoveTiles loses to any
+    // OTHER candidate that also clears the standTime floor and moves at least
+    // that far (ranked the same way), so the reflex sidesteps for real instead
+    // of settling for a jitter merely because it happened to rank first.
+    if (cands[best].moveDist < kSolveFallbackMinMoveTiles) {
+        int alt = -1;
+        for (int i = 0; i < n; ++i) {
+            if (i == best || cands[i].moveDist < kSolveFallbackMinMoveTiles) continue;
+            if (cands[i].safeTime + 1e-4f < standTime) continue;
+            if (alt < 0 || better(cands[i], cands[alt])) alt = i;
+        }
+        if (alt >= 0) best = alt;
+    }
+    return best;
+}
+
 bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
                         const Path::PlanResult& route, CoreState& state,
                         SolveResult& committed, bool mapRebuilt,
-                        const TimedAdvice& timed)
+                        const TimedAdvice& timed, SharedCtx* shared)
 {
     if (!in.map) return false;
     if (in.movementLocked || !std::isfinite(in.speed) || in.speed <= 0.f) {
         if (!committed.shouldMove) return false;
-        Solve(in, moveBudgetTiles, goal, route, state, committed, timed);
+        Solve(in, moveBudgetTiles, goal, route, state, committed, timed, shared);
         return true;
     }
     // Keep the hot stationary path cheap between map rebuilds. On a new map,
     // even a spatially clear Hold must inspect the new shot's future trajectory.
+    // NOT built when this branch never needs it (the common "holding still,
+    // map only re-anchored" tick returns above, before Build() — sharing must
+    // never turn that cheap path into a guaranteed build).
     const auto decisionClear = [&]() -> bool {
         if (!committed.shouldMove) {
             if (Core::PointSafety(in, in.player) < kULatencyPad) return false;
@@ -962,10 +1144,17 @@ bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& g
                 !Core::ZonePathClear(in, in.player, committed.target)) return false;
         }
         // Never approve a moving target solely from the shorter painted lane.
-        static thread_local Core::Temporal::Ctx ctx;
-        Core::Temporal::Build(*in.map, in.settings.hitScale, in.settings.positionUncertainty,
-                              in.player, kUTemporalCullTiles, ctx,
-                              Core::ProjectilePlayerHalf(in.settings));
+        // Item 4 follow-up: same shared-or-thread_local choice as Solve() above,
+        // over IDENTICAL Build() inputs (same in.map/in.player/in.settings,
+        // same kUTemporalCullTiles) — see SharedCtx's contract in UDodgeSolver.h.
+        static thread_local Core::Temporal::Ctx localCtx;
+        Core::Temporal::Ctx& ctx = shared ? shared->ctx : localCtx;
+        if (!shared || !shared->built) {
+            Core::Temporal::Build(*in.map, in.settings.hitScale, in.settings.positionUncertainty,
+                                  in.player, kUTemporalCullTiles, ctx,
+                                  Core::ProjectilePlayerHalf(in.settings));
+            if (shared) shared->built = true;
+        }
         const Vec2 target = committed.shouldMove ? committed.target : in.player;
         const float dwell = committed.shouldMove ? kUDwellMs : Core::Temporal::kHorizonMs;
         return Core::Temporal::PathClear(ctx, in.player, in.speed, target, dwell);
@@ -973,7 +1162,7 @@ bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& g
     if (decisionClear()) return false;
     // A rebuilt map contains the freshest evidence. It does not imply a solve
     // occurred: the worker may still be processing an older snapshot.
-    Solve(in, moveBudgetTiles, goal, route, state, committed, timed);
+    Solve(in, moveBudgetTiles, goal, route, state, committed, timed, shared);
     return true;
 }
 

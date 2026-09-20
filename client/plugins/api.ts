@@ -20,7 +20,7 @@
  */
 
 // ── Types (erased at build) ──────────────────────────────────────────
-export type { PluginContext, SettingOption } from '../src/plugins/PluginContext.js';
+export type { PluginContext, SettingOption, OtherPluginSettingDescription } from '../src/plugins/PluginContext.js';
 export type { ClientConnection } from '../src/proxy/ClientConnection.js';
 export type { Packet } from '../src/packets/Packet.js';
 export type { GameWorldState, TrackedEntity } from '../src/state/GameWorldState.js';

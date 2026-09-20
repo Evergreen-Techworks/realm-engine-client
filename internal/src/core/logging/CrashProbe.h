@@ -47,6 +47,12 @@ inline void LogException(EXCEPTION_POINTERS* ep, const char* tag)
         DbgFileLogWrite("[CrashProbe] (null exception pointers)");
         return;
     }
+    // Item 4 (navigation finish plan): DbgFileLogWrite buffers by default now.
+    // Flush whatever is queued and switch to unbuffered writes for the rest of
+    // this crash report (and anything after it) BEFORE writing a single line of
+    // the report itself, so a process that dies moments later still has every
+    // line on disk.
+    DbgFileLogEnterCrashMode();
     EXCEPTION_RECORD* er = ep->ExceptionRecord;
     CONTEXT* cx = ep->ContextRecord;
     char line[1024];

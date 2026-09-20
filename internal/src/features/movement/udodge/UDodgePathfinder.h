@@ -2,6 +2,10 @@
 #include "UDodgeCommitment.h"
 #include "UDodgeTypes.h"
 
+// PlannerSnapshot::ringApproach and PlanResult::ringGoal exist (Tactician Slice 2). The host
+// scenario harness builds against older trees too and keys its ring observations on this.
+#define UDODGE_PATH_RING 1
+
 // UDodge grid pathfinder (plan 65; TIME-EXPANDED per plan 64 temporal model) — a
 // bounded local grid Dijkstra that finds a WAYPOINT ROUTE around obstacles to the
 // nearest durable-safe area, the piece the straight-line per-tick solver cannot
@@ -123,12 +127,20 @@ struct PlannerSnapshot {
     bool     goalActive = false;   // a soft goal exists (tie-break only)
     Vec2     goalPos{};
     bool     goalWalkTo = false;
+    bool     groupActive = false;
+    Vec2     groupPos{};
+    int32_t  groupBossId = 0;
     bool     playerOnHazard = false;
     bool     hasLock = false;      // locked boss → gate goal cells to the weapon-range disk
     Vec2     lockPos{};
     float    weaponRangeTiles = 0.f; // disk radius (0 = no gate)
     float    innerStandoffTiles = 0.f; // annulus inner radius (0 = no inner gate). Goal cells inside
                                        // this radius of lockPos are rejected as GOALS but stay traversable.
+    // A lock target exists and the player is still APPROACHING its ring (the walk-to
+    // pipeline carries the approach, so hasLock is off): plan into
+    // [innerStandoffTiles, weaponRangeTiles] exactly as when hasLock is set.
+    // lockPos / weaponRangeTiles / innerStandoffTiles are valid.
+    bool     ringApproach = false;
     // ── Plan-commitment hysteresis (plan 76) ─────────────────────────────────
     // Last tick's accepted durable-safe goal, carried forward so the Dijkstra can
     // prefer it among near-equal options (stops the goal marker flip-flopping). The
@@ -150,13 +162,12 @@ struct PlannerSnapshot {
     // re-plan after a stall takes a different line instead of the same one.
     Vec2     navAvoid[kMaxNavAvoid]{};
     int      navAvoidCount = 0;
-    // The game thread is following a cached route that crosses damaging ground
-    // (PlanResult::navCrossesHazard): the worker's solve relaxes safe-walk for it on
-    // every cycle, not only on the cycle that planned the route.
-    bool     navFollowingHazardRoute = false;
     NavGrid  navGrid{};           // coarse 1-tile occupancy (game thread fills from WorldTAB)
     // navCollisionRule at publish time, so one snapshot is planned under one rule.
     Movement::Collision::Rule collisionRule = Movement::Collision::Rule::Legacy;
+    // udodgePlanner at publish time, for the same reason (S3.1). `map.planner`
+    // carries the same value to every Core test the worker runs.
+    Contact::Policy planner = Contact::Policy::Classic;
 };
 
 // The pathfinder's output — PLAIN DATA ONLY.
@@ -179,6 +190,9 @@ struct PlanResult {
     bool  startIsGoal = false; // the player cell is already durable-safe (no route needed)
     bool  expanded    = false; // the window grew beyond the base radius to find the goal
     bool  outOfRange  = false; // locked: no in-range goal, used an unconstrained (out-of-range) goal
+    bool  ringGoal    = false; // goalPos lies inside the ring (hasLock or ringApproach): a shot-free
+                               // in-ring cell, or the in-ring time-clear cell (tempGoal) that outranks
+                               // any ground outside the ring
     bool  partial      = false; // no durable pocket was time-reachable; the route heads to the
                                 // SAFEST reachable-in-time cell instead (best-effort lookahead bias,
                                 // still fully time-feasible — never assumes impossible speed)
@@ -204,11 +218,6 @@ struct PlanResult {
     int   navWptCount  = 0;     // number of route cells in navWpts
     Vec2  navWpts[kMaxNavWpts]{}; // route polyline (world; [0] = player cell) — driver + overlay
     int   navPops      = 0;     // A* cells finalized (perf diagnostics)
-    // The route crosses damaging ground. Under safe-walk the A* first treats that
-    // ground as a wall; only when no route exists without it does it take the
-    // least-damaging one and set this. The game thread then follows that route
-    // with safe-walk relaxed (the follower and the solver hard-refuse damaging
-    // ground otherwise, which used to leave the player pacing at the hazard edge).
     bool  navCrossesHazard = false;
     // ── Worker phase timing (perf diagnostics) — plain data, filled by Compute
     // on the worker thread, read by the game thread through the normal handoff.
