@@ -326,6 +326,10 @@ async function main() {
       devServer?.broadcastScriptLog(id, line, level);
     });
     devServer.setScriptHost(scriptHost);
+    // Generic host services (script start/stop, plugin-config read/write/
+    // apply) for any bundled plugin that needs them — wired before
+    // pluginManager.loadAll() runs (see startServices below).
+    pluginManager.setHostAccess(devServer.getPluginHostAccess());
     scriptHost.installBridge({
       stateManager,
       clientRef: bridgeClientRef,
