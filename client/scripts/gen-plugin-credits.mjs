@@ -17,9 +17,18 @@
 // directly; others are resolved through the GitHub commits API); a git display
 // name is the fallback. Ordering is by commit count, most active first.
 //
+// The popover exists to credit CONTRIBUTORS, not the project owner (user
+// decision 2026-09-20): his name is on the product itself, so his identities
+// are filtered out of the per-plugin lists and a plugin only shows a ⓘ when
+// someone else has worked on it. `Co-authored-by:` trailers count as
+// authorship, so work integrated on the owner's commits can still credit its
+// author; MANUAL_PLUGIN_AUTHORS covers contributors whose past work was
+// integrated before trailers were used.
+//
 // Run after history changes:      node scripts/gen-plugin-credits.mjs
 // Private build tree variant (adds plugins that only exist in C:\realm-engine,
-// credited to jessesulo; NEVER commit that variant to this public repo):
+// with no author list — they are the owner's own; NEVER commit that variant to
+// this public repo):
 //   node scripts/gen-plugin-credits.mjs --extra testlab-interleaver,testlab-recorder,testlab-runner,spoofing
 import { execFileSync } from 'child_process';
 import { writeFileSync } from 'fs';
@@ -36,6 +45,23 @@ const BRANCH = 'main';
 // the fallback for anything still unknown).
 const MANUAL_EMAIL_LOGINS = {
   'zackwinn10@gmail.com': 'Zaclin-GIT',
+};
+
+// The project owner is credited at the product level, not per plugin: the ⓘ
+// popover lists the OTHER people who worked on a plugin. All of the owner's
+// git identities are filtered by email and by resolved login.
+const OWNER_LOGIN = 'jessesulo';
+const OWNER_EMAILS = new Set(['sulo.jesse@outlook.com', 'jessesulo14@gmail.com']);
+
+// Contributors whose reviewed work was integrated under owner-authored
+// commits (so git history cannot see them), credited to the plugins that work
+// built. ProdMafia, 2026-09: predictive AutoNexus observation + health
+// evidence, and the shoot/autofire readiness bindings under the autoaim tree
+// (docs/prodmafia/integration-report.md).
+const MANUAL_PLUGIN_AUTHORS = {
+  'auto-nexus': ['ProdMafia'],
+  'auto-aim': ['ProdMafia'],
+  'killaura': ['ProdMafia'],
 };
 
 // TS side of each plugin, plus the native tree it drives. Auto Dodge is built
@@ -95,19 +121,39 @@ function listTree(prefix) {
   return git(['ls-tree', '-r', '--name-only', BRANCH, prefix]).split('\n').filter(Boolean);
 }
 
+// AI pair-programming trailers (Claude, Antigravity, …) are tooling, not
+// contributors — the popover credits people, so those co-authors are skipped.
+const NONHUMAN_COAUTHOR = /^(claude|anthropic|antigravity|gemini|openai|gpt-|gpt|codex|copilot|cursor)/i;
+const NONHUMAN_COAUTHOR_EMAIL = /@(noreply\.)?anthropic\.com$/i;
+
 // Per-file author history (unique commits per author email), following renames
-// so pre-rename contributors are not lost.
+// so pre-rename contributors are not lost. `Co-authored-by:` trailers count
+// the same as authorship, so work merged in on someone else's commit still
+// credits its author.
 const fileAuthorCache = new Map();
 function fileAuthors(file) {
   if (fileAuthorCache.has(file)) return fileAuthorCache.get(file);
   const out = new Map(); // email → { name, commits:Set }
-  const log = git(['log', BRANCH, '--follow', '--format=%H|%ae|%an', '--', file]);
+  const log = git(['log', BRANCH, '--follow',
+    '--format=%H|%ae|%an|%(trailers:key=Co-authored-by,valueonly,separator=;)', '--', file]);
   for (const line of log.split('\n').filter(Boolean)) {
-    const [hash, email, ...nameParts] = line.split('|');
-    const name = nameParts.join('|');
+    const parts = line.split('|');
+    const hash = parts[0];
+    const email = parts[1];
+    const trailers = parts.length >= 4 ? parts[parts.length - 1] : '';
+    const name = (parts.length >= 4 ? parts.slice(2, -1) : parts.slice(2)).join('|');
     if (!out.has(email)) out.set(email, { name, commits: new Set() });
     out.get(email).commits.add(hash);
     out.get(email).name = name; // keep the most recent spelling
+    for (const raw of trailers.split(';').map((s) => s.trim()).filter(Boolean)) {
+      const m = /^(.*?)\s*(?:<(.+)>)?$/.exec(raw);
+      const coEmail = (m[2] || `co-author:${(m[1] || raw).trim()}`).toLowerCase();
+      const coName = (m[1] || raw).trim() || raw;
+      if (NONHUMAN_COAUTHOR.test(coName) || NONHUMAN_COAUTHOR_EMAIL.test(coEmail)) continue;
+      if (!out.has(coEmail)) out.set(coEmail, { name: coName, commits: new Set() });
+      out.get(coEmail).commits.add(hash);
+      out.get(coEmail).name = coName;
+    }
   }
   fileAuthorCache.set(file, out);
   return out;
@@ -163,20 +209,27 @@ function display(login, email, info, emailLogins) {
   return info.get(email)?.name || email;
 }
 
-function sortedNames(agg, emailLogins) {
+function sortedNames(agg, emailLogins, manual = []) {
   const noreply = /^(\d+\+)?([^+@]+)@users\.noreply\.github\.com$/i;
-  const rows = [...agg.entries()].map(([email, info]) => {
+  const rows = [];
+  for (const [email, info] of agg.entries()) {
+    if (OWNER_EMAILS.has(email.toLowerCase())) continue; // the owner is not a per-plugin credit
     const m = noreply.exec(email);
-    return { key: display(m ? m[2] : null, email, agg, emailLogins), count: info.count };
-  });
+    const key = display(m ? m[2] : null, email, agg, emailLogins);
+    if (key === OWNER_LOGIN) continue;
+    rows.push({ key, count: info.count });
+  }
   // Merge author identities that resolved to the same login.
   const byKey = new Map();
   for (const r of rows) byKey.set(r.key, (byKey.get(r.key) || 0) + r.count);
-  return [...byKey.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([k]) => k);
+  const names = [...byKey.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([k]) => k);
+  // Manual credits go last: they have no commit counts to sort by.
+  for (const name of manual) if (!names.includes(name)) names.push(name);
+  return names;
 }
 
-function entry(files, emailLogins, extra = {}) {
-  return { ...extra, authors: sortedNames(bucketAuthors(files), emailLogins) };
+function entry(files, emailLogins, extra = {}, manual = []) {
+  return { ...extra, authors: sortedNames(bucketAuthors(files), emailLogins, manual) };
 }
 
 // ---- build the credits map -------------------------------------------------
@@ -185,7 +238,7 @@ const emailLogins = githubEmailLogins();
 const credits = {};
 
 for (const [id, paths] of Object.entries(PLUGIN_PATHS)) {
-  credits[id] = entry(expand(paths), emailLogins);
+  credits[id] = entry(expand(paths), emailLogins, {}, MANUAL_PLUGIN_AUTHORS[id]);
 }
 
 // Auto Dodge: per-version buckets over the movement tree, a shared-core bucket
@@ -207,11 +260,13 @@ lines.push(entry(sharedFiles, emailLogins, { label: 'Shared core' }));
 lines.push(entry(['client/plugins/auto-dodge.ts'], emailLogins, { label: 'Client integration' }));
 credits['auto-dodge'] = { lines };
 
-// Private-build extras: plugins that only exist in the build source tree.
+// Private-build extras: plugins that only exist in the build source tree. They
+// are the owner's own work, so they carry no per-plugin author list — the ⓘ
+// stays hidden until someone else contributes to them.
 const extraArg = process.argv.find((a) => a.startsWith('--extra='));
 if (extraArg) {
   for (const id of extraArg.slice('--extra='.length).split(',').filter(Boolean)) {
-    credits[id] = { authors: ['jessesulo'] };
+    credits[id] = { authors: [] };
   }
   console.log('gen-plugin-credits: PRIVATE variant (do not commit): ' + extraArg.slice(8));
 }

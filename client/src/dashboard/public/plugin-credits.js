@@ -5,53 +5,40 @@
 // window.PLUGIN_CREDITS for each plugin's ⓘ credits popover.
 window.PLUGIN_CREDITS = Object.freeze({
     "admin-autododge": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "anti-debuffs": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "anti-lag": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "api": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "auto-ability": {
       "authors": [
-        "jessesulo",
         "rythia58"
       ]
     },
     "auto-aim": {
       "authors": [
-        "jessesulo",
         "Zaclin-GIT",
-        "rythia58"
+        "rythia58",
+        "ProdMafia"
       ]
     },
     "auto-drink": {
       "authors": [
-        "jessesulo",
         "Zaclin-GIT",
         "FourOfSpades4"
       ]
     },
     "auto-follow": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "auto-loot": {
       "authors": [
-        "jessesulo",
         "Zaclin-GIT",
         "Jazano",
         "rythia58"
@@ -59,105 +46,73 @@ window.PLUGIN_CREDITS = Object.freeze({
     },
     "auto-nexus": {
       "authors": [
-        "jessesulo",
         "FourOfSpades4",
         "Zaclin-GIT",
-        "Brincz"
+        "Brincz",
+        "ProdMafia"
       ]
     },
     "camera-controls": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "chat-filter": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "collider-manipulation": {
       "authors": [
         "Zaclin-GIT",
-        "jessesulo",
         "decendium"
       ]
     },
     "damage-sniffer": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "fps-setter": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "glow": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "ip-connect": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "killaura": {
       "authors": [
-        "jessesulo",
-        "Zaclin-GIT"
+        "Zaclin-GIT",
+        "ProdMafia"
       ]
     },
     "o3-helper": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "packet-logger": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "player-noclip": {
       "authors": [
-        "jessesulo",
         "Zaclin-GIT"
       ]
     },
     "rollback": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "safe-visuals": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "safe-walk": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "server-switch": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "socket": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "speed-hack": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "spoof-push-tiles": {
-      "authors": [
-        "jessesulo"
-      ]
+      "authors": []
     },
     "auto-dodge": {
       "lines": [
@@ -165,52 +120,39 @@ window.PLUGIN_CREDITS = Object.freeze({
           "label": "XDodge",
           "note": "Ported from the XRebuild/XDriver decompile",
           "authors": [
-            "jessesulo",
             "Zaclin-GIT"
           ]
         },
         {
           "label": "RE-Sim (grid)",
-          "authors": [
-            "jessesulo"
-          ]
+          "authors": []
         },
         {
           "label": "RE-Sim (quadtree)",
-          "authors": [
-            "jessesulo"
-          ]
+          "authors": []
         },
         {
           "label": "zDodge",
           "authors": [
             "Zaclin-GIT",
-            "jessesulo",
             "decendium"
           ]
         },
         {
           "label": "RePP (RE++)",
-          "authors": [
-            "jessesulo"
-          ]
+          "authors": []
         },
         {
           "label": "PJDodge",
-          "authors": [
-            "jessesulo"
-          ]
+          "authors": []
         },
         {
           "label": "UDodge (unified)",
-          "authors": [
-            "jessesulo"
-          ]
+          "authors": []
         },
         {
           "label": "Shared core",
           "authors": [
-            "jessesulo",
             "Zaclin-GIT",
             "FourOfSpades4",
             "rythia58",
@@ -220,7 +162,6 @@ window.PLUGIN_CREDITS = Object.freeze({
         {
           "label": "Client integration",
           "authors": [
-            "jessesulo",
             "Zaclin-GIT",
             "FourOfSpades4"
           ]

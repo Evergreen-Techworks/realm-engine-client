@@ -6701,7 +6701,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     var entry = (window.PLUGIN_CREDITS || {})[p.id];
     if (!entry) return null;
 
-    var hasLines = Array.isArray(entry.lines) && entry.lines.some(function (l) { return l && l.authors && l.authors.length; });
+    var hasLines = Array.isArray(entry.lines) && entry.lines.some(function (l) { return l && ((l.authors && l.authors.length) || l.note); });
     var hasAuthors = Array.isArray(entry.authors) && entry.authors.length;
     if (!hasLines && !hasAuthors) return null;
 
@@ -6739,10 +6739,12 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       label.className = 'plugin-credits-line-label';
       label.textContent = line.label;
       row.appendChild(label);
-      var names = document.createElement('span');
-      names.className = 'plugin-credits-names';
-      names.textContent = line.authors.join(', ');
-      row.appendChild(names);
+      if (line.authors && line.authors.length) {
+        var names = document.createElement('span');
+        names.className = 'plugin-credits-names';
+        names.textContent = line.authors.join(', ');
+        row.appendChild(names);
+      }
       pop.appendChild(row);
       if (line.note) {
         var note = document.createElement('div');
@@ -6752,7 +6754,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       }
     }
 
-    if (hasLines) entry.lines.forEach(function (line) { if (line && line.authors && line.authors.length) addLine(line); });
+    if (hasLines) entry.lines.forEach(function (line) { if (line && ((line.authors && line.authors.length) || line.note)) addLine(line); });
     else addNames(entry.authors);
 
     var src = document.createElement('div');
