@@ -5,6 +5,12 @@ import {
   MAX_REQUEST_RAW_CHARS,
   MAX_REQUEST_AGE_MS,
   MAX_RUN_MINUTES,
+  SCRIPT_START_SETTLE_MS,
+  NATIVE_BRIDGE_TIMEOUT_MS,
+  NO_MOVEMENT_TIMEOUT_MS,
+  NO_MOVEMENT_MIN_TILE_DELTA,
+  RECONNECT_GRACE_MS,
+  RECONNECT_RESET_MS,
   parseRunRequest,
   extractRunIdForConsumedName,
   consumedRequestFileName,
@@ -13,9 +19,12 @@ import {
   isSafeId,
   buildThrowawayConfigSnapshot,
   buildRejectedResult,
+  formatAccountMatchDetail,
   RunnerStateMachine,
+  ReconnectClassifier,
   type RunRequest,
   type PluginConfigSnapshot,
+  type WorldPosition,
 } from '../runnerCore.js';
 
 describe('TESTLAB_PRIVATE_ONLY marker', () => {
@@ -309,6 +318,25 @@ function req(overrides: Partial<RunRequest> = {}): RunRequest {
   };
 }
 
+/**
+ * Drives a machine already in waiting-world (after a successful
+ * onLaunchResult) all the way to running, exactly as the settled
+ * both-signals path requires: enter waiting-bridge at `inWorldAtMs`, one
+ * poll tick establishing the bridge as connected (arming the settle
+ * window), then a second tick after the full settle delay observing
+ * 'ready' — `checkBridgeReady` only starts the settle clock on the tick
+ * that FIRST observes the bridge connected, so a single call can never by
+ * itself report 'ready' (this mirrors the real poll loop, which ticks every
+ * few seconds).
+ */
+function toRunning(m: RunnerStateMachine, inWorldAtMs: number): void {
+  m.enterWaitingBridge(inWorldAtMs);
+  m.checkBridgeReady(inWorldAtMs, true, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS);
+  const outcome = m.checkBridgeReady(inWorldAtMs + SCRIPT_START_SETTLE_MS, true, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS);
+  if (outcome !== 'ready') throw new Error(`toRunning: expected 'ready', got '${outcome}'`);
+  m.enterRunning();
+}
+
 describe('RunnerStateMachine — every transition', () => {
   it('idle -> launching via begin(); refuses a second begin()', () => {
     const m = new RunnerStateMachine();
@@ -337,6 +365,28 @@ describe('RunnerStateMachine — every transition', () => {
     expect(result.gamePid).toBeNull();
   });
 
+  it('launching -> stopping -> done on account-not-found, with a counts-only detail when accountMatch is provided', () => {
+    const m = new RunnerStateMachine();
+    m.begin(0, req({ accountLabel: 'lab-1' }));
+    m.onLaunchResult(false, 'account-not-found', null, { matchCount: 0, totalAccounts: 2 });
+    const result = m.finish(1000, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: false });
+    expect(result.reason).toBe('account-not-found');
+    expect(result.detail).toBe(
+      `account-not-found: 0 of 2 saved accounts have the label "lab-1" (labels are compared case-insensitively, ignoring spaces, '-' and '_')`,
+    );
+  });
+
+  it('launching -> stopping -> done on account-ambiguous, never guessing', () => {
+    const m = new RunnerStateMachine();
+    m.begin(0, req({ accountLabel: 'lab-1' }));
+    m.onLaunchResult(false, 'account-ambiguous', null, { matchCount: 2, totalAccounts: 4 });
+    const result = m.finish(1000, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: false });
+    expect(result.reason).toBe('account-ambiguous');
+    expect(result.detail).toBe(
+      `account-ambiguous: 2 of 4 saved accounts have the label "lab-1" (labels are compared case-insensitively, ignoring spaces, '-' and '_')`,
+    );
+  });
+
   it('launching -> stopping -> done on launch-failed (unrecognized error code maps to launch-failed)', () => {
     const m = new RunnerStateMachine();
     m.begin(0, req());
@@ -346,16 +396,35 @@ describe('RunnerStateMachine — every transition', () => {
     expect(result.detail).toBe('boom');
   });
 
-  it('waiting-world -> running via enterRunning(), stamping inWorldUtc', () => {
+  it('waiting-world -> waiting-bridge -> running, stamping inWorldUtc at waiting-bridge entry', () => {
     const m = new RunnerStateMachine();
     m.begin(0, req());
     m.onLaunchResult(true, null, 1);
     expect(m.hasEnteredWorld()).toBe(false);
-    m.enterRunning(500);
+    m.enterWaitingBridge(500);
+    expect(m.getPhase()).toBe('waiting-bridge');
+    expect(m.hasEnteredWorld()).toBe(true); // true once in world, independent of the bridge.
+    expect(m.checkBridgeReady(500, true, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS)).toBe('waiting');
+    expect(m.checkBridgeReady(500 + SCRIPT_START_SETTLE_MS, true, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS)).toBe('ready');
+    m.enterRunning();
     expect(m.getPhase()).toBe('running');
-    expect(m.hasEnteredWorld()).toBe(true);
     const result = m.finish(600, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: true });
     expect(result.inWorldUtc).toBe(new Date(500).toISOString());
+  });
+
+  it('enterRunning() is a no-op outside waiting-bridge (e.g. still waiting-world)', () => {
+    const m = new RunnerStateMachine();
+    m.begin(0, req());
+    m.onLaunchResult(true, null, 1);
+    m.enterRunning();
+    expect(m.getPhase()).toBe('waiting-world');
+  });
+
+  it('checkBridgeReady is a no-op outside waiting-bridge', () => {
+    const m = new RunnerStateMachine();
+    m.begin(0, req());
+    expect(m.checkBridgeReady(0, true, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS)).toBe('waiting');
+    expect(m.getPhase()).toBe('launching'); // begin() alone hasn't reached waiting-bridge yet.
   });
 
   it('hasEnteredWorld stays false for a run that never got past waiting-world', () => {
@@ -378,15 +447,164 @@ describe('RunnerStateMachine — every transition', () => {
     expect(result.reason).toBe('never-in-world');
   });
 
+  describe('waiting-bridge -> running via checkBridgeReady (script-start gate)', () => {
+    it('stays "waiting" before the settle delay elapses, even with the bridge connected the whole time', () => {
+      const m = new RunnerStateMachine();
+      m.begin(0, req());
+      m.onLaunchResult(true, null, 1);
+      m.enterWaitingBridge(0);
+      expect(m.checkBridgeReady(SCRIPT_START_SETTLE_MS - 1, true, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS)).toBe('waiting');
+      expect(m.getPhase()).toBe('waiting-bridge');
+    });
+
+    it('becomes "ready" exactly at the settle boundary', () => {
+      const m = new RunnerStateMachine();
+      m.begin(0, req());
+      m.onLaunchResult(true, null, 1);
+      m.enterWaitingBridge(0);
+      expect(m.checkBridgeReady(0, true, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS)).toBe('waiting'); // first observation arms the settle clock at t=0
+      expect(m.checkBridgeReady(SCRIPT_START_SETTLE_MS, true, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS)).toBe('ready');
+      expect(m.getPhase()).toBe('waiting-bridge'); // caller transitions explicitly with enterRunning().
+    });
+
+    it('a bridge that disconnects before the settle delay resets the settle window', () => {
+      const m = new RunnerStateMachine();
+      m.begin(0, req());
+      m.onLaunchResult(true, null, 1);
+      m.enterWaitingBridge(0);
+      expect(m.checkBridgeReady(1000, true, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS)).toBe('waiting'); // arms settle clock at t=1000
+      expect(m.checkBridgeReady(2000, false, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS)).toBe('waiting'); // dropped before it elapsed
+      // Reconnects at 2500; settle now measured from 2500, not the original 1000.
+      expect(m.checkBridgeReady(2500, true, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS)).toBe('waiting'); // re-arms at t=2500
+      expect(m.checkBridgeReady(2500 + SCRIPT_START_SETTLE_MS - 1, true, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS)).toBe('waiting');
+      expect(m.checkBridgeReady(2500 + SCRIPT_START_SETTLE_MS, true, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS)).toBe('ready');
+    });
+
+    it('times out with reason native-not-connected when the bridge never connects within NATIVE_BRIDGE_TIMEOUT_MS of entering world', () => {
+      const m = new RunnerStateMachine();
+      m.begin(0, req());
+      m.onLaunchResult(true, null, 1);
+      m.enterWaitingBridge(0);
+      expect(m.checkBridgeReady(NATIVE_BRIDGE_TIMEOUT_MS - 1, false, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS)).toBe('waiting');
+      expect(m.getPhase()).toBe('waiting-bridge');
+      expect(m.checkBridgeReady(NATIVE_BRIDGE_TIMEOUT_MS, false, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS)).toBe('timeout');
+      expect(m.getPhase()).toBe('stopping');
+      // The character is genuinely in the world when this fires -- hasEnteredWorld must stay true.
+      expect(m.hasEnteredWorld()).toBe(true);
+      const result = m.finish(NATIVE_BRIDGE_TIMEOUT_MS + 50, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: true });
+      expect(result.reason).toBe('native-not-connected');
+      expect(result.inWorldUtc).toBe(new Date(0).toISOString());
+    });
+
+    it('a bridge that connects just before the timeout still needs its own full settle window, which can push past the timeout', () => {
+      const m = new RunnerStateMachine();
+      m.begin(0, req());
+      m.onLaunchResult(true, null, 1);
+      m.enterWaitingBridge(0);
+      // Connects with only 1ms of settle room left before the timeout would fire.
+      const almostTimeout = NATIVE_BRIDGE_TIMEOUT_MS - 1;
+      expect(m.checkBridgeReady(almostTimeout, true, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS)).toBe('waiting');
+      // One tick later the settle window hasn't elapsed yet, but neither has the overall timeout been re-armed --
+      // the very next check, past the timeout mark, must NOT report 'ready' just because the bridge is connected.
+      const stillWithinSettle = almostTimeout + SCRIPT_START_SETTLE_MS - 1;
+      const outcome = m.checkBridgeReady(stillWithinSettle, true, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS);
+      expect(outcome).toBe('timeout');
+      expect(m.getPhase()).toBe('stopping');
+    });
+  });
+
+  describe('movement watchdog (running only)', () => {
+    const pos = (x: number, y: number, mapKey: string | number = 'realm'): WorldPosition => ({ x, y, mapKey });
+
+    it('stays "waiting" before the timeout, and arms on the first call', () => {
+      const m = new RunnerStateMachine();
+      m.begin(0, req());
+      m.onLaunchResult(true, null, 1);
+      toRunning(m, 0);
+      expect(m.checkMovement(1000, pos(0, 0), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe('waiting');
+      expect(m.checkMovement(NO_MOVEMENT_TIMEOUT_MS + 1000 - 1, pos(0, 0), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe('waiting');
+    });
+
+    it('"moved" once distance reaches the tile threshold, and resets the window', () => {
+      const m = new RunnerStateMachine();
+      m.begin(0, req());
+      m.onLaunchResult(true, null, 1);
+      toRunning(m, 0);
+      m.checkMovement(0, pos(100, 100), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA); // arm baseline
+      expect(m.checkMovement(1000, pos(100.5, 100), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe('waiting'); // < 1 tile
+      expect(m.checkMovement(2000, pos(101, 100), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe('moved'); // exactly 1 tile
+      // Window reset at t=2000 -- no restart even after another full timeout with no further movement, until it re-elapses.
+      expect(m.checkMovement(2000 + NO_MOVEMENT_TIMEOUT_MS - 1, pos(101, 100), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe('waiting');
+    });
+
+    it('a map change counts as movement even at the identical x/y', () => {
+      const m = new RunnerStateMachine();
+      m.begin(0, req());
+      m.onLaunchResult(true, null, 1);
+      toRunning(m, 0);
+      m.checkMovement(0, pos(50, 50, 'nexus'), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA);
+      expect(m.checkMovement(1000, pos(50, 50, 'realm-42'), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe('moved');
+    });
+
+    it('"restart" once after NO_MOVEMENT_TIMEOUT_MS with no movement, then "stopped" after another full window with still none', () => {
+      const m = new RunnerStateMachine();
+      m.begin(0, req());
+      m.onLaunchResult(true, null, 1);
+      toRunning(m, 0);
+      m.checkMovement(0, pos(10, 10), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA); // arm
+      expect(m.checkMovement(NO_MOVEMENT_TIMEOUT_MS - 1, pos(10, 10), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe('waiting');
+      expect(m.checkMovement(NO_MOVEMENT_TIMEOUT_MS, pos(10, 10), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe('restart');
+      expect(m.getPhase()).toBe('running'); // restart doesn't stop the run itself.
+      // Second window starts fresh from the restart tick.
+      expect(m.checkMovement(NO_MOVEMENT_TIMEOUT_MS + NO_MOVEMENT_TIMEOUT_MS - 1, pos(10, 10), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe(
+        'waiting',
+      );
+      expect(m.checkMovement(NO_MOVEMENT_TIMEOUT_MS * 2, pos(10, 10), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe('stopped');
+      expect(m.getPhase()).toBe('stopping');
+      const result = m.finish(NO_MOVEMENT_TIMEOUT_MS * 2 + 10, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: true });
+      expect(result.reason).toBe('no-movement');
+    });
+
+    it('movement after a restart refreshes the one-restart budget for a later stall', () => {
+      const m = new RunnerStateMachine();
+      m.begin(0, req());
+      m.onLaunchResult(true, null, 1);
+      toRunning(m, 0);
+      m.checkMovement(0, pos(0, 0), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA);
+      expect(m.checkMovement(NO_MOVEMENT_TIMEOUT_MS, pos(0, 0), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe('restart'); // restart #1 used
+      expect(m.checkMovement(NO_MOVEMENT_TIMEOUT_MS + 1000, pos(5, 5), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe('moved'); // real movement
+      // A SECOND stall, long after, gets its own restart -- the budget isn't "used up" for the whole run.
+      const t2 = NO_MOVEMENT_TIMEOUT_MS + 1000 + NO_MOVEMENT_TIMEOUT_MS;
+      expect(m.checkMovement(t2, pos(5, 5), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe('restart');
+    });
+
+    it('is a no-op outside running', () => {
+      const m = new RunnerStateMachine();
+      m.begin(0, req());
+      expect(m.checkMovement(0, pos(0, 0), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe('waiting');
+      expect(m.getPhase()).toBe('launching');
+    });
+
+    it('missing position data on both sides never proves movement -- still escalates to restart/stopped as a safety net', () => {
+      const m = new RunnerStateMachine();
+      m.begin(0, req());
+      m.onLaunchResult(true, null, 1);
+      toRunning(m, 0);
+      m.checkMovement(0, null, NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA);
+      expect(m.checkMovement(NO_MOVEMENT_TIMEOUT_MS, null, NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA)).toBe('restart');
+    });
+  });
+
   it('running -> stopping -> done on completed after the requested minutes elapse', () => {
     const m = new RunnerStateMachine();
     m.begin(0, req({ minutes: 10 }));
     m.onLaunchResult(true, null, 1);
-    m.enterRunning(1000);
-    expect(m.checkMinutesElapsed(1000 + 10 * 60_000 - 1)).toBe(false);
-    expect(m.checkMinutesElapsed(1000 + 10 * 60_000)).toBe(true);
+    toRunning(m, 1000);
+    const base = 1000; // inWorldAtMs, and checkMinutesElapsed's epoch.
+    expect(m.checkMinutesElapsed(base + 10 * 60_000 - 1)).toBe(false);
+    expect(m.checkMinutesElapsed(base + 10 * 60_000)).toBe(true);
     expect(m.getPhase()).toBe('stopping');
-    const result = m.finish(1000 + 10 * 60_000, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: true });
+    const result = m.finish(base + 10 * 60_000, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: true });
     expect(result.reason).toBe('completed');
   });
 
@@ -394,7 +612,7 @@ describe('RunnerStateMachine — every transition', () => {
     const m = new RunnerStateMachine();
     m.begin(0, req());
     m.onLaunchResult(true, null, 1);
-    m.enterRunning(0);
+    toRunning(m, 0);
     expect(m.onDeath()).toBe(true);
     expect(m.getPhase()).toBe('stopping');
     const result = m.finish(10, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: true });
@@ -405,7 +623,7 @@ describe('RunnerStateMachine — every transition', () => {
     const m = new RunnerStateMachine();
     m.begin(0, req({ stopOn: { death: false, maxReconnects: undefined } }));
     m.onLaunchResult(true, null, 1);
-    m.enterRunning(0);
+    toRunning(m, 0);
     expect(m.onDeath()).toBe(false);
     expect(m.getPhase()).toBe('running');
   });
@@ -414,12 +632,12 @@ describe('RunnerStateMachine — every transition', () => {
     const m = new RunnerStateMachine();
     m.begin(0, req({ stopOn: { death: true, maxReconnects: 2 } }));
     m.onLaunchResult(true, null, 1);
-    m.enterRunning(0);
-    expect(m.onReconnect()).toBe(false); // 1
-    expect(m.onReconnect()).toBe(false); // 2
-    expect(m.onReconnect()).toBe(true); // 3 > 2
+    toRunning(m, 0);
+    expect(m.onReconnect(100)).toBe(false); // 1
+    expect(m.onReconnect(200)).toBe(false); // 2
+    expect(m.onReconnect(300)).toBe(true); // 3 > 2
     expect(m.getPhase()).toBe('stopping');
-    const result = m.finish(10, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: true });
+    const result = m.finish(310, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: true });
     expect(result.reason).toBe('reconnect-limit');
     expect(m.getReconnectCount()).toBe(3);
   });
@@ -428,16 +646,29 @@ describe('RunnerStateMachine — every transition', () => {
     const m = new RunnerStateMachine();
     m.begin(0, req());
     m.onLaunchResult(true, null, 1);
-    m.enterRunning(0);
-    for (let i = 0; i < 50; i++) expect(m.onReconnect()).toBe(false);
+    toRunning(m, 0);
+    for (let i = 0; i < 50; i++) expect(m.onReconnect(1000 + i * 1000)).toBe(false);
     expect(m.getPhase()).toBe('running');
+  });
+
+  it('the abnormal-reconnect count resets after RECONNECT_RESET_MS of healthy play', () => {
+    const m = new RunnerStateMachine();
+    m.begin(0, req({ stopOn: { death: true, maxReconnects: 1 } }));
+    m.onLaunchResult(true, null, 1);
+    toRunning(m, 0);
+    expect(m.onReconnect(1000)).toBe(false); // count=1, under the limit
+    // A long healthy stretch passes -- the next one starts counting from zero again.
+    expect(m.onReconnect(1000 + RECONNECT_RESET_MS)).toBe(false); // reset to 0, then count=1
+    expect(m.getReconnectCount()).toBe(1);
+    // But two close together after the reset DOES trip it.
+    expect(m.onReconnect(1000 + RECONNECT_RESET_MS + 1000)).toBe(true); // count=2 > 1
   });
 
   it('requestStop keeps the FIRST reason when called twice (idempotent)', () => {
     const m = new RunnerStateMachine();
     m.begin(0, req());
     m.onLaunchResult(true, null, 1);
-    m.enterRunning(0);
+    toRunning(m, 0);
     m.requestStop('death', 'first');
     m.requestStop('error', 'second');
     const result = m.finish(10, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: true });
@@ -449,7 +680,7 @@ describe('RunnerStateMachine — every transition', () => {
     const m = new RunnerStateMachine();
     m.begin(0, req());
     m.onLaunchResult(true, null, 1);
-    m.enterRunning(0);
+    toRunning(m, 0);
     m.requestStop('error', 'unexpected exception: boom');
     const result = m.finish(20, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: true });
     expect(result.reason).toBe('error');
@@ -469,7 +700,7 @@ describe('RunnerStateMachine — every transition', () => {
     const m = new RunnerStateMachine();
     m.begin(0, req({ runId: 'r-xyz' }));
     m.onLaunchResult(true, null, 999);
-    m.enterRunning(0);
+    toRunning(m, 0);
     m.requestStop('completed', 'done');
     const result = m.finish(30, {
       build: { version: '1.2.3', commit: 'deadbeef' },
@@ -488,6 +719,95 @@ describe('RunnerStateMachine — every transition', () => {
       gamePid: 999,
       gameTerminated: true,
     });
+  });
+});
+
+describe('formatAccountMatchDetail', () => {
+  it('formats the documented account-not-found example exactly', () => {
+    expect(formatAccountMatchDetail('account-not-found', 0, 2, 'lab-1')).toBe(
+      `account-not-found: 0 of 2 saved accounts have the label "lab-1" (labels are compared case-insensitively, ignoring spaces, '-' and '_')`,
+    );
+  });
+
+  it('singularizes "account" for exactly one saved account', () => {
+    expect(formatAccountMatchDetail('account-not-found', 0, 1, 'x')).toBe(
+      `account-not-found: 0 of 1 saved account have the label "x" (labels are compared case-insensitively, ignoring spaces, '-' and '_')`,
+    );
+  });
+
+  it('never contains anything but the reason, counts, and the queried label', () => {
+    const detail = formatAccountMatchDetail('account-ambiguous', 2, 5, 'twin-1');
+    expect(detail).not.toMatch(/@/); // no e-mail shape ever sneaks in
+    expect(detail).toContain('2 of 5');
+  });
+});
+
+describe('ReconnectClassifier', () => {
+  it('replays the real 2026-09-20 sequence (6 server-driven map hops in 9 minutes) and trips on NONE of them', () => {
+    const c = new ReconnectClassifier();
+    // 06:17:56 already in Realm, already loaded.
+    c.onAdmissionLoaded();
+
+    // 06:18:54 RECONNECT "Nexus" -> 06:18:55 connected -> Map: Nexus (loaded shortly after).
+    c.onReconnectPacket(58_000);
+    expect(c.classify(59_000)).toBe(false);
+    c.onAdmissionLoaded();
+
+    // 06:19:02 RECONNECT "NexusPortal.Zephyr" -> connected -> Map: Realm (loaded).
+    c.onReconnectPacket(66_000);
+    expect(c.classify(66_500)).toBe(false);
+    c.onAdmissionLoaded();
+
+    // 06:20:21 RECONNECT "Nexus" -> connected -> Map: Nexus (loaded).
+    c.onReconnectPacket(145_000);
+    expect(c.classify(145_600)).toBe(false);
+    c.onAdmissionLoaded();
+
+    // 06:20:30 RECONNECT "NexusPortal.Zephyr" -> 06:20:31 connected (the 6th hop, run stopped here in the old code).
+    c.onReconnectPacket(154_000);
+    expect(c.classify(155_000)).toBe(false);
+  });
+
+  it('an abnormal reconnect: no RECONNECT packet observed at all', () => {
+    const c = new ReconnectClassifier();
+    c.onAdmissionLoaded();
+    expect(c.classify(100_000)).toBe(true);
+  });
+
+  it('an abnormal reconnect: the last RECONNECT packet is stale (older than RECONNECT_GRACE_MS)', () => {
+    const c = new ReconnectClassifier();
+    c.onAdmissionLoaded();
+    c.onReconnectPacket(0);
+    expect(c.classify(RECONNECT_GRACE_MS + 1)).toBe(true);
+  });
+
+  it('a RECONNECT packet exactly at the grace boundary still counts as normal', () => {
+    const c = new ReconnectClassifier();
+    c.onAdmissionLoaded();
+    c.onReconnectPacket(0);
+    expect(c.classify(RECONNECT_GRACE_MS)).toBe(false);
+  });
+
+  it('an abnormal reconnect: the connection that just ended never reached "loaded" (a failed reconnect attempt), even with a fresh RECONNECT packet', () => {
+    const c = new ReconnectClassifier();
+    // First connection reached loaded.
+    c.onAdmissionLoaded();
+    c.onReconnectPacket(1000);
+    expect(c.classify(1100)).toBe(false); // normal hop -- but this new connection...
+    // ...never itself reaches 'loaded' before the NEXT reconnect (crashed mid-load).
+    c.onReconnectPacket(2000);
+    expect(c.classify(2100)).toBe(true); // abnormal: previous connection never loaded.
+  });
+
+  it('classify() resets loaded-tracking for the new connection regardless of the verdict', () => {
+    const c = new ReconnectClassifier();
+    c.onAdmissionLoaded();
+    c.onReconnectPacket(0);
+    expect(c.classify(100)).toBe(false);
+    // The new connection (post-classify) hasn't reached loaded yet -- a reconnect
+    // right now, even with a fresh packet, is abnormal because THIS one never loaded.
+    c.onReconnectPacket(200);
+    expect(c.classify(300)).toBe(true);
   });
 });
 
@@ -521,7 +841,7 @@ describe('no request -> inert (documented at the plugin level; core-level guaran
     expect(m.checkNeverInWorld(1_000_000)).toBe(false);
     expect(m.checkMinutesElapsed(1_000_000)).toBe(false);
     expect(m.onDeath()).toBe(false);
-    expect(m.onReconnect()).toBe(false);
+    expect(m.onReconnect(0)).toBe(false);
     expect(m.getPhase()).toBe('idle');
   });
 });
