@@ -13020,6 +13020,57 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     return true;
   }
 
+  // Launch a saved account by its display label, exactly as that account's
+  // own Launch button would (same launchGameWithCredentials() call, same
+  // payload) — for any other script running in this page that only has a
+  // label to go on. Resolves {ok:true} once the server reports the launch
+  // succeeded, or {ok:false, error:'account-not-found'|'launch-failed'}.
+  // Never exposes account data itself; the caller only ever gets ok/error.
+  window._launchAccountByLabel = function (label, serverName) {
+    return new Promise(function (resolve) {
+      var norm = String(label || '').trim().toLowerCase();
+      var account = null;
+      for (var i = 0; i < dashboardAccounts.length; i++) {
+        var candidate = String(dashboardAccounts[i].label || dashboardAccounts[i].email || '').trim().toLowerCase();
+        if (candidate && candidate === norm) { account = dashboardAccounts[i]; break; }
+      }
+      if (!account) { resolve({ ok: false, error: 'account-not-found' }); return; }
+      if (!ws || ws.readyState !== 1) { resolve({ ok: false, error: 'launch-failed' }); return; }
+
+      var settled = false;
+      var timeoutId = null;
+      var onResult = function (event) {
+        var msg;
+        try { msg = JSON.parse(event.data); } catch (e) { return; }
+        if (!msg || msg.type !== window.WS_MSG.LAUNCH_GAME_RESULT) return;
+        finish(!!msg.ok, msg.ok ? undefined : 'launch-failed');
+      };
+      function finish(ok, error) {
+        if (settled) return;
+        settled = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        ws.removeEventListener('message', onResult);
+        resolve({ ok: ok, error: ok ? undefined : (error || 'launch-failed') });
+      }
+      ws.addEventListener('message', onResult);
+      timeoutId = setTimeout(function () { finish(false, 'launch-failed'); }, 30000);
+
+      var started;
+      try {
+        started = launchGameWithCredentials(
+          String(account.email || '').trim(),
+          String(account.password || ''),
+          String(serverName || account.serverName || 'USWest').trim() || 'USWest',
+          undefined,
+          launchOptsWithAccount(account, {}),
+        );
+      } catch (e) {
+        started = false;
+      }
+      if (!started) finish(false, 'launch-failed');
+    });
+  };
+
   function handleConfig(msg) {
     // Capture bot API URL for direct script upload requests
     if (msg.botApiUrl) window._botApiUrl = String(msg.botApiUrl);
