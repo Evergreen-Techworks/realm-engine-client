@@ -326,10 +326,6 @@ async function main() {
       devServer?.broadcastScriptLog(id, line, level);
     });
     devServer.setScriptHost(scriptHost);
-    // Generic host services (script start/stop, plugin-config read/write/
-    // apply) for any bundled plugin that needs them — wired before
-    // pluginManager.loadAll() runs (see startServices below).
-    pluginManager.setHostAccess(devServer.getPluginHostAccess());
     scriptHost.installBridge({
       stateManager,
       clientRef: bridgeClientRef,
@@ -380,7 +376,14 @@ async function main() {
   const diagPollTimer = setInterval(pollEventLoopDiag, 2000);
   diagPollTimer.unref?.();
 
-  const shutdown = async () => {
+  /**
+   * `exitCode` defaults to 0 (the normal clean shutdown every existing
+   * caller gets) — SIGINT/SIGTERM below always call this with no argument,
+   * deliberately, so nothing the signal event itself might pass through
+   * could ever change the exit code. A caller that needs a different code
+   * (see `requestAppShutdown` below) passes it explicitly.
+   */
+  const shutdown = async (exitCode = 0) => {
     if (startupController.signal.aborted) return;
     startupController.abort();
     clearInterval(diagPollTimer);
@@ -392,10 +395,30 @@ async function main() {
     proxy.stop();
     pluginManager.stopWatching();
     await hooker.uninstall();
-    process.exit(0);
+    process.exit(exitCode);
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => { void shutdown(); });
+  process.on('SIGTERM', () => { void shutdown(); });
+
+  // Generic host services (script start/stop, plugin-config read/write/
+  // apply, launch-by-label, app shutdown) for any bundled plugin that needs
+  // them — wired before pluginManager.loadAll() runs (see startServices
+  // below). requestAppShutdown reuses this same graceful shutdown, with a
+  // hard timeout so a hang anywhere in it (e.g. hooker.uninstall()) still
+  // exits with the requested code rather than leaving the process running.
+  if (devServer) {
+    pluginManager.setHostAccess({
+      ...devServer.getPluginHostAccess(),
+      requestAppShutdown: (exitCode: number) => {
+        const forceTimer = setTimeout(() => {
+          Logger.warn('Main', 'Graceful shutdown timed out; forcing exit.');
+          process.exit(exitCode);
+        }, 8000);
+        forceTimer.unref?.();
+        void shutdown(exitCode).catch(() => process.exit(exitCode));
+      },
+    });
+  }
 
   void startMetadataEnrichment({
     signal: startupController.signal,
