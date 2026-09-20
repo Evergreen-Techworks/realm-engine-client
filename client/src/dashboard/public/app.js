@@ -6513,8 +6513,9 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
 
   /**
    * Main plugin panel: one card per plugin in the filtered list. Every card
-   * carries its own enable toggle and hotkey binder, so a plugin can be bound
-   * while it is off; settings only render once the plugin is enabled.
+   * carries a hotkey binder and a credits ⓘ (enabling is the sidebar toggle's
+   * job), so a plugin can be bound while it is off; settings only render once
+   * the plugin is enabled.
    */
   function renderPluginCardsPanel(plugins, detailEl) {
     teleportBeaconSelectEl = null;
@@ -6558,24 +6559,8 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       actions.className = 'plugin-detail-actions';
       actions.appendChild(buildPluginHotkeyControl(p));
 
-      if (!p.hotkeyLocked) {
-        var toggleLabel = document.createElement('label');
-        toggleLabel.className = 'toggle-switch plugin-detail-master-toggle';
-        toggleLabel.title = (p.enabled ? 'Disable ' : 'Enable ') + getPluginDisplayName(p);
-        toggleLabel.innerHTML =
-          '<input type="checkbox" ' + (p.enabled ? 'checked' : '') + '>' +
-          '<span class="toggle-slider"></span>';
-        var cb = toggleLabel.querySelector('input');
-        cb.setAttribute('aria-label', 'Enable ' + getPluginDisplayName(p));
-        cb.addEventListener('change', function () {
-          if (!ws || ws.readyState !== 1) {
-            cb.checked = !!p.enabled;
-            return;
-          }
-          ws.send(JSON.stringify({ type: 'togglePlugin', pluginId: p.id, enabled: cb.checked }));
-        });
-        actions.appendChild(toggleLabel);
-      }
+      var creditsControl = buildPluginCreditsControl(p);
+      if (creditsControl) actions.appendChild(creditsControl);
 
       header.appendChild(actions);
       card.appendChild(header);
@@ -6700,6 +6685,82 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     wrap.appendChild(clearBtn);
 
     syncPluginHotkeyControl(wrap, p);
+    return wrap;
+  }
+
+  /**
+   * Credits ⓘ — sits where the card header's master toggle used to be (the
+   * sidebar toggle is the only per-plugin enable switch now). Hovering or
+   * keyboard-focusing the icon shows everyone who worked on the plugin, from
+   * window.PLUGIN_CREDITS, which scripts/gen-plugin-credits.mjs generates
+   * from the public realm-engine-client git history. Auto Dodge distributes
+   * its credit per dodge version; entries can carry a note when something was
+   * ported from another repo. Returns null when there is nothing to show.
+   */
+  function buildPluginCreditsControl(p) {
+    var entry = (window.PLUGIN_CREDITS || {})[p.id];
+    if (!entry) return null;
+
+    var hasLines = Array.isArray(entry.lines) && entry.lines.some(function (l) { return l && l.authors && l.authors.length; });
+    var hasAuthors = Array.isArray(entry.authors) && entry.authors.length;
+    if (!hasLines && !hasAuthors) return null;
+
+    var wrap = document.createElement('div');
+    wrap.className = 'plugin-credits';
+    wrap.setAttribute('data-plugin-id', p.id);
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'plugin-credits-info';
+    btn.title = 'Credits';
+    btn.setAttribute('aria-label', 'Credits for ' + getPluginDisplayName(p));
+    btn.textContent = 'ⓘ';
+    wrap.appendChild(btn);
+
+    var pop = document.createElement('div');
+    pop.className = 'plugin-credits-popover';
+    pop.setAttribute('role', 'tooltip');
+
+    var heading = document.createElement('div');
+    heading.className = 'plugin-credits-heading';
+    heading.textContent = 'Credits';
+    pop.appendChild(heading);
+
+    function addNames(names) {
+      var row = document.createElement('div');
+      row.className = 'plugin-credits-names';
+      row.textContent = names.join(', ');
+      pop.appendChild(row);
+    }
+    function addLine(line) {
+      var row = document.createElement('div');
+      row.className = 'plugin-credits-line';
+      var label = document.createElement('span');
+      label.className = 'plugin-credits-line-label';
+      label.textContent = line.label;
+      row.appendChild(label);
+      var names = document.createElement('span');
+      names.className = 'plugin-credits-names';
+      names.textContent = line.authors.join(', ');
+      row.appendChild(names);
+      pop.appendChild(row);
+      if (line.note) {
+        var note = document.createElement('div');
+        note.className = 'plugin-credits-note';
+        note.textContent = line.note;
+        pop.appendChild(note);
+      }
+    }
+
+    if (hasLines) entry.lines.forEach(function (line) { if (line && line.authors && line.authors.length) addLine(line); });
+    else addNames(entry.authors);
+
+    var src = document.createElement('div');
+    src.className = 'plugin-credits-source';
+    src.textContent = 'github.com/Evergreen-Techworks/realm-engine-client';
+    pop.appendChild(src);
+
+    wrap.appendChild(pop);
     return wrap;
   }
 
