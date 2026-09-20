@@ -9,6 +9,11 @@
     "plugins/testlab-interleaver.ts",
     "src/testlab/interleaverCore.ts",
     "src/testlab/__tests__/interleaverCore.test.ts",
-    "src/plugins/__tests__/testlabInterleaver.test.ts"
+    "src/plugins/__tests__/testlabInterleaver.test.ts",
+    "plugins/testlab-runner.ts",
+    "src/testlab/runnerCore.ts",
+    "src/testlab/__tests__/runnerCore.test.ts",
+    "src/plugins/__tests__/testlabRunner.test.ts",
+    "src/dashboard/public/js/testlab-runner.js"
   ]
 }

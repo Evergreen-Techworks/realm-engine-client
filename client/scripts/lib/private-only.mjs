@@ -103,6 +103,29 @@ export function excludedPluginKeys(manifest, isPrivateBuild) {
   return keys;
 }
 
+const PUBLIC_STATIC_PREFIX = 'src/dashboard/public/';
+
+/**
+ * Manifest paths under `src/dashboard/public/` (static files build-prod.mjs
+ * copies verbatim into `dist/public`, e.g. a private-only renderer helper
+ * loaded by a plain `<script>` tag) — these are not plugin entry points, so
+ * `excludedPluginKeys` can't catch them; a customer build must still drop
+ * them from the staged `dist/public` tree. Returns each path relative to
+ * `src/dashboard/public/` (e.g. `js/testlab-runner.js`); empty when there is
+ * no manifest or this is a private build.
+ * @param {{ marker: string, paths: string[] } | null} manifest
+ * @param {boolean} isPrivateBuild
+ * @returns {Set<string>}
+ */
+export function excludedPublicStaticPaths(manifest, isPrivateBuild) {
+  const paths = new Set();
+  if (!manifest || isPrivateBuild) return paths;
+  for (const p of manifest.paths) {
+    if (p.startsWith(PUBLIC_STATIC_PREFIX)) paths.add(p.slice(PUBLIC_STATIC_PREFIX.length));
+  }
+  return paths;
+}
+
 /**
  * Recursively scan `dir` for `marker` as raw bytes — not decoded text, so a
  * minified/bundled or otherwise binary-ish file still fails the scan if the

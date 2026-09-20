@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 // pattern as scripts/lib/packet-keys.mjs and src/packets/__tests__/directionKeys.test.ts.
 import {
   excludedPluginKeys,
+  excludedPublicStaticPaths,
   pluginKeyForPath,
   readPrivateOnlyManifest,
   scanForMarker,
@@ -110,6 +111,35 @@ describe('excludedPluginKeys', () => {
   it('no manifest: excludes nothing, in either mode', () => {
     expect(excludedPluginKeys(null, false)).toEqual(new Set());
     expect(excludedPluginKeys(null, true)).toEqual(new Set());
+  });
+});
+
+describe('excludedPublicStaticPaths', () => {
+  const manifest = {
+    marker: 'TESTLAB_PRIVATE_ONLY',
+    paths: [
+      'plugins/testlab-runner.ts',
+      'src/testlab/runnerCore.ts',
+      'src/dashboard/public/js/testlab-runner.js',
+    ],
+  };
+
+  it('customer build: yields only the src/dashboard/public/ paths, relative to that directory', () => {
+    expect(excludedPublicStaticPaths(manifest, false)).toEqual(new Set(['js/testlab-runner.js']));
+  });
+
+  it('private build: excludes nothing', () => {
+    expect(excludedPublicStaticPaths(manifest, true)).toEqual(new Set());
+  });
+
+  it('no manifest: excludes nothing, in either mode', () => {
+    expect(excludedPublicStaticPaths(null, false)).toEqual(new Set());
+    expect(excludedPublicStaticPaths(null, true)).toEqual(new Set());
+  });
+
+  it('a manifest with no public/ paths yields an empty set', () => {
+    const noPublicPaths = { marker: 'M', paths: ['plugins/testlab-recorder.ts', 'src/testlab/recorderCore.ts'] };
+    expect(excludedPublicStaticPaths(noPublicPaths, false)).toEqual(new Set());
   });
 });
 
