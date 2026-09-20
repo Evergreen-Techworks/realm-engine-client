@@ -48,6 +48,11 @@ void SetLockTarget(int32_t enemyId);
 // KillAura::Tick is the only caller of this.
 void SetKillAuraAimOverride(bool active, float x, float y, int32_t enemyId);
 
+// Shot angle from (px,py) toward (tx,ty) with the weapon tweaks, the same formula
+// the aim hooks redirect with. Pure forwarder to AimHooks, for native AutoFire's
+// script trigger. Any thread.
+float ShotAngleTo(float px, float py, float tx, float ty);
+
 // ── Targeting filters ─────────────────────────────────────────────────────────
 void SetShootInvulnerable(bool on);
 bool IsShootInvulnerable();

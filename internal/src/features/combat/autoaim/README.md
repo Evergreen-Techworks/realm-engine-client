@@ -31,6 +31,7 @@ autoaim/
 ├── core/     AimMath.{h,cpp}  WeaponProfile.{h,cpp}  TargetSelector.{h,cpp}
 ├── shoot/    AimHooks.{h,cpp}  ShootRuntime.{h,cpp}  ProjNoclip.{h,cpp}
 ├── modes/    AutoAim.{h,cpp}  KillAura.{h,cpp}  AutoFire.{h,cpp}
+│             AutoFireDecision.h (pure trigger rules, host-tested)
 │             AutoBreakWalls.{h,cpp}
 └── ui/       FeatAutoAim.{h,cpp}  FeatMagnetAim.{h,cpp}
 ```
@@ -49,6 +50,8 @@ autoaim/
         └──────────────> modes/AutoFire ──> shoot/ShootRuntime
 
   modes/AutoAim ──> core/TargetSelector, core/WeaponProfile, shoot/AimHooks
+  modes/AutoFire (script trigger) ──> modes/AutoAim (target, ShotAngleTo),
+                                      core/TargetSelector (range), EnemyTracker
   ui/FeatAutoAim ──> modes/AutoAim, shoot/ProjNoclip
 ```
 
@@ -74,6 +77,7 @@ the `aim` IPC payload — see the measured-result block atop `modes/KillAura.cpp
 |---|---|
 | `AutoAim::Tick()` — per-frame entity walk | `platform/hooks/DirectX.cpp:193` |
 | `FeatAutoAim` / `FeatMagnetAim` / `KillAura` / `AutoFire` / `AutoBreakWalls` ticks | `gui/tabs/CombatTab/CombatTAB.cpp:25-29` |
+| `AutoFire::GameThreadTick()` — script-armed trigger, game-update thread | `movement/dodge/DangerPlanner.cpp` `Detour_AppEngineUpdate` |
 | IPC feature keys (`autoAimEnabled`, `killaura*`, `autoFire*`, `autoBreakWalls*`, `projectileNoclipEnabled`) | `features/control/FeatureCommandRegistry.cpp:104-123` |
 | Hook teardown (`ProjNoclip::Uninstall`, `AutoAim::Uninstall`) | `platform/hooks/InitHooks.cpp:94,96` |
 

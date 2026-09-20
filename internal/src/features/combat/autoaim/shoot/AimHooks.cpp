@@ -281,4 +281,9 @@ void SetKillAuraOverride(bool active, float x, float y, int32_t enemyId)
 void SetReverseCultStaff(bool v)   { s_reverseCultStaff.store(v, std::memory_order_relaxed); }
 void SetOffsetColossusSword(bool v) { s_offsetColossus.store(v, std::memory_order_relaxed); }
 
+float ShotAngleTo(float px, float py, float tx, float ty)
+{
+    return ApplyWeaponTweaks(atan2f(ty - py, tx - px));
+}
+
 } // namespace AimHooks
