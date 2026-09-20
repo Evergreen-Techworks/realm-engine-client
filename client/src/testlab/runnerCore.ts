@@ -56,7 +56,7 @@ export interface RunRequest {
   stopOn: RunStopOn | undefined;
 }
 
-export type RequestRejectReason = 'oversized' | 'invalid-json' | 'wrong-version' | 'missing-field' | 'stale';
+export type RequestRejectReason = 'oversized' | 'invalid-json' | 'wrong-version' | 'missing-field' | 'unsafe-id' | 'stale';
 
 export type RequestParseResult =
   | { ok: true; request: RunRequest }
@@ -70,7 +70,19 @@ export const MAX_REQUEST_AGE_MS = 10 * 60_000;
 
 export const MAX_RUN_MINUTES = 240;
 
-const RUN_ID_SAFE = /^[A-Za-z0-9._-]+$/;
+/** Every id that can reach a filesystem path (`runId`, `scriptId`, a plugin
+ *  id) must satisfy this: 1-64 chars from a safe charset, no leading dot, no
+ *  `..` anywhere — so it can never be used to escape the directory it gets
+ *  joined into, however it's wrapped into a larger file name. */
+const SAFE_ID_CHARS = /^[A-Za-z0-9._-]{1,64}$/;
+
+export function isSafeId(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  if (!SAFE_ID_CHARS.test(value)) return false;
+  if (value.startsWith('.')) return false;
+  if (value.includes('..')) return false;
+  return true;
+}
 
 /**
  * Best-effort `runId` extraction for the consumed-rename target name,
@@ -78,15 +90,15 @@ const RUN_ID_SAFE = /^[A-Za-z0-9._-]+$/;
  * missing fields, or a stale timestamp) — the caller must rename the file off
  * its live name before doing anything else, so it can never be reconsidered
  * at a later launch, valid or not. Falls back to `'invalid'` when no safe id
- * can be recovered.
+ * can be recovered — the SAME safe-charset check `parseRunRequest` uses, so
+ * an id this function accepts can never later turn out to be a path-unsafe
+ * `runId` once full validation runs.
  */
 export function extractRunIdForConsumedName(raw: string): string {
   try {
     const data: unknown = JSON.parse(raw);
     const id = data && typeof data === 'object' ? (data as Record<string, unknown>).runId : undefined;
-    if (typeof id === 'string' && RUN_ID_SAFE.test(id.trim())) {
-      return id.trim();
-    }
+    if (isSafeId(id)) return id;
   } catch {
     /* fall through to 'invalid' */
   }
@@ -140,6 +152,7 @@ export function parseRunRequest(raw: string, nowMs: number): RequestParseResult 
 
   const runId = typeof data.runId === 'string' ? data.runId.trim() : '';
   if (!runId) return { ok: false, reason: 'missing-field', detail: 'runId' };
+  if (!isSafeId(runId)) return { ok: false, reason: 'unsafe-id', detail: 'runId' };
 
   const createdUtc = typeof data.createdUtc === 'string' ? data.createdUtc : '';
   const createdMs = createdUtc ? Date.parse(createdUtc) : NaN;
@@ -163,13 +176,22 @@ export function parseRunRequest(raw: string, nowMs: number): RequestParseResult 
   const minutes = Math.min(MAX_RUN_MINUTES, Math.max(1, Math.round(minutesRaw)));
 
   const serverName = typeof data.serverName === 'string' && data.serverName.trim() ? data.serverName.trim() : undefined;
-  const scriptId = typeof data.scriptId === 'string' && data.scriptId.trim() ? data.scriptId.trim() : undefined;
+
+  const scriptIdRaw = typeof data.scriptId === 'string' ? data.scriptId.trim() : '';
+  let scriptId: string | undefined;
+  if (scriptIdRaw) {
+    if (!isSafeId(scriptIdRaw)) return { ok: false, reason: 'unsafe-id', detail: 'scriptId' };
+    scriptId = scriptIdRaw;
+  }
 
   let plugins: RunRequest['plugins'];
   if (isPlainObject(data.plugins)) {
     plugins = {};
     for (const [pluginId, override] of Object.entries(data.plugins)) {
       if (!isPlainObject(override)) continue;
+      // A plugin id never reaches a path today, but it's exactly the kind of
+      // caller-supplied id this file treats uniformly as unsafe-until-proven.
+      if (!isSafeId(pluginId)) return { ok: false, reason: 'unsafe-id', detail: `plugins.${pluginId}` };
       const entry: { enabled?: boolean; settings?: Record<string, unknown> } = {};
       if (typeof override.enabled === 'boolean') entry.enabled = override.enabled;
       if (isPlainObject(override.settings)) entry.settings = { ...override.settings };
@@ -189,23 +211,6 @@ export function parseRunRequest(raw: string, nowMs: number): RequestParseResult 
   return {
     ok: true,
     request: { v: 1, runId, createdUtc, accountLabel, serverName, scriptId, minutes, plugins, stopOn },
-  };
-}
-
-/** `{type:'testlabLaunch', runId, accountLabel, serverName}` — no credential fields, ever. */
-export interface LaunchBroadcast {
-  type: 'testlabLaunch';
-  runId: string;
-  accountLabel: string;
-  serverName: string | undefined;
-}
-
-export function buildLaunchBroadcast(request: RunRequest): LaunchBroadcast {
-  return {
-    type: 'testlabLaunch',
-    runId: request.runId,
-    accountLabel: request.accountLabel,
-    serverName: request.serverName,
   };
 }
 
