@@ -15,6 +15,9 @@ import { depositToVault, withdrawFromVault } from './vaultTransfer.js';
 import { installVaultStoreHooks, getVaultStore } from './VaultStore.js';
 import { tryInventoryAction } from '../../../util/InventoryActions.js';
 import { connectionGameTime } from '../../../util/connectionGameTime.js';
+import { tryConsumePlayerItem, availablePlayerItemCount } from '../../../util/ItemUseReservations.js';
+import { abilityManaCost, observeAbilityMana, reserveAbilityMana, abilityCooldownMs,
+  abilityCooldownReady, reserveAbilityCooldown } from '../../../util/AbilityMana.js';
 import { warnUnimplemented } from '../stubWarn.js';
 
 function playerData(deps: BridgeDeps): PlayerData | null {
@@ -165,18 +168,34 @@ export function install(deps: BridgeDeps): void {
     if (!c?.connected) return;
     const itemType = typeIdAtSlot(c.playerData, slotIndex);
     if (itemType <= 0) return;
+    if (slotIndex >= 4 && availablePlayerItemCount(c, slotIndex, itemType) <= 0) return;
     // Unknown game time right after a map change: an epoch-ms USEITEM would never serialize.
     const time = connectionGameTime(c);
     if (time === null) return;
+    const xml = slotIndex === 1 ? deps.gameData.getRawObjectXml(itemType) : undefined;
+    const cost = slotIndex === 1 ? abilityManaCost(xml) : 0;
+    const cooldown = slotIndex === 1 ? abilityCooldownMs(xml) : 0;
+    if (cooldown === null || (slotIndex === 1 && !abilityCooldownReady(c.playerData, itemType))) return;
+    if (cost === null || (slotIndex === 1 && (observeAbilityMana(c.playerData, c.playerData.mana) < cost
+      || c.playerData.hasConditionEffect('Quiet') || c.playerData.hasConditionEffect('Silenced')))) return;
     try {
       const pkt = deps.proxy.packetFactory.createByName('USEITEM');
       pkt.data.time = time;
       pkt.data.slotObject = { objectId: c.objectId, slotId: slotIndex, objectType: itemType };
       pkt.data.itemUsePos = { x: c.playerData.pos.x, y: c.playerData.pos.y };
-      pkt.data.useType = 0;
+      pkt.data.useType = 1;
       pkt.data.unknownInt = 0;
       pkt.modified = true;
-      tryInventoryAction(c, () => String(typeIdAtSlot(c.playerData, slotIndex)), () => c.sendToServer(pkt));
+      tryInventoryAction(c, () => String(typeIdAtSlot(c.playerData, slotIndex)), () => {
+        if (slotIndex >= 4) tryConsumePlayerItem(c, slotIndex, itemType, () => c.sendToServer(pkt));
+        else {
+          if (slotIndex === 1) reserveAbilityCooldown(c.playerData, 550, itemType, cooldown);
+          c.sendToServer(pkt);
+          if (slotIndex === 1) {
+            reserveAbilityMana(c.playerData, cost);
+          }
+        }
+      });
     } catch {
       // Void SDK API: a disconnect or stale slot simply leaves the item alone.
     }

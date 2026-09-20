@@ -289,6 +289,15 @@ export default class Farmer {
   }
 
   handleBossEncounter(quest, now) {
+    if (quest && this.objectIsDead(quest.objectId)) {
+      this.endBossEncounter(false);
+      RealmEngine.dodge.clearWaypoint();
+      if (quest.isEventBoss && this.eventArrived) {
+        RealmEngine.ui.status(`${quest.name}: defeated — waiting for loot or next phase`);
+        return true;
+      }
+      return false;
+    }
     const enemies = RealmEngine.enemies.getAll();
     if (!this.bossEncounter && quest) {
       const boss = enemies.find(e => e.objectId === quest.objectId && e.hp > 0);
@@ -300,13 +309,7 @@ export default class Farmer {
     }
     if (!this.bossEncounter) return false;
     const boss = enemies.find(e => e.objectId === this.bossEncounter.objectId);
-    const dead = RealmEngine.world.objects.isDead?.(this.bossEncounter.objectId)
-      || (boss && boss.hp <= 0 && boss.maxHp > 0);
-    if (dead) {
-      if (quest?.isEventBoss && this.eventArrived) {
-        this.handleBossAdds(enemies, this.bossEncounter, this.bossEncounter.name, 'boss defeated; watching for loot or next phase');
-        return true;
-      }
+    if (this.objectIsDead(this.bossEncounter.objectId)) {
       this.endBossEncounter(false); return false;
     }
     if (boss) {
@@ -373,14 +376,18 @@ export default class Farmer {
     }
   }
 
+  objectIsDead(objectId) {
+    if (RealmEngine.world.objects.isDead?.(objectId)) return true;
+    const object = RealmEngine.world.objects.getById(objectId)
+      ?? RealmEngine.enemies.getAll().find(enemy => enemy.objectId === objectId);
+    return !!object && object.hp <= 0 && object.maxHp > 0;
+  }
+
   // A boss encounter whose boss is not known to be dead. User decision 2026-09-14:
   // while one is on, only white bags interrupt; everything else waits for the kill or
   // for the encounter to end, and the boss lock is kept.
   bossFightActive() {
-    const encounter = this.bossEncounter;
-    if (!encounter || RealmEngine.world.objects.isDead?.(encounter.objectId)) return false;
-    const boss = RealmEngine.enemies.getAll().find((e) => e.objectId === encounter.objectId);
-    return !(boss && boss.hp <= 0 && boss.maxHp > 0);
+    return !!this.bossEncounter && !this.objectIsDead(this.bossEncounter.objectId);
   }
 
   bagIsUseful(bag) {
@@ -723,10 +730,7 @@ export default class Farmer {
           RealmEngine.log.info(`Realm Farmer: continuing nearby event phase — ${replacement.name}`);
           return this.eventGoal;
         }
-        // Only an add we can still damage justifies staying: an invulnerable or hidden
-        // object beside the corpse used to pin the farmer here indefinitely. Even then,
-        // not past EVENT_HOLD_MAX_MS.
-        const addsAlive = this.eventArrived && RealmEngine.enemies.getAll().some(e =>
+        const addsAlive = !dead && this.eventArrived && RealmEngine.enemies.getAll().some(e =>
           e.objectId !== this.eventGoal.objectId && e.hp > 0 && e.isTargetable
           && Math.hypot(e.position.x-this.eventGoal.position.x, e.position.y-this.eventGoal.position.y) <= 12);
         if (this.eventArrived && this.eventHoldSince === null) this.eventHoldSince = now;
@@ -788,7 +792,7 @@ export default class Farmer {
     // Commit to the selected quest while travelling. Realm quest ids and tracked
     // entities can change as visibility/nearest-region changes, so an object merely
     // leaving the snapshot is not evidence the boss disappeared.
-    if (this.questGoal && (RealmEngine.world.objects.isDead?.(this.questGoal.objectId)
+    if (this.questGoal && (this.objectIsDead(this.questGoal.objectId)
       || (this.questGoal.hp <= 0 && this.questGoal.maxHp > 0))) {
       this.questGoal = null; this.questMissingAt = 0;
     }
@@ -898,7 +902,7 @@ export default class Farmer {
 
     // A useful bag takes movement ownership before combat. Do not clear and
     // recreate its waypoint by running target selection during the detour.
-    if (this.eventGoal && RealmEngine.world.objects.isDead?.(this.eventGoal.objectId)) {
+    if (this.eventGoal && this.objectIsDead(this.eventGoal.objectId)) {
       this.getEventGoal(now);
       // The packet already sent cannot be cancelled, but stop waiting for the
       // old destination and route to the new event from wherever we land.

@@ -14,6 +14,7 @@ import { PacketFactory } from '../../../packets/PacketFactory.js';
 import type { Packet } from '../../../packets/Packet.js';
 import PACKET_DEFINITIONS from '../../../packets/packetDefinitions.generated.js';
 import STAT_TYPES from '../../../packets/statTypes.generated.js';
+import { RecoveryCoordinator } from '../../../proxy/RecoveryCoordinator.js';
 
 const factory = new PacketFactory(PACKET_DEFINITIONS as any, STAT_TYPES as any);
 
@@ -43,7 +44,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-export function fixture() {
+export function fixture(testHooks?: { allowActivePredictionForTests?: boolean }) {
   vi.useFakeTimers();
   const hooks = new Map<string, (...args: any[]) => void>();
   const settings = new Map<string, (...args: any[]) => void>();
@@ -55,6 +56,13 @@ export function fixture() {
   const objects = new Map<number, { id: string; displayId: string; isEnemy: boolean; projectiles: Map<number, ProjectileFixture> }>();
   const client: any = { connected: true, objectId: 1, sendToServer: vi.fn(),
     playerData: { effectiveMaxHealth: 1000, health: 800, mapName: 'Realm', defense: 0, effects: [0, 0] } };
+  client.recovery = new RecoveryCoordinator({
+    isConnected: () => client.connected,
+    sendEscape: () => client.sendToServer({ name: 'ESCAPE', modified: true }),
+    schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+    cancel: timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
+  });
+  client.admission = { generation: client.recovery.beginGeneration(), phase: 'loaded' };
   const ctx = { enabled: true,
     registerSetting: (name: string, _def: any, fn: any) => settings.set(name, fn),
     onEnabledChange: (fn: any) => { onEnable = fn; },
@@ -73,9 +81,11 @@ export function fixture() {
       },
     },
   };
-  register(ctx as unknown as PluginContext);
+  const controls = register(ctx as unknown as PluginContext, testHooks);
 
   const emit = (name: string, data: any = {}) => {
+    if (name === 'MAPINFO') client.admission.generation = client.recovery.beginGeneration();
+    if (name === 'RECONNECT') client.recovery.acceptReconnect(client.admission.generation);
     const packet = { isDefined: true, data, send: true };
     hooks.get(name)?.(client, packet); return packet;
   };
@@ -127,6 +137,22 @@ export function fixture() {
     return packet;
   };
 
+  const damage = (bulletId: number, objectId: number, amount: number) => {
+    const bytes = frame(75, [i32(client.objectId), u8(0), u16(amount), u8(0), u16(bulletId), i32(objectId), Buffer.from([0xde, 0xad])]);
+    const original = Buffer.from(bytes);
+    const packet = factory.createFromBytes(bytes, 'server');
+    expect(packet.name).toBe('DAMAGE');
+    const before = JSON.stringify(packet.data);
+    deepFreeze(packet.data);
+    hooks.get('DAMAGE')?.(client, packet);
+    expect(packet.send).toBe(true);
+    expect(packet.modified).toBe(false);
+    expect(packet.rawBytes).toEqual(original);
+    expect(JSON.stringify(packet.data)).toBe(before);
+    expect(factory.serialize(packet)).toEqual(original);
+    return packet;
+  };
+
   const setCondition = (name: keyof typeof ConditionEffect, on = true) => {
     const bit = ConditionEffect[name];
     const effects = client.playerData.effects as [number, number];
@@ -139,8 +165,9 @@ export function fixture() {
   const escapeLog = () => (ctx.log.mock.calls as any[][]).map(([line]) => String(line)).filter(l => l.startsWith('AUTO NEXUS'));
 
   return {
-    client, ctx, settings, events, cleanup, commands, emit, hp, enemy, enemyShoot, serverPlayerShoot, playerHit,
-    setCondition, escapes, escapeLog, entityTypes,
+    client, ctx, settings, events, cleanup, commands, emit, hp, enemy, enemyShoot, serverPlayerShoot, playerHit, damage,
+    setCondition, escapes, escapeLog, entityTypes, observation: () => controls.observation(client),
+    transitions: () => controls.transitions(client),
     disable: () => { ctx.enabled = false; onEnable(); },
     enable: () => { ctx.enabled = true; onEnable(); },
   };

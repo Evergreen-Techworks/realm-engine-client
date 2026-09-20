@@ -6,7 +6,8 @@ vi.mock('../../../plugins/api.js', async (importOriginal) => ({
   getDllThreatsAgeMs: vi.fn(() => null),
   getDllGround: vi.fn(() => null),
 }));
-import { getDllThreats, getDllThreatsAgeMs, sendDllFeature } from '../../../plugins/api.js';
+import { ConditionEffect, getDllThreats, getDllThreatsAgeMs, sendDllFeature } from '../../../plugins/api.js';
+import { appliedDamage, withOnHitEffects } from '../../../plugins/auto-nexus/hitLedger.js';
 import type { DllThreat } from '../../../plugins/api.js';
 import { fixture } from './helpers/autoNexusFixture.js';
 
@@ -29,7 +30,7 @@ function threats(list: Partial<DllThreat>[], ageMs = 20): void {
 
 /** max HP 1000, nexus at 10% (100 HP), no burst guard, defense 0, one Jellyfish in view. */
 function plain() {
-  const f = fixture();
+  const f = fixture({ allowActivePredictionForTests: true });
   f.settings.get('ForceAutoNexusHealth')!(10);
   f.settings.get('BurstGuard')!(false);
   f.enemy(JELLY_ID, JELLY_TYPE, 'Hadopelagic Jellyfish', JELLY_PROJECTILES);
@@ -42,9 +43,55 @@ beforeEach(() => {
 });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.clearAllMocks(); });
 
+describe('packet-damage condition estimates, not confirmed loss', () => {
+  it.each([
+    ['Invulnerable', 0], ['Invincible', 0], ['ArmorBroken', 100], ['Armored', 40],
+    ['Exposed', 80], ['Curse', 75], ['Petrified', 54],
+  ])('estimates %s', (name, expected) => {
+    const effects: [number, number] = [0, 0];
+    const bit = ConditionEffect[name as keyof typeof ConditionEffect];
+    effects[bit < 31 ? 0 : 1] = 1 << (bit < 31 ? bit : bit - 31);
+    expect(appliedDamage(100, false, 40, effects)).toBe(expected);
+  });
+
+  it('treats unknown piercing conservatively and excludes invalid damage', () => {
+    expect(appliedDamage(100, null, 40, [0, 0])).toBe(100);
+    for (const damage of [NaN, Infinity, -1, 0]) expect(appliedDamage(damage, false, 40, [0, 0])).toBe(0);
+    expect(appliedDamage(100, false, NaN, [0, 0])).toBe(100);
+    expect(appliedDamage(100, false, 40, [0, 0])).toBe(60);
+    expect(appliedDamage(100, false, 40, withOnHitEffects([0, 0], ['Exposed']))).toBe(80);
+  });
+});
+
 describe('hit ledger (layer 2)', () => {
-  it('replays the 2026-09-14 Hadopelagic Jellyfish death: one escape before the lethal total', () => {
-    const f = fixture();
+  it('keeps partial and healing debt in the production observation path', () => {
+    const state = fixture();
+    state.settings.get('BurstGuard')!(false);
+    state.hp(800);
+    state.enemyShoot(5001, 7, 0, 100);
+    state.playerHit(7, 5001);
+    state.hp(750);
+    expect(state.observation()).toMatchObject({ pendingDamage: 50, predictedHp: 700, certainty: 'ambiguous' });
+    state.hp(850);
+    expect(state.observation()).toMatchObject({ pendingDamage: 50, predictedHp: 800, certainty: 'ambiguous' });
+    expect(state.escapes()).toBe(0);
+  });
+
+  it('does not activate ambiguous reused owner/bullet identities even with test permission', () => {
+    const state = plain();
+    state.hp(300);
+    state.enemyShoot(JELLY_ID, 7, 1, 250);
+    state.enemyShoot(JELLY_ID, 7, 1, 250);
+    state.playerHit(7, JELLY_ID);
+    expect(state.escapes()).toBe(0);
+    state.emit('UPDATE', { drops: [JELLY_ID], newObjs: [] });
+    state.enemyShoot(JELLY_ID, 7, 1, 250);
+    state.playerHit(7, JELLY_ID);
+    expect(state.escapes()).toBe(0);
+  });
+
+  it('observes the historical Jellyfish reconstruction without activating ambiguous health ordering', () => {
+    const f = fixture({ allowActivePredictionForTests: true });
     f.client.playerData.effectiveMaxHealth = 675;
     f.client.playerData.defense = 39;
     f.enemy(JELLY_ID, JELLY_TYPE, 'Hadopelagic Jellyfish', JELLY_PROJECTILES);
@@ -57,17 +104,12 @@ describe('hit ledger (layer 2)', () => {
     f.playerHit(103, JELLY_ID);                             // 150 - 39 = 111  -> 272, now Exposed
     f.playerHit(101, JELLY_ID);                             // 120 - 19 = 101  -> 171 (> 168.75)
     expect(f.escapes()).toBe(0);
-    f.playerHit(102, JELLY_ID);                             // 101 -> 70: escape
-    expect(f.escapes()).toBe(1);
+    f.playerHit(102, JELLY_ID);
+    expect(f.escapes()).toBe(0);
+    expect(f.observation()).toMatchObject({ predictedHp: 70, certainty: 'ambiguous', thresholdCrossed: true, lethal: false });
     f.playerHit(104, JELLY_ID);                             // 131 -> 525 total >= 464: the lethal one
-    expect(f.escapes()).toBe(1);
-
-    const [line] = f.escapeLog();
-    expect(line).toContain('layer=hit-ledger; predicted HP=70/675; escape point=169 HP (threshold 25%)');
-    expect(line).toContain('confirmed HP=464/675 age=202ms');
-    expect(line).toContain('bullets=4 [Hadopelagic Jellyfish 0x7219 raw 120 -> 81 def, '
-      + 'Hadopelagic Jellyfish 0x7219 raw 150 -> 111 def, Hadopelagic Jellyfish 0x7219 raw 120 -> 101 def, '
-      + 'Hadopelagic Jellyfish 0x7219 raw 120 -> 101 def]');
+    expect(f.escapes()).toBe(0);
+    expect(f.observation()).toMatchObject({ predictedHp: -61, certainty: 'ambiguous', lethal: true });
     f.emit('DEATH', { killedBy: 'Hadopelagic Jellyfish' });
     expect(f.ctx.log).toHaveBeenCalledWith(expect.stringContaining('ledger HP=-61 (5 charged hit(s), 5 shot(s) known)'));
   });

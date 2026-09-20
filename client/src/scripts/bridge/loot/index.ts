@@ -547,8 +547,8 @@ export function install(deps: BridgeDeps): void {
         slotId: slotIndex,
         objectType: itemId,
       };
-      pkt.data.itemUsePos = { x: 0, y: 0 };
-      pkt.data.useType = 0;
+      pkt.data.itemUsePos = { ...c.playerData.pos };
+      pkt.data.useType = 1;
       pkt.data.unknownInt = 0;
       pkt.modified = true;
       return tryInventoryAction(c,

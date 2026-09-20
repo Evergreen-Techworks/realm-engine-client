@@ -16,6 +16,7 @@
 // `src/scripts/bridge/scriptUi/ScriptPanels.ts`) are intentionally not centered
 // here — this module owns the DevServer↔app.js boundary only.
 export const WS_MSG = Object.freeze({
+  STARTUP_STATUS: 'startupStatus',
   ALL_PLAYERS_RAW_STATS: 'allPlayersRawStats',
   CLIENT_LIST: 'clientList',
   CONFIG: 'config',

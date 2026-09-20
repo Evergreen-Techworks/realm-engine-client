@@ -66,6 +66,14 @@ namespace UDodge { namespace Path {
 struct OccGrid {
     Vec2    center{};                  // world position of the center cell (= player at raster time)
     uint8_t flags[kUPathMaxCells]{};   // bit0 = wall/blocked, bit1 = hazard
+    // navCollisionRule=game only: the squares around floor(center) as a whole-tile,
+    // halfEdge-0 raster (read through Movement::Collision::RasterSquares). Square
+    // (squareX0, squareY0) is cell 0.
+    int     squareX0 = 0, squareY0 = 0;
+    uint8_t squares[kUOccSquareCells]{};
+    // Every rule: the ground <Speed> of the same squares as WorldTAB stores it
+    // (0 = none), for route times (Movement::Speed).
+    float   squareSpeed[kUOccSquareCells]{};
 };
 
 // Coarse 1-tile navigation occupancy for the walk-to A* (SEPARATE from OccGrid —
@@ -107,6 +115,10 @@ struct PlannerSnapshot {
     // two halves of the MPC agree by construction. 0 = unreadable → the old
     // moveBudget-derived value is used as the fallback.
     float    speed = 0.f;
+    // The player's speed off any square (Movement::Speed::BaseTilesPerSec, tiles per
+    // ms). The dodge route prices each edge at the ground speed of its two cells.
+    // 0 = unknown: edges fall back to `speed`.
+    float    baseSpeed = 0.f;
     Settings settings{};           // hitScale / safeWalk feed the plain safety + occupancy tests
     bool     goalActive = false;   // a soft goal exists (tie-break only)
     Vec2     goalPos{};
@@ -143,6 +155,8 @@ struct PlannerSnapshot {
     // every cycle, not only on the cycle that planned the route.
     bool     navFollowingHazardRoute = false;
     NavGrid  navGrid{};           // coarse 1-tile occupancy (game thread fills from WorldTAB)
+    // navCollisionRule at publish time, so one snapshot is planned under one rule.
+    Movement::Collision::Rule collisionRule = Movement::Collision::Rule::Legacy;
 };
 
 // The pathfinder's output — PLAIN DATA ONLY.

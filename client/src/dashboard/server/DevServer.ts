@@ -14,6 +14,8 @@ import { PacketInspector, type CapturedPacket } from './PacketInspector.js';
 import { PacketLab } from './PacketLab.js';
 import { GameUpdater, type GameUpdateStatus } from './GameUpdater.js';
 import type { PluginManager } from '../../plugins/PluginManager.js';
+import type { PluginLoadReport } from '../../plugins/PluginManager.js';
+import type { MetadataStatus } from '../../startup/metadataEnrichment.js';
 import type { Proxy } from '../../proxy/Proxy.js';
 import type { GameWorldState } from '../../state/GameWorldState.js';
 import type { GameDataLoader } from '../../game-data/GameDataLoader.js';
@@ -300,6 +302,22 @@ const MIME_TYPES: Record<string, string> = {
  * Serves the packet inspector UI on localhost:3000.
  */
 export class DevServer {
+  private startupStopped = false;
+  private startupStatus: { metadata: MetadataStatus; plugins: PluginLoadReport | null } = {
+    metadata: { state: 'loading', failed: [] }, plugins: null,
+  };
+
+  setStartupStatus(status: { metadata: MetadataStatus; plugins: PluginLoadReport | null }): void {
+    if (this.startupStopped) return;
+    this.startupStatus = {
+      metadata: { ...status.metadata, failed: [...status.metadata.failed] },
+      plugins: status.plugins ? { loaded: [...status.plugins.loaded], failed: [...status.plugins.failed] } : null,
+    };
+    const message = JSON.stringify({ type: WS_MSG.STARTUP_STATUS, ...this.startupStatus });
+    for (const client of this.wss.clients) {
+      if (client.readyState === WebSocket.OPEN) client.send(message);
+    }
+  }
   private httpServer: http.Server;
   private wss: WebSocketServer;
   private inspector: PacketInspector;
@@ -1053,6 +1071,7 @@ export class DevServer {
       process.exit(1);
     });
     this.httpServer.listen(port, DASHBOARD_BIND_HOST, () => {
+      Logger.log('Startup', `launch=${process.env.REALM_ENGINE_LAUNCH_ID ?? process.pid} process=proxy stage=dashboard-ready elapsedMs=${performance.now().toFixed(1)}`);
       Logger.log('DevServer', `Dashboard available at http://localhost:${port}`);
       void this.applyExaltTuneOnProxyStartMaybe().finally(() => {
         syncExaltTuneWatchdogFromDisk();
@@ -1102,6 +1121,7 @@ export class DevServer {
   }
 
   stop(): void {
+    this.startupStopped = true;
     stopSmartTrimScheduler();
     stopExaltTuneWatchdog();
     this.playerDataIntervalStop?.();
@@ -2566,6 +2586,8 @@ export class DevServer {
   }
 
   private handleWsConnection(ws: WebSocket): void {
+    if (this.startupStopped) return;
+    ws.send(JSON.stringify({ type: WS_MSG.STARTUP_STATUS, ...this.startupStatus }));
     Logger.log('DevServer', 'Dashboard client connected');
 
     // Send current plugin state

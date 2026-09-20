@@ -2672,6 +2672,29 @@ namespace WorldTAB {
         return (it != s_tileMaxDmgMap.end()) ? it->second : 0;
     }
 
+    uint8_t GetTileFlags(int tx, int ty)
+    {
+        std::lock_guard<std::mutex> lock(s_tileMapMutex);
+        return TileFlagsLocked(BlockedKey(tx, ty));
+    }
+
+    void CopyTileSpeeds(int tx0, int ty0, int side, float* out)
+    {
+        if (!out || side <= 0) return;
+        std::lock_guard<std::mutex> lock(s_tileMapMutex);
+        for (int y = 0; y < side; ++y) {
+            for (int x = 0; x < side; ++x) {
+                const uint32_t key = BlockedKey(tx0 + x, ty0 + y);
+                float speed = 0.f;
+                if (TileFlagsLocked(key) & Movement::TileOccupancy::kTileSpeedMod) {
+                    const auto it = s_tileSpeedMap.find(key);
+                    if (it != s_tileSpeedMap.end()) speed = it->second;
+                }
+                out[y * side + x] = speed;
+            }
+        }
+    }
+
     // Returns the XML speed multiplier for the tile at (tx, ty).
     // 0.0 = no modifier; > 1.0 = speedy ground; < 1.0 = slow ground.
     float GetTileSpeed(int tx, int ty)

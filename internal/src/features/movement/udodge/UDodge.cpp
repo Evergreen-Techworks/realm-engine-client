@@ -9,6 +9,7 @@
 #include "UDodgeSensors.h"
 #include "UDodgeDebug.h"
 #include "UDodgeEnemyHazards.h"
+#include "features/movement/nav/Speed.h"
 
 #include "MovementRuntime.h"
 #include "DbgFileLog.h"
@@ -18,6 +19,7 @@
 #include "DangerPlanner.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
+#include "features/combat/enemytracker/LockLiveness.h"
 #include "gui/tabs/TestTAB.h"
 #include "gui/tabs/WorldTAB.h"
 #include "gui/tabs/CameraTAB.h"
@@ -162,8 +164,11 @@ void DiagStuckDump(const char* why, Vec2 player, Vec2 goal, Vec2 navStep, bool l
     constexpr int R = 5, S = 2 * R + 1;
     unsigned char cells[S * S];
     const Vec2 centre{ std::floor(player.x) + 0.5f, std::floor(player.y) + 0.5f };
+    // '#' is the player box against walls (legacy) or the square itself (game rule).
+    const Movement::Collision::Rule rule = Movement::Collision::GetRule();
     WorldTAB::CopyBoxBlocked(centre.x - static_cast<float>(R), centre.y - static_cast<float>(R), S, 1.f,
-                             kUOccPlayerHalfEdge, /*foldHazard=*/true, cells);
+                             rule == Movement::Collision::Rule::Game ? 0.f : kUOccPlayerHalfEdge,
+                             /*foldHazard=*/true, cells);
     char grid[S * (S + 1) + 1];
     int g = 0;
     for (int y = 0; y < S; ++y) {
@@ -189,10 +194,10 @@ void DiagStuckDump(const char* why, Vec2 player, Vec2 goal, Vec2 navStep, bool l
         if (map.zones[i].active && Len(Sub(map.zones[i].pos, player)) < map.zones[i].radius + 3.f) ++activeZones;
     for (int i = 0; i < map.enemyCount; ++i)
         if (Len(Sub(map.enemies[i].pos, player)) < 3.f) ++nearEnemies;
-    DiagTiming::Logf("[Diag/Stuck] %s at (%.3f,%.3f) goal=(%.2f,%.2f)%s step=(%.2f,%.2f) route=%d wpts=%d partial=%d"
+    DiagTiming::Logf("[Diag/Stuck] %s rule=%s at (%.3f,%.3f) goal=(%.2f,%.2f)%s step=(%.2f,%.2f) route=%d wpts=%d partial=%d"
         " hazardRoute=%d refused=%d avoid=%d safeWalk=%d liveOccupy(player)=%d liveOccupy(step)=%d"
         " nearZones=%d nearEnemies=%d map=%s",
-        why, player.x, player.y, goal.x, goal.y, lockApproach ? " (lock approach)" : "",
+        why, Movement::Collision::RuleName(rule), player.x, player.y, goal.x, goal.y, lockApproach ? " (lock approach)" : "",
         navStep.x, navStep.y, g_navCache.valid ? 1 : 0, g_navCache.n, g_navCache.partial ? 1 : 0,
         g_navCache.crossesHazard ? 1 : 0, g_refusedFrames, avoidCount, in.settings.safeWalk ? 1 : 0,
         CanOccupyAt(in, player) ? 1 : 0, CanOccupyAt(in, navStep) ? 1 : 0,
@@ -400,9 +405,20 @@ void PublishMinimal(Decision decision, Vec2 player)
 // (cheap via the per-tick hazard memo). `grid` persists across frames (a static in
 // Tick), so unrebuilt wall bits survive. Runs inside the per-tick memo lifetime
 // (BuildMap/ReanchorMap populated it).
-void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls)
+void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls, Movement::Collision::Rule rule)
 {
     grid.center = player;
+    grid.squareX0 = static_cast<int>(std::floor(player.x)) - kUOccSquareRad;
+    grid.squareY0 = static_cast<int>(std::floor(player.y)) - kUOccSquareRad;
+    // Ground <Speed> of the squares around the window: the worker times each route
+    // edge at the speed of the ground it crosses (Movement::Speed).
+    WorldTAB::CopyTileSpeeds(grid.squareX0, grid.squareY0, kUOccSquareSide, grid.squareSpeed);
+    if (rule == Movement::Collision::Rule::Game) {
+        // The game's rule reads squares, not a box: one whole-tile, halfEdge-0 raster
+        // at square centres around the window (Collision::RasterSquares).
+        WorldTAB::CopyBoxBlocked(static_cast<float>(grid.squareX0) + 0.5f, static_cast<float>(grid.squareY0) + 0.5f,
+                                 kUOccSquareSide, 1.f, 0.f, /*foldHazard=*/true, grid.squares);
+    }
     constexpr int R = kUPathMaxRadCells;
     constexpr int S = kUPathMaxSide;
 
@@ -460,15 +476,19 @@ void FillOccGrid(Path::OccGrid& grid, Vec2 player, bool rebuildWalls)
 // from single-tile to the player-box footprint makes walk-to hug walls slightly
 // less — the intended fix for routing the player's edge into a wall the game blocks.
 // Cheap: one mutex lock, kUNavCells hashmap probes, only when a walk-to is active.
-void FillNavGrid(Path::NavGrid& grid, Vec2 player, bool safeWalk)
+void FillNavGrid(Path::NavGrid& grid, Vec2 player, bool safeWalk, Movement::Collision::Rule rule)
 {
     // Stable tile centres preserve clearance in one-tile corridors; a grid
     // anchored to the player's fractional position can put every cell on a wall edge.
     grid.center = {std::floor(player.x) + 0.5f, std::floor(player.y) + 0.5f};
     const float originX = grid.center.x - static_cast<float>(kUNavRadCells) * kUNavCellTiles;
     const float originY = grid.center.y - static_cast<float>(kUNavRadCells) * kUNavCellTiles;
+    // Legacy: the player box plus navigation padding. Game: no box — each cell is its
+    // square exactly, which is what the A*'s Collision::DiagonalStepClear reads back.
+    const float halfEdge = rule == Movement::Collision::Rule::Game
+        ? 0.f : kUOccPlayerHalfEdge + Navigation::kWallPadding;
     WorldTAB::CopyBoxBlocked(originX, originY, kUNavSide, kUNavCellTiles,
-                             kUOccPlayerHalfEdge + Navigation::kWallPadding, /*foldHazard=*/safeWalk, grid.flags);
+                             halfEdge, /*foldHazard=*/safeWalk, grid.flags);
     for (int i = 0; i < kUNavCells; ++i)
         if (grid.flags[i] & 0x8) grid.flags[i] |= 0x1; // never A* into blank map void
 }
@@ -525,7 +545,7 @@ void UpdateAutopilotLock(bool autopilotOn)
     for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot()) {
         if (!e.hasHealthBar) continue;   // walls / destructibles — not a fight target
         if (e.isInvulnerable) continue;  // <Invincible/> — untargetable / undamageable
-        if (e.hp <= 0) continue;         // dead / despawning
+        if (!EnemyTracker::EntryAlive(e)) continue;   // dead / despawning (LockLiveness.h)
         if (e.maxHp <= 0) continue;
         if (e.maxHp > bestMaxHp) { bestMaxHp = e.maxHp; bestId = e.id; }
     }
@@ -720,7 +740,12 @@ void Tick(void* player, float px, float py, float dt)
     MapInput in{};
     in.player = { px, py };
 
-    in.speed = std::max(0.f, std::isfinite(tilesPerSec) ? tilesPerSec : 0.f) / 1000.f;
+    // Movement::Speed: the conditions-and-SPD base, and the speed on the player's own
+    // square for this frame's step (the square the game's move update reads).
+    const float ownSquareSpeed = WorldTAB::GetTileSpeed(static_cast<int>(std::floor(px)),
+                                                        static_cast<int>(std::floor(py)));
+    const float baseTilesPerSec = Movement::Speed::BaseTilesPerSec(tilesPerSec, ownSquareSpeed);
+    in.speed = Movement::Speed::TilesPerSec(baseTilesPerSec, ownSquareSpeed) / 1000.f;
     in.stepTiles = settings.stepTiles > 0.f
         ? settings.stepTiles
         : std::clamp(std::max(0.f, tilesPerSec) * kServerTickSec, 0.f, 3.0f);
@@ -731,6 +756,9 @@ void Tick(void* player, float px, float py, float dt)
     in.env.canOccupy = &Sensors::CanOccupy;
     in.env.isHazard = &Sensors::IsHazardAt;
     in.env.wallsClear = &Sensors::WallsClear;
+    const Movement::Collision::Rule collisionRule = Movement::Collision::GetRule();
+    in.env.rule = collisionRule;
+    in.env.stepClear = &Sensors::StepClear;
     in.map = &g_map;
 
     // in.stepTiles IS the per-tick move budget (tilesPerSec × kServerTickSec).
@@ -1096,7 +1124,7 @@ void Tick(void* player, float px, float py, float dt)
         const Vec2 gridCenter   = lockedCenter ? goal.lockPos : in.player;
         {
             PhaseTimer _p(DiagTiming::Game().rasterOcc);
-            FillOccGrid(s_snap.grid, gridCenter, true);
+            FillOccGrid(s_snap.grid, gridCenter, true, collisionRule);
         }
         s_snap.commitment       = g_commitment;
         s_snap.tickId           = g_map.tickId;
@@ -1108,6 +1136,7 @@ void Tick(void* player, float px, float py, float dt)
         // from the real speed the moment the user sets the "Step distance" slider
         // or the auto clamp [0.4, 3.0] binds — it stays a step-LENGTH knob only.
         s_snap.speed            = in.speed;
+        s_snap.baseSpeed        = baseTilesPerSec / 1000.f;
         s_snap.settings         = settings;
         s_snap.goalActive       = goal.active;
         s_snap.goalPos          = goal.pos;
@@ -1126,6 +1155,7 @@ void Tick(void* player, float px, float py, float dt)
         s_snap.retreatValid     = retreatValid;
         s_snap.retreatPos       = retreatPos;
         s_snap.map              = g_map;    // plain-data danger copy (lanes/zones/enemies)
+        s_snap.collisionRule    = collisionRule;
         // Navigation (walk-to): only ask the worker to (re)plan — and only pay the
         // large nav-grid rasterize — when a re-plan is actually triggered (navReplan).
         // Between re-plans we FOLLOW the cached route, so the walk-to costs nothing
@@ -1137,7 +1167,7 @@ void Tick(void* player, float px, float py, float dt)
         s_snap.navFollowingHazardRoute = walkActive && g_navCache.valid && g_navCache.crossesHazard;
         if (s_snap.navActive) {
             PhaseTimer _p(DiagTiming::Game().rasterNav);
-            FillNavGrid(s_snap.navGrid, in.player, settings.safeWalk);
+            FillNavGrid(s_snap.navGrid, in.player, settings.safeWalk, collisionRule);
             if (diagOn) ++DiagTiming::Game().navReplans;
         }
         uint32_t pub = 0;

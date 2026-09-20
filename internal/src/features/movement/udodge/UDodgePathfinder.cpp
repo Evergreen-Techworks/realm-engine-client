@@ -2,6 +2,7 @@
 #include "UDodgePathfinder.h"
 #include "UDodgeNavigation.h"
 #include "UDodgeCore.h"   // Core::PointSafety — the cheap per-cell danger (plain-data)
+#include "features/movement/nav/Speed.h"
 
 #include <algorithm>
 #include <cmath>
@@ -35,6 +36,7 @@ uint8_t s_tgoal[kUPathMaxCells];  // 1 = SECOND-CLASS temporal goal (finding F):
 uint8_t s_pend[kUPathMaxCells];   // 1 = this cell sits inside a PENDING (telegraphed, unarmed) AoE disc
                                   // — cost-only, never a block; taints it as a goal (finding G-2)
 float   s_safe[kUPathMaxCells];   // cached spatial Core::PointSafety (goal test + partial-route metric)
+float   s_factor[kUPathMaxCells]; // ground <Speed> factor of the cell's square (Movement::Speed::TileFactor)
 int     s_path[kUPathMaxCells];   // reconstructed route (forward order: [0] = start)
 
 // Binary min-heap of (cost, cellIndex). Lazy Dijkstra: a cell may be pushed
@@ -133,12 +135,32 @@ Core::Temporal::Ctx s_tctx;
 // Occupancy from the plain rasterized grid ALONE (no Env). Blocked = wall bit, or
 // hazard bit when safeWalk is on (mirrors Sensors::CanOccupy(x,y,safeWalk) so the
 // worker route and the game-thread pre-position walkability check agree).
-bool GridBlocked(const OccGrid& g, bool safeWalk, int gx, int gy)
+// The ground <Speed> factor of the square under `w` (1 outside the copied squares).
+float SquareFactor(const OccGrid& g, Vec2 w)
+{
+    const int x = static_cast<int>(std::floor(w.x)) - g.squareX0;
+    const int y = static_cast<int>(std::floor(w.y)) - g.squareY0;
+    if (x < 0 || y < 0 || x >= kUOccSquareSide || y >= kUOccSquareSide) return 1.f;
+    return Movement::Speed::TileFactor(g.squareSpeed[y * kUOccSquareSide + x]);
+}
+
+Movement::Collision::RasterSquares OccSquares(const OccGrid& g)
+{
+    return Movement::Collision::RasterSquares{ g.squares, g.squareX0, g.squareY0, kUOccSquareSide };
+}
+
+// Legacy: the box raster's wall and FullOccupy-ring bits at the cell. Game: the game's
+// point rule at the cell centre over the copied squares. Damaging ground either way.
+bool GridBlocked(const PlannerSnapshot& s, bool safeWalk, int gx, int gy)
 {
     if (gx < 0 || gx >= kS || gy < 0 || gy >= kS) return true;
-    const uint8_t f = g.flags[gy * kS + gx];
-    if (f & (0x1 | 0x10)) return true;   // wall, or the FullOccupy half-tile rule at this centre
+    const uint8_t f = s.grid.flags[gy * kS + gx];
     if (safeWalk && (f & 0x2)) return true;
+    if (s.collisionRule == Movement::Collision::Rule::Game) {
+        const Vec2 w = CellWorld(s.grid.center, gx, gy);
+        return !Movement::Collision::Standable(OccSquares(s.grid), w.x, w.y);
+    }
+    if (f & (0x1 | 0x10)) return true;   // wall, or the FullOccupy half-tile rule at this centre
     return false;
 }
 
@@ -216,7 +238,9 @@ struct Ctx {
     float diskInner = 0.f;    // annulus INNER radius (0 = no inner gate). GOAL-only: cells inside
                               // this radius are rejected as goals but stay traversable.
     float timePerTile = 0.f;  // ms to cross one tile at the player's REAL speed (edge-cost scale;
-                              // PlannerSnapshot::speed — finding K)
+                              // PlannerSnapshot::speed — finding K). Used only without baseTilesPerMs.
+    float baseTilesPerMs = 0.f; // Movement::Speed base (PlannerSnapshot::baseSpeed): each edge is timed
+                                // at the ground speed of its two cells (Speed::EdgeMs); 0 = unknown
     int   prevGoalCell = -1;  // last tick's committed goal cell (plan 76 goal hysteresis; -1 = none/off-grid)
 };
 
@@ -240,7 +264,7 @@ bool ForwardTopologyOpen(const Ctx& c)
                                                         kUPathCellTiles)) + kR;
             const int gy = static_cast<int>(std::lround((p.y - c.s->grid.center.y) /
                                                         kUPathCellTiles)) + kR;
-            if (GridBlocked(c.s->grid, c.s->settings.safeWalk, gx, gy) ||
+            if (GridBlocked(*c.s, c.s->settings.safeWalk, gx, gy) ||
                 EnemyBlockedLocal(c.s->map, p) ||
                 ZoneBlockedLocal(c.s->map, c.s->player, p)) {
                 clear = false; break;
@@ -275,7 +299,7 @@ void EvalCell(const Ctx& c, int idx, int gx, int gy)
 {
     if (s_eval[idx]) return;
     const Vec2 w = CellWorld(c.s->grid.center, gx, gy);
-    if (GridBlocked(c.s->grid, c.s->settings.safeWalk, gx, gy) ||
+    if (GridBlocked(*c.s, c.s->settings.safeWalk, gx, gy) ||
         EnemyBlockedLocal(c.s->map, w) ||
         ZoneBlockedLocal(c.s->map, c.mi.player, w)) {
         s_eval[idx] = 1;
@@ -285,6 +309,7 @@ void EvalCell(const Ctx& c, int idx, int gx, int gy)
         ? kUDurablePocketMargin
         : Core::PointSafety(c.mi, w);
     s_safe[idx] = safety;
+    s_factor[idx] = SquareFactor(c.s->grid, w);
     s_goal[idx] = (safety >= kUDurablePocketMargin && GoalGateOk(c, w)) ? 1 : 0;
     s_tgoal[idx] = 0;                                  // set lazily, only if the pass tests it
     s_pend[idx] = PendingZoneLocal(c.s->map, w) ? 1 : 0;
@@ -371,6 +396,7 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
     // lands on it momentarily — treat it as open ground so the search can leave.
     s_eval[start] = 2; s_safe[start] = startSafety; s_goal[start] = 0;
     s_tgoal[start] = 0; s_pend[start] = 0;
+    s_factor[start] = SquareFactor(c.s->grid, CellWorld(center, start % kS, start / kS));
     s_cost[start] = 0.f;                                // arrival time at the start = 0
     HeapPush(0.f, start);
 
@@ -489,18 +515,35 @@ int SearchPass(const Ctx& c, int curRad, int start, int& pops,
             EvalCell(c, ni, nx, ny);
             if (s_eval[ni] == 1) continue;         // blocked — never route through it
             if (kDx[k] != 0 && kDy[k] != 0) {
-                // No diagonal corner-cutting: both orthogonal neighbours must be
-                // occupiable, else the route clips a wall corner the game refuses.
-                const int ox = Idx(cgx + kDx[k], cgy);
-                const int oy = Idx(cgx, cgy + kDy[k]);
-                EvalCell(c, ox, cgx + kDx[k], cgy);
-                EvalCell(c, oy, cgx, cgy + kDy[k]);
-                if (s_eval[ox] == 1 || s_eval[oy] == 1) continue;
+                if (c.s->collisionRule == Movement::Collision::Rule::Game) {
+                    // The game's rule decides walls: the diagonal is open exactly when
+                    // the centre can travel it. Enemy bodies, live blasts and damaging
+                    // ground beside it still close it, as before.
+                    const auto softBlocked = [&](int x, int y) {
+                        if (x < 0 || x >= kS || y < 0 || y >= kS) return true;
+                        const Vec2 w = CellWorld(center, x, y);
+                        return (c.s->settings.safeWalk && (c.s->grid.flags[Idx(x, y)] & 0x2)) ||
+                               EnemyBlockedLocal(c.s->map, w) || ZoneBlockedLocal(c.s->map, c.mi.player, w);
+                    };
+                    if (softBlocked(cgx + kDx[k], cgy) || softBlocked(cgx, cgy + kDy[k])) continue;
+                    const Vec2 a = CellWorld(center, cgx, cgy), b = CellWorld(center, nx, ny);
+                    if (!Movement::Collision::StepClear(OccSquares(c.s->grid), a.x, a.y, b.x, b.y)) continue;
+                } else {
+                    // No diagonal corner-cutting: both orthogonal neighbours must be
+                    // occupiable, else the route clips a wall corner the game refuses.
+                    const int ox = Idx(cgx + kDx[k], cgy);
+                    const int oy = Idx(cgx, cgy + kDy[k]);
+                    EvalCell(c, ox, cgx + kDx[k], cgy);
+                    EvalCell(c, oy, cgx, cgy + kDy[k]);
+                    if (s_eval[ox] == 1 || s_eval[oy] == 1) continue;
+                }
             }
             const float stepDist = (kDx[k] != 0 && kDy[k] != 0)
                                        ? kUPathCellTiles * kUPathRoot2 : kUPathCellTiles;
             // Edge cost is TIME: how long the player takes to cross this edge.
-            const float tB = s_cost[cur] + stepDist * c.timePerTile;
+            const float tB = s_cost[cur] + (c.baseTilesPerMs > 0.f
+                ? Movement::Speed::EdgeMs(c.baseTilesPerMs, s_factor[cur], s_factor[ni], stepDist)
+                : stepDist * c.timePerTile);
             // SPEED-AWARE GATE: only walk into B if the player, arriving at tB
             // (having left cur at s_cost[cur]), is clear of every bullet there.
             const Vec2 wB = CellWorld(center, nx, ny);
@@ -582,6 +625,7 @@ void RunSearch(const PlannerSnapshot& s, bool diskActive, float startSafety, Pla
     // stays purely a step-LENGTH knob (it places the lookahead anchor below).
     // speed == 0 means the game's tiles-per-second was unreadable this tick; fall
     // back to the old moveBudget derivation rather than dividing by zero.
+    c.baseTilesPerMs = (std::isfinite(s.baseSpeed) && s.baseSpeed > 1e-6f) ? s.baseSpeed : 0.f;
     c.timePerTile = (s.speed > 1e-6f)
                         ? 1.f / s.speed
                         : kServerTickSec * 1000.f / std::max(s.moveBudget, 1e-3f);
@@ -822,6 +866,16 @@ bool NavTouchesVoid(const PlannerSnapshot& in, int gx, int gy)
     return false;
 }
 
+// The nav raster read back as squares (FillNavGrid rasterizes square centres).
+Movement::Collision::RasterSquares NavSquares(const PlannerSnapshot& in)
+{
+    return Movement::Collision::RasterSquares{
+        in.navGrid.flags,
+        static_cast<int>(std::floor(in.navGrid.center.x)) - kNR,
+        static_cast<int>(std::floor(in.navGrid.center.y)) - kNR,
+        kNS };
+}
+
 float NavOctile(int ax, int ay, int bx, int by)
 {
     const int dx = std::abs(ax - bx), dy = std::abs(ay - by);
@@ -910,6 +964,17 @@ NavSearch RunNavSearch(const PlannerSnapshot& in, int startGx, int startGy, int 
         if (NavBlocked(in, x, y, false)) return true;
         return hazardIsWall && (in.navGrid.flags[NavIdx(x, y)] & 0x2) != 0;
     };
+    // Everything `blocked` refuses except walls and the FullOccupy rule (game rule only).
+    auto softBlocked = [&](int x, int y) {
+        if (x < 0 || x >= kNS || y < 0 || y >= kNS) return true;
+        if (hazardIsWall && (in.navGrid.flags[NavIdx(x, y)] & 0x2) != 0) return true;
+        const Vec2 w = NavCellWorld(in.navGrid.center, x, y);
+        if (EnemyBlockedLocal(in.map, w)) return true;
+        for (int i = 0; i < in.map.zoneCount; ++i)
+            if (InsideEnemyKeepout(in.map.zones[i], in.player, w, kUPlayerHalf)) return true;
+        return false;
+    };
+    const Movement::Collision::RasterSquares navSquares = NavSquares(in);
 
     float popCost; int cur;
     while (NavHeapPop(popCost, cur)) {
@@ -928,9 +993,16 @@ NavSearch RunNavSearch(const PlannerSnapshot& in, int startGx, int startGy, int 
         for (int d = 0; d < 8; ++d) {
             const int nx = cgx + kDx[d], ny = cgy + kDy[d];
             if (blocked(nx, ny)) continue;
-            // No diagonal corner-cutting: both shared orthogonal cells must be open.
             if (kDx[d] != 0 && kDy[d] != 0) {
-                if (blocked(cgx + kDx[d], cgy) || blocked(cgx, cgy + kDy[d])) continue;
+                if (in.collisionRule == Movement::Collision::Rule::Game) {
+                    // Walls: the game's rule between the two centres. Enemy bodies,
+                    // keep-outs and a hazard-as-wall pass beside the step still close it.
+                    if (softBlocked(cgx + kDx[d], cgy) || softBlocked(cgx, cgy + kDy[d])) continue;
+                    if (!Movement::Collision::DiagonalStepClear(navSquares, navSquares.tx0 + cgx, navSquares.ty0 + cgy,
+                                                                kDx[d], kDy[d])) continue;
+                } else if (blocked(cgx + kDx[d], cgy) || blocked(cgx, cgy + kDy[d])) {
+                    continue;   // no diagonal corner-cutting: both shared orthogonal cells must be open
+                }
             }
             const int   nidx = NavIdx(nx, ny);
             if (s_navClosed[nidx]) continue;
@@ -1113,6 +1185,14 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
     navInput.env.occSide = kNS;
     navInput.env.occRadius = kNR;
     navInput.env.occCellTiles = kUNavCellTiles;
+    navInput.env.rule = in.collisionRule;
+    if (in.collisionRule == Movement::Collision::Rule::Game) {
+        const Movement::Collision::RasterSquares squares = NavSquares(in);
+        navInput.env.squares = squares.cells;
+        navInput.env.squareX0 = squares.tx0;
+        navInput.env.squareY0 = squares.ty0;
+        navInput.env.squareSide = squares.side;
+    }
     float deviation = 0.f; bool nearEnd = false;
     out.navStepTarget = Navigation::Follow(out.navWpts, wn, in.player,
         std::max(in.moveBudget, 1.f) * kUNavLookaheadBudgets, deviation, nearEnd,

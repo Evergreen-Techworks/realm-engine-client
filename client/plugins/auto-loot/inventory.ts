@@ -181,8 +181,8 @@ export function sendUseItemFromBag(
   const packet = ctx.createPacket('USEITEM');
   packet.data.time = time;
   packet.data.slotObject = { objectId: bag.objectId, slotId: bagSlot, objectType: itemId };
-  packet.data.itemUsePos = { x: 0, y: 0 };
-  packet.data.useType = 0;
+  packet.data.itemUsePos = { ...client.playerData.pos };
+  packet.data.useType = 1;
   packet.data.unknownInt = 0;
   packet.modified = true;
   return tryInventoryAction(client,

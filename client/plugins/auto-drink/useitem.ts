@@ -2,7 +2,7 @@
 
 import type { PluginContext } from '../api.js';
 import type { ClientConnection } from '../api.js';
-import { connectionGameTime } from '../api.js';
+import { connectionGameTime, tryConsumePlayerItem } from '../api.js';
 
 /**
  * Send a USEITEM for the potion at `slotId`. Returns false, sending nothing,
@@ -31,6 +31,5 @@ export function sendUseItem(
     unknownInt: 0,
   };
   pkt.modified = true;
-  client.sendToServer(pkt);
-  return true;
+  return tryConsumePlayerItem(client, slotId, itemType, () => client.sendToServer(pkt));
 }

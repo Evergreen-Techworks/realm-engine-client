@@ -4,6 +4,9 @@
 #include "features/combat/enemytracker/EnemyClassify.h"
 #include "features/combat/enemytracker/SnapshotHandoff.h"
 #include "features/combat/autoaim/core/LockPolicy.h"
+#include "features/combat/enemytracker/LockLiveness.h"
+
+#include <cmath>
 
 #include <atomic>
 #include <cstdio>
@@ -154,18 +157,64 @@ static EnemyTracker::Entry Tracked(bool invulnerable, bool healthBar, bool scene
     return e;
 }
 
+static EnemyTracker::LockInfo LockOn(const EnemyTracker::Entry& e)
+{
+    return EnemyTracker::ResolveLock(std::vector<EnemyTracker::Entry>{ e }, e.id);
+}
+
 static void TestLockPolicy()
 {
     using LockPolicy::Decide;
     using LockPolicy::Use;
     const EnemyTracker::Entry wall = Tracked(false, false, true);
-    CHECK(Decide(&wall, false) == Use::Aim, "explicit lock on a breakable not aimed at");
+    CHECK(Decide(LockOn(wall), false) == Use::Aim, "explicit lock on a breakable not aimed at");
     const EnemyTracker::Entry plain = Tracked(false, true, false);
-    CHECK(Decide(&plain, false) == Use::Aim, "explicit lock on an enemy not aimed at");
+    CHECK(Decide(LockOn(plain), false) == Use::Aim, "explicit lock on an enemy not aimed at");
     const EnemyTracker::Entry invuln = Tracked(true, true, false);
-    CHECK(Decide(&invuln, false) == Use::Hold, "invulnerable lock not held");
-    CHECK(Decide(&invuln, true) == Use::Aim, "invulnerable lock not aimed at with Shoot invulnerable");
-    CHECK(Decide(nullptr, false) == Use::FallBack, "missing lock did not fall back");
+    CHECK(Decide(LockOn(invuln), false) == Use::Hold, "invulnerable lock not held");
+    CHECK(Decide(LockOn(invuln), true) == Use::Aim, "invulnerable lock not aimed at with Shoot invulnerable");
+    CHECK(Decide(EnemyTracker::LockInfo{}, false) == Use::FallBack, "missing lock did not fall back");
+    EnemyTracker::Entry corpse = plain;
+    corpse.hp = 0;
+    CHECK(Decide(LockOn(corpse), false) == Use::FallBack, "a dead lock is aimed at instead of falling back");
+}
+
+// ── Lock liveness (LockLiveness.h): the one answer every lock consumer reads ─────
+static void TestLockLiveness()
+{
+    using EnemyTracker::LockState;
+    using EnemyTracker::ResolveLock;
+    EnemyTracker::Entry boss = Tracked(false, true, false);
+    boss.x = 16.5f; boss.y = 0.5f;
+    std::vector<EnemyTracker::Entry> snap{ Tracked(false, true, false), boss };
+    snap[0].id = 7;
+
+    CHECK(ResolveLock(snap, 0).state == LockState::None, "id 0 is not a lock");
+    CHECK(ResolveLock(snap, -3).state == LockState::None, "a negative id is not a lock");
+    const EnemyTracker::LockInfo live = ResolveLock(snap, boss.id);
+    CHECK(live.state == LockState::Live && live.entry == &snap[1] && live.x == 16.5f && live.y == 0.5f,
+          "a live lock resolves to its snapshot entry and position");
+    CHECK(EnemyTracker::Engages(live), "a live lock is a fight");
+
+    snap[1].isInvulnerable = true;
+    const EnemyTracker::LockInfo invuln = ResolveLock(snap, boss.id);
+    CHECK(invuln.state == LockState::Invulnerable && EnemyTracker::Engages(invuln),
+          "an invulnerable lock holds the fight");
+
+    snap[1].isInvulnerable = false;
+    snap[1].hp = 0;
+    const EnemyTracker::LockInfo dead = ResolveLock(snap, boss.id);
+    CHECK(dead.state == LockState::Gone && dead.entry == nullptr && !EnemyTracker::Engages(dead),
+          "a dead lock is gone on the same tick (no grace)");
+
+    snap[1].hp = 9000;
+    snap[1].x = NAN;
+    CHECK(ResolveLock(snap, boss.id).state == LockState::Gone, "a lock at a non-finite position is gone");
+
+    snap.pop_back();
+    const EnemyTracker::LockInfo absent = ResolveLock(snap, boss.id);
+    CHECK(absent.state == LockState::Gone && !EnemyTracker::Engages(absent),
+          "a lock missing from the snapshot is gone (no last-known position)");
 }
 
 // ── SnapshotHandoff ───────────────────────────────────────────────────────────
@@ -245,6 +294,7 @@ int main()
     TestDefaultHpHelpersStayDropped();
     TestHiddenHelpers();
     TestLockPolicy();
+    TestLockLiveness();
     TestHandoffViewIsStableUntilRefresh();
     TestHandoffAcrossThreads();
     std::printf("enemy_tracker_tests: %d checks, %d failures\n", checks, failures);

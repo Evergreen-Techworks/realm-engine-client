@@ -3494,6 +3494,16 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
       switch (msg.type) {
+        case window.WS_MSG.STARTUP_STATUS: {
+          const label = document.getElementById('startup-availability');
+          if (label) {
+            const states = { loading: 'Metadata loading', unavailable: 'Metadata unavailable', available: 'Metadata available', cancelled: 'Metadata cancelled' };
+            const metadata = states[msg.metadata?.state] || 'Metadata unavailable';
+            const plugins = msg.plugins === null ? 'Plugins loading' : msg.plugins?.failed?.length ? 'Some plugins failed to load' : 'Plugins initialized';
+            label.textContent = `${metadata} · ${plugins}`;
+          }
+          break;
+        }
         case window.WS_MSG.PACKET:
           onPacket(msg.data);
           break;

@@ -64,6 +64,9 @@ import { setDllFeatureSender } from './bridge/DllFeatureBus.js';
 import { attachHiddenHelperTypeSync } from './bridge/HiddenHelperTypes.js';
 import { Logger } from './util/Logger.js';
 import { ensureRotmgMetadataXml } from './util/ensureRotmgMetadataXml.js';
+import { startServices } from './startup/startServices.js';
+import { startMetadataEnrichment, type MetadataStatus } from './startup/metadataEnrichment.js';
+import type { PluginLoadReport } from './plugins/PluginManager.js';
 import { getRealmengineDataDir } from './util/rotmgAssetExtractor.js';
 import { ensureSdkDeployed } from './util/ensureSdkDeployed.js';
 import { getBakedPacketDefinitions, getBakedServers, getBakedStatTypes } from './config/BakedData.js';
@@ -338,34 +341,52 @@ async function main() {
   // lock and auto-aim: sent now, on every DLL (re)connect, and on game-data reload.
   attachHiddenHelperTypeSync(gameData, internalBridge);
 
-  // 7. Mirror XML + plugin loading in parallel (metadata fetch can be slow if mirrors are down)
-  const [metadataResult] = await Promise.all([
-    ensureRotmgMetadataXml(gameDataDir, {
+  const startupController = new AbortController();
+  let metadataStatus: MetadataStatus = { state: 'loading', failed: [] };
+  let pluginReport: PluginLoadReport | null = null;
+  const publishStartup = () => {
+    if (!startupController.signal.aborted) devServer?.setStartupStatus({ metadata: metadataStatus, plugins: pluginReport });
+  };
+  const markReady = (stage: string) => {
+    if (!startupController.signal.aborted) Logger.log('Startup', `launch=${process.env.REALM_ENGINE_LAUNCH_ID ?? process.pid} process=proxy stage=${stage} elapsedMs=${performance.now().toFixed(1)}`);
+  };
+  proxy.once('listenStarted', () => markReady('proxy-listening'));
+  internalBridge.once('listening', () => markReady('pipe-listening'));
+  const shutdown = async () => {
+    if (startupController.signal.aborted) return;
+    startupController.abort();
+    devServer?.stop();
+    Logger.log('Main', 'Shutting down...');
+    scriptHost?.stopAll();
+    internalBridge.stop();
+    setDllFeatureSender(null);
+    proxy.stop();
+    pluginManager.stopWatching();
+    await hooker.uninstall();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+
+  void startMetadataEnrichment({
+    signal: startupController.signal,
+    publish: status => {
+      metadataStatus = status;
+      publishStartup();
+      if (status.state === 'unavailable') Logger.warn('Metadata', `Optional metadata unavailable: ${status.failed.join(', ')}`);
+    },
+    run: signal => ensureRotmgMetadataXml(gameDataDir, {
+      signal,
       log(level, message) {
         if (level === 'error') Logger.error('Metadata', message);
         else if (level === 'warn') Logger.warn('Metadata', message);
         else Logger.log('Metadata', message);
       },
     }),
-    pluginManager.loadAll().then(() => {
-      devServer?.tryAutoLoadDefaultPluginConfig();
-      return pluginManager.startWatching();
-    }).then(() => {
-      // Broadcast plugin state to any dashboard clients that connected before plugins finished loading
-      devServer?.broadcastPluginState();
-    }),
-  ]);
-  if (!metadataResult.ok) {
-    Logger.warn(
-      'Main',
-      `Missing metadata XML (${metadataResult.failed.join(', ')}). Damage sniffer scaling/enchants may be incomplete. Set ROTMG_XML_BASE or run: npm run download-game-xml`,
-    );
-  }
+  });
 
   // 8. Start proxy
-  proxy.start('127.0.0.1', GAME_PORT);
 
-  Logger.log('Main', `Proxy ready on 127.0.0.1:${GAME_PORT}`);
   if (hookInstalled) {
     Logger.log('Main', `Game hook active - Exalt at ${hooker.gameDirectory}`);
   }
@@ -385,28 +406,26 @@ async function main() {
   }
   // Start the pipe server — the injected DLL connects to us.
   // No reconnect hammering; server just listens until DLL injects.
-  internalBridge.listen();
+  await startServices({
+    signal: startupController.signal,
+    loadPlugins: () => pluginManager.loadAll(),
+    applyProfile: () => { devServer?.tryAutoLoadDefaultPluginConfig(); },
+    startWatching: () => pluginManager.startWatching(),
+    publish: report => {
+      pluginReport = report;
+      publishStartup();
+      markReady('plugin-profile-ready');
+      if (report.failed.length) Logger.warn('Main', `Plugin initialization degraded: ${report.failed.join(', ')}`);
+      devServer?.broadcastPluginState();
+    },
+    startProxy: () => proxy.start('127.0.0.1', GAME_PORT),
+    startPipe: () => internalBridge.listen(),
+  });
   // Forward DLL state/player messages to any listeners
   internalBridge.on('message', (msg: any) => {
     devServer?.broadcastDllMessage(msg);
   });
 
-  // Graceful shutdown
-  const shutdown = async () => {
-    Logger.log('Main', 'Shutting down...');
-    scriptHost?.stopAll();
-    internalBridge.stop();
-    setDllFeatureSender(null);
-    // #region agent log
-    // #endregion
-    await hooker.uninstall();
-    proxy.stop();
-    pluginManager.stopWatching();
-    process.exit(0);
-  };
-
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
 }
 
 main().catch((err) => {

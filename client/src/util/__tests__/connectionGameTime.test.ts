@@ -32,7 +32,7 @@ it('reports no game time until the connection has one', () => {
 function client(time: number, send = vi.fn()) {
   return { connected: true, objectId: 1, time, sendToServer: send,
     playerData: { mapName: `Realm ${Math.random()}`, pos: { x: 0, y: 0 }, inventory: [-1, -1, -1, -1, 2592, -1, -1, -1, -1, -1, -1, -1],
-      backpack: Array(16).fill(-1), hasBackpack: false, quickSlots: [] } } as any;
+      backpack: Array(16).fill(-1), hasBackpack: false, quickSlots: [{ itemType: 2594, quantity: 1 }] } } as any;
 }
 
 /** What ClientConnection.send would put on the wire, or null when serialization fails. */

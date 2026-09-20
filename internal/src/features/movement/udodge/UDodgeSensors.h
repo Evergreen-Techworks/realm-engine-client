@@ -20,6 +20,9 @@ bool CanOccupy(float worldX, float worldY, bool safeWalk);
 // Walls only: the player box against blocked squares, without the FullOccupy
 // half-tile rule or damaging ground (Env::wallsClear, navigation padding).
 bool WallsClear(float worldX, float worldY);
+// navCollisionRule=game: can the centre walk straight from a to b (walls and objects,
+// Movement::Collision::StepClear over WorldTAB's squares)? Game thread only.
+bool StepClear(float ax, float ay, float bx, float by);
 
 // ── Instantaneous danger map (plan 45) ──────────────────────────────────────
 // Reads the WorldManager server-tick counter (increments once per processed

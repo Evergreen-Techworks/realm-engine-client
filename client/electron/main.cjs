@@ -6,6 +6,10 @@ const { WindowHostBridge } = require('./services/window-host-bridge.cjs');
 const { InstanceManager } = require('./services/instance-manager.cjs');
 const { acquireInstanceLock, allowSetForegroundWindow, machineInstancePipePath } = require('./services/single-instance.cjs');
 const { IPC } = require('./ipc-channels.cjs');
+const { performance } = require('node:perf_hooks');
+const { randomUUID } = require('node:crypto');
+const startupLaunchId = randomUUID();
+process.env.REALM_ENGINE_LAUNCH_ID = startupLaunchId;
 
 const APP_NAME = 'Realm Engine';
 const APP_USER_MODEL_ID = 'com.realmengine.app';
@@ -302,7 +306,10 @@ function createWindow() {
   });
 
   // Show window as soon as first paint is ready
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    console.log(`[Startup] launch=${startupLaunchId} process=electron stage=window-visible elapsedMs=${performance.now().toFixed(1)}`);
+  });
   instanceManager.on('update', (state) => {
     try {
       if (mainWindow && !mainWindow.isDestroyed()) {

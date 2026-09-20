@@ -2,9 +2,8 @@
  * Auto Nexus — pure damage and shot-identity rules for the hit ledger (layer 2)
  * and the short forecast (layer 3).
  *
- * Every number here comes from a server packet: ENEMYSHOOT / SERVERPLAYERSHOOT
- * `damage`, the local player's wire DEFENSE stat and condition bitmasks. Nothing
- * is estimated. A bullet without a packet damage is not charged and not forecast.
+ * Raw damage comes from packets. Defense, piercing and condition application
+ * remain estimates, not proof of confirmed loss. Unknown damage is excluded.
  */
 import { ConditionEffect, tomatoDamageWithDefense } from '../api.js';
 
@@ -15,6 +14,11 @@ export const SYNTHETIC_RAW_DAMAGE = 9999;
 
 /** A bullet the server announced, with the damage the server stated for it. */
 export interface ShotRecord {
+  identity: string;
+  ownerIncarnation: number;
+  receiptSequence: number;
+  receivedAt: number;
+  ambiguous: boolean;
   ownerId: number;
   /** Object type of the owner when the shot arrived; null if the world state did not know it. */
   ownerType: number | null;
@@ -47,7 +51,7 @@ export function isPacketDamage(value: unknown): value is number {
  */
 export function shotCount(raw: unknown): number {
   const n = typeof raw === 'number' && Number.isFinite(raw) ? Math.trunc(raw) : 1;
-  return n === 255 || n <= 0 ? 1 : n;
+  return n === 255 || n <= 0 ? 1 : Math.min(n, 254);
 }
 
 /** How long a shot stays chargeable: its lifetime capped at 10 s, plus the PLAYERHIT round trip. */

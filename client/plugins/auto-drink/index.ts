@@ -1,4 +1,5 @@
 import type { PluginContext, ClientConnection } from '../api.js';
+import { tryConsumePlayerItem } from '../api.js';
 import { SAFE_ZONE_MAPS, BELT_SLOT_BASE, FALLBACK_POT_AMOUNT, clampPct } from './constants.js';
 import { loadPotIds } from './catalog.js';
 import { findSlots } from './slots.js';
@@ -179,7 +180,7 @@ export function register(ctx: PluginContext) {
     let used = 0;
     for (const found of slots) {
       if (healed >= deficit) break;
-      if (!sendUseItem(ctx, client, found.slotId, found.itemType)) break;
+      if (!sendUseItem(ctx, client, found.slotId, found.itemType)) continue;
       state.recentSends.push(now);
       const amount = amounts.get(found.itemType) ?? FALLBACK_POT_AMOUNT;
       inFlight.push({ amount, at: now });
@@ -214,6 +215,13 @@ export function register(ctx: PluginContext) {
   }
 
   let activeClient: ClientConnection | null = null;
+
+  ctx.hookPacket('USEITEM', (client, packet) => {
+    const slot = packet.data?.slotObject;
+    if (slot?.objectId !== client.objectId || packet.data.useType !== 1) return;
+    if (hpPots.has(slot.objectType) || mpPots.has(slot.objectType))
+      tryConsumePlayerItem(client, slot.slotId, slot.objectType, () => {});
+  });
 
   ctx.hookPacket('NEWTICK', (client) => {
     activeClient = client;

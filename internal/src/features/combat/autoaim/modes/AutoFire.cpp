@@ -110,7 +110,7 @@ public:
     bool ManualEngaged() const { return s_diagEngaged.load(std::memory_order_relaxed); }
     bool ShootReady() const
     {
-        return BootGate::FeatureAllowed("AutoFire") && ShootRuntime::IsResolved();
+        return ShootRuntime::IsFiringResolved();
     }
     uintptr_t LocalPlayer() const { return reinterpret_cast<uintptr_t>(m_local); }
     uint32_t  SceneEpoch() const  { return s_sceneEpoch.load(std::memory_order_relaxed); }
@@ -234,6 +234,11 @@ void Tick(bool menuOpen)
     if (s_scriptArmed.load(std::memory_order_relaxed) && GameState::GetLocalPtr())
         DangerPlanner::TryInstall();
 
+    if (!ShootRuntime::IsManualAngleResolved()) {
+        SetEngaged(false, "manual-angle-unverified");
+        return;
+    }
+
     const bool autoEngaged = s_autoEngage.load(std::memory_order_relaxed);
     const int  vk          = s_hotkeyVk.load(std::memory_order_relaxed);
     // The hotkey counts only while the game window owns the foreground
@@ -348,7 +353,9 @@ void RenderSettings()
         SetEnabled(on);
     ImGui::SameLine(); ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Hold the bound key to fire continuously. Drives the game's own shoot\nentry, so its rate limit / MP / silence checks all still apply.\n\nA script's autoFireEnabled fires with no key, but only at Auto Aim's\ntarget while it is in the enemy list, alive and in range. Never at the cursor.");
+        ImGui::SetTooltip("Script autofire uses the game's firing controls and only fires at\nAuto Aim's live target in range. Manual autofire is unavailable until\nits angle method is verified. The game's normal firing controls still work.");
+
+    ImGui::TextDisabled("Manual autofire unavailable: angle method is not verified.");
 
     ImGui::Spacing();
     ImGui::PushItemWidth(180.f);
@@ -375,7 +382,7 @@ void RenderSettings()
         SetSlot(slot);
     ImGui::SameLine(); ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Diagnostic: the slot index passed to the game's ComputeShootAngle.\n0 is the weapon slot in every observed build; 0..3 for correction\nwithout a rebuild.");
+        ImGui::SetTooltip("Reserved manual diagnostic setting. No native angle method is called\nwhile its identity remains unverified.");
 
     ImGui::PopItemWidth();
 

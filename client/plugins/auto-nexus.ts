@@ -1,6 +1,7 @@
 import type { PluginContext, ClientConnection, Packet, GameDataLoader } from './api.js';
 import { sendDllFeature, StatType, getDllThreats, getDllThreatsAgeMs } from './api.js';
 import { remainingHitMs } from './auto-nexus/forecastTiming.js';
+import { HealthEvidence } from './auto-nexus/healthEvidence.js';
 import {
   type ShotRecord,
   appliedDamage,
@@ -13,7 +14,7 @@ import {
   withOnHitEffects,
 } from './auto-nexus/hitLedger.js';
 
-// Auto Nexus escapes on three layers, all driven by damage numbers the server sent:
+// Confirmed health protects the player. The two predictive layers are observations:
 //  1. Confirmed health — server HP (NEWTICK/UPDATE) and server DAMAGE amounts.
 //  2. Hit ledger — each outgoing PLAYERHIT charges the damage the server stated
 //     for that bullet in ENEMYSHOOT, after defense, until the next server HP.
@@ -75,13 +76,46 @@ interface EscapePoint { hp: number; burst: number; guarded: boolean }
 
 type EscapeLayer = 'confirmed-health' | 'hit-ledger' | 'forecast' | 'manual';
 
+export type PredictionMode = 'off' | 'observe' | 'active';
+export interface RecoveryObservation {
+  kind: 'escape-requested' | 'reconnect' | 'mapinfo';
+  generation: number;
+  at: number;
+}
+export interface PredictionObservation {
+  sampleAt: number;
+  generation: number;
+  mode: PredictionMode;
+  layer: 'hit-ledger' | 'forecast';
+  confirmedHp: number | null;
+  healthAgeMs: number | null;
+  predictedHp: number | null;
+  effectiveThreshold: number;
+  thresholdCrossed: boolean;
+  lethal: boolean;
+  nativeScanAgeMs: number | null;
+  sourceCertainty: 'ambiguous';
+  pendingDamage: number;
+  certainty: 'identified' | 'ambiguous';
+  escapeRequestedAt: number | null;
+  reconnectAt: number | null;
+  mapInfoAt: number | null;
+  earliestImpactMs: number | null;
+}
+
 interface NexusState {
+  generation: number;
+  evidence: HealthEvidence;
+  ownerIncarnations: Map<number, number>;
+  shotSequence: number;
+  startedAt: number;
+  escapeRequestedAt: number | null;
+  reconnectAt: number | null;
+  mapInfoAt: number | null;
   hp: number | null;
   maxHp: number;
   healthAt: number | null;
   safe: boolean;
-  escaped: boolean;
-  retry: ReturnType<typeof setInterval> | null;
   /** Confirmed HP values from the last BURST_WINDOW_MS, oldest first. */
   samples: { at: number; hp: number; maxHp: number }[];
   /** Confirmed HP losses within one BURST_WINDOW_MS, from the last BURST_MEMORY_MS. */
@@ -95,7 +129,7 @@ interface NexusState {
   ledgerEffects: [number, number];
 }
 
-export function register(ctx: PluginContext) {
+export function register(ctx: PluginContext, testHooks?: { allowActivePredictionForTests?: boolean }) {
   ctx.name = 'Auto Nexus';
   ctx.category = 'combat';
   let thresholdPct = 25;
@@ -104,10 +138,35 @@ export function register(ctx: PluginContext) {
   let retryMs = 400;
   let burstGuard = true;
   let forecastEnabled = true;
+  let predictionMode: PredictionMode = 'observe';
+  const observations = new WeakMap<ClientConnection, PredictionObservation>();
+  const transitions = new WeakMap<ClientConnection, RecoveryObservation[]>();
   let horizonMs = DEFAULT_FORECAST_HORIZON_MS;
   let states = new WeakMap<ClientConnection, NexusState>();
   let activeClient: ClientConnection | null = null;
-  const timers = new Set<ReturnType<typeof setInterval>>();
+  const clients = new Set<ClientConnection>();
+
+  function recordTransition(client: ClientConnection, kind: RecoveryObservation['kind'], generation = client.admission.generation): number {
+    const at = performance.now();
+    const history = transitions.get(client) ?? [];
+    history.push({ kind, generation, at });
+    if (history.length > 32) history.shift();
+    transitions.set(client, history);
+    return at;
+  }
+
+  function activePredictionAllowed(): boolean {
+    return predictionMode !== 'off' && testHooks?.allowActivePredictionForTests === true;
+  }
+
+  ctx.registerSetting('PredictionMode', {
+    label: 'Prediction (observation only)', type: 'select', value: 'observe',
+    options: [{ label: 'Off', value: 'off' }, { label: 'Observe', value: 'observe' }],
+  }, (value: string) => {
+    predictionMode = value === 'off' ? 'off' : 'observe';
+    if (value !== predictionMode) ctx.updateSetting('PredictionMode', predictionMode);
+    syncNativeForecast();
+  });
 
   ctx.registerSetting('ForceAutoNexusHealth', {
     label: 'Nexus Health', type: 'range', value: thresholdPct, min: 0, max: 100, step: 1,
@@ -155,7 +214,7 @@ export function register(ctx: PluginContext) {
   // and its damage numbers are ignored here. Its ground predictor and overlay stay
   // off. Re-sent on connect and map change so restored native state cannot linger.
   function syncNativeForecast(): void {
-    const on = ctx.enabled && forecastEnabled;
+    const on = ctx.enabled && forecastEnabled && predictionMode !== 'off';
     sendDllFeature('autoNexusTilePredict', false);
     sendDllFeature('autoNexusDebugDraw', false);
     // Scan past the horizon by the accepted scan age, so a hit at the horizon edge
@@ -167,8 +226,8 @@ export function register(ctx: PluginContext) {
   syncNativeForecast();
   ctx.onEnabledChange(() => {
     syncNativeForecast();
-    for (const timer of timers) clearInterval(timer);
-    timers.clear();
+    for (const client of clients) client.recovery.cancelEscape(states.get(client)!.generation);
+    clients.clear();
     states = new WeakMap(); // re-enable must not reuse health, shots or charges from before the pause
     activeClient = null;
   });
@@ -186,8 +245,9 @@ export function register(ctx: PluginContext) {
   }, FORECAST_POLL_MS);
   ctx.registerCleanup(() => {
     clearInterval(forecastTimer);
-    for (const timer of timers) clearInterval(timer);
-    timers.clear();
+    for (const client of clients) client.recovery.cancelEscape(states.get(client)!.generation);
+    clients.clear();
+    activeClient = null;
     sendDllFeature('autoNexusEnabled', false);
     sendDllFeature('autoNexusProjPredict', false);
     sendDllFeature('autoNexusTilePredict', false);
@@ -196,37 +256,55 @@ export function register(ctx: PluginContext) {
 
   function stateFor(client: ClientConnection): NexusState {
     let state = states.get(client);
+    if (state && state.generation !== client.admission.generation) {
+      client.recovery.cancelEscape(state.generation);
+      observations.delete(client);
+      state = undefined;
+    }
     if (!state) {
-      state = { hp: null, maxHp: 0, healthAt: null, safe: SAFE_ZONE_MAPS.has(
-        String(client.playerData?.mapName ?? '').trim().toLowerCase()), escaped: false, retry: null,
+      const evidence = new HealthEvidence();
+      const generation = client.admission?.generation ?? 0;
+      evidence.reset(generation);
+      state = { generation, evidence, ownerIncarnations: new Map(), shotSequence: 0, startedAt: Date.now(),
+        escapeRequestedAt: null, reconnectAt: null, mapInfoAt: null,
+        hp: null, maxHp: 0, healthAt: null, safe: SAFE_ZONE_MAPS.has(
+        String(client.playerData?.mapName ?? '').trim().toLowerCase()),
         samples: [], bursts: [], shots: new Map(), lastShotPruneAt: 0, charges: [], ledgerEffects: [0, 0] };
       states.set(client, state);
+      clients.add(client);
     }
     return state;
-  }
-  function stopRetry(state: NexusState): void {
-    if (state.retry) { clearInterval(state.retry); timers.delete(state.retry); state.retry = null; }
   }
   function clearLedger(state: NexusState): void {
     state.charges = [];
     state.ledgerEffects = [0, 0];
+    state.evidence.reset(state.generation);
+    if (state.hp !== null) state.evidence.observeHp(state.hp, Date.now());
   }
   function reset(client: ClientConnection, safe: boolean): void {
-    const state = stateFor(client); stopRetry(state);
-    state.hp = null; state.maxHp = 0; state.healthAt = null; state.safe = safe; state.escaped = false;
+    const state = stateFor(client); client.recovery.cancelEscape(state.generation);
+    state.generation = client.admission?.generation ?? 0;
+    state.hp = null; state.maxHp = 0; state.healthAt = null; state.safe = safe;
+    state.startedAt = Date.now(); state.escapeRequestedAt = null; state.reconnectAt = null; state.mapInfoAt = null;
     state.samples = []; state.bursts = [];
     state.shots.clear(); clearLedger(state);
+    state.ownerIncarnations.clear(); state.shotSequence = 0;
+    observations.delete(client);
   }
   ctx.on('clientDisconnected', client => {
-    stopRetry(stateFor(client)); states.delete(client);
+    const state = states.get(client);
+    if (state) client.recovery.cancelEscape(state.generation);
+    states.delete(client); clients.delete(client); observations.delete(client);
     if (activeClient === client) activeClient = null;
   });
   ctx.hookPacket('MAPINFO', (client, packet) => {
     if (!packet.isDefined) return;
     reset(client, SAFE_ZONE_MAPS.has(String(packet.data.name ?? '').trim().toLowerCase()));
+    stateFor(client).mapInfoAt = recordTransition(client, 'mapinfo');
     syncNativeForecast();
   });
   ctx.hookPacket('CREATESUCCESS', client => { reset(client, stateFor(client).safe); });
+  ctx.hookPacket('RECONNECT', client => { stateFor(client).reconnectAt = recordTransition(client, 'reconnect'); });
 
   // ── Player numbers ─────────────────────────────────────────────────────────
   /**
@@ -245,8 +323,7 @@ export function register(ctx: PluginContext) {
     return [e0 | state.ledgerEffects[0], e1 | state.ledgerEffects[1]];
   }
   function predictedHp(state: NexusState): number | null {
-    if (state.hp === null) return null;
-    return state.hp - state.charges.reduce((sum, c) => sum + c.applied, 0);
+    return state.evidence.snapshot(Date.now()).predictedHp;
   }
   function ownerLabel(type: number | null): string {
     if (type === null) return 'unknown owner';
@@ -273,8 +350,12 @@ export function register(ctx: PluginContext) {
     bullets: BulletNote[] = [],
     forecastHp: number | null = null,
   ): void {
-    if (state.escaped || !client.connected) return;
-    state.escaped = true;
+    if ((layer === 'hit-ledger' || layer === 'forecast') && !activePredictionAllowed()) return;
+    if ((layer === 'hit-ledger' || layer === 'forecast') && state.evidence.snapshot(Date.now()).certainty === 'ambiguous') return;
+    if (!client.connected || !ctx.enabled || state.generation !== client.admission.generation ||
+        ['dead', 'disconnected', 'cancelled', 'terminal'].includes(client.admission.phase)) return;
+    if (!client.recovery.requestEscape(state.generation, { retries: retryCount, retryMs })) return;
+    state.escapeRequestedAt = recordTransition(client, 'escape-requested', state.generation);
     const now = Date.now();
     const point = state.maxHp > 0 ? escapePoint(state, now) : null;
     const predicted = forecastHp ?? predictedHp(state);
@@ -285,31 +366,14 @@ export function register(ctx: PluginContext) {
       + `; confirmed HP=${state.hp ?? 'unknown'}/${state.maxHp}`
       + ` age=${state.healthAt === null ? 'unknown' : `${now - state.healthAt}ms`}`
       + `; bullets=${describeBullets(bullets)}`;
-    ctx.log(`AUTO NEXUS — ${detail}; ${reason}`);
-    const send = () => {
-      try {
-        const packet = ctx.createPacket('ESCAPE'); packet.modified = true;
-        client.sendToServer(packet);
-      } catch (error) {
-        ctx.log(`ESCAPE send failed; bounded retries remain available: ${String(error)}`);
-      }
-    };
-    send();
+    try { ctx.log(`AUTO NEXUS — ${detail}; ${reason}`); } catch {}
     // Notification failures must never prevent the first ESCAPE or its retries.
     if (showNotification) {
       try {
         ctx.sendNotification(client, 'AutoNexus',
-          `Escaped (${layer}) at predicted HP ${round(predicted)}/${state.maxHp}; confirmed ${state.hp ?? 'unknown'}\n${reason}`);
-      } catch (error) { ctx.log(`Auto Nexus notification failed: ${String(error)}`); }
+          `Escape requested (${layer}) at predicted HP ${round(predicted)}/${state.maxHp}; confirmed ${state.hp ?? 'unknown'}\n${reason}`);
+      } catch (error) { try { ctx.log(`Auto Nexus notification failed: ${String(error)}`); } catch {} }
     }
-    let remaining = retryCount;
-    if (remaining <= 0) return;
-    state.retry = setInterval(() => {
-      if (!ctx.enabled || !client.connected || !state.escaped || remaining <= 0) { stopRetry(state); return; }
-      send();
-      if (--remaining <= 0) stopRetry(state);
-    }, retryMs);
-    timers.add(state.retry);
   }
   /** Record a newly confirmed HP value and any loss it completes within one reaction window. */
   function noteConfirmedHp(state: NexusState, now: number): void {
@@ -331,7 +395,7 @@ export function register(ctx: PluginContext) {
     return guarded > threshold ? { hp: guarded, burst, guarded: true } : { hp: threshold, burst, guarded: false };
   }
   function armed(state: NexusState): boolean {
-    return ctx.enabled && !state.safe && !state.escaped && state.hp !== null && state.maxHp > 0;
+    return ctx.enabled && !state.safe && state.hp !== null && state.maxHp > 0;
   }
   /** Layer 1: confirmed server HP. */
   function check(client: ClientConnection, state: NexusState, reason: string): void {
@@ -344,8 +408,9 @@ export function register(ctx: PluginContext) {
   }
   /** Layer 2: confirmed HP minus the hits charged since. */
   function checkLedger(client: ClientConnection, state: NexusState): void {
-    if (!armed(state) || state.charges.length === 0) return;
+    if (!armed(state) || predictionMode === 'off' || (state.charges.length === 0 && !observations.has(client))) return;
     const predicted = predictedHp(state)!;
+    observePrediction(client, state, 'hit-ledger', predicted);
     if (predicted > escapePoint(state, Date.now()).hp) return;
     escape(client, state, 'hit-ledger',
       `${state.charges.length} outgoing PLAYERHIT(s) charged at packet damage since the last server HP`,
@@ -353,13 +418,14 @@ export function register(ctx: PluginContext) {
   }
   /** Layer 3: already-fired bullets with packet damage the native scan says hit within the horizon. */
   function checkForecast(client: ClientConnection, state: NexusState): void {
-    if (!forecastEnabled || !armed(state)) return;
+    if (!forecastEnabled || predictionMode === 'off' || !armed(state)) return;
     let effects = effectsOf(client, state);
     if (isInvulnerable(effects)) return;
     const threats = getDllThreats();
     if (threats.length === 0) return;
     const ageMs = getDllThreatsAgeMs();
     const now = Date.now();
+    if (ageMs === null || now - ageMs < state.startedAt || state.generation !== client.admission.generation) return;
     const seen = new Set<string>();
     const incoming: { shot: ShotRecord; inMs: number }[] = [];
     for (const threat of threats) {
@@ -373,7 +439,7 @@ export function register(ctx: PluginContext) {
       seen.add(key);
       const shot = state.shots.get(key);
       // Only bullets the server announced with a damage count; already-charged ones never twice.
-      if (!shot || shot.charged || shot.expiresAt < now || !isPacketDamage(shot.rawDamage)) continue;
+      if (!shot || shot.ambiguous || shot.charged || shot.expiresAt < now || !isPacketDamage(shot.rawDamage)) continue;
       incoming.push({ shot, inMs });
     }
     if (incoming.length === 0) return;
@@ -388,13 +454,30 @@ export function register(ctx: PluginContext) {
       if (applied <= 0) continue;
       hp -= applied;
       counted.push({ ownerType: shot.ownerType, raw: shot.rawDamage, applied, armorPiercing: shot.armorPiercing, inMs });
+      observePrediction(client, state, 'forecast', hp, counted[0].inMs ?? null);
       if (hp <= point.hp) {
         escape(client, state, 'forecast',
           `${counted.length} fired bullet(s) predicted to hit within ${horizonMs}ms`
           + ` (native scan age ${ageMs ?? 'unknown'}ms)`, counted, hp);
-        return;
+        if (activePredictionAllowed()) return;
       }
     }
+  }
+
+  function observePrediction(client: ClientConnection, state: NexusState, layer: 'hit-ledger' | 'forecast', hp: number,
+    earliestImpactMs: number | null = null): void {
+    const point = escapePoint(state, Date.now());
+    observations.set(client, {
+      sampleAt: performance.now(), generation: client.admission?.generation ?? 0,
+      mode: activePredictionAllowed() ? 'active' : predictionMode, layer,
+      confirmedHp: state.hp, healthAgeMs: state.healthAt === null ? null : Date.now() - state.healthAt,
+      predictedHp: hp, effectiveThreshold: point.hp, thresholdCrossed: hp <= point.hp, lethal: hp <= 0,
+      nativeScanAgeMs: layer === 'forecast' ? getDllThreatsAgeMs() : null, sourceCertainty: 'ambiguous',
+      pendingDamage: state.evidence.snapshot(Date.now()).pendingDamage,
+      certainty: state.evidence.snapshot(Date.now()).certainty,
+      escapeRequestedAt: state.escapeRequestedAt, reconnectAt: state.reconnectAt, mapInfoAt: state.mapInfoAt,
+      earliestImpactMs,
+    });
   }
 
   // ── Shots (ENEMYSHOOT / enemy-owned SERVERPLAYERSHOOT) ────────────────────
@@ -417,7 +500,15 @@ export function register(ctx: PluginContext) {
     const expiresAt = now + shotTtlMs(def?.lifetimeMs);
     const onHitEffects = (def?.conditionEffects ?? []).map(ce => ce.effect);
     for (let i = 0; i < count; i++) {
-      state.shots.set(bulletKey(ownerId, firstBulletId + i), {
+      const key = bulletKey(ownerId, firstBulletId + i);
+      const previous = state.shots.get(key);
+      const ambiguous = Boolean(previous && previous.expiresAt >= now);
+      if (ambiguous) state.evidence.noteAmbiguity();
+      const ownerIncarnation = state.ownerIncarnations.get(ownerId) ?? 0;
+      const receiptSequence = ++state.shotSequence;
+      state.shots.set(key, {
+        identity: `${state.generation}:${ownerId}:${ownerIncarnation}:${(firstBulletId + i) & 0xffff}:${receiptSequence}`,
+        ownerIncarnation, receiptSequence, receivedAt: now, ambiguous,
         ownerId, ownerType, bulletType, rawDamage,
         armorPiercing: def ? def.armorPiercing === true : null,
         onHitEffects, expiresAt, charged: false,
@@ -464,13 +555,15 @@ export function register(ctx: PluginContext) {
     const state = stateFor(client);
     activeClient = client;
     const shot = state.shots.get(bulletKey(objectId, bulletId));
-    if (!shot || shot.charged || shot.expiresAt < Date.now()) return;
+    if (!shot || shot.ambiguous || shot.charged || shot.expiresAt < Date.now()) return;
     shot.charged = true;
     const applied = appliedDamage(shot.rawDamage, shot.armorPiercing, defenseOf(client), effectsOf(client, state));
     state.ledgerEffects = withOnHitEffects(state.ledgerEffects, shot.onHitEffects);
     if (applied <= 0) return;
+    state.evidence.observeHit(shot.identity, applied, shot.expiresAt, Date.now());
     state.charges.push({ key: bulletKey(objectId, bulletId), ownerType: shot.ownerType, raw: shot.rawDamage,
       applied, armorPiercing: shot.armorPiercing });
+    if (state.charges.length > MAX_SHOTS) { state.charges.shift(); state.evidence.noteAmbiguity(); }
     checkLedger(client, state);
   });
 
@@ -490,16 +583,17 @@ export function register(ctx: PluginContext) {
     if (hpStat && typeof hpStat.value === 'number' && Number.isFinite(hpStat.value)) {
       state.hp = Math.max(0, hpStat.value);
       state.healthAt = Date.now();
-      // Explicit server HP already includes every hit the server applied, so the
-      // ledger restarts from it: nothing charged before is counted again.
-      clearLedger(state);
+      state.evidence.observeHp(state.hp, state.healthAt);
+      state.ledgerEffects = [0, 0];
       noteConfirmedHp(state, state.healthAt);
     } else if (state.hp === null && Number.isFinite(client.playerData.health) && client.playerData.health > 0) {
       // Hot reload can begin between full HP updates. Seed once from the last
       // server HP; delta ticks without HP must not undo confirmed DAMAGE.
       state.hp = client.playerData.health;
+      state.evidence.observeHp(state.hp, Date.now());
     }
     check(client, state, 'server health update');
+    checkLedger(client, state);
   }
   // These hooks run after StateManager so effective max HP includes gear/exalts.
   // Read HP from the packet itself; do not replace a confirmed zero with max HP.
@@ -507,12 +601,29 @@ export function register(ctx: PluginContext) {
     statusHealth(client, packet, packet.data.statuses ?? []);
   });
   ctx.hookPacket('UPDATE', (client, packet) => {
+    if (packet.isDefined) {
+      const state = stateFor(client);
+      for (const ownerId of packet.data.drops ?? []) {
+        if (!Number.isInteger(ownerId)) continue;
+        state.ownerIncarnations.set(ownerId, (state.ownerIncarnations.get(ownerId) ?? 0) + 1);
+        for (const [key, shot] of state.shots) if (shot.ownerId === ownerId) {
+          state.shots.delete(key);
+          state.evidence.noteAmbiguity();
+        }
+      }
+      if (state.ownerIncarnations.size > MAX_SHOTS) {
+        state.ownerIncarnations.clear(); state.shots.clear(); state.evidence.noteAmbiguity();
+      }
+    }
     statusHealth(client, packet, (packet.data.newObjs ?? []).map((o: any) => o.status));
   });
   ctx.hookPacket('DAMAGE', (client, packet) => {
     if (!packet.isDefined || packet.data.targetId !== client.objectId) return;
     const state = stateFor(client); syncMaxHp(client, state);
-    if (state.hp === null && Number.isFinite(client.playerData.health) && client.playerData.health > 0) state.hp = client.playerData.health;
+    if (state.hp === null && Number.isFinite(client.playerData.health) && client.playerData.health > 0) {
+      state.hp = client.playerData.health;
+      state.evidence.observeHp(state.hp, Date.now());
+    }
     if (packet.data.kill === true) {
       state.hp = 0;
       clearLedger(state);
@@ -522,6 +633,10 @@ export function register(ctx: PluginContext) {
       state.hp = Math.max(0, state.hp - damage);
       // The server confirmed this bullet: drop its charge so it is not subtracted twice.
       const objectId = Number(packet.data.objectId), bulletId = Number(packet.data.bulletId);
+      const knownShot = Number.isInteger(objectId) && Number.isInteger(bulletId)
+        ? state.shots.get(bulletKey(objectId, bulletId)) : undefined;
+      state.evidence.observeDamage(knownShot && !knownShot.ambiguous && knownShot.expiresAt >= Date.now()
+        ? knownShot.identity : null, damage, Date.now());
       if (Number.isInteger(objectId) && Number.isInteger(bulletId)) {
         const key = bulletKey(objectId, bulletId);
         state.charges = state.charges.filter(c => c.key !== key);
@@ -549,8 +664,9 @@ export function register(ctx: PluginContext) {
       + `; ledger HP=${ledgerHp === null ? 'unknown' : Math.round(ledgerHp)} (${state.charges.length} charged hit(s), ${state.shots.size} shot(s) known)`
       + `; forecast=${forecastEnabled ? `on (horizon ${horizonMs}ms, native scan age ${scanAge === null ? 'never' : `${scanAge}ms`})` : 'off'}`
       + `; enabled=${ctx.enabled}`
-      + `; safe=${state.safe}; escapeRequested=${state.escaped}; mode=predictive-v2`);
-    stopRetry(state); // death is final; repeated ESCAPE cannot recover the character
+      + `; safe=${state.safe}; escapeRequested=${state.escapeRequestedAt !== null}; mode=${predictionMode}`);
+    client.recovery.cancelEscape(state.generation);
+    state.safe = true;
   });
   // Never suppress server packets or hold outgoing hit reports. A DEATH packet
   // is still delivered normally; no prediction can turn it into a saved life.
@@ -565,7 +681,7 @@ export function register(ctx: PluginContext) {
       ctx.updateSetting('ForceAutoNexusHealth', value);
     }
     ctx.sendNotification(client, 'AutoNexus', `Nexus at ${thresholdPct}% HP; burst guard ${burstGuard ? 'on' : 'off'}`
-      + `; hit ledger on; forecast ${forecastEnabled ? `on (${horizonMs}ms)` : 'off'}`);
+      + `; prediction ${predictionMode}; forecast ${forecastEnabled ? `on (${horizonMs}ms)` : 'off'}`);
   });
   ctx.hookCommand('reset', (client) => {
     const state = stateFor(client);
@@ -576,6 +692,16 @@ export function register(ctx: PluginContext) {
       + `${before === null ? 'unknown' : Math.round(before)}); confirmed HP ${state.hp ?? 'unknown'}/${state.maxHp}`);
   });
   ctx.hookCommand('nexus', (client) => escape(client, stateFor(client), 'manual', '/nexus command'));
-  ctx.log(`Loaded — confirmed health + hit ledger; forecast default on (${DEFAULT_FORECAST_HORIZON_MS}ms);`
+  ctx.log(`Loaded — confirmed health active; prediction observation only (${DEFAULT_FORECAST_HORIZON_MS}ms);`
     + ` default nexus at ${thresholdPct}% HP until the saved profile applies; burst guard default on`);
+  return {
+    observation: (client: ClientConnection) => {
+      const observation = observations.get(client);
+      const state = states.get(client);
+      if (!observation || !state || observation.generation !== client.admission.generation) return null;
+      return { ...observation, escapeRequestedAt: state.escapeRequestedAt,
+        reconnectAt: state.reconnectAt, mapInfoAt: state.mapInfoAt };
+    },
+    transitions: (client: ClientConnection) => (transitions.get(client) ?? []).map(event => ({ ...event })),
+  };
 }
