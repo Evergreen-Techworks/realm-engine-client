@@ -352,7 +352,13 @@ async function main() {
   };
   proxy.once('listenStarted', () => markReady('proxy-listening'));
   internalBridge.once('listening', () => markReady('pipe-listening'));
-  const shutdown = async () => {
+  /**
+   * `exitCode` defaults to 0 (the normal clean shutdown every existing
+   * caller gets) — SIGINT/SIGTERM below always call this with no argument,
+   * deliberately, so nothing the signal event itself might pass through
+   * could ever change the exit code.
+   */
+  const shutdown = async (exitCode = 0) => {
     if (startupController.signal.aborted) return;
     startupController.abort();
     devServer?.stop();
@@ -363,10 +369,10 @@ async function main() {
     proxy.stop();
     pluginManager.stopWatching();
     await hooker.uninstall();
-    process.exit(0);
+    process.exit(exitCode);
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => { void shutdown(); });
+  process.on('SIGTERM', () => { void shutdown(); });
 
   void startMetadataEnrichment({
     signal: startupController.signal,

@@ -6,6 +6,7 @@ const { WindowHostBridge } = require('./services/window-host-bridge.cjs');
 const { InstanceManager } = require('./services/instance-manager.cjs');
 const { acquireInstanceLock, allowSetForegroundWindow, machineInstancePipePath } = require('./services/single-instance.cjs');
 const { IPC } = require('./ipc-channels.cjs');
+const { PROXY_EXIT_QUIT_APP } = require('./proxyExitCodes.cjs');
 const { performance } = require('node:perf_hooks');
 const { randomUUID } = require('node:crypto');
 const startupLaunchId = randomUUID();
@@ -455,20 +456,18 @@ function startProxy() {
 
   proxyProcess.on('exit', (code, signal) => {
     console.log('[Electron] Proxy exited with code', code, signal ? 'signal ' + signal : '');
-    if (code !== 0 && code !== null) {
+    if (code !== 0 && code !== PROXY_EXIT_QUIT_APP && code !== null) {
       const detail = proxyStderrTail.trim();
       proxyExitReason = detail
         ? 'Proxy crashed (code ' + code + '): ' + detail.split('\n').pop()
         : 'Proxy crashed (exit code ' + code + ')';
     }
     proxyProcess = null;
-    // A clean exit (code 0) of the core proxy process is not something
-    // anything today triggers while the window stays open — the proxy owns
-    // the dashboard, script host, and proxy itself, so once it's gone on
-    // purpose there is nothing left running that matters. Quit the rest of
-    // the app rather than leaving an empty, non-functional window up. A
-    // crash (non-zero/null-with-signal handled above) is unaffected.
-    if (code === 0) {
+    // A dedicated exit code (never used by a normal SIGINT/SIGTERM/crash
+    // exit) means the proxy process itself asked to take the whole app down
+    // with it, e.g. via a graceful self-shutdown request. A normal clean
+    // exit (0) and every other code/signal behave exactly as before.
+    if (code === PROXY_EXIT_QUIT_APP) {
       app.quit();
     }
   });
