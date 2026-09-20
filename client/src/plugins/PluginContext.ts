@@ -21,6 +21,30 @@ export type PluginCategory =
   | 'utility'
   | 'admin';
 
+/**
+ * Optional host-service surface for a bundled plugin that needs to run a
+ * script package or temporarily swap the live plugin configuration without
+ * reaching into DevServer's internals directly. Unset (`ctx.hostAccess ===
+ * null`) unless `PluginManager.setHostAccess()` was called before this
+ * plugin loaded — every caller must handle that case.
+ */
+export interface PluginHostAccess {
+  /** The plugin-config id currently active (e.g. `'default'`). */
+  getActivePluginConfigId(): string;
+  /** A snapshot of every plugin's current live state, named `name`. */
+  buildPluginConfigSnapshot(name: string): unknown;
+  /** Write `snapshot` to `<configsDir>/<sanitizedId>.json` and apply it live. */
+  writeAndLoadPluginConfig(id: string, snapshot: unknown): { ok: boolean; message: string; id: string };
+  /** Apply the config already saved at `<configsDir>/<id>.json` — same effect as `POST /api/configs/load`. */
+  loadPluginConfigById(id: string): { ok: boolean; message: string };
+  /** Remove `<configsDir>/<id>.json` if present. Never throws. */
+  deletePluginConfigFile(id: string): void;
+  /** Start a script package by id through ScriptHost. */
+  startScript(id: string): Promise<{ ok: boolean; error?: string }>;
+  /** Stop a running script package by id through ScriptHost. */
+  stopScript(id: string): { ok: boolean; error?: string };
+}
+
 export interface SettingOption {
   label: string;
   value: string;
@@ -121,6 +145,31 @@ export class PluginContext {
    * `updateOtherPluginSetting`'s doc comment.
    */
   public onUpdateOtherPluginSetting: ((pluginId: string, key: string, value: any) => boolean) | null = null;
+
+  /** Set by PluginManager when `setHostAccess()` was called before this plugin loaded. See {@link PluginHostAccess}. */
+  public hostAccess: PluginHostAccess | null = null;
+
+  private _clientMessageHandlers = new Map<string, (msg: any) => void>();
+
+  /**
+   * Register a handler for an inbound dashboard websocket message type that
+   * DevServer itself doesn't recognize — DevServer forwards any such message
+   * to `PluginManager.dispatchClientMessage(type, msg)`, which calls the
+   * handler registered here for a matching `type`. At most one handler per
+   * type per plugin; never throws from the caller's side (a handler that
+   * throws is caught by the dispatcher, not here).
+   */
+  onClientMessage(type: string, handler: (msg: any) => void): void {
+    this._clientMessageHandlers.set(type, handler);
+  }
+
+  /** Called by PluginManager.dispatchClientMessage(). Returns whether this plugin had a handler for `type`. */
+  handleClientMessage(type: string, msg: any): boolean {
+    const handler = this._clientMessageHandlers.get(type);
+    if (!handler) return false;
+    handler(msg);
+    return true;
+  }
 
   /** Game data (objects.xml parsed). Available after proxy startup. */
   public readonly gameData: GameDataLoader | null;
