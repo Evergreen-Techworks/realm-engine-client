@@ -55,6 +55,18 @@ export interface DllMessage {
   [key: string]: unknown;
 }
 
+/**
+ * Narrow view of `InternalBridge` for consumers that only need to react to the
+ * DLL (re)connecting — e.g. reissuing state that `replayAllFeatureState`
+ * deliberately does not replay (see the `scriptNavigationGoal` exclusion in
+ * `setFeature`). `authenticated` fires once per successful hello: the first
+ * connect and every reconnect after a drop.
+ */
+export type DllReconnectSource = {
+  on(event: 'authenticated', listener: () => void): unknown;
+  off(event: 'authenticated', listener: () => void): unknown;
+};
+
 export class InternalBridge extends EventEmitter {
   private server: Server | null = null;
   private socket: Socket | null = null;
@@ -150,14 +162,23 @@ export class InternalBridge extends EventEmitter {
     }
   }
 
-  /** Send a command to the DLL (e.g. setFeature). Drops silently if not yet connected. */
-  send(msg: DllMessage): void {
-    if (!this.pipeTransportReady() || !this.connected) return;
-    this.writeMessage(JSON.stringify(msg));
+  /**
+   * Send a command to the DLL (e.g. setFeature). Returns whether it actually
+   * reached the pipe — false (dropped silently, not an error) when the DLL
+   * isn't connected. Callers that need to know "the DLL has this" vs "nobody
+   * received this" (e.g. a script's navigation goal) must use this return
+   * value instead of assuming a call that didn't throw was delivered.
+   */
+  send(msg: DllMessage): boolean {
+    if (!this.pipeTransportReady() || !this.connected) return false;
+    return this.writeMessage(JSON.stringify(msg));
   }
 
-  /** Send a feature toggle. Always updates the last-known state for replay on reconnect. */
-  setFeature(key: string, value: boolean | number | string): void {
+  /**
+   * Send a feature toggle. Always updates the last-known state for replay on
+   * reconnect. Returns whether the DLL actually received it right now (see `send`).
+   */
+  setFeature(key: string, value: boolean | number | string): boolean {
     const valueType: 'b' | 'n' | 's'
       = typeof value === 'boolean' ? 'b' : (typeof value === 'number' ? 'n' : 's');
     const msg: DllMessage = { type: DllMessageType.SetFeature, key, valueType, value };
@@ -165,20 +186,20 @@ export class InternalBridge extends EventEmitter {
       this.lastSentFeatures.set(key, { ...msg });
     }
     if (!DiagGate.on()) {
-      this.send(msg);
-      return;
+      return this.send(msg);
     }
     // item 4b: local-only sequence number for correlating log lines within a
     // session — never sent over the wire (see the comment above the module
     // constants for why this doesn't round-trip against the DLL).
     const seq = ++bridgeSendSeq;
     const t0 = performance.now();
-    this.send(msg);
+    const delivered = this.send(msg);
     const elapsedMs = performance.now() - t0;
     bridgeSendLatency.record(elapsedMs);
     if (elapsedMs > BRIDGE_SLOW_MS && bridgeSlowLineLimiter.allow()) {
       Logger.log('Diag/Bridge', `key=${key} seq=${seq} send=${elapsedMs.toFixed(1)}ms (>${BRIDGE_SLOW_MS}ms)`);
     }
+    return delivered;
   }
 
   // ── Private ──────────────────────────────────────────────────────────────
