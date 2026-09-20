@@ -116,6 +116,19 @@ export interface SettingDef {
 }
 
 /**
+ * The slice of a `SettingDef` needed to validate/coerce a request against it
+ * from another plugin, without exposing its current value, label or
+ * callback. See `PluginContext.onDescribeOtherPluginSetting`.
+ */
+export interface OtherPluginSettingDescription {
+  type: SettingDef['type'];
+  options?: SettingOption[];
+  min?: number;
+  max?: number;
+  visibleWhen?: SettingDef['visibleWhen'];
+}
+
+/**
  * API surface provided to each plugin.
  * Plugins receive this in their `register()` function.
  */
@@ -163,6 +176,20 @@ export class PluginContext {
    * `updateOtherPluginSetting`'s doc comment.
    */
   public onUpdateOtherPluginSetting: ((pluginId: string, key: string, value: any) => boolean) | null = null;
+
+  /**
+   * Callback set by PluginManager: describe a DIFFERENT loaded plugin's
+   * registered setting — its type plus whichever of `options`/`min`/`max`/
+   * `visibleWhen` apply — without reading its current value. Small and
+   * read-only: it never applies or changes anything by itself. Lets a
+   * controller validate/coerce a free-text setting key + requested values
+   * against the target plugin's real definition (legal `select` options,
+   * numeric bounds, the modes a `visibleWhen`-gated setting is even active
+   * in) before touching it, the same way the dashboard already renders those
+   * constraints from `getSettings()` — this just exposes one setting's slice
+   * of that to another plugin.
+   */
+  public onDescribeOtherPluginSetting: ((pluginId: string, key: string) => OtherPluginSettingDescription | undefined) | null = null;
 
   /** Set by PluginManager when `setHostAccess()` was called before this plugin loaded. See {@link PluginHostAccess}. */
   public hostAccess: PluginHostAccess | null = null;
@@ -328,6 +355,20 @@ export class PluginContext {
       return this.onUpdateOtherPluginSetting?.(pluginId, key, value) ?? false;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Describe a setting registered on a DIFFERENT loaded plugin — its type
+   * plus whichever of `options`/`min`/`max`/`visibleWhen` apply (see
+   * `onDescribeOtherPluginSetting`). Returns `undefined` when no such wiring
+   * is available or the plugin/key doesn't exist. Never throws.
+   */
+  describeOtherPluginSetting(pluginId: string, key: string): OtherPluginSettingDescription | undefined {
+    try {
+      return this.onDescribeOtherPluginSetting?.(pluginId, key);
+    } catch {
+      return undefined;
     }
   }
 
