@@ -462,6 +462,15 @@ function startProxy() {
         : 'Proxy crashed (exit code ' + code + ')';
     }
     proxyProcess = null;
+    // A clean exit (code 0) of the core proxy process is not something
+    // anything today triggers while the window stays open — the proxy owns
+    // the dashboard, script host, and proxy itself, so once it's gone on
+    // purpose there is nothing left running that matters. Quit the rest of
+    // the app rather than leaving an empty, non-functional window up. A
+    // crash (non-zero/null-with-signal handled above) is unaffected.
+    if (code === 0) {
+      app.quit();
+    }
   });
 }
 
