@@ -2019,6 +2019,9 @@
      deferred app.js module. Edit the .ts source, not this file. -->
 <script src="ws-message-types.js"></script>
 <script type="module" src="app.js"></script>
+<!-- Private-build-only file (client/private-only.json); absent from customer
+     builds, where this 404s harmlessly. Classic script, independent of app.js. -->
+<script src="js/testlab-runner.js"></script>
 
 <!-- Script picker popup -->
 <div id="script-picker-overlay" class="script-picker-overlay hidden" role="dialog" aria-modal="true" aria-label="Select Script">
