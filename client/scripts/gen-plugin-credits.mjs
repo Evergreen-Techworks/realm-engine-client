@@ -20,10 +20,9 @@
 // The popover exists to credit CONTRIBUTORS, not the project owner (user
 // decision 2026-09-20): his name is on the product itself, so his identities
 // are filtered out of the per-plugin lists and a plugin only shows a ⓘ when
-// someone else has worked on it. `Co-authored-by:` trailers count as
-// authorship, so work integrated on the owner's commits can still credit its
-// author; MANUAL_PLUGIN_AUTHORS covers contributors whose past work was
-// integrated before trailers were used.
+// someone else has worked on it. This repo carries no `Co-authored-by:`
+// trailers (owner policy) — contributors whose work was integrated under
+// owner-authored commits are credited through MANUAL_PLUGIN_AUTHORS below.
 //
 // Run after history changes:      node scripts/gen-plugin-credits.mjs
 // Private build tree variant (adds plugins that only exist in C:\realm-engine,
@@ -55,9 +54,10 @@ const OWNER_EMAILS = new Set(['sulo.jesse@outlook.com', 'jessesulo14@gmail.com']
 
 // Contributors whose reviewed work was integrated under owner-authored
 // commits (so git history cannot see them), credited to the plugins that work
-// built. ProdMafia, 2026-09: predictive AutoNexus observation + health
-// evidence, and the shoot/autofire readiness bindings under the autoaim tree
-// (docs/prodmafia/integration-report.md).
+// built — this map is the mechanism for such credit; the repo does not use
+// Co-authored-by trailers. ProdMafia, 2026-09: predictive AutoNexus
+// observation + health evidence, and the shoot/autofire readiness bindings
+// under the autoaim tree (docs/prodmafia/integration-report.md).
 const MANUAL_PLUGIN_AUTHORS = {
   'auto-nexus': ['ProdMafia'],
   'auto-aim': ['ProdMafia'],
@@ -121,39 +121,19 @@ function listTree(prefix) {
   return git(['ls-tree', '-r', '--name-only', BRANCH, prefix]).split('\n').filter(Boolean);
 }
 
-// AI pair-programming trailers (Claude, Antigravity, …) are tooling, not
-// contributors — the popover credits people, so those co-authors are skipped.
-const NONHUMAN_COAUTHOR = /^(claude|anthropic|antigravity|gemini|openai|gpt-|gpt|codex|copilot|cursor)/i;
-const NONHUMAN_COAUTHOR_EMAIL = /@(noreply\.)?anthropic\.com$/i;
-
 // Per-file author history (unique commits per author email), following renames
-// so pre-rename contributors are not lost. `Co-authored-by:` trailers count
-// the same as authorship, so work merged in on someone else's commit still
-// credits its author.
+// so pre-rename contributors are not lost.
 const fileAuthorCache = new Map();
 function fileAuthors(file) {
   if (fileAuthorCache.has(file)) return fileAuthorCache.get(file);
   const out = new Map(); // email → { name, commits:Set }
-  const log = git(['log', BRANCH, '--follow',
-    '--format=%H|%ae|%an|%(trailers:key=Co-authored-by,valueonly,separator=;)', '--', file]);
+  const log = git(['log', BRANCH, '--follow', '--format=%H|%ae|%an', '--', file]);
   for (const line of log.split('\n').filter(Boolean)) {
-    const parts = line.split('|');
-    const hash = parts[0];
-    const email = parts[1];
-    const trailers = parts.length >= 4 ? parts[parts.length - 1] : '';
-    const name = (parts.length >= 4 ? parts.slice(2, -1) : parts.slice(2)).join('|');
+    const [hash, email, ...nameParts] = line.split('|');
+    const name = nameParts.join('|');
     if (!out.has(email)) out.set(email, { name, commits: new Set() });
     out.get(email).commits.add(hash);
     out.get(email).name = name; // keep the most recent spelling
-    for (const raw of trailers.split(';').map((s) => s.trim()).filter(Boolean)) {
-      const m = /^(.*?)\s*(?:<(.+)>)?$/.exec(raw);
-      const coEmail = (m[2] || `co-author:${(m[1] || raw).trim()}`).toLowerCase();
-      const coName = (m[1] || raw).trim() || raw;
-      if (NONHUMAN_COAUTHOR.test(coName) || NONHUMAN_COAUTHOR_EMAIL.test(coEmail)) continue;
-      if (!out.has(coEmail)) out.set(coEmail, { name: coName, commits: new Set() });
-      out.get(coEmail).commits.add(hash);
-      out.get(coEmail).name = coName;
-    }
   }
   fileAuthorCache.set(file, out);
   return out;
