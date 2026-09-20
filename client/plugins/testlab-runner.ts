@@ -227,7 +227,13 @@ export function register(ctx: PluginContext) {
         const startResult = await (ctx.hostAccess?.startScript(request.scriptId) ??
           Promise.resolve({ ok: false, error: 'host access unavailable' }));
         if (!startResult.ok) {
-          machine.requestStop('error', startResult.error ?? 'script not installed');
+          // ScriptHost.start() reports a missing package as "Script package
+          // not found: <id>" — normalize that one case to the documented
+          // detail text; any other start failure (already running, invalid
+          // manifest, ...) keeps its own message rather than being
+          // mislabeled as "not installed".
+          const notInstalled = /^Script package not found:/.test(startResult.error ?? '');
+          machine.requestStop('error', notInstalled ? 'script not installed' : startResult.error ?? 'script not installed');
           await finishRun();
           return;
         }

@@ -326,7 +326,7 @@ describe('Test Lab Runner plugin', () => {
     expect(result.detail).toMatch(/stale/);
   });
 
-  it('script-not-installed ends the run with reason error and detail from the host', async () => {
+  it('script-not-installed ends the run with reason error and the documented detail text', async () => {
     const hostAccess = makeHostAccess({ startScript: vi.fn(async () => ({ ok: false, error: 'Script package not found: farmer' })) });
     writeRequest(testlabDir, { runId: 'run-noscript', accountLabel: 'lab-1', scriptId: 'farmer' });
     const { ctx, clientMessageHandlers, connectClient } = makeCtx(hostAccess);
@@ -338,6 +338,21 @@ describe('Test Lab Runner plugin', () => {
 
     const result = readResult(testlabDir, 'run-noscript');
     expect(result.reason).toBe('error');
-    expect(result.detail).toMatch(/Script package not found/);
+    expect(result.detail).toBe('script not installed');
+  });
+
+  it('a different script-start failure (not "not found") keeps its own detail text', async () => {
+    const hostAccess = makeHostAccess({ startScript: vi.fn(async () => ({ ok: false, error: 'Already running' })) });
+    writeRequest(testlabDir, { runId: 'run-already', accountLabel: 'lab-1', scriptId: 'farmer' });
+    const { ctx, clientMessageHandlers, connectClient } = makeCtx(hostAccess);
+    register(ctx);
+
+    connectClient('loaded');
+    clientMessageHandlers.get('testlabLaunchResult')!({ runId: 'run-already', ok: true });
+    await flushAsync();
+
+    const result = readResult(testlabDir, 'run-already');
+    expect(result.reason).toBe('error');
+    expect(result.detail).toBe('Already running');
   });
 });
