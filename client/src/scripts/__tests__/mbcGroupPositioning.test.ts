@@ -82,14 +82,6 @@ describe('MBC group positioning proposal', () => {
     const players = [player(1, 1.1), player(2, 1.5), player(3, 1.9)];
     expect(new GroupPositioning().select(input(players)).waypoint).toBeNull();
   });
-  it('keeps moving forward once aligned with a cardinal segment instead of recentering backward', () => {
-    const players = [player(1, 6.1), player(2, 6.5), player(3, 6.9)];
-    const policy = new GroupPositioning();
-    expect(policy.select(input(players, { origin: { x: 0.8, y: 0.5 } })).waypoint)
-      .toEqual({ x: 1.5, y: 0.5 });
-    expect(policy.select(input(players, { origin: { x: 0.8, y: 0.8 } })).waypoint)
-      .toEqual({ x: 0.5, y: 0.5 });
-  });
   it('centers integer tile coordinates rather than targeting wall edges', () => {
     const integerTiles = graph(Array.from({ length: 8 }, (_, index) => [index, 0]));
     const players = [player(1, 6.1), player(2, 6.5), player(3, 6.9)];

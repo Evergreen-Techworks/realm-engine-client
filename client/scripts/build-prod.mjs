@@ -337,6 +337,45 @@ for (const f of readdirSync(PUBLIC_SRC)) {
   }
 }
 
+// plugin-credits.js is generated from git history and, in private source
+// trees, carries entries for private-only plugins too (regenerated there
+// with --extra=...). The popover only renders entries for plugins the build
+// ships, but the private plugin names alone must not reach a customer build,
+// and the raw-byte marker scan cannot catch them — the generated file carries
+// no marker. Drop excluded plugin keys from the staged copy.
+{
+  const creditsPath = join(PUBLIC_DIST, 'plugin-credits.js');
+  if (privateOnlyExcludedKeys.size > 0 && existsSync(creditsPath)) {
+    const raw = readFileSync(creditsPath, 'utf8');
+    const jsonStart = raw.indexOf('Object.freeze(');
+    const jsonEnd = raw.lastIndexOf(');');
+    if (jsonStart === -1 || jsonEnd === -1 || jsonEnd < jsonStart) {
+      console.error('[build-prod] ERROR: plugin-credits.js is not in the generated Object.freeze format');
+      process.exit(1);
+    }
+    const head = jsonStart + 'Object.freeze('.length;
+    let credits;
+    try {
+      credits = JSON.parse(raw.slice(head, jsonEnd));
+    } catch {
+      console.error('[build-prod] ERROR: plugin-credits.js body failed to parse as JSON');
+      process.exit(1);
+    }
+    let removedCredits = 0;
+    for (const key of privateOnlyExcludedKeys) {
+      if (key in credits) {
+        delete credits[key];
+        removedCredits++;
+      }
+    }
+    if (removedCredits > 0) {
+      const body = JSON.stringify(credits, null, 2).replace(/\n/g, '\n  ');
+      writeFileSync(creditsPath, raw.slice(0, head) + body + raw.slice(jsonEnd));
+      log(`private-only: removed ${removedCredits} private plugin credit entr${removedCredits === 1 ? 'y' : 'ies'} from dist/public/plugin-credits.js`);
+    }
+  }
+}
+
 // Inject __ADMIN_BUILD__ flag into app.js (CSS hides admin-only elements;
 // JS uses the flag to lock out admin mode entirely in user builds).
 // HTML is NOT stripped — removing elements breaks JS event listeners.

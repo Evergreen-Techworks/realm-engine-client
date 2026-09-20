@@ -32,3 +32,12 @@ src/core/ipc/BuildSecrets.h
 # dumps, decompiled headers. Never distributed with the source.
 refs/
 
+# regen-headers.ps1 working directory
+.regen-work/
+
+# Il2CppInspectorPro clone (built on first regen-headers run)
+.il2cpp-inspector/
+
+# Patch watcher local state (hashes, logs)
+.patch-watcher-state/
+

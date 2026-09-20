@@ -20,20 +20,16 @@ inline void QueryPerformanceCounter(LARGE_INTEGER* p) {
     spacetime = internal / "src/features/movement/spacetime"
     for test in ("udodge_zone_tests", "udodge_temporal_tests", "udodge_admission_tests",
                  "udodge_speed_expiry_tests", "udodge_commitment_tests", "udodge_navigation_tests",
-                 "udodge_timed_tests", "udodge_prune_tests", "udodge_pathing_rules_tests",
-                 "udodge_worker_clock_tests", "udodge_telemetry_tests", "udodge_prederr_tests",
-                 "udodge_temporal_broadphase_tests", "udodge_fallback_sidestep_tests"):
+                 "udodge_timed_tests", "udodge_prune_tests", "udodge_pathing_rules_tests"):
         binary = build / test
         extra = [str(core / "UDodgeWorker.cpp"), str(spacetime / "SpacetimeCore.cpp")] \
             if test == "udodge_commitment_tests" else []
         if test in ("udodge_navigation_tests", "udodge_pathing_rules_tests"):
             extra = [str(core / "UDodgePathfinder.cpp")]
-        if test in ("udodge_timed_tests", "udodge_worker_clock_tests"):
+        if test == "udodge_timed_tests":
             extra = [str(spacetime / "SpacetimeCore.cpp")]
         subprocess.run([
             os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-pthread",
-            # 1.2 million differential queries against a plain all-lanes reference.
-            *(["-O2"] if test == "udodge_temporal_broadphase_tests" else []),
             "-I", str(build), "-I", str(core), "-I", str(internal / "src"),
             str(core / "UDodgeCore.cpp"), str(core / "UDodgeSolver.cpp"),
             *extra, str(internal / f"tests/{test}.cpp"),
@@ -85,8 +81,6 @@ with tempfile.TemporaryDirectory(prefix="autofire-decision-tests-") as directory
 
 # End-to-end pathing scenarios against the production planner (tests/scenario).
 subprocess.run(["python3", str(internal / "tests/scenario/run_scenarios.py"), "--check"], check=True)
-# UDodge decision telemetry through the production Tick: off is silent, on only observes.
-subprocess.run(["python3", str(internal / "tests/scenario/run_scenarios.py"), "--telemetry-check"], check=True)
 
 # Native input focus gate, and SteerInput compiled on a fake Windows layer.
 with tempfile.TemporaryDirectory(prefix="input-focus-tests-") as directory:

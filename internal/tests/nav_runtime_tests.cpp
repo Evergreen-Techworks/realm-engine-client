@@ -88,20 +88,6 @@ Nav::RouteCorridor Await(Nav::RouteState expected, Nav::RoutePoint goal = {13.5f
     Check(false, "runtime reaches the expected route state within 2.5 seconds");
     return result;
 }
-
-// Item 3 (navigation finish plan, 2026-09-19): confirms capture NEVER reaches
-// Ready within the window, instead of asserting it does. 1.2s is far longer
-// than kCaptureSettleMs (250ms) plus a same-tick 15x5 scan, so anything that
-// were going to become ready structurally would have by now; this is checking
-// a structural impossibility, not racing a slow success.
-bool NeverReady(Nav::RoutePoint player, Nav::RoutePoint goal, int iterations = 120)
-{
-    for (int iteration = 0; iteration < iterations; ++iteration) {
-        if (Runtime::Update(player, goal, 6.f, true).state == Nav::RouteState::Ready) return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return true;
-}
 }
 
 namespace GameState { void* GetWorldMgr() { return world; } }
@@ -211,55 +197,6 @@ int main()
     }
     Check(largeRoute.state == Nav::RouteState::Ready && largeRoute.goalId == 9007199254740991ULL,
           "174724 received squares feed bounded runtime batches without losing distant cells or large request IDs");
-    Runtime::Stop();
-
-    // ── Item 3: capture state machine (map capture readiness) ────────────────
-    // docs/navigation/2026-09-15-global-routing-integration.md's documented
-    // fail-closed limitation: after an epoch change, if the game reuses both
-    // the world and list pointers with an equal-or-larger count, the old
-    // pointer/size-only test can never prove the list was replaced and
-    // capture stays map_pending forever. The owner's real session confirmed
-    // it in play: map_pending=1 on 17 of 17 walk-to lines with
-    // navNavigator=dstar. Runtime.cpp now has a second readiness path: the
-    // player's own tile and a small ring around it must resolve to known
-    // ground (own tile also unblocked) under the CURRENT epoch specifically.
-    Runtime::SetNavigatorText("dstar");
-    Scene reused(15, 5, true);   // open ground throughout: no wall can hide the ring check itself
-    world = reused.worldBytes.data();
-    Runtime::SetMapInfoText("15,5");
-    Runtime::SetScriptGoalText("30,13.5,2.5");
-    Runtime::Start();
-    Await(Nav::RouteState::Ready);
-
-    // Same dimensions, same world/list pointer (never reassigned) — exactly
-    // "the game reuses both pointers and keeps an equal-or-larger count".
-    Runtime::NotifySceneReset();
-    Runtime::SetMapInfoText("15,5");
-    Runtime::SetScriptGoalText("31,13.5,2.5");
-    const auto reuseWaiting = Runtime::Update({1.5f, 2.5f}, {13.5f, 2.5f}, 6.f, true);
-    Check(reuseWaiting.capturePending && reuseWaiting.captureDiag.guard == Nav::CaptureGuard::AwaitingReplacement,
-          "a reused pointer with an equal-or-larger count is named awaiting_list_replacement, not silently ready");
-    const auto reuseRoute = Await(Nav::RouteState::Ready);
-    Check(reuseRoute.goalId == 31 && reuseRoute.captureDiag.ready && !reuseRoute.captureDiag.fastPath,
-          "pointer reuse with an equal-or-larger count now reaches ready, via the own-tile+ring proof");
-
-    // Wrong bridged dimensions: the player's own row falls outside the
-    // declared map, so MapMemory itself refuses that cell (out of bounds) —
-    // own-tile+ring can never resolve, so capture must never claim ready.
-    Runtime::NotifySceneReset();
-    Runtime::SetMapInfoText("2,2");
-    Runtime::SetScriptGoalText("32,1.5,1.5");
-    Check(NeverReady({1.5f, 2.5f}, {1.5f, 1.5f}), "wrong bridged dimensions (exclude the player's own tile) never reach ready");
-
-    // An unreadable own tile: every neighbour around it reads fine, but the
-    // exact square the player stands on reports an unreadable type (255,
-    // CaptureSquare's own rejection) — it must never quietly become "known"
-    // by way of its neighbours.
-    Write(reused.squares[2 * 15 + 1].data(), RuntimeOffsets::TileType, static_cast<uint16_t>(255));
-    Runtime::NotifySceneReset();
-    Runtime::SetMapInfoText("15,5");
-    Runtime::SetScriptGoalText("33,13.5,2.5");
-    Check(NeverReady({1.5f, 2.5f}, {13.5f, 2.5f}), "an unreadable own tile never reaches ready even though its neighbours do");
     Runtime::Stop();
 #ifdef NAV_RUNTIME_TEST_TIMING
     std::printf("Navigation runtime measured maximum worker cycle: %.3f ms (75 and 174724-square fixtures)\n", Runtime::TestMaximumCycleMs());

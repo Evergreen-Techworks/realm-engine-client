@@ -4639,6 +4639,12 @@ body.theme-light .nearby-row.selected td {
   background: color-mix(in srgb, var(--bg-secondary, var(--bg-card)) 92%, transparent);
 }
 
+/* Plugins tab only — the Scripts tab shares .plugin-hub-sidebar and stays 280px. */
+#plugin-hub-sidebar {
+  width: 340px;
+  min-width: 260px;
+}
+
 .plugin-hub-toolbar {
   padding: 10px 12px;
   display: flex;
@@ -4811,17 +4817,13 @@ body.theme-light .nearby-row.selected td {
   color: var(--text-muted);
 }
 
-.plugin-active-card.plugin-active-card--flash {
-  animation: plugin-active-card-flash 1s ease-out;
-}
-
-@keyframes plugin-active-card-flash {
-  0% {
-    box-shadow: 0 0 0 2px var(--accent, #c9a227);
-  }
-  100% {
-    box-shadow: 0 0 0 0 transparent;
-  }
+/* The selected plugin is the only card in the panel, so it reads as the pane
+   itself rather than a tile floating in it. */
+.plugin-active-card--solo {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
 }
 
 .plugin-detail-inner {
@@ -4861,11 +4863,6 @@ body.theme-light .nearby-row.selected td {
   text-transform: uppercase;
   color: var(--text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-.plugin-detail-master-toggle {
-  margin-top: 0;
-  flex-shrink: 0;
 }
 
 .plugin-detail-actions {
@@ -4960,6 +4957,104 @@ body.theme-light .nearby-row.selected td {
   display: none;
 }
 
+/* Credits ⓘ — replaces the old card header master toggle; hover or keyboard
+   focus shows who worked on the plugin, from window.PLUGIN_CREDITS */
+.plugin-credits {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.plugin-credits-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.plugin-credits-info:hover,
+.plugin-credits-info:focus-visible {
+  background: var(--bg-hover);
+  color: var(--accent);
+  outline: none;
+}
+
+.plugin-credits-popover {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  min-width: 240px;
+  max-width: 340px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow);
+  text-align: left;
+}
+
+.plugin-credits:hover .plugin-credits-popover,
+.plugin-credits:focus-within .plugin-credits-popover {
+  display: block;
+}
+
+.plugin-credits-heading {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.plugin-credits-names {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.plugin-credits-line {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 6px;
+}
+
+.plugin-credits-line-label {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.plugin-credits-note {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.4;
+  font-style: italic;
+}
+
+.plugin-credits-source {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--bg-subtle-border);
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
 .plugin-hotkey-status {
   min-height: 0;
   padding: 0 16px;
@@ -4995,9 +5090,14 @@ body.theme-light .nearby-row.selected td {
 }
 
 .plugin-detail-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 24px 20px;
   color: var(--text-muted);
   font-size: 13px;
+  text-align: center;
 }
 
 .plugin-detail-inner .plugin-settings.plugin-settings-grid {
@@ -5041,7 +5141,8 @@ body:not(.plugins-advanced) .setting-advanced { display: none !important; }
     flex-direction: column;
   }
 
-  .plugin-hub-sidebar {
+  .plugin-hub-sidebar,
+  #plugin-hub-sidebar {
     width: 100%;
     min-width: 0;
     max-height: 42vh;

@@ -6,8 +6,6 @@ bool  IsTileBlocked(int tx, int ty);
 bool  IsTileFullOccupied(int tx, int ty);
 bool  IsDamagingTile(int tx, int ty);
 bool  IsTileDamagingLive(int tx, int ty);
-int   GetTileDamageLive(int tx, int ty);
-bool  IsLiveHazardActive();
 float GetTileSpeed(int tx, int ty);
 unsigned char GetTileFlags(int tx, int ty);
 void  CopyTileSpeeds(int tx0, int ty0, int side, float* out);

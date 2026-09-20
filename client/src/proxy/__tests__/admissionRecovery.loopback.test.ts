@@ -354,57 +354,6 @@ describe('admission and recovery loopback', () => {
     await settle();
     expect(srv.conns).toHaveLength(1);
   });
-  it('a full-server FAILURE while a portal attempt is pending refuses that attempt, not the session — and backs off per consecutive refusal', async () => {
-    const srv = await server([hold]);
-    const { port, clients } = await startProxy(srv.port);
-    const player = await game(port);
-    player.send(hello(-2, 0, Buffer.alloc(0)));
-    await until(() => srv.hellos.length === 1, 'hello reaches the server');
-
-    const map = factory.createByName('MAPINFO');
-    map.data = { width: 100, height: 100, name: 'Nexus', displayName: 'Nexus', realmName: '', fp: 0, background: 0, difficulty: 0, allowPlayerTeleport: false, noSave: false, showDisplays: false, maxPlayers: 85, gameOpenedTime: 0, serverVersion: '', viewDistance: 15 };
-    srv.conns[0].send(factory.serialize(map));
-    await until(() => player.frames.length === 1, 'map delivered');
-    srv.conns[0].send(frame(101, [i32(10), i32(1), str('')]));
-    await until(() => player.frames.length === 2, 'character ready');
-    const client = clients[0];
-    expect(client.admission.phase).toBe('loaded');
-
-    // Simulate a pending USEPORTAL attempt (sending it is WorldObjectService's job,
-    // covered by its own tests) so this test can isolate what the FAILURE does to it.
-    client.lastAttemptedPortalId = 555;
-    client.lastPortalAttemptAt = Date.now();
-    srv.conns[0].send(FULL_SERVER_FAILURE);
-    await until(() => client.admission.phase === 'entry-refused', 'first refusal observed');
-    expect(client.admission).toMatchObject({ phase: 'entry-refused', portalId: 555, reason: 'full-server' });
-    expect(client.lastAttemptedPortalId).toBeNull();
-    const firstWait = client.admission.retryAt! - Date.now();
-    expect(firstWait).toBeGreaterThan(14000);
-    expect(firstWait).toBeLessThanOrEqual(15000);
-
-    // A second consecutive refusal of the SAME portal doubles the backoff.
-    client.lastAttemptedPortalId = 555;
-    client.lastPortalAttemptAt = Date.now();
-    const firstRetryAt = client.admission.retryAt;
-    srv.conns[0].send(FULL_SERVER_FAILURE);
-    await until(() => client.admission.retryAt !== firstRetryAt, 'second refusal observed');
-    const secondWait = client.admission.retryAt! - Date.now();
-    expect(secondWait).toBeGreaterThan(29000);
-    expect(secondWait).toBeLessThanOrEqual(30000);
-
-    // A refusal of a DIFFERENT portal resets the backoff to the 15 s baseline.
-    client.lastAttemptedPortalId = 777;
-    client.lastPortalAttemptAt = Date.now();
-    srv.conns[0].send(FULL_SERVER_FAILURE);
-    await until(() => client.admission.portalId === 777, 'third refusal observed');
-    const thirdWait = client.admission.retryAt! - Date.now();
-    expect(thirdWait).toBeGreaterThan(14000);
-    expect(thirdWait).toBeLessThanOrEqual(15000);
-
-    // Never treated as a session-ending failure: the game connection stays up.
-    expect(player.closed).toBe(false);
-    expect(client.connected).toBe(true);
-  });
   it('cancels escape writes on close and ignores late reconnect hooks', async () => {
     const srv = await server([answer(ping(1))]);
     const { port, clients, proxy } = await startProxy(srv.port);

@@ -5976,6 +5976,11 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     admin: 'plugins.category.admin'
   };
   let cachedPluginsForHub = [];
+  // Plugin hub selection. The hub rebuilds both sides on every plugin push
+  // from the server, so the selected id lives out here and is re-applied each
+  // pass; lastFilteredPlugins is what the current search/category left visible.
+  let selectedPluginId = null;
+  let lastFilteredPlugins = [];
   let pluginHubFiltersInitialized = false;
   let teleportBeaconSelectEl = null;
   let lastTeleportBeaconHash = '';
@@ -6470,10 +6475,6 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     parent.appendChild(settingsDiv);
   }
 
-  function renderPluginDetail(p) {
-    // unused — kept as no-op for any external callers
-  }
-
   function findPluginHubElById(container, pluginId, className) {
     if (!container || !pluginId) return null;
     var nodes = container.querySelectorAll('.' + className + '[data-plugin-id]');
@@ -6483,38 +6484,58 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     return null;
   }
 
+  /**
+   * Select a plugin: highlight its sidebar row and render its details — and
+   * only its details — in the main panel. Toggling a plugin never calls this,
+   * so switches can be flipped down the list without the panel moving.
+   */
   function jumpToPluginInHub(pluginId) {
+    selectedPluginId = pluginId || null;
     var sideEl = pluginSidebarList || document.getElementById('plugin-sidebar-list');
     var detailEl = pluginDetail || document.getElementById('plugin-detail');
     if (sideEl) {
       sideEl.querySelectorAll('.plugin-sidebar-item--selected').forEach(function (el) {
         el.classList.remove('plugin-sidebar-item--selected');
       });
-      var item = findPluginHubElById(sideEl, pluginId, 'plugin-sidebar-item');
-      if (item) {
-        item.classList.add('plugin-sidebar-item--selected');
-        item.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
+      var item = findPluginHubElById(sideEl, selectedPluginId, 'plugin-sidebar-item');
+      if (item) item.classList.add('plugin-sidebar-item--selected');
     }
-    if (!detailEl) return;
-    var card = findPluginHubElById(detailEl, pluginId, 'plugin-active-card');
-    if (card) {
-      requestAnimationFrame(function () {
-        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        card.classList.remove('plugin-active-card--flash');
-        void card.offsetWidth;
-        card.classList.add('plugin-active-card--flash');
-        setTimeout(function () {
-          card.classList.remove('plugin-active-card--flash');
-        }, 1000);
-      });
-    }
+    renderPluginDetailPanel(lastFilteredPlugins, detailEl);
   }
 
   /**
-   * Main plugin panel: one card per plugin in the filtered list. Every card
-   * carries its own enable toggle and hotkey binder, so a plugin can be bound
-   * while it is off; settings only render once the plugin is enabled.
+   * Main plugin panel: the selected plugin's card, alone. Nothing selected —
+   * or a selection the current search filtered out — leaves the panel on its
+   * hint. The id is remembered either way, so the card returns when the
+   * plugin matches the filter again.
+   */
+  function renderPluginDetailPanel(plugins, detailEl) {
+    if (!detailEl) return;
+    var list = Array.isArray(plugins) ? plugins : [];
+    var selected = null;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].id === selectedPluginId) {
+        selected = list[i];
+        break;
+      }
+    }
+    if (!selected) {
+      teleportBeaconSelectEl = null;
+      detailEl.innerHTML = '';
+      var hint = document.createElement('div');
+      hint.className = 'plugin-detail-empty';
+      hint.textContent = t('plugins.empty.select');
+      detailEl.appendChild(hint);
+      return;
+    }
+    renderPluginCardsPanel([selected], detailEl);
+  }
+
+  /**
+   * Render plugin cards into the main panel. Called with the single selected
+   * plugin. The card carries a hotkey binder and a credits ⓘ (enabling is the
+   * sidebar toggle's job), so a plugin can be bound while it is off; settings
+   * only render once it is on.
    */
   function renderPluginCardsPanel(plugins, detailEl) {
     teleportBeaconSelectEl = null;
@@ -6536,7 +6557,8 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
 
     sorted.forEach(function (p) {
       var card = document.createElement('div');
-      card.className = 'plugin-active-card' + (p.enabled ? '' : ' plugin-active-card--off');
+      card.className = 'plugin-active-card' + (p.enabled ? '' : ' plugin-active-card--off') +
+        (sorted.length === 1 ? ' plugin-active-card--solo' : '');
       card.setAttribute('data-plugin-id', p.id);
 
       var header = document.createElement('div');
@@ -6558,24 +6580,8 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       actions.className = 'plugin-detail-actions';
       actions.appendChild(buildPluginHotkeyControl(p));
 
-      if (!p.hotkeyLocked) {
-        var toggleLabel = document.createElement('label');
-        toggleLabel.className = 'toggle-switch plugin-detail-master-toggle';
-        toggleLabel.title = (p.enabled ? 'Disable ' : 'Enable ') + getPluginDisplayName(p);
-        toggleLabel.innerHTML =
-          '<input type="checkbox" ' + (p.enabled ? 'checked' : '') + '>' +
-          '<span class="toggle-slider"></span>';
-        var cb = toggleLabel.querySelector('input');
-        cb.setAttribute('aria-label', 'Enable ' + getPluginDisplayName(p));
-        cb.addEventListener('change', function () {
-          if (!ws || ws.readyState !== 1) {
-            cb.checked = !!p.enabled;
-            return;
-          }
-          ws.send(JSON.stringify({ type: 'togglePlugin', pluginId: p.id, enabled: cb.checked }));
-        });
-        actions.appendChild(toggleLabel);
-      }
+      var creditsControl = buildPluginCreditsControl(p);
+      if (creditsControl) actions.appendChild(creditsControl);
 
       header.appendChild(actions);
       card.appendChild(header);
@@ -6703,6 +6709,82 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     return wrap;
   }
 
+  /**
+   * Credits ⓘ — sits where the card header's master toggle used to be (the
+   * sidebar toggle is the only per-plugin enable switch now). Hovering or
+   * keyboard-focusing the icon shows everyone who worked on the plugin, from
+   * window.PLUGIN_CREDITS, which scripts/gen-plugin-credits.mjs generates
+   * from the public realm-engine-client git history. Auto Dodge distributes
+   * its credit per dodge version; entries can carry a note when something was
+   * ported from another repo. Returns null when there is nothing to show.
+   */
+  function buildPluginCreditsControl(p) {
+    var entry = (window.PLUGIN_CREDITS || {})[p.id];
+    if (!entry) return null;
+
+    var hasLines = Array.isArray(entry.lines) && entry.lines.some(function (l) { return l && l.authors && l.authors.length; });
+    var hasAuthors = Array.isArray(entry.authors) && entry.authors.length;
+    if (!hasLines && !hasAuthors) return null;
+
+    var wrap = document.createElement('div');
+    wrap.className = 'plugin-credits';
+    wrap.setAttribute('data-plugin-id', p.id);
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'plugin-credits-info';
+    btn.title = 'Credits';
+    btn.setAttribute('aria-label', 'Credits for ' + getPluginDisplayName(p));
+    btn.textContent = 'ⓘ';
+    wrap.appendChild(btn);
+
+    var pop = document.createElement('div');
+    pop.className = 'plugin-credits-popover';
+    pop.setAttribute('role', 'tooltip');
+
+    var heading = document.createElement('div');
+    heading.className = 'plugin-credits-heading';
+    heading.textContent = 'Credits';
+    pop.appendChild(heading);
+
+    function addNames(names) {
+      var row = document.createElement('div');
+      row.className = 'plugin-credits-names';
+      row.textContent = names.join(', ');
+      pop.appendChild(row);
+    }
+    function addLine(line) {
+      var row = document.createElement('div');
+      row.className = 'plugin-credits-line';
+      var label = document.createElement('span');
+      label.className = 'plugin-credits-line-label';
+      label.textContent = line.label;
+      row.appendChild(label);
+      var names = document.createElement('span');
+      names.className = 'plugin-credits-names';
+      names.textContent = line.authors.join(', ');
+      row.appendChild(names);
+      pop.appendChild(row);
+      if (line.note) {
+        var note = document.createElement('div');
+        note.className = 'plugin-credits-note';
+        note.textContent = line.note;
+        pop.appendChild(note);
+      }
+    }
+
+    if (hasLines) entry.lines.forEach(function (line) { if (line && line.authors && line.authors.length) addLine(line); });
+    else addNames(entry.authors);
+
+    var src = document.createElement('div');
+    src.className = 'plugin-credits-source';
+    src.textContent = 'github.com/Evergreen-Techworks/realm-engine-client';
+    pop.appendChild(src);
+
+    wrap.appendChild(pop);
+    return wrap;
+  }
+
   function syncPluginHotkeyControl(wrap, p) {
     var capturing = capturePluginHotkeyId === p.id;
     wrap.classList.toggle('plugin-hotkey--capturing', capturing);
@@ -6762,6 +6844,8 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
     var detailEl = pluginDetail || document.getElementById('plugin-detail');
     if (!hubEl || !sideEl || !detailEl) return;
 
+    lastFilteredPlugins = [];
+
     var visiblePlugins = cachedPluginsForHub.filter(function (p) { return !HIDDEN_PLUGINS.has(p.id); });
     if (visiblePlugins.length === 0) {
       sideEl.innerHTML = '';
@@ -6806,6 +6890,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       return getPluginDisplayName(a).localeCompare(getPluginDisplayName(b));
     });
 
+    lastFilteredPlugins = filtered;
     sideEl.innerHTML = '';
 
     if (filtered.length === 0) {
@@ -6824,7 +6909,8 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
 
     filtered.forEach(function (p) {
       var item = document.createElement('div');
-      item.className = 'plugin-sidebar-item' + (p.enabled ? '' : ' disabled');
+      item.className = 'plugin-sidebar-item' + (p.enabled ? '' : ' disabled') +
+        (p.id === selectedPluginId ? ' plugin-sidebar-item--selected' : '');
       item.setAttribute('data-plugin-id', p.id);
 
       var nameSpan = document.createElement('span');
@@ -6869,9 +6955,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
       sideEl.appendChild(item);
     });
 
-    // Main panel: one card per plugin (enabled first), each with its own
-    // enable toggle and hotkey binder.
-    renderPluginCardsPanel(filtered, detailEl);
+    renderPluginDetailPanel(filtered, detailEl);
   }
 
   // Type filter chips
