@@ -6,10 +6,20 @@ import { StatType } from '../../constants/StatType.js';
 const runnerSource = readFileSync(new URL('../../../script-packages/farmer/oryx-runner.mjs', import.meta.url), 'utf8')
   .replace('export default class OryxRunner', 'return class OryxRunner');
 const OryxRunner = new Function(runnerSource)();
-const source = readFileSync(new URL('../../../script-packages/farmer/index.mjs', import.meta.url), 'utf8')
+const rawSource = readFileSync(new URL('../../../script-packages/farmer/index.mjs', import.meta.url), 'utf8');
+const source = rawSource
   .replace("import { RealmEngine } from '@realmengine/sdk';", '')
   .replace("import OryxRunner from './oryx-runner.mjs';", '')
   .replace('export default class Farmer', 'return class Farmer');
+// normalizeStatusForChangeCheck is a plain top-level function declared before the
+// class, so it can be pulled out and unit-tested standalone — same trick as
+// OryxRunner above, just stopping before the class body instead of renaming its export.
+const contextHelpersSource = rawSource.split('export default class Farmer')[0]
+  .replace("import { RealmEngine } from '@realmengine/sdk';", '')
+  .replace("import OryxRunner from './oryx-runner.mjs';", '');
+const { normalizeStatusForChangeCheck } = new Function(
+  `${contextHelpersSource}\nreturn { normalizeStatusForChangeCheck };`,
+)();
 function fixture() {
   let enemies: any[] = [];
   const quest = { objectId: 10, name: 'Boss', position: { x: 6, y: 0 }, hp: 100, maxHp: 100, isTargetable: true };
@@ -742,4 +752,70 @@ it('prefers a targetable enemy over a bigger locked one that can no longer be da
   f.farmer.lockId = 30;
   f.setEnemies([shielded, mob]);
   expect(f.farmer.updateTarget(0).objectId).toBe(31);
+});
+
+describe('persisted status logging', () => {
+  // RealmEngine.ui.status() is dashboard-only and nothing persists it. setStatus()
+  // additionally logs the message through RealmEngine.log.info so a stall is visible
+  // in the dashboard script log after the fact, not only to someone watching live.
+  it('logs a new status immediately and leaves the dashboard status widget unthrottled', () => {
+    const f = fixture();
+    f.farmer.setStatus('Fighting: Boss');
+    expect(f.sdk.ui.status).toHaveBeenLastCalledWith('Fighting: Boss');
+    expect(f.sdk.log.info).toHaveBeenLastCalledWith('state: Fighting: Boss');
+  });
+
+  it('repeats an unchanged message at most once per 5s heartbeat', () => {
+    vi.useFakeTimers(); vi.setSystemTime(10000);
+    const f = fixture();
+    f.farmer.setStatus('Idle');
+    expect(f.sdk.log.info).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(12000);
+    f.farmer.setStatus('Idle');
+    expect(f.sdk.log.info).toHaveBeenCalledTimes(1); // <5s since last log -> throttled
+    vi.setSystemTime(15500);
+    f.farmer.setStatus('Idle');
+    expect(f.sdk.log.info).toHaveBeenCalledTimes(2); // >=5s -> heartbeat
+  });
+
+  it('normalizeStatusForChangeCheck blanks every digit run so number-only differences compare equal', () => {
+    expect(normalizeStatusForChangeCheck('Leveling: Bandit Leader -> (643, 1658) - 104 tiles'))
+      .toBe(normalizeStatusForChangeCheck('Leveling: Bandit Leader -> (644, 1660) - 103 tiles'));
+    expect(normalizeStatusForChangeCheck('Fighting: Bandit Leader'))
+      .not.toBe(normalizeStatusForChangeCheck('Leveling: Bandit Leader -> (644, 1660) - 103 tiles'));
+  });
+
+  it('number-only churn (coordinates/tile-count moving) logs at most once per second', () => {
+    vi.useFakeTimers(); vi.setSystemTime(10000);
+    const f = fixture();
+    const status = (n: number) => `Leveling: Bandit Leader -> (${640 + n}, ${1658 + n}) - ${104 - n} tiles`;
+
+    f.farmer.setStatus(status(0));
+    expect(f.sdk.log.info).toHaveBeenCalledTimes(1); // first ever -> immediate
+
+    vi.setSystemTime(10100);
+    f.farmer.setStatus(status(1));
+    expect(f.sdk.log.info).toHaveBeenCalledTimes(1); // <1s since last log -> throttled
+
+    vi.setSystemTime(10300);
+    f.farmer.setStatus(status(2));
+    expect(f.sdk.log.info).toHaveBeenCalledTimes(1); // still <1s -> throttled
+
+    vi.setSystemTime(11050); // >=1000ms since the 10000 log
+    f.farmer.setStatus(status(3));
+    expect(f.sdk.log.info).toHaveBeenCalledTimes(2);
+    expect(f.sdk.log.info).toHaveBeenLastCalledWith(expect.stringContaining(status(3)));
+  });
+
+  it('a real (non-digit) change logs immediately, even inside the number-only throttle window', () => {
+    vi.useFakeTimers(); vi.setSystemTime(10000);
+    const f = fixture();
+    f.farmer.setStatus('Leveling: Bandit Leader -> (643, 1658) - 104 tiles');
+    expect(f.sdk.log.info).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(10100); // well inside the 1s number-only throttle window
+    f.farmer.setStatus('Fighting: Bandit Leader');
+    expect(f.sdk.log.info).toHaveBeenCalledTimes(2);
+    expect(f.sdk.log.info).toHaveBeenLastCalledWith(expect.stringContaining('state: Fighting: Bandit Leader'));
+  });
 });
