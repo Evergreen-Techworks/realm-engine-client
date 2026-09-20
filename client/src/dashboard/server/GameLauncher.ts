@@ -4,7 +4,7 @@ import { execFileSync, spawn } from 'child_process';
 import { Logger } from '../../util/Logger.js';
 import { getClientToken } from '../../util/Hwid.js';
 import { registerCredentialLaunch } from '../process/credentialLaunchRegistry.js';
-import { moveRotmgLaunchedWindowAfterSpawn, ROTMG_EXALT_IMAGE } from '../process/rotmgWindowsClientTune.js';
+import { moveRotmgLaunchedWindowAfterSpawn } from '../process/rotmgWindowsClientTune.js';
 
 /**
  * Count running processes matching an image name, locale-independently.
@@ -64,36 +64,83 @@ function imageNameForPid(pid: number): string | null {
   }
 }
 
-/**
- * Terminate exactly one process by PID, after verifying its live image name
- * matches `expectedImageName` (default: the game's own launcher image). Never
- * uses `taskkill /IM`, which would end every process sharing that image name —
- * a caller that only knows the PID it itself spawned must not be able to
- * accidentally kill a different instance. Returns `ok:false` without killing
- * anything when the PID isn't running or its image name doesn't match.
- */
-export function terminateGameProcessByPid(
-  pid: number,
-  expectedImageName: string = ROTMG_EXALT_IMAGE,
-): { ok: boolean; error?: string } {
-  const n = Math.floor(Number(pid));
-  if (!Number.isFinite(n) || n <= 0) return { ok: false, error: 'invalid pid' };
-
-  const actual = imageNameForPid(n);
-  if (actual === null) return { ok: false, error: `pid ${n} is not running` };
-
-  const normalize = (s: string) => s.replace(/ /g, ' ').trim().toLowerCase();
-  if (normalize(actual) !== normalize(expectedImageName)) {
-    return { ok: false, error: `pid ${n} is "${actual}", not "${expectedImageName}" — refusing to kill it` };
-  }
-
-  try {
-    execFileSync('taskkill', ['/PID', String(n), '/F'], { encoding: 'utf8', windowsHide: true });
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: (err as Error).message };
-  }
+/** One process a caller is itself responsible for, to verify and terminate. */
+export interface TerminatePidSpec {
+  pid: number;
+  /** The live image name this PID must have before it is touched at all. */
+  expectedImageName: string;
 }
+
+export interface TerminateTreeResult {
+  /** True only when nothing in `specs` is confirmed still alive afterward. */
+  ok: boolean;
+  /** Present when anything was refused, failed, or survived -- never thrown. */
+  error?: string;
+  terminatedPids: number[];
+  survivingPids: number[];
+}
+
+/**
+ * Terminate the process tree rooted at each PID in `specs`, after verifying
+ * each one's own live image name -- never `taskkill /IM`, which would end
+ * every process sharing that image name. A PID that isn't running at all is
+ * skipped as already-done (not a failure, not a survivor); a PID whose image
+ * name doesn't match its `expectedImageName` is left alone and counted as a
+ * survivor, never killed.
+ *
+ * `/T` (tree) catches a child the caller doesn't itself know about. Passing
+ * that child's own PID+image as a second spec (when known) additionally
+ * covers the case where it was reparented away from the root entirely --
+ * e.g. the Steam relaunch path in `ensureSteamAppIdFile`'s doc comment,
+ * where the process actually running the game may not be a descendant of
+ * the PID `spawn()` returned at all.
+ *
+ * Every attempted PID is re-queried after the kill: `ok`/`terminatedPids`/
+ * `survivingPids` reflect what is actually still running afterward, not
+ * what `taskkill` merely claimed to have done.
+ */
+export function terminateGameProcessTree(specs: TerminatePidSpec[]): TerminateTreeResult {
+  const terminated: number[] = [];
+  const surviving: number[] = [];
+  const errors: string[] = [];
+  const normalize = (s: string) => s.replace(/\u00A0/g, ' ').trim().toLowerCase();
+
+  for (const { pid, expectedImageName } of specs) {
+    const n = Math.floor(Number(pid));
+    if (!Number.isFinite(n) || n <= 0) continue;
+
+    const before = imageNameForPid(n);
+    if (before === null) continue; // already not running -- nothing to verify or kill.
+
+    if (normalize(before) !== normalize(expectedImageName)) {
+      surviving.push(n);
+      errors.push(`pid ${n} is "${before}", not "${expectedImageName}" -- refusing to kill it`);
+      continue;
+    }
+
+    try {
+      execFileSync('taskkill', ['/PID', String(n), '/T', '/F'], { encoding: 'utf8', windowsHide: true });
+    } catch (err) {
+      errors.push(`taskkill pid ${n} failed: ${(err as Error).message}`);
+    }
+
+    const after = imageNameForPid(n);
+    if (after === null) {
+      terminated.push(n);
+    } else {
+      surviving.push(n);
+      errors.push(`pid ${n} still running after taskkill /T`);
+    }
+  }
+
+  return {
+    ok: surviving.length === 0,
+    error: errors.length > 0 ? errors.join('; ') : undefined,
+    terminatedPids: terminated,
+    survivingPids: surviving,
+  };
+}
+
 
 /**
  * Encapsulates game launch logic: path detection, process counting, single-client
