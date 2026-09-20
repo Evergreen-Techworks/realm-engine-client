@@ -14,7 +14,7 @@ import * as esbuild from 'esbuild';
 import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, copyFileSync, existsSync, statSync } from 'fs';
 import { join, resolve } from 'path';
 import { execSync } from 'child_process';
-import { excludedPluginKeys, readPrivateOnlyManifest, scanForMarker } from './lib/private-only.mjs';
+import { excludedPluginKeys, excludedPublicStaticPaths, readPrivateOnlyManifest, scanForMarker } from './lib/private-only.mjs';
 
 const ADMIN_BUILD = process.argv.includes('--admin');
 // Contract with the pipeline (infra/build-vm) — do not redefine independently.
@@ -314,6 +314,26 @@ for (const f of readdirSync(PUBLIC_SRC)) {
       const subSrc = join(src, sub);
       if (statSync(subSrc).isFile()) copyFileSync(subSrc, join(destDir, sub));
     }
+  }
+}
+
+// private-only.json paths under src/dashboard/public/ are static files
+// staged verbatim by the copy loop above (not plugin entry points, so
+// excludedPluginKeys can't catch them) — drop them from dist/public now,
+// before the private-only gate scans it, so a customer build never ships
+// them even though the source copy above ignores this manifest entirely.
+{
+  const publicStaticExcluded = excludedPublicStaticPaths(PRIVATE_ONLY_MANIFEST, PRIVATE_BUILD);
+  let removedCount = 0;
+  for (const relPath of publicStaticExcluded) {
+    const target = join(PUBLIC_DIST, relPath);
+    if (existsSync(target)) {
+      rmSync(target, { force: true });
+      removedCount++;
+    }
+  }
+  if (publicStaticExcluded.size > 0) {
+    log(`private-only: removed ${removedCount}/${publicStaticExcluded.size} public static file(s) from dist/public`);
   }
 }
 
