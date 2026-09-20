@@ -528,28 +528,40 @@ export class DevServer {
   }
 
   /**
-   * Launch a saved account by its display label (case/whitespace-
-   * insensitive), exactly as that account's own Launch button would: looked
-   * up and launched entirely here via the same `launchGameWithCredentials`
-   * path. Credentials never leave this method — the caller only ever gets
-   * back ok/error/pid. Steam accounts are supported the same way the
-   * dashboard's own Launch button supports them (the account record's
-   * `email`/`password` fields double as the Steam guid/secret when
-   * `isSteam` is set; see `AccountService.verifyDecaAccountOnce`).
+   * Launch a saved account by its display label — case-insensitive AND
+   * ignoring whitespace, `-` and `_`, so `lab-1`, `Lab 1`, `lab_1` and
+   * `LAB1` all match the same saved `lab1` — exactly as that account's own
+   * Launch button would: looked up and launched entirely here via the same
+   * `launchGameWithCredentials` path. Credentials never leave this method —
+   * the caller only ever gets back ok/error/pid, plus, when the match
+   * fails, `matchCount`/`totalAccounts` (numbers only, never a label or
+   * e-mail) so a caller can explain the failure without leaking account
+   * data. More than one match returns `'account-ambiguous'` rather than
+   * guessing. Steam accounts are supported the same way the dashboard's own
+   * Launch button supports them (the account record's `email`/`password`
+   * fields double as the Steam guid/secret when `isSteam` is set; see
+   * `AccountService.verifyDecaAccountOnce`).
    */
   async launchSavedAccountByLabel(
     label: string,
     serverName?: string,
-  ): Promise<{ ok: boolean; error?: 'account-not-found' | 'launch-failed'; pid?: number }> {
-    const normalize = (s: string) => String(s || '').trim().toLowerCase();
+  ): Promise<{
+    ok: boolean;
+    error?: 'account-not-found' | 'account-ambiguous' | 'launch-failed';
+    pid?: number;
+    matchCount?: number;
+    totalAccounts?: number;
+  }> {
+    const normalize = (s: string) => String(s || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
     const target = normalize(label);
-    if (!target) return { ok: false, error: 'account-not-found' };
+    const accounts = this.readDashboardAccounts();
+    const totalAccounts = accounts.length;
 
-    const account = this.readDashboardAccounts().find(
-      (a) => normalize(a.label || a.email) === target,
-    );
-    if (!account) return { ok: false, error: 'account-not-found' };
+    const matches = target ? accounts.filter((a) => normalize(a.label || a.email) === target) : [];
+    if (matches.length === 0) return { ok: false, error: 'account-not-found', matchCount: 0, totalAccounts };
+    if (matches.length > 1) return { ok: false, error: 'account-ambiguous', matchCount: matches.length, totalAccounts };
 
+    const account = matches[0];
     const accountLabel = account.label || account.email;
     const result = await this.launchGameWithCredentials(
       String(account.email || '').trim(),
@@ -586,6 +598,7 @@ export class DevServer {
       startScript: (id: string) => this.scriptHost?.start(id) ?? Promise.resolve({ ok: false, error: 'Script host unavailable' }),
       stopScript: (id: string) => this.scriptHost?.stop(id) ?? { ok: false, error: 'Script host unavailable' },
       launchSavedAccountByLabel: (label: string, serverName?: string) => this.launchSavedAccountByLabel(label, serverName),
+      isNativeBridgeReady: () => this.internalBridge?.isConnected ?? false,
     };
   }
 

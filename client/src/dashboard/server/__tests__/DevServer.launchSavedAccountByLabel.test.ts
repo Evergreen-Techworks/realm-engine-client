@@ -98,16 +98,46 @@ describe('DevServer.launchSavedAccountByLabel', () => {
     expect(opts).toMatchObject({ isSteam: true, steamId: '765000000000001' });
   });
 
-  it('returns account-not-found for an unknown label without calling the launcher at all', async () => {
+  it('returns account-not-found for an unknown label without calling the launcher at all, with counts only', async () => {
     const result = await devServer.launchSavedAccountByLabel('nobody');
-    expect(result).toEqual({ ok: false, error: 'account-not-found' });
+    expect(result).toEqual({ ok: false, error: 'account-not-found', matchCount: 0, totalAccounts: 2 });
     expect(launchSpy).not.toHaveBeenCalled();
+    // Never leaks a real saved label or e-mail.
+    expect(JSON.stringify(result)).not.toMatch(/lab-1|lab1@example\.com|Steam One/);
   });
 
   it('returns account-not-found for a blank label', async () => {
     const result = await devServer.launchSavedAccountByLabel('   ');
-    expect(result).toEqual({ ok: false, error: 'account-not-found' });
+    expect(result).toEqual({ ok: false, error: 'account-not-found', matchCount: 0, totalAccounts: 2 });
     expect(launchSpy).not.toHaveBeenCalled();
+  });
+
+  it('matches ignoring case, whitespace, "-" and "_" interchangeably', async () => {
+    for (const candidate of ['Lab_1', 'LAB1', 'Lab 1', 'lab_1', 'L A B - 1']) {
+      launchSpy.mockClear();
+      const result = await devServer.launchSavedAccountByLabel(candidate);
+      expect(result.ok).toBe(true);
+      expect(launchSpy).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('returns account-ambiguous (never guessing) when more than one saved account normalizes to the same label', async () => {
+    const accountsDir = join(profile, 'Documents', 'Realmengine');
+    writeFileSync(
+      join(accountsDir, '_accounts.json'),
+      JSON.stringify({
+        accounts: [
+          { id: 'a1', label: 'lab-1', email: 'lab1@example.com', password: 'hunter2', serverName: 'USEast' },
+          { id: 'a2', label: 'Steam One', email: 'steamworks:guid', password: 'steam-secret', serverName: 'USWest', isSteam: true, steamId: '765000000000001' },
+          { id: 'a3', label: 'twin-1', email: 'twin1@example.com', password: 'p1', serverName: 'USEast' },
+          { id: 'a4', label: 'Twin_1', email: 'twin1b@example.com', password: 'p2', serverName: 'USEast' },
+        ],
+      }),
+    );
+    const result = await devServer.launchSavedAccountByLabel('Twin 1');
+    expect(result).toEqual({ ok: false, error: 'account-ambiguous', matchCount: 2, totalAccounts: 4 });
+    expect(launchSpy).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toMatch(/twin1@example\.com|twin1b@example\.com|twin-1|Twin_1/);
   });
 
   it('maps a launcher failure to the generic launch-failed error, not the launcher-specific message', async () => {

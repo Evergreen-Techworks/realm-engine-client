@@ -45,14 +45,34 @@ export interface PluginHostAccess {
   stopScript(id: string): { ok: boolean; error?: string };
   /**
    * Launch a saved account (matched by its display label, case/whitespace-
-   * insensitive) exactly as its own Launch button would — looked up and
-   * launched entirely server-side. Credentials never leave this call: the
-   * caller only ever receives ok/error/pid, never account data.
+   * and separator-insensitive — `lab-1`, `Lab 1`, `lab_1` and `LAB1` all
+   * match the same saved `lab1`) exactly as its own Launch button would —
+   * looked up and launched entirely server-side. Credentials never leave
+   * this call: the caller only ever receives ok/error/pid, plus, on a
+   * failed match, how many of how many saved accounts matched
+   * (`matchCount`/`totalAccounts`) — counts only, never a label or e-mail —
+   * so a caller can explain the failure without leaking account data.
+   * `'account-ambiguous'` means more than one saved account matched; this
+   * method never guesses which one was meant.
    */
   launchSavedAccountByLabel(
     label: string,
     serverName?: string,
-  ): Promise<{ ok: boolean; error?: 'account-not-found' | 'launch-failed'; pid?: number }>;
+  ): Promise<{
+    ok: boolean;
+    error?: 'account-not-found' | 'account-ambiguous' | 'launch-failed';
+    pid?: number;
+    matchCount?: number;
+    totalAccounts?: number;
+  }>;
+  /**
+   * Whether the native DLL bridge is currently connected (past the `hello`
+   * handshake) — read-only, small, and generic: any plugin that needs to
+   * know before sending the DLL something time-sensitive can check it, with
+   * no Test-Lab-specific meaning attached. `false` includes "never
+   * connected", "mid-handshake" and "disconnected after a prior session".
+   */
+  isNativeBridgeReady(): boolean;
   /**
    * Ask the host process to shut down gracefully (script host, dashboard,
    * proxy, game hook) and then exit with `exitCode`. Fire-and-forget from
