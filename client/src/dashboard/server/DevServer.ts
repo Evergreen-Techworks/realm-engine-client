@@ -1,6 +1,6 @@
 import http from 'http';
 import net from 'net';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
 import { join, extname } from 'path';
 import { execFileSync, spawn } from 'child_process';
 // NOTE: DevServer runs in a forked Node child process (electron/main.cjs
@@ -15,6 +15,7 @@ import { PacketLab } from './PacketLab.js';
 import { GameUpdater, type GameUpdateStatus } from './GameUpdater.js';
 import type { PluginManager } from '../../plugins/PluginManager.js';
 import type { PluginLoadReport } from '../../plugins/PluginManager.js';
+import type { PluginHostAccess } from '../../plugins/PluginContext.js';
 import type { MetadataStatus } from '../../startup/metadataEnrichment.js';
 import type { Proxy } from '../../proxy/Proxy.js';
 import type { GameWorldState } from '../../state/GameWorldState.js';
@@ -456,6 +457,90 @@ export class DevServer {
 
   private applyPluginConfigSnapshot(snapshot: any): { ok: boolean; message: string } {
     return this.pluginConfigs.applyPluginConfigSnapshot(snapshot);
+  }
+
+  /**
+   * Apply the plugin config saved at `<configsDir>/<sanitizedId>.json` live
+   * and make it the active config id — the same effect `POST /api/configs/
+   * load` has, factored out so a caller other than that HTTP route (a
+   * plugin with host access) can use it too. Only ever reads a config that
+   * already exists on disk; never writes one.
+   */
+  loadPluginConfigById(rawId: string): { ok: boolean; message: string; notFound?: boolean } {
+    const id = this.sanitizeConfigId(String(rawId || '').trim());
+    try {
+      this.ensureDir(getRealmengineDocumentsDir());
+      const configsDir = this.getConfigsDir();
+      this.ensureDir(configsDir);
+      const filePath = join(configsDir, id + '.json');
+      if (!existsSync(filePath)) {
+        return { ok: false, message: 'Config not found.', notFound: true };
+      }
+      const raw = readFileSync(filePath, 'utf8');
+      const snapshot = JSON.parse(raw);
+      const result = this.applyPluginConfigSnapshot(snapshot);
+      if (result.ok) {
+        this.config.lastPluginConfigId = id;
+        this.saveConfig();
+        this.broadcastConfig();
+      }
+      return result;
+    } catch (err) {
+      return { ok: false, message: `Failed to load config: ${(err as Error).message}` };
+    }
+  }
+
+  /**
+   * Write `snapshot` to `<configsDir>/<sanitizedId>.json` (creating or
+   * replacing it) and then apply it exactly like {@link loadPluginConfigById}.
+   * Returns the sanitized id actually used, so a caller that only has a
+   * display name can find the file it just wrote (and later delete it).
+   */
+  writeAndLoadPluginConfig(rawId: string, snapshot: unknown): { ok: boolean; message: string; id: string } {
+    const id = this.sanitizeConfigId(String(rawId || '').trim());
+    try {
+      this.ensureDir(getRealmengineDocumentsDir());
+      const configsDir = this.getConfigsDir();
+      this.ensureDir(configsDir);
+      writeFileSync(join(configsDir, id + '.json'), JSON.stringify(snapshot, null, 2), 'utf8');
+    } catch (err) {
+      return { ok: false, message: `Failed to write config: ${(err as Error).message}`, id };
+    }
+    const result = this.loadPluginConfigById(id);
+    return { ok: result.ok, message: result.message, id };
+  }
+
+  /** Removes `<configsDir>/<id>.json` if present. Never throws. */
+  deletePluginConfigFile(rawId: string): void {
+    try {
+      const id = this.sanitizeConfigId(String(rawId || '').trim());
+      const filePath = join(this.getConfigsDir(), id + '.json');
+      if (existsSync(filePath)) unlinkSync(filePath);
+    } catch (err) {
+      Logger.warn('DevServer', `Failed to delete plugin config ${rawId}: ${(err as Error).message}`);
+    }
+  }
+
+  /** Public accessor for the active plugin-config id (e.g. `'default'`) — used to remember/restore it around a temporary switch. */
+  getCurrentPluginConfigId(): string {
+    return this.getActivePluginConfigId();
+  }
+
+  /**
+   * Generic surface a plugin can use to run a script package and temporarily
+   * swap the live plugin configuration, without reaching into DevServer's
+   * internals directly. Wired via `PluginManager.setHostAccess()`.
+   */
+  getPluginHostAccess(): PluginHostAccess {
+    return {
+      getActivePluginConfigId: () => this.getCurrentPluginConfigId(),
+      buildPluginConfigSnapshot: (name: string) => this.buildPluginConfigSnapshot(name),
+      writeAndLoadPluginConfig: (id: string, snapshot: unknown) => this.writeAndLoadPluginConfig(id, snapshot),
+      loadPluginConfigById: (id: string) => this.loadPluginConfigById(id),
+      deletePluginConfigFile: (id: string) => this.deletePluginConfigFile(id),
+      startScript: (id: string) => this.scriptHost?.start(id) ?? Promise.resolve({ ok: false, error: 'Script host unavailable' }),
+      stopScript: (id: string) => this.scriptHost?.stop(id) ?? { ok: false, error: 'Script host unavailable' },
+    };
   }
 
   public tryAutoLoadDefaultPluginConfig(): void {
@@ -1966,25 +2051,14 @@ export class DevServer {
             res.end(JSON.stringify({ error: 'Config id is required.' }));
             return;
           }
-          const id = this.sanitizeConfigId(rawId);
-          ensureRealmengineUserDir();
-          ensureConfigsDir();
-          const filePath = join(configsDir, id + '.json');
-          if (!existsSync(filePath)) {
+          const result = this.loadPluginConfigById(rawId);
+          if (result.notFound) {
             res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Config not found.' }));
+            res.end(JSON.stringify({ error: result.message }));
             return;
           }
-          const raw = readFileSync(filePath, 'utf8');
-          const snapshot = JSON.parse(raw);
-          const result = this.applyPluginConfigSnapshot(snapshot);
-          if (result.ok) {
-            this.config.lastPluginConfigId = id;
-            this.saveConfig();
-            this.broadcastConfig();
-          }
           res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(result));
+          res.end(JSON.stringify({ ok: result.ok, message: result.message }));
         } catch (err) {
           Logger.warn('DevServer', `configs load failed: ${(err as Error).message}`);
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -3006,6 +3080,11 @@ export class DevServer {
         } else if (msg.type === 'updateSingleClientOnly') {
           this.config.singleClientOnly = msg.value !== false;
           this.broadcastConfig();
+        } else {
+          // Not a message type this server handles itself — offer it to any
+          // loaded plugin that registered for it via ctx.onClientMessage().
+          // A no-op when nothing did.
+          this.pluginManager.dispatchClientMessage(String(msg.type ?? ''), msg);
         }
       } catch {}
     });
