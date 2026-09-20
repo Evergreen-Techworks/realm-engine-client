@@ -328,24 +328,6 @@ export class PluginManager {
     this.hostAccess = access;
   }
 
-  /**
-   * Forward an inbound dashboard websocket message that DevServer's own
-   * handler didn't recognize to whichever loaded (bundled) plugin registered
-   * a handler for `type` via `ctx.onClientMessage()`. A no-op when nothing
-   * registered that type. Never throws — a handler's own exception is
-   * swallowed so one broken plugin can't take down the websocket loop.
-   */
-  dispatchClientMessage(type: string, msg: any): void {
-    for (const plugin of this.loadedPlugins.values()) {
-      if (!(plugin.context instanceof PluginContext)) continue;
-      try {
-        plugin.context.handleClientMessage(type, msg);
-      } catch {
-        /* one plugin's handler failing must not affect any other */
-      }
-    }
-  }
-
   /** Subscribe to runtime changes in dashboard-visible plugin definitions. */
   onPluginStateChanged(listener: () => void): () => void {
     this.pluginStateChangedListeners.add(listener);

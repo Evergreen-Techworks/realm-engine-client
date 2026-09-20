@@ -43,6 +43,24 @@ export interface PluginHostAccess {
   startScript(id: string): Promise<{ ok: boolean; error?: string }>;
   /** Stop a running script package by id through ScriptHost. */
   stopScript(id: string): { ok: boolean; error?: string };
+  /**
+   * Launch a saved account (matched by its display label, case/whitespace-
+   * insensitive) exactly as its own Launch button would — looked up and
+   * launched entirely server-side. Credentials never leave this call: the
+   * caller only ever receives ok/error/pid, never account data.
+   */
+  launchSavedAccountByLabel(
+    label: string,
+    serverName?: string,
+  ): Promise<{ ok: boolean; error?: 'account-not-found' | 'launch-failed'; pid?: number }>;
+  /**
+   * Ask the host process to shut down gracefully (script host, dashboard,
+   * proxy, game hook) and then exit with `exitCode`. Fire-and-forget from
+   * the caller's perspective — the process is going away shortly after this
+   * returns, one way or another (a timeout forces the exit if graceful
+   * shutdown hangs).
+   */
+  requestAppShutdown(exitCode: number): void;
 }
 
 export interface SettingOption {
@@ -148,28 +166,6 @@ export class PluginContext {
 
   /** Set by PluginManager when `setHostAccess()` was called before this plugin loaded. See {@link PluginHostAccess}. */
   public hostAccess: PluginHostAccess | null = null;
-
-  private _clientMessageHandlers = new Map<string, (msg: any) => void>();
-
-  /**
-   * Register a handler for an inbound dashboard websocket message type that
-   * DevServer itself doesn't recognize — DevServer forwards any such message
-   * to `PluginManager.dispatchClientMessage(type, msg)`, which calls the
-   * handler registered here for a matching `type`. At most one handler per
-   * type per plugin; never throws from the caller's side (a handler that
-   * throws is caught by the dispatcher, not here).
-   */
-  onClientMessage(type: string, handler: (msg: any) => void): void {
-    this._clientMessageHandlers.set(type, handler);
-  }
-
-  /** Called by PluginManager.dispatchClientMessage(). Returns whether this plugin had a handler for `type`. */
-  handleClientMessage(type: string, msg: any): boolean {
-    const handler = this._clientMessageHandlers.get(type);
-    if (!handler) return false;
-    handler(msg);
-    return true;
-  }
 
   /** Game data (objects.xml parsed). Available after proxy startup. */
   public readonly gameData: GameDataLoader | null;
