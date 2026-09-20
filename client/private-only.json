@@ -13,7 +13,6 @@
     "plugins/testlab-runner.ts",
     "src/testlab/runnerCore.ts",
     "src/testlab/__tests__/runnerCore.test.ts",
-    "src/plugins/__tests__/testlabRunner.test.ts",
-    "src/dashboard/public/js/testlab-runner.js"
+    "src/plugins/__tests__/testlabRunner.test.ts"
   ]
 }
