@@ -553,6 +553,16 @@ export class PluginManager {
           return plugin ? plugin.context.getSetting(key) : undefined;
         };
         context.onUpdateOtherPluginSetting = (pluginId, key, value) => this.updateSetting(pluginId, key, value);
+        // Read-only description (type/options/min/max/visibleWhen) of a
+        // different plugin's setting, with no current value and no side
+        // effect — lets a controller validate a free-text setting key/value
+        // pair against the live plugin before ever calling updateSetting.
+        context.onDescribeOtherPluginSetting = (pluginId, key) => {
+          const plugin = this.loadedPlugins.get(pluginId);
+          const def = plugin?.context.getSettings().find((s) => s.key === key);
+          if (!def) return undefined;
+          return { type: def.type, options: def.options, min: def.min, max: def.max, visibleWhen: def.visibleWhen };
+        };
         context.hostAccess = this.hostAccess;
       }
 
