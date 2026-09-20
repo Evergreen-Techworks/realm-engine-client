@@ -133,6 +133,7 @@ import {
 import { isThermalBackgroundDemotionActive } from '../process/thermalStressLayer.js';
 import { normalizeSlotCount, toBoolArray, parseOfferSlots } from '../../util/tradeSlots.js';
 import { WikiSpriteService } from './wikiSpriteService.js';
+import { getLatestCredentialLaunchByAccountLabel } from '../process/credentialLaunchRegistry.js';
 
 /**
  * Count running processes matching an image name, locale-independently.
@@ -527,11 +528,55 @@ export class DevServer {
   }
 
   /**
-   * Generic surface a plugin can use to run a script package and temporarily
-   * swap the live plugin configuration, without reaching into DevServer's
-   * internals directly. Wired via `PluginManager.setHostAccess()`.
+   * Launch a saved account by its display label (case/whitespace-
+   * insensitive), exactly as that account's own Launch button would: looked
+   * up and launched entirely here via the same `launchGameWithCredentials`
+   * path. Credentials never leave this method — the caller only ever gets
+   * back ok/error/pid. Steam accounts are supported the same way the
+   * dashboard's own Launch button supports them (the account record's
+   * `email`/`password` fields double as the Steam guid/secret when
+   * `isSteam` is set; see `AccountService.verifyDecaAccountOnce`).
    */
-  getPluginHostAccess(): PluginHostAccess {
+  async launchSavedAccountByLabel(
+    label: string,
+    serverName?: string,
+  ): Promise<{ ok: boolean; error?: 'account-not-found' | 'launch-failed'; pid?: number }> {
+    const normalize = (s: string) => String(s || '').trim().toLowerCase();
+    const target = normalize(label);
+    if (!target) return { ok: false, error: 'account-not-found' };
+
+    const account = this.readDashboardAccounts().find(
+      (a) => normalize(a.label || a.email) === target,
+    );
+    if (!account) return { ok: false, error: 'account-not-found' };
+
+    const accountLabel = account.label || account.email;
+    const result = await this.launchGameWithCredentials(
+      String(account.email || '').trim(),
+      String(account.password || ''),
+      String(serverName || account.serverName || 'USWest').trim() || 'USWest',
+      {
+        accountId: account.id,
+        accountLabel,
+        isSteam: account.isSteam,
+        steamId: account.steamId,
+      },
+    );
+    if (!result.ok) return { ok: false, error: 'launch-failed' };
+
+    const rec = getLatestCredentialLaunchByAccountLabel(accountLabel);
+    return { ok: true, pid: rec?.pidLauncher };
+  }
+
+  /**
+   * Generic surface a plugin can use to run a script package, temporarily
+   * swap the live plugin configuration, or launch a saved account by label,
+   * without reaching into DevServer's internals directly. `requestAppShutdown`
+   * is deliberately not included here — it's composed on top of this object
+   * by index.ts, the only place the real shutdown function is reachable.
+   * Wired via `PluginManager.setHostAccess()`.
+   */
+  getPluginHostAccess(): Omit<PluginHostAccess, 'requestAppShutdown'> {
     return {
       getActivePluginConfigId: () => this.getCurrentPluginConfigId(),
       buildPluginConfigSnapshot: (name: string) => this.buildPluginConfigSnapshot(name),
@@ -540,6 +585,7 @@ export class DevServer {
       deletePluginConfigFile: (id: string) => this.deletePluginConfigFile(id),
       startScript: (id: string) => this.scriptHost?.start(id) ?? Promise.resolve({ ok: false, error: 'Script host unavailable' }),
       stopScript: (id: string) => this.scriptHost?.stop(id) ?? { ok: false, error: 'Script host unavailable' },
+      launchSavedAccountByLabel: (label: string, serverName?: string) => this.launchSavedAccountByLabel(label, serverName),
     };
   }
 
@@ -2057,8 +2103,11 @@ export class DevServer {
             res.end(JSON.stringify({ error: result.message }));
             return;
           }
+          // Same response shape the route always returned: applyPluginConfigSnapshot's
+          // own {ok, message} result, unmodified (host-access callers get the
+          // richer {ok, message, notFound?} shape from loadPluginConfigById directly).
           res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: result.ok, message: result.message }));
+          res.end(JSON.stringify({ ok: result.ok, message: result.message } satisfies { ok: boolean; message: string }));
         } catch (err) {
           Logger.warn('DevServer', `configs load failed: ${(err as Error).message}`);
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -3080,11 +3129,6 @@ export class DevServer {
         } else if (msg.type === 'updateSingleClientOnly') {
           this.config.singleClientOnly = msg.value !== false;
           this.broadcastConfig();
-        } else {
-          // Not a message type this server handles itself — offer it to any
-          // loaded plugin that registered for it via ctx.onClientMessage().
-          // A no-op when nothing did.
-          this.pluginManager.dispatchClientMessage(String(msg.type ?? ''), msg);
         }
       } catch {}
     });
