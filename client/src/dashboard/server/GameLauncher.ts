@@ -4,7 +4,7 @@ import { execFileSync, spawn } from 'child_process';
 import { Logger } from '../../util/Logger.js';
 import { getClientToken } from '../../util/Hwid.js';
 import { registerCredentialLaunch } from '../process/credentialLaunchRegistry.js';
-import { moveRotmgLaunchedWindowAfterSpawn } from '../process/rotmgWindowsClientTune.js';
+import { moveRotmgLaunchedWindowAfterSpawn, ROTMG_EXALT_IMAGE } from '../process/rotmgWindowsClientTune.js';
 
 /**
  * Count running processes matching an image name, locale-independently.
@@ -36,6 +36,62 @@ function countRunningProcessesByImageName(imageName: string): number {
   } catch (err) {
     Logger.warn('GameLauncher', `Failed to inspect ${imageName} processes: ${(err as Error).message}`);
     return 0;
+  }
+}
+
+/**
+ * Look up the image name currently running at `pid`, locale-independently
+ * (same CSV-row parsing as `countRunningProcessesByImageName`, for the same
+ * reason: a localized "no tasks" notice must never be mistaken for a row).
+ * Returns `null` when no process has that PID.
+ */
+function imageNameForPid(pid: number): string | null {
+  try {
+    const output = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    for (const rawLine of String(output || '').split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const m = line.match(/^"([^"]*)"/);
+      if (m) return m[1];
+    }
+    return null;
+  } catch (err) {
+    Logger.warn('GameLauncher', `Failed to inspect PID ${pid}: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+/**
+ * Terminate exactly one process by PID, after verifying its live image name
+ * matches `expectedImageName` (default: the game's own launcher image). Never
+ * uses `taskkill /IM`, which would end every process sharing that image name —
+ * a caller that only knows the PID it itself spawned must not be able to
+ * accidentally kill a different instance. Returns `ok:false` without killing
+ * anything when the PID isn't running or its image name doesn't match.
+ */
+export function terminateGameProcessByPid(
+  pid: number,
+  expectedImageName: string = ROTMG_EXALT_IMAGE,
+): { ok: boolean; error?: string } {
+  const n = Math.floor(Number(pid));
+  if (!Number.isFinite(n) || n <= 0) return { ok: false, error: 'invalid pid' };
+
+  const actual = imageNameForPid(n);
+  if (actual === null) return { ok: false, error: `pid ${n} is not running` };
+
+  const normalize = (s: string) => s.replace(/ /g, ' ').trim().toLowerCase();
+  if (normalize(actual) !== normalize(expectedImageName)) {
+    return { ok: false, error: `pid ${n} is "${actual}", not "${expectedImageName}" — refusing to kill it` };
+  }
+
+  try {
+    execFileSync('taskkill', ['/PID', String(n), '/F'], { encoding: 'utf8', windowsHide: true });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
   }
 }
 
