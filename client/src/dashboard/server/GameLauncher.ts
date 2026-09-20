@@ -80,6 +80,54 @@ export interface TerminateTreeResult {
   survivingPids: number[];
 }
 
+/** A killed process can take a moment to actually exit -- poll this long, this often, before declaring survival. */
+export const TERMINATE_VERIFY_MS = 10_000;
+export const TERMINATE_VERIFY_POLL_MS = 500;
+
+/** Injectable clock/sleep seam so tests can drive the verify-poll loop
+ *  without a real wall-clock wait. Defaults to the real clock. */
+export interface TerminateProcessClock {
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+}
+
+const REAL_TERMINATE_CLOCK: TerminateProcessClock = {
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
+/**
+ * Poll `imageNameForPid(pid)` until it reports the pid gone or
+ * `TERMINATE_VERIFY_MS` elapses. A single immediate re-check (the previous
+ * behavior) reported a false survivor for a kill that was already underway
+ * -- Windows can take a few seconds to actually tear a process down.
+ */
+async function waitForPidGone(pid: number, clock: TerminateProcessClock): Promise<boolean> {
+  const deadline = clock.now() + TERMINATE_VERIFY_MS;
+  for (;;) {
+    if (imageNameForPid(pid) === null) return true;
+    if (clock.now() >= deadline) return false;
+    await clock.sleep(TERMINATE_VERIFY_POLL_MS);
+  }
+}
+
+/** Runs one `taskkill` invocation, capturing its own stdout/stderr either
+ *  way -- not sensitive, and the only way to see "Access is denied." or
+ *  "not found" instead of a bare non-zero exit. */
+function runTaskkill(args: string[]): { ok: boolean; output: string } {
+  try {
+    const output = execFileSync('taskkill', args, { encoding: 'utf8', windowsHide: true });
+    return { ok: true, output: String(output ?? '').trim() };
+  } catch (err) {
+    const e = err as { message?: string; stdout?: Buffer | string; stderr?: Buffer | string };
+    const captured = [e.stdout, e.stderr]
+      .map((b) => (b ? String(b).trim() : ''))
+      .filter(Boolean)
+      .join(' | ');
+    return { ok: false, output: captured || String(e.message ?? 'unknown error') };
+  }
+}
+
 /**
  * Terminate the process tree rooted at each PID in `specs`, after verifying
  * each one's own live image name -- never `taskkill /IM`, which would end
@@ -95,11 +143,21 @@ export interface TerminateTreeResult {
  * where the process actually running the game may not be a descendant of
  * the PID `spawn()` returned at all.
  *
- * Every attempted PID is re-queried after the kill: `ok`/`terminatedPids`/
- * `survivingPids` reflect what is actually still running afterward, not
- * what `taskkill` merely claimed to have done.
+ * If `taskkill /PID <pid> /T /F` itself fails (e.g. access denied) or the
+ * pid is still alive after `TERMINATE_VERIFY_MS` of polling, falls back to a
+ * single, narrower `taskkill /PID <pid> /F` (no `/T`) on that SAME verified
+ * pid only -- re-checking its live image name first, since time has passed
+ * -- and polls again. Never falls back by image name, never touches a
+ * different pid.
+ *
+ * Every attempted pid is re-queried after the kill (and after the fallback,
+ * if it ran): `ok`/`terminatedPids`/`survivingPids` reflect what is actually
+ * still running afterward, not what `taskkill` merely claimed to have done.
  */
-export function terminateGameProcessTree(specs: TerminatePidSpec[]): TerminateTreeResult {
+export async function terminateGameProcessTree(
+  specs: TerminatePidSpec[],
+  clock: TerminateProcessClock = REAL_TERMINATE_CLOCK,
+): Promise<TerminateTreeResult> {
   const terminated: number[] = [];
   const surviving: number[] = [];
   const errors: string[] = [];
@@ -118,18 +176,36 @@ export function terminateGameProcessTree(specs: TerminatePidSpec[]): TerminateTr
       continue;
     }
 
-    try {
-      execFileSync('taskkill', ['/PID', String(n), '/T', '/F'], { encoding: 'utf8', windowsHide: true });
-    } catch (err) {
-      errors.push(`taskkill pid ${n} failed: ${(err as Error).message}`);
+    const treeKill = runTaskkill(['/PID', String(n), '/T', '/F']);
+    // A taskkill that itself errored (e.g. access denied) never issued a
+    // real kill -- don't waste the poll budget confirming what is already
+    // known; go straight to deciding whether a fallback is warranted.
+    let gone = treeKill.ok ? await waitForPidGone(n, clock) : false;
+    let lastOutput = treeKill.output;
+
+    if (!gone) {
+      errors.push(`taskkill /T pid ${n}: ${treeKill.output || '(no output)'}`);
+
+      const stillThere = imageNameForPid(n);
+      if (stillThere === null) {
+        gone = true; // vanished between the last poll and this check.
+      } else if (normalize(stillThere) === normalize(expectedImageName)) {
+        const fallbackKill = runTaskkill(['/PID', String(n), '/F']);
+        lastOutput = fallbackKill.output;
+        gone = fallbackKill.ok ? await waitForPidGone(n, clock) : false;
+        errors.push(`taskkill /PID pid ${n} fallback: ${fallbackKill.output || '(no output)'}`);
+      } else {
+        // Image changed to something unexpected between checks -- refuse to
+        // touch it further; it counts as a survivor below.
+        lastOutput = `pid ${n} is now "${stillThere}", not "${expectedImageName}"`;
+      }
     }
 
-    const after = imageNameForPid(n);
-    if (after === null) {
+    if (gone) {
       terminated.push(n);
     } else {
       surviving.push(n);
-      errors.push(`pid ${n} still running after taskkill /T`);
+      errors.push(`pid ${n} still running after taskkill /T and fallback (last output: ${lastOutput || '(none)'})`);
     }
   }
 
