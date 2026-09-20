@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { register } from '../../../plugins/testlab-interleaver.js';
 import type { PluginContext } from '../../../plugins/api.js';
 
@@ -106,7 +106,28 @@ function load(opts: { otherSettings?: Record<string, unknown>; descriptions?: Re
   };
 }
 
+/**
+ * Enable the plugin and flush its deferred first-arm attempt.
+ *
+ * `testlab-interleaver.ts`'s `scheduleStart` deliberately arms one tick after
+ * `enabled` flips true rather than synchronously inside the setter (see that
+ * function's doc comment) — this is what lets it survive a per-run config
+ * apply that enables the recorder and/or writes this plugin's own settings
+ * in the same synchronous batch, moments AFTER this plugin's own `enabled`
+ * flip. Every test that wants to observe a (successful or refused) start
+ * must flush that tick with fake timers active, which is why `beforeEach`
+ * below installs them for the whole suite.
+ */
+function arm(h: ReturnType<typeof load>): void {
+  h.setEnabled(true);
+  vi.advanceTimersByTime(0);
+}
+
 describe('Test Lab A/B interleaver plugin', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
   afterEach(() => {
     clearRecorderBus();
     vi.useRealTimers();
@@ -129,7 +150,7 @@ describe('Test Lab A/B interleaver plugin', () => {
   it('does not start when the recorder is disabled', () => {
     setRecorderBus(false);
     const h = load();
-    h.setEnabled(true);
+    arm(h);
     expect(h.otherPluginUpdates).toEqual([]);
     expect(h.dashboardLogs.at(-1)).toMatch(/Test Lab Recorder is not enabled/);
     expect(h.ctx.enabled).toBe(false); // self-reverted
@@ -140,7 +161,7 @@ describe('Test Lab A/B interleaver plugin', () => {
     setRecorderBus(true);
     const h = load();
     h.settings.set('target', 'notARealSetting');
-    h.setEnabled(true);
+    arm(h);
     expect(h.otherPluginUpdates).toEqual([]);
     expect(h.dashboardLogs.at(-1)).toMatch(/Unknown Auto Dodge setting "notARealSetting"/);
     expect(h.ctx.enabled).toBe(false);
@@ -150,7 +171,7 @@ describe('Test Lab A/B interleaver plugin', () => {
   it('does not start when the target is gated to a dodgeMode the plugin is not currently in', () => {
     setRecorderBus(true);
     const h = load({ otherSettings: { dodgeMode: 'xdodge', udodgeEnemyStandoff: 'off' } });
-    h.setEnabled(true);
+    arm(h);
     expect(h.otherPluginUpdates).toEqual([]);
     expect(h.dashboardLogs.at(-1)).toMatch(/only applies when dodgeMode=unified/);
     expect(h.dashboardLogs.at(-1)).toMatch(/xdodge/);
@@ -164,7 +185,7 @@ describe('Test Lab A/B interleaver plugin', () => {
     h.settings.set('target', 'dodgeMode');
     h.settings.set('valueA', 'xdodge');
     h.settings.set('valueB', 'unified');
-    h.setEnabled(true);
+    arm(h);
     expect(h.otherPluginUpdates.length).toBeGreaterThan(0);
     const [pluginId, key, value] = h.otherPluginUpdates[0];
     expect(pluginId).toBe('auto-dodge');
@@ -178,7 +199,7 @@ describe('Test Lab A/B interleaver plugin', () => {
     const h = load();
     h.settings.set('valueA', 'off');
     h.settings.set('valueB', 'off');
-    h.setEnabled(true);
+    arm(h);
     expect(h.otherPluginUpdates).toEqual([]);
     expect(h.dashboardLogs.at(-1)).toMatch(/nothing to compare/);
     expect(h.ctx.enabled).toBe(false);
@@ -189,7 +210,7 @@ describe('Test Lab A/B interleaver plugin', () => {
     setRecorderBus(true);
     const h = load();
     h.settings.set('valueB', 'bogus');
-    h.setEnabled(true);
+    arm(h);
     expect(h.otherPluginUpdates).toEqual([]);
     expect(h.dashboardLogs.at(-1)).toMatch(/bogus/);
     expect(h.ctx.enabled).toBe(false);
@@ -199,7 +220,7 @@ describe('Test Lab A/B interleaver plugin', () => {
   it('flips call the settings path with the right key/value and call mark', () => {
     const writer = setRecorderBus(true);
     const h = load();
-    h.setEnabled(true);
+    arm(h);
 
     // The settings path: PluginManager.updateSetting-equivalent for the
     // 'auto-dodge' plugin's real setting key, with the real legal value.
@@ -222,7 +243,7 @@ describe('Test Lab A/B interleaver plugin', () => {
   it('marks ab.start once at start with key/a/b/blockMinutes/seed', () => {
     const writer = setRecorderBus(true);
     const h = load();
-    h.setEnabled(true);
+    arm(h);
     const startRecord = writer!.writeLine.mock.calls.map((c: unknown[]) => c[0]).find((r: any) => r.key === 'ab.start');
     expect(startRecord).toMatchObject({
       k: 'arm',
@@ -236,7 +257,7 @@ describe('Test Lab A/B interleaver plugin', () => {
   it('restores the original value on disable, marks ab.stop with the reason, and logs why it stopped', () => {
     const writer = setRecorderBus(true);
     const h = load({ otherSettings: { dodgeMode: 'unified', udodgeEnemyStandoff: 'off' } });
-    h.setEnabled(true);
+    arm(h);
     h.setEnabled(false);
 
     // Last update for the target key should restore the pre-flip value ('off').
@@ -256,7 +277,7 @@ describe('Test Lab A/B interleaver plugin', () => {
   it('restores on plugin unload (registerCleanup) even without an explicit disable, and logs reason=plugin-unload', () => {
     setRecorderBus(true);
     const h = load({ otherSettings: { dodgeMode: 'unified', udodgeEnemyStandoff: 'off' } });
-    h.setEnabled(true);
+    arm(h);
     h.otherPluginUpdates.length = 0; // clear the initial flip
     h.runCleanup();
     const lastForKey = [...h.otherPluginUpdates].reverse().find(([, key]) => key === 'udodgeEnemyStandoff');
@@ -268,18 +289,18 @@ describe('Test Lab A/B interleaver plugin', () => {
     clearRecorderBus();
     const h = load();
     expect(() => h.setEnabled(true)).not.toThrow();
+    expect(() => vi.advanceTimersByTime(0)).not.toThrow(); // flush the deferred first-arm attempt
     expect(h.ctx.enabled).toBe(false); // recorder-not-enabled refusal
     h.runCleanup();
   });
 
   it('delays the arm mark by SETTLE_MS after a dodgeMode flip, but applies the value and logs the flip immediately', () => {
-    vi.useFakeTimers();
     const writer = setRecorderBus(true);
     const h = load({ otherSettings: { dodgeMode: 'xdodge' } });
     h.settings.set('target', 'dodgeMode');
     h.settings.set('valueA', 'xdodge');
     h.settings.set('valueB', 'unified');
-    h.setEnabled(true);
+    arm(h);
 
     // Applied and logged immediately.
     expect(h.otherPluginUpdates.some(([, key]) => key === 'dodgeMode')).toBe(true);
@@ -299,10 +320,9 @@ describe('Test Lab A/B interleaver plugin', () => {
   });
 
   it('stops mid-run with reason=recorder-disabled when the recorder is turned off during a run', () => {
-    vi.useFakeTimers();
     const writer = setRecorderBus(true);
     const h = load();
-    h.setEnabled(true);
+    arm(h); // armed while the recorder is still enabled -- this is the mid-RUN disable path, not the arm-time refusal.
     setRecorderBus(false, writer);
 
     vi.advanceTimersByTime(5000); // TICK_MS
@@ -315,10 +335,9 @@ describe('Test Lab A/B interleaver plugin', () => {
   });
 
   it('stops mid-run with reason=target-invalid when dodgeMode changes away from a mode-gated target', () => {
-    vi.useFakeTimers();
     setRecorderBus(true);
     const h = load({ otherSettings: { dodgeMode: 'unified', udodgeEnemyStandoff: 'off' } });
-    h.setEnabled(true);
+    arm(h);
     h.otherSettings.set('dodgeMode', 'xdodge'); // something else changed the mode mid-run
 
     vi.advanceTimersByTime(5000); // TICK_MS
@@ -330,10 +349,9 @@ describe('Test Lab A/B interleaver plugin', () => {
   });
 
   it('stops mid-run with reason=target-invalid when the target setting disappears entirely', () => {
-    vi.useFakeTimers();
     setRecorderBus(true);
     const h = load();
-    h.setEnabled(true);
+    arm(h);
     h.descriptions.delete('udodgeEnemyStandoff'); // e.g. Auto Dodge unloaded/changed shape
 
     vi.advanceTimersByTime(5000);
@@ -345,10 +363,9 @@ describe('Test Lab A/B interleaver plugin', () => {
   });
 
   it('stops mid-run with reason=error:<message> when something in the tick throws, and still restores', () => {
-    vi.useFakeTimers();
     setRecorderBus(true);
     const h = load();
-    h.setEnabled(true);
+    arm(h);
     (h.ctx as any).describeOtherPluginSetting = vi.fn(() => {
       throw new Error('boom');
     });
@@ -359,5 +376,64 @@ describe('Test Lab A/B interleaver plugin', () => {
     expect(h.logs.at(-1)).toBe('[TestLabAB] stopped reason=error:boom restored=off');
     const lastForKey = [...h.otherPluginUpdates].reverse().find(([, key]) => key === 'udodgeEnemyStandoff');
     expect(lastForKey?.[2]).toBe('off');
+  });
+
+  // ── Regression: 2026-09-20, runId 20260920T182708Z-9617 ──────────────────
+  //
+  // A real unattended run's run-request enabled BOTH `testlab-recorder` and
+  // `testlab-interleaver` in one per-run plugin config, applied through
+  // PluginConfigService.applyPluginConfigSnapshot in a single synchronous
+  // pass. That function toggles every plugin's `enabled` (and then its
+  // `settings`) in the order PluginManager.getPlugins() returns them —
+  // alphabetical by plugin NAME. 'Test Lab A/B' sorts before 'Test Lab
+  // Recorder', so this plugin's own enable-triggered start ran and
+  // permanently refused (recorder not enabled YET) before the recorder's own
+  // turn, later in that same pass, ever enabled it. The refusal was reported
+  // only via ctx.dashboardLog (see the other fix in this file), so an
+  // unattended run — nobody watching the dashboard — saw nothing at all: zero
+  // arm records, zero "TestLabAB"/"interleav" lines anywhere in the proxy
+  // log, for the entire run.
+  //
+  // These two plugins are exactly one instance of the general "enabled at
+  // load time, no separate enabled-state transition, still in the middle of
+  // a same-batch config apply" scenario: the plugin goes false -> true
+  // exactly once (never disabled first), and other state that arming depends
+  // on — a sibling plugin's enabled flag, or even this plugin's OWN
+  // settings, applied by that same batch right after `enabled` per
+  // PluginConfigService's per-plugin ordering — can still be mid-flight at
+  // that single transition. Both must still arm.
+
+  it('arms even when the recorder plugin is enabled AFTER this plugin, in the same synchronous config-apply batch', () => {
+    setRecorderBus(false); // recorder not enabled YET at the instant this plugin turns on...
+    const h = load();
+    h.setEnabled(true); // ...enabled once, as a per-run config apply does (no prior disable -- no separate "transition").
+    const writer = setRecorderBus(true); // ...recorder's own turn in the SAME synchronous batch enables it moments later.
+    vi.advanceTimersByTime(0); // flush the deferred first-arm attempt, now that the batch has settled.
+
+    expect(h.ctx.enabled).toBe(true); // still armed -- not permanently self-disabled by a since-resolved race.
+    expect(h.otherPluginUpdates.length).toBeGreaterThan(0);
+    expect(writer!.writeLine).toHaveBeenCalled();
+    const startRecord = writer!.writeLine.mock.calls.map((c: unknown[]) => c[0]).find((r: any) => r.key === 'ab.start');
+    expect(startRecord).toMatchObject({ k: 'arm', key: 'ab.start' });
+    h.runCleanup();
+  });
+
+  it("arms against this run's requested settings even when they are applied to this plugin AFTER its own enable, in the same synchronous batch", () => {
+    setRecorderBus(true);
+    const h = load(); // defaults: target=udodgeEnemyStandoff, valueA=off, valueB=auto
+    h.setEnabled(true); // enabled first, exactly as applyPluginConfigSnapshot does per-plugin...
+    h.settings.set('target', 'dodgeMode'); // ...then this run's requested settings, still the same synchronous batch.
+    h.settings.set('valueA', 'xdodge');
+    h.settings.set('valueB', 'unified');
+    vi.advanceTimersByTime(0); // flush the deferred first-arm attempt.
+
+    expect(h.otherPluginUpdates.length).toBeGreaterThan(0);
+    const [pluginId, key, value] = h.otherPluginUpdates[0];
+    expect(pluginId).toBe('auto-dodge');
+    // Armed against the FINAL settings applied by the batch, not the stale
+    // defaults that were live at the instant `enabled` flipped true.
+    expect(key).toBe('dodgeMode');
+    expect(['xdodge', 'unified']).toContain(value);
+    h.runCleanup();
   });
 });
