@@ -64,12 +64,16 @@ const BUS_SLOT_KEY = '__realmengine_testlabRecorderBus_v1';
 interface RecorderBusSlot {
   writer: BufferedJsonlWriter | null;
   enabled: boolean;
+  /** Absolute path of the writer's own file, for a caller (the unattended
+   *  runner) that needs to report "did a recording happen" without importing
+   *  this module directly. Null until a writer exists. */
+  filePath: string | null;
 }
 function getBusSlot(): RecorderBusSlot {
   const g = globalThis as unknown as Record<string, unknown>;
   let slot = g[BUS_SLOT_KEY] as RecorderBusSlot | undefined;
   if (!slot) {
-    slot = { writer: null, enabled: false };
+    slot = { writer: null, enabled: false, filePath: null };
     g[BUS_SLOT_KEY] = slot;
   }
   return slot;
@@ -105,13 +109,15 @@ export function register(ctx: PluginContext) {
   // independent tmpdir() call here previously wrote to a different directory
   // than the client log in the packaged app.
   const startedAt = new Date();
-  const writer = new BufferedJsonlWriter(packetsFilePath(startedAt, loggerDirectory()));
+  const filePath = packetsFilePath(startedAt, loggerDirectory());
+  const writer = new BufferedJsonlWriter(filePath);
   const tracker = new ProjDefTracker();
   let wroteStart = false;
 
   const slot = getBusSlot();
   slot.writer = writer;
   slot.enabled = ctx.enabled;
+  slot.filePath = filePath;
 
   // Ties all three private-only files' markers to one real, non-dead call
   // site so none of them can be tree-shaken out of a bundled build.
@@ -170,6 +176,7 @@ export function register(ctx: PluginContext) {
     writer.close();
     slot.writer = null;
     slot.enabled = false;
+    slot.filePath = null;
   });
 }
 
