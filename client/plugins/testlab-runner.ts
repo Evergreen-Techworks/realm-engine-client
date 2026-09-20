@@ -51,9 +51,15 @@ import {
   buildThrowawayConfigSnapshot,
   buildRejectedResult,
   RunnerStateMachine,
+  ReconnectClassifier,
+  SCRIPT_START_SETTLE_MS,
+  NATIVE_BRIDGE_TIMEOUT_MS,
+  NO_MOVEMENT_TIMEOUT_MS,
+  NO_MOVEMENT_MIN_TILE_DELTA,
   type RunRequest,
   type RunResultFile,
   type PluginConfigSnapshot,
+  type WorldPosition,
 } from '../src/testlab/runnerCore.js';
 
 export { TESTLAB_PRIVATE_ONLY };
@@ -89,6 +95,7 @@ export function register(ctx: PluginContext) {
 
   const scheduler = new RuntimeScheduler();
   let machine: RunnerStateMachine | null = null;
+  let reconnectClassifier: ReconnectClassifier | null = null;
   let currentClient: ClientConnection | null = null;
   let seenFirstConnect = false;
   let stopPolling: (() => void) | null = null;
@@ -135,8 +142,11 @@ export function register(ctx: PluginContext) {
     const isReconnect = seenFirstConnect;
     seenFirstConnect = true;
     currentClient = client;
-    if (isReconnect && machine && machine.onReconnect()) {
-      void finishRun();
+    if (isReconnect && machine && reconnectClassifier) {
+      const abnormal = reconnectClassifier.classify(Date.now());
+      if (abnormal && machine.onReconnect(Date.now())) {
+        void finishRun();
+      }
     }
   });
 
@@ -146,6 +156,14 @@ export function register(ctx: PluginContext) {
 
   ctx.hookPacket('DEATH', () => {
     if (machine?.onDeath()) void finishRun();
+  });
+
+  // A farming session hops maps constantly (portal, Auto Nexus, a dungeon
+  // teleport) — the server always answers with RECONNECT first. Recording
+  // every one here is what lets ReconnectClassifier tell that apart from an
+  // abnormal drop (see runnerCore.ts's ReconnectClassifier doc comment).
+  ctx.hookPacket('RECONNECT', () => {
+    reconnectClassifier?.onReconnectPacket(Date.now());
   });
 
   // ── The one-shot startup check. See this file's header. ──
@@ -189,14 +207,22 @@ export function register(ctx: PluginContext) {
 
   async function runRequest(request: RunRequest): Promise<void> {
     machine = new RunnerStateMachine();
+    reconnectClassifier = new ReconnectClassifier();
     machine.begin(Date.now(), request);
     originalConfigId = ctx.hostAccess?.getActivePluginConfigId() ?? null;
 
     try {
       log(`launching accountLabel="${request.accountLabel}" runId=${request.runId}`);
       const launch = await (ctx.hostAccess?.launchSavedAccountByLabel(request.accountLabel, request.serverName) ??
-        Promise.resolve({ ok: false as const, error: 'launch-failed' as const }));
-      machine.onLaunchResult(launch.ok, launch.error ?? null, launch.ok ? launch.pid ?? null : null);
+        Promise.resolve({ ok: false as const, error: 'launch-failed' as const, matchCount: undefined, totalAccounts: undefined }));
+      machine.onLaunchResult(
+        launch.ok,
+        launch.error ?? null,
+        launch.ok ? launch.pid ?? null : null,
+        !launch.ok && (launch.matchCount != null || launch.totalAccounts != null)
+          ? { matchCount: launch.matchCount ?? 0, totalAccounts: launch.totalAccounts ?? 0 }
+          : undefined,
+      );
       if (machine.getPhase() !== 'waiting-world') {
         await finishRun();
         return;
@@ -208,6 +234,15 @@ export function register(ctx: PluginContext) {
         await finishRun();
         return;
       }
+
+      log('in world, waiting for native bridge');
+      const bridgeWaitStartedAtMs = Date.now();
+      const bridgeReady = await waitForNativeBridge();
+      if (!bridgeReady) {
+        await finishRun();
+        return;
+      }
+      log(`native bridge ready after ${Math.max(0, Math.round((Date.now() - bridgeWaitStartedAtMs) / 1000))}s`);
 
       applyThrowawayPluginConfig(request);
 
@@ -228,13 +263,28 @@ export function register(ctx: PluginContext) {
         log(`started script "${request.scriptId}"`);
       }
 
-      machine.enterRunning(Date.now());
+      machine.enterRunning();
+      if (request.scriptId) {
+        machine.armMovementWatchdog(Date.now(), currentWorldPosition());
+      }
       log(`running runId=${request.runId} for ${request.minutes} minute(s)`);
       startPolling();
     } catch (err) {
       machine.requestStop('error', `unexpected exception: ${(err as Error).message}`);
       await finishRun();
     }
+  }
+
+  /** Best-effort current player position + map, for the movement watchdog and
+   *  for `ReconnectClassifier`'s "did the previous connection ever load"
+   *  question. `null` whenever it can't be read (no client, not connected). */
+  function currentWorldPosition(): WorldPosition | null {
+    const client = currentClient;
+    if (!client || !client.connected) return null;
+    const pos = ctx.getEffectivePlayerPos(client);
+    if (!pos) return null;
+    const mapKey = `${client.state?.gameId ?? -2}|${String(client.playerData?.mapName ?? '').trim().toLowerCase()}`;
+    return { x: pos.x, y: pos.y, mapKey };
   }
 
   function waitForWorld(): Promise<boolean> {
@@ -246,6 +296,8 @@ export function register(ctx: PluginContext) {
           return;
         }
         if (currentClient?.admission?.phase === 'loaded') {
+          reconnectClassifier?.onAdmissionLoaded();
+          machine.enterWaitingBridge(Date.now());
           stop();
           resolveWait(true);
           return;
@@ -258,6 +310,59 @@ export function register(ctx: PluginContext) {
       const stop = scheduler.scheduleRepeating(POLL_MS, check);
       check();
     });
+  }
+
+  /**
+   * Polls until BOTH "admission loaded" (already true on entry) and the
+   * native DLL bridge report ready, continuously, for `SCRIPT_START_SETTLE_MS`
+   * — see runnerCore.ts's `RunnerStateMachine.checkBridgeReady` doc comment
+   * for why: the first live unattended run started the script the instant it
+   * was in world, ~15s before the DLL bridge connected, and the script's
+   * one-shot DLL setup + navigation goal were silently dropped.
+   */
+  function waitForNativeBridge(): Promise<boolean> {
+    return new Promise((resolveWait) => {
+      const check = () => {
+        if (!machine) {
+          stop();
+          resolveWait(false);
+          return;
+        }
+        if (currentClient?.admission?.phase === 'loaded') reconnectClassifier?.onAdmissionLoaded();
+        const bridgeConnected = ctx.hostAccess?.isNativeBridgeReady() ?? false;
+        const outcome = machine.checkBridgeReady(Date.now(), bridgeConnected, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS);
+        if (outcome === 'ready') {
+          stop();
+          resolveWait(true);
+          return;
+        }
+        if (outcome === 'timeout') {
+          stop();
+          resolveWait(false);
+        }
+      };
+      const stop = scheduler.scheduleRepeating(POLL_MS, check);
+      check();
+    });
+  }
+
+  /** Best-effort restart of a stalled script: stop then start again. Failures
+   *  are logged, not fatal here — if the restart itself didn't take, the
+   *  movement watchdog's second window ends the run with reason
+   *  `no-movement` rather than wasting the rest of it standing still. */
+  async function restartScript(scriptId: string): Promise<void> {
+    try {
+      ctx.hostAccess?.stopScript(scriptId);
+    } catch {
+      /* best effort */
+    }
+    try {
+      const result = await (ctx.hostAccess?.startScript(scriptId) ??
+        Promise.resolve({ ok: false, error: 'host access unavailable' }));
+      if (!result.ok) log(`restart of script "${scriptId}" failed: ${result.error ?? 'unknown error'}`);
+    } catch (err) {
+      log(`restart of script "${scriptId}" threw: ${(err as Error).message}`);
+    }
   }
 
   function applyThrowawayPluginConfig(request: RunRequest): void {
@@ -300,8 +405,20 @@ export function register(ctx: PluginContext) {
     stopPolling?.();
     stopPolling = scheduler.scheduleRepeating(POLL_MS, () => {
       if (!machine) return;
+      if (currentClient?.admission?.phase === 'loaded') reconnectClassifier?.onAdmissionLoaded();
       if (machine.checkMinutesElapsed(Date.now())) {
         void finishRun();
+        return;
+      }
+      const scriptId = machine.getRequest()?.scriptId;
+      if (scriptId) {
+        const outcome = machine.checkMovement(Date.now(), currentWorldPosition(), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA);
+        if (outcome === 'restart') {
+          log('no movement for 90 s — restarting script');
+          void restartScript(scriptId);
+        } else if (outcome === 'stopped') {
+          void finishRun();
+        }
       }
     });
     // Cover the (rare) case where minutes is already effectively 0 by the
@@ -365,7 +482,7 @@ export function register(ctx: PluginContext) {
 
       const specs = pidsToTerminate(request);
       if (specs.length > 0) {
-        const term = terminateGameProcessTree(specs);
+        const term = await terminateGameProcessTree(specs);
         gameTerminated = term.ok;
         if (!term.ok) log(`did not fully terminate the game process tree: ${term.error}`);
       }
@@ -380,6 +497,7 @@ export function register(ctx: PluginContext) {
       restorePluginConfig(request);
       log(`done reason=${result.reason} detail="${result.detail}"`);
       machine = null;
+      reconnectClassifier = null;
       quitApp();
     }
   }
