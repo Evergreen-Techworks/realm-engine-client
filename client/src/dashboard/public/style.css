@@ -4639,6 +4639,12 @@ body.theme-light .nearby-row.selected td {
   background: color-mix(in srgb, var(--bg-secondary, var(--bg-card)) 92%, transparent);
 }
 
+/* Plugins tab only — the Scripts tab shares .plugin-hub-sidebar and stays 280px. */
+#plugin-hub-sidebar {
+  width: 340px;
+  min-width: 260px;
+}
+
 .plugin-hub-toolbar {
   padding: 10px 12px;
   display: flex;
@@ -4811,17 +4817,13 @@ body.theme-light .nearby-row.selected td {
   color: var(--text-muted);
 }
 
-.plugin-active-card.plugin-active-card--flash {
-  animation: plugin-active-card-flash 1s ease-out;
-}
-
-@keyframes plugin-active-card-flash {
-  0% {
-    box-shadow: 0 0 0 2px var(--accent, #c9a227);
-  }
-  100% {
-    box-shadow: 0 0 0 0 transparent;
-  }
+/* The selected plugin is the only card in the panel, so it reads as the pane
+   itself rather than a tile floating in it. */
+.plugin-active-card--solo {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
 }
 
 .plugin-detail-inner {
@@ -5088,9 +5090,14 @@ body.theme-light .nearby-row.selected td {
 }
 
 .plugin-detail-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 24px 20px;
   color: var(--text-muted);
   font-size: 13px;
+  text-align: center;
 }
 
 .plugin-detail-inner .plugin-settings.plugin-settings-grid {
@@ -5134,7 +5141,8 @@ body:not(.plugins-advanced) .setting-advanced { display: none !important; }
     flex-direction: column;
   }
 
-  .plugin-hub-sidebar {
+  .plugin-hub-sidebar,
+  #plugin-hub-sidebar {
     width: 100%;
     min-width: 0;
     max-height: 42vh;
