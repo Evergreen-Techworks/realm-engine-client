@@ -4,6 +4,7 @@ import type { GameWorldState } from '../../state/GameWorldState.js';
 import type { PartyRosterState } from '../../state/PartyRosterState.js';
 import type { GameDataLoader } from '../../game-data/GameDataLoader.js';
 import type { Proxy } from '../../proxy/Proxy.js';
+import type { DllReconnectSource } from '../../bridge/InternalBridge.js';
 
 /** MITM client holder — `DevServer` assigns `.current` on proxy connect/disconnect */
 export type BridgeClientRef = { current: ClientConnection | undefined };
@@ -29,6 +30,15 @@ export interface BridgeDeps {
   gameData: GameDataLoader;
   /** MITM proxy — packet hooks + factory for outbound packets (e.g. chat bridge). */
   proxy: Proxy;
+  /**
+   * DLL pipe bridge (re)connect signal, set by index.ts. `InternalBridge`'s
+   * normal feature replay on reconnect deliberately skips `scriptNavigationGoal`
+   * (a blind replay would resend a goal from a previous map); components that
+   * track a live goal (MovementController) use this to decide for themselves
+   * whether to reissue it. Optional so tests that don't exercise reconnect
+   * behaviour can omit it.
+   */
+  dllBridge?: DllReconnectSource;
   /**
    * Set by `ScriptHost` while `onStart` / `onLoop` / `onStop` run so `RealmEngine.log`
    * can attribute lines to the active script.

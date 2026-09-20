@@ -28,6 +28,23 @@ export class MovementController {
 
   constructor(private readonly deps: BridgeDeps) {
     for (const packet of ['HELLO', 'MAPINFO']) deps.proxy?.hookPacket(packet, () => this.clearWaypoint());
+    // The DLL bridge replays ordinary feature toggles on reconnect but deliberately
+    // excludes scriptNavigationGoal (see InternalBridge.setFeature) — a blind replay
+    // would resend a goal from a map we've since left. clearWaypoint() on HELLO/MAPINFO
+    // already drops a goal that's gone stale; if `this.target` is still set here, it's
+    // still valid for the current map, so reissue it with a fresh id — the DLL may only
+    // half-know the old one after losing the pipe.
+    deps.dllBridge?.on('authenticated', () => this.reissueOnReconnect());
+  }
+
+  private reissueOnReconnect(): void {
+    if (!this.target) return;
+    const requestId = nextNavigationId();
+    const sent = sendDllFeature('scriptNavigationGoal', `${requestId},${this.target.x},${this.target.y}`);
+    if (sent) {
+      this.requestId = requestId;
+      this.generation = -1;
+    }
   }
 
   onNavigationStatus(handler: (status: NavigationStatus) => void): () => void {

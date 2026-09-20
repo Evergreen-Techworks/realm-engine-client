@@ -302,6 +302,12 @@ async function main() {
   );
 
 
+  // Constructed here (rather than after the dashboard block below) so the script
+  // bridge deps built inside it can carry a reference for reconnect-driven
+  // resends (e.g. MovementController re-arming a live navigation goal) — see
+  // the dllBridge wiring a few lines down. listen() is still called later.
+  const internalBridge = new InternalBridge('admin-dev');
+
   // 6. Dev dashboard FIRST — Electron only waits ~10s for http://localhost:3000; metadata fetch can be slow
   let devServer: DevServer | undefined;
   let scriptHost: ScriptHost | undefined;
@@ -334,6 +340,7 @@ async function main() {
       partyRoster,
       gameData,
       proxy,
+      dllBridge: internalBridge,
       scriptSession,
       emitScriptLog: (scriptId, line, level) => {
         devServer?.broadcastScriptLog(scriptId, line, level);
@@ -352,7 +359,6 @@ async function main() {
     devServer.start(4440);
   }
 
-  const internalBridge = new InternalBridge('admin-dev');
   setDllFeatureSender((key, value) => internalBridge.setFeature(key, value));
   // objects.xml hidden helpers (invisible spawners/triggers) for the native enemy
   // lock and auto-aim: sent now, on every DLL (re)connect, and on game-data reload.
