@@ -30,7 +30,9 @@
  * Every stop, for any reason, is logged (`ctx.log`, so it lands in the
  * persistent client log even with no dashboard open) and the reason is
  * written into the `ab.stop` mark, so a run that ends unexpectedly is never
- * silent.
+ * silent. A refusal to start is logged the same way (`ctx.log`, not just
+ * `ctx.dashboardLog`) for the identical reason: an unattended run has nobody
+ * watching the dashboard, so a dashboard-only refusal is invisible to it.
  *
  * This file, its pure core and their tests are listed in
  * `client/private-only.json` and must be removable from customer builds by
@@ -166,6 +168,11 @@ export function register(ctx: PluginContext) {
    *  delay (see `applyFlip`). Cleared on every subsequent flip and on stop
    *  so a stale mark can never fire after the run has moved on or ended. */
   let pendingSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Pending "attempt to arm" timer from an enable event — see `scheduleStart`'s
+   *  doc comment for why arming is deferred a tick instead of running inline
+   *  inside the enabled-setter call. Cleared on disable/stop/unload so a
+   *  since-cancelled start can never fire late. */
+  let pendingStartTimer: ReturnType<typeof setTimeout> | null = null;
   // Guards against the recursive onEnabledChange(false) call that our own
   // `ctx.enabled = false` (used to revert a refused start, or a mid-run
   // self-stop) triggers.
@@ -175,6 +182,13 @@ export function register(ctx: PluginContext) {
     if (pendingSettleTimer) {
       clearTimeout(pendingSettleTimer);
       pendingSettleTimer = null;
+    }
+  }
+
+  function clearPendingStart(): void {
+    if (pendingStartTimer) {
+      clearTimeout(pendingStartTimer);
+      pendingStartTimer = null;
     }
   }
 
@@ -198,7 +212,13 @@ export function register(ctx: PluginContext) {
   }
 
   function refuseStart(reason: string): void {
-    ctx.dashboardLog(`[TestLabAB] Refusing to start: ${reason}`);
+    const message = `[TestLabAB] Refusing to start: ${reason}`;
+    // Both: ctx.log lands in the persistent proxy log (what an unattended run
+    // actually gets read back through), ctx.dashboardLog keeps the existing
+    // in-app UX. A dashboard-only refusal is invisible with nobody watching
+    // the dashboard — see this file's header and the 2026-09-20 incident.
+    ctx.log(message);
+    ctx.dashboardLog(message);
     selfDisabling = true;
     ctx.enabled = false;
   }
@@ -212,6 +232,7 @@ export function register(ctx: PluginContext) {
    */
   function stopRun(reason: StopReason): void {
     clearPendingSettle();
+    clearPendingStart();
     stopTicking?.();
     stopTicking = null;
     if (!machine || runningTargetKey === null) {
@@ -254,6 +275,7 @@ export function register(ctx: PluginContext) {
   }
 
   function doStart(): void {
+    if (machine) return; // already armed -- a redundant enable/deferred-start pair is a no-op, never a double-arm.
     const targetKey = String(ctx.getSetting<string>('target') ?? '').trim();
     const rawValueA = ctx.getSetting<string>('valueA');
     const rawValueB = ctx.getSetting<string>('valueB');
@@ -297,6 +319,10 @@ export function register(ctx: PluginContext) {
     machine = nextMachine;
     runningTargetKey = targetKey;
     mark('ab.start', { key: targetKey, a: outcome.valueA, b: outcome.valueB, blockMinutes, seed });
+    // Distinct, greppable "armed" line -- applyFlip's own log line below fires
+    // on every subsequent block flip too, so this is the one line that means
+    // specifically "the A/B run started".
+    ctx.log(`[TestLabAB] armed target=${targetKey} a=${outcome.valueA} b=${outcome.valueB} blockMinutes=${blockMinutes} seed=${seed}`);
     applyFlip(targetKey, startOutcome.value, startOutcome.block, seed);
 
     stopTicking = scheduler.scheduleRepeating(TICK_MS, () => {
@@ -326,13 +352,52 @@ export function register(ctx: PluginContext) {
     });
   }
 
+  /**
+   * Arm on the NEXT tick rather than synchronously inside the `enabled`
+   * setter. Root cause of the 2026-09-20 "never arms" bug (runId
+   * 20260920T182708Z-9617): an unattended run's per-run plugin config
+   * (`PluginConfigService.applyPluginConfigSnapshot`, via the throwaway
+   * config `testlab-runner.ts` builds) applies EVERY plugin's `enabled` +
+   * `settings` in one synchronous pass, plugins ordered alphabetically by
+   * NAME (`PluginManager.getPlugins()`'s sort) — 'Test Lab A/B' sorts before
+   * 'Test Lab Recorder'. The real run-request enabled both in the same
+   * config apply. Calling `doStart()` synchronously from `onEnabledChange`
+   * meant it ran and permanently refused (recorder not enabled YET,
+   * mid-pass) before the recorder's own turn in that same pass ever
+   * happened — and for the same reason, it would just as easily read this
+   * plugin's OWN target/valueA/valueB/blockMinutes settings before THIS
+   * SAME pass's settings block (which runs right after `enabled` for a
+   * given plugin, per `applyPluginConfigSnapshot`) had written them,
+   * silently arming against stale defaults instead of the requested values.
+   *
+   * Deferring one tick lets that whole synchronous batch finish — every
+   * other plugin's enable/settings, and this plugin's own settings — before
+   * evaluating whether to start, so the decision is made against the FINAL
+   * settled state instead of a mid-batch snapshot. A disable (or an
+   * already-armed run) before the timer fires cancels/no-ops it; see
+   * `clearPendingStart` and the guard at the top of the callback and of
+   * `doStart` itself.
+   */
+  function scheduleStart(): void {
+    clearPendingStart();
+    pendingStartTimer = setTimeout(() => {
+      pendingStartTimer = null;
+      if (!ctx.enabled || machine) return;
+      doStart();
+    }, 0);
+    pendingStartTimer.unref?.();
+  }
+
   ctx.onEnabledChange((enabled) => {
     if (selfDisabling) {
       selfDisabling = false;
       return;
     }
-    if (enabled) doStart();
-    else stopRun('disabled-by-user');
+    if (enabled) scheduleStart();
+    else {
+      clearPendingStart();
+      stopRun('disabled-by-user');
+    }
   });
 
   // `ctx.registerCleanup` fires on plugin unload/hot-reload, but NOT on a
