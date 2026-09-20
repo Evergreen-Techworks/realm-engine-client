@@ -1,7 +1,15 @@
 import type { DllFeatureKey } from './contract.js';
 
 type DllFeatureValue = boolean | number | string;
-type DllFeatureSender = (key: DllFeatureKey, value: DllFeatureValue) => void;
+/**
+ * `false` means "the DLL definitely did not get this" (e.g. the pipe is down);
+ * anything else — `true`, or a sender that returns nothing, like the ~30
+ * fire-and-forget callers and every test double predating this contract —
+ * is treated as delivered. This keeps `sendDllFeature`'s truth accurate for
+ * callers that check it (see MovementController.navigateTo) without forcing
+ * every existing sender to start returning a boolean.
+ */
+type DllFeatureSender = (key: DllFeatureKey, value: DllFeatureValue) => boolean | void;
 
 /** Plugins are esbuild-bundled separately; each bundle inlines this module unless externalized.
  *  The main app sets the sender here — use a process-global slot so every copy shares it. */
@@ -49,12 +57,15 @@ export function sendDllFeature(key: DllFeatureKey, value: DllFeatureValue): bool
     // #endregion
     return false;
   }
-  slot.sender(key, value);
+  const delivered = slot.sender(key, value) !== false;
   slot.owned![key] = value;
-  slot.current![key] = value;
+  // Only record what the DLL actually holds when the send really reached it —
+  // otherwise a later override/restore would see `current` already matching
+  // and skip resending a value the DLL never got.
+  if (delivered) slot.current![key] = value;
   // #region agent log
   // #endregion
-  return true;
+  return delivered;
 }
 
 /**
@@ -66,9 +77,9 @@ export function overrideDllFeature(key: DllFeatureKey, value: DllFeatureValue): 
   const slot = getBusSlot();
   if (!slot.sender) return false;
   if (slot.current![key] === value) return true;
-  slot.sender(key, value);
-  slot.current![key] = value;
-  return true;
+  const delivered = slot.sender(key, value) !== false;
+  if (delivered) slot.current![key] = value;
+  return delivered;
 }
 
 /**
@@ -81,7 +92,7 @@ export function restoreDllFeature(key: DllFeatureKey, fallback: DllFeatureValue)
   if (!slot.sender) return false;
   const value = slot.owned![key] ?? fallback;
   if (slot.current![key] === value) return true;
-  slot.sender(key, value);
-  slot.current![key] = value;
-  return true;
+  const delivered = slot.sender(key, value) !== false;
+  if (delivered) slot.current![key] = value;
+  return delivered;
 }

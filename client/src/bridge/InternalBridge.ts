@@ -132,21 +132,30 @@ export class InternalBridge extends EventEmitter {
     }
   }
 
-  /** Send a command to the DLL (e.g. setFeature). Drops silently if not yet connected. */
-  send(msg: DllMessage): void {
-    if (!this.pipeTransportReady() || !this.connected) return;
-    this.writeMessage(JSON.stringify(msg));
+  /**
+   * Send a command to the DLL (e.g. setFeature). Returns whether it actually
+   * reached the pipe — false (dropped silently, not an error) when the DLL
+   * isn't connected. Callers that need to know "the DLL has this" vs "nobody
+   * received this" (e.g. a script's navigation goal) must use this return
+   * value instead of assuming a call that didn't throw was delivered.
+   */
+  send(msg: DllMessage): boolean {
+    if (!this.pipeTransportReady() || !this.connected) return false;
+    return this.writeMessage(JSON.stringify(msg));
   }
 
-  /** Send a feature toggle. Always updates the last-known state for replay on reconnect. */
-  setFeature(key: string, value: boolean | number | string): void {
+  /**
+   * Send a feature toggle. Always updates the last-known state for replay on
+   * reconnect. Returns whether the DLL actually received it right now (see `send`).
+   */
+  setFeature(key: string, value: boolean | number | string): boolean {
     const valueType: 'b' | 'n' | 's'
       = typeof value === 'boolean' ? 'b' : (typeof value === 'number' ? 'n' : 's');
     const msg: DllMessage = { type: DllMessageType.SetFeature, key, valueType, value };
     if (key !== 'internalUnloadDll') {
       this.lastSentFeatures.set(key, { ...msg });
     }
-    this.send(msg);
+    return this.send(msg);
   }
 
   // ── Private ──────────────────────────────────────────────────────────────
