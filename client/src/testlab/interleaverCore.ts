@@ -34,6 +34,19 @@ export function interleaverCoreMarker(): string {
 
 export type Arm = 'A' | 'B';
 
+/** A setting's live value, as read/written through the cross-plugin hooks
+ *  (`PluginContext.getOtherPluginSetting` / `updateOtherPluginSetting`). */
+export type SettingValue = string | number | boolean;
+
+/**
+ * How long to wait after flipping `dodgeMode` before writing the arm mark,
+ * so the mark's timestamp reflects when the new dodge engine is actually
+ * live rather than the instant the setting was written. Only `dodgeMode`
+ * flips get this treatment — see `applyFlip` in the thin plugin. Exported so
+ * the plugin and its tests share one number.
+ */
+export const SETTLE_MS = 2000;
+
 /** idle: never started (or fully restored). running: actively flipping on a
  *  schedule. restoring: `stop()` has computed the value to restore but the
  *  caller hasn't yet confirmed it applied that side effect (`finishStop()`). */
@@ -97,10 +110,11 @@ export function blockIndexFor(startTime: number, blockMinutes: number, now: numb
 }
 
 export interface InterleaverConfig {
-  /** The Auto Dodge setting key being interleaved, e.g. 'udodgeEnemyStandoff'. */
+  /** The Auto Dodge setting key being interleaved, e.g. 'udodgeEnemyStandoff'
+   *  or 'dodgeMode' itself. */
   key: string;
-  valueA: string;
-  valueB: string;
+  valueA: SettingValue;
+  valueB: SettingValue;
   /** Minutes per block; the caller is responsible for clamping to >= 1. */
   blockMinutes: number;
   /** Recording start time, used to seed the schedule PRNG. Log it. */
@@ -110,7 +124,7 @@ export interface InterleaverConfig {
 export interface StartResult {
   ok: true;
   arm: Arm;
-  value: string;
+  value: SettingValue;
   block: number;
 }
 
@@ -123,12 +137,12 @@ export type StartOutcome = StartResult | StartRefusal;
 
 export interface FlipEvent {
   arm: Arm;
-  value: string;
+  value: SettingValue;
   block: number;
 }
 
 export interface RestoreEvent {
-  value: string;
+  value: SettingValue;
 }
 
 /**
@@ -141,7 +155,7 @@ export class InterleaverStateMachine {
   private phase: InterleaverPhase = 'idle';
   private startTime = 0;
   private currentBlock = -1;
-  private originalValue: string | null = null;
+  private originalValue: SettingValue | null = null;
   private schedule: Arm[] = [];
 
   constructor(private readonly config: InterleaverConfig) {}
@@ -155,7 +169,7 @@ export class InterleaverStateMachine {
    * `valueA === valueB` (nothing to compare) or a run is already in
    * progress. `currentValue` is captured as the value to restore on stop.
    */
-  start(now: number, currentValue: string): StartOutcome {
+  start(now: number, currentValue: SettingValue): StartOutcome {
     if (this.phase !== 'idle') {
       return { ok: false, reason: 'already running' };
     }
@@ -216,7 +230,157 @@ export class InterleaverStateMachine {
     return this.schedule[block];
   }
 
-  private valueForArm(arm: Arm): string {
+  private valueForArm(arm: Arm): SettingValue {
     return arm === 'A' ? this.config.valueA : this.config.valueB;
   }
+}
+
+// ── Free-text target validation (ANY Auto Dodge setting, incl. dodgeMode) ──
+//
+// The thin plugin no longer hardcodes which switches can be A/B'd. Instead it
+// reads a live setting's shape through the general cross-plugin "describe"
+// hook (`PluginContext.describeOtherPluginSetting`) and hands the result to
+// the pure functions below, which do the actual refuse-or-coerce decision so
+// it stays unit-testable against a fake description (no live plugin needed).
+
+/**
+ * Minimal shape of a live setting's definition, as returned by
+ * `describeOtherPluginSetting`. Deliberately structurally compatible with
+ * `SettingDef`/`SettingOption` (a superset) so the thin plugin can pass what
+ * that hook returns straight through without remapping.
+ */
+export interface SettingDescription {
+  type: 'number' | 'boolean' | 'range' | 'select' | 'text' | 'button';
+  options?: { value: string }[];
+  min?: number;
+  max?: number;
+  /** Same shape `SettingDef.visibleWhen` uses for dashboard rendering: this
+   *  setting only applies when another setting (usually `dodgeMode`) has one
+   *  of these values. Absent means always active — e.g. `dodgeMode` itself
+   *  has no `visibleWhen`, so it is always a legal target. */
+  visibleWhen?: { key: string; value?: unknown; values?: unknown[] };
+}
+
+export interface CoerceOk {
+  ok: true;
+  value: SettingValue;
+}
+export interface CoerceRefusal {
+  ok: false;
+  reason: string;
+}
+export type CoerceOutcome = CoerceOk | CoerceRefusal;
+
+/**
+ * Coerces a raw string request value (as arrives in a per-run plugin config
+ * or a dashboard text field) to the type `description` declares, validating
+ * legality along the way: a `select` value must be one of the registered
+ * options, a `number`/`range` value must parse and fall within `min`/`max`,
+ * and a `boolean` value must be the literal string "true" or "false" (never
+ * JS truthiness — `Boolean("false")` is `true`, which would silently invert
+ * the request). `text` accepts anything. `button` can't hold a value at all.
+ */
+export function coerceSettingValue(description: SettingDescription, raw: string, label: string): CoerceOutcome {
+  switch (description.type) {
+    case 'select': {
+      const legal = (description.options ?? []).map((o) => o.value);
+      if (!legal.includes(raw)) {
+        return {
+          ok: false,
+          reason: `${label} "${raw}" is not a legal value (expected one of: ${legal.join(', ') || '(none registered)'}).`,
+        };
+      }
+      return { ok: true, value: raw };
+    }
+    case 'text':
+      return { ok: true, value: raw };
+    case 'number':
+    case 'range': {
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return { ok: false, reason: `${label} "${raw}" is not a number.` };
+      if (description.min !== undefined && n < description.min) {
+        return { ok: false, reason: `${label} ${n} is below the minimum (${description.min}).` };
+      }
+      if (description.max !== undefined && n > description.max) {
+        return { ok: false, reason: `${label} ${n} is above the maximum (${description.max}).` };
+      }
+      return { ok: true, value: n };
+    }
+    case 'boolean': {
+      if (raw === 'true') return { ok: true, value: true };
+      if (raw === 'false') return { ok: true, value: false };
+      return { ok: false, reason: `${label} "${raw}" is not "true" or "false".` };
+    }
+    case 'button':
+    default:
+      return { ok: false, reason: 'That setting is a button, not a value that can be A/B\'d.' };
+  }
+}
+
+/**
+ * Whether `description`'s setting is even active given the live value of the
+ * OTHER setting it is gated on (`visibleWhen.key`, usually `dodgeMode`) —
+ * mirrors the dashboard's own `visibleWhen` rendering rule exactly. A setting
+ * with no `visibleWhen` (e.g. `dodgeMode` itself) is always active, in any
+ * mode — the "unless the target IS dodgeMode, which is always allowed" rule
+ * falls out of this for free, since `dodgeMode`'s own definition never
+ * carries a `visibleWhen`.
+ */
+export function isTargetGateSatisfied(description: SettingDescription, gatingValue: unknown): boolean {
+  const gate = description.visibleWhen;
+  if (!gate) return true;
+  const allowed = gate.values ?? (gate.value !== undefined ? [gate.value] : undefined);
+  if (!allowed) return true;
+  return allowed.includes(gatingValue);
+}
+
+export interface TargetValidationInput {
+  targetKey: string;
+  /** `undefined` when the key does not exist on the live plugin. */
+  description: SettingDescription | undefined;
+  rawValueA: string;
+  rawValueB: string;
+  /** Current live value of `description.visibleWhen.key`, read by the caller
+   *  through the same cross-plugin hook. Ignored when there is no gate. */
+  gatingValue?: unknown;
+}
+
+export interface TargetValidationOk {
+  ok: true;
+  valueA: SettingValue;
+  valueB: SettingValue;
+}
+export interface TargetValidationRefusal {
+  ok: false;
+  reason: string;
+}
+export type TargetValidationOutcome = TargetValidationOk | TargetValidationRefusal;
+
+/**
+ * The full refuse-to-start decision for a free-text target: unknown key,
+ * mode-gated-out, illegal/out-of-range value, or A === B. Pure and
+ * synchronous — the caller resolves `description`/`gatingValue` from the live
+ * plugin first (dashboard + log-worthy side effects stay in the thin plugin).
+ */
+export function validateTarget(input: TargetValidationInput): TargetValidationOutcome {
+  const { targetKey, description, rawValueA, rawValueB, gatingValue } = input;
+  if (!description) {
+    return { ok: false, reason: `Unknown Auto Dodge setting "${targetKey}".` };
+  }
+  if (!isTargetGateSatisfied(description, gatingValue)) {
+    const gate = description.visibleWhen!;
+    const allowed = gate.values ?? (gate.value !== undefined ? [gate.value] : []);
+    return {
+      ok: false,
+      reason: `"${targetKey}" only applies when ${gate.key}=${allowed.join('/')} (currently "${String(gatingValue ?? 'unknown')}").`,
+    };
+  }
+  const a = coerceSettingValue(description, rawValueA, 'Value A');
+  if (!a.ok) return a;
+  const b = coerceSettingValue(description, rawValueB, 'Value B');
+  if (!b.ok) return b;
+  if (a.value === b.value) {
+    return { ok: false, reason: `Value A and Value B are both "${rawValueA}" — nothing to compare.` };
+  }
+  return { ok: true, valueA: a.value, valueB: b.value };
 }

@@ -6,7 +6,12 @@ import {
   generateSchedule,
   blockIndexFor,
   InterleaverStateMachine,
+  coerceSettingValue,
+  isTargetGateSatisfied,
+  validateTarget,
+  SETTLE_MS,
   type InterleaverConfig,
+  type SettingDescription,
 } from '../interleaverCore.js';
 
 const SEEDS = [1, 2, 42, 1_700_000_000_000, 987654321, 0xdeadbeef];
@@ -233,5 +238,183 @@ describe('InterleaverStateMachine — restore on stop from any state', () => {
     const machine = new InterleaverStateMachine(config());
     machine.start(0, 'auto');
     expect(machine.stop()).toEqual({ value: 'auto' });
+  });
+});
+
+describe('SETTLE_MS', () => {
+  it('is the documented 2 second settle delay', () => {
+    expect(SETTLE_MS).toBe(2000);
+  });
+});
+
+function selectDesc(values: string[]): SettingDescription {
+  return { type: 'select', options: values.map((value) => ({ value })) };
+}
+
+describe('coerceSettingValue', () => {
+  it('accepts a legal select value and passes it through unchanged', () => {
+    const outcome = coerceSettingValue(selectDesc(['off', 'auto']), 'auto', 'Value B');
+    expect(outcome).toEqual({ ok: true, value: 'auto' });
+  });
+
+  it('refuses an illegal select value with a reason naming the legal options', () => {
+    const outcome = coerceSettingValue(selectDesc(['off', 'auto']), 'bogus', 'Value B');
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toMatch(/Value B/);
+      expect(outcome.reason).toMatch(/bogus/);
+      expect(outcome.reason).toMatch(/off/);
+      expect(outcome.reason).toMatch(/auto/);
+    }
+  });
+
+  it('accepts any string for a text setting', () => {
+    expect(coerceSettingValue({ type: 'text' }, 'anything at all', 'Value A')).toEqual({
+      ok: true,
+      value: 'anything at all',
+    });
+  });
+
+  it('coerces a number/range value and enforces min/max bounds', () => {
+    const desc: SettingDescription = { type: 'range', min: 0.5, max: 2 };
+    expect(coerceSettingValue(desc, '1.25', 'Value A')).toEqual({ ok: true, value: 1.25 });
+    const tooLow = coerceSettingValue(desc, '0.1', 'Value A');
+    expect(tooLow.ok).toBe(false);
+    if (!tooLow.ok) expect(tooLow.reason).toMatch(/below the minimum/);
+    const tooHigh = coerceSettingValue(desc, '5', 'Value A');
+    expect(tooHigh.ok).toBe(false);
+    if (!tooHigh.ok) expect(tooHigh.reason).toMatch(/above the maximum/);
+  });
+
+  it('refuses a non-numeric string for a number setting', () => {
+    const outcome = coerceSettingValue({ type: 'number' }, 'not-a-number', 'Value A');
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.reason).toMatch(/not a number/);
+  });
+
+  it('coerces the literal strings "true"/"false" to real booleans, not JS truthiness', () => {
+    expect(coerceSettingValue({ type: 'boolean' }, 'true', 'Value A')).toEqual({ ok: true, value: true });
+    expect(coerceSettingValue({ type: 'boolean' }, 'false', 'Value A')).toEqual({ ok: true, value: false });
+  });
+
+  it('refuses a boolean value that is neither "true" nor "false"', () => {
+    const outcome = coerceSettingValue({ type: 'boolean' }, 'yes', 'Value A');
+    expect(outcome.ok).toBe(false);
+  });
+
+  it('refuses a button setting outright', () => {
+    const outcome = coerceSettingValue({ type: 'button' }, 'anything', 'Value A');
+    expect(outcome.ok).toBe(false);
+  });
+});
+
+describe('isTargetGateSatisfied', () => {
+  it('is always satisfied when the description has no visibleWhen (e.g. dodgeMode itself)', () => {
+    const dodgeModeDesc: SettingDescription = { type: 'select', options: [{ value: 'xdodge' }, { value: 'unified' }] };
+    expect(isTargetGateSatisfied(dodgeModeDesc, 'xdodge')).toBe(true);
+    expect(isTargetGateSatisfied(dodgeModeDesc, 'unified')).toBe(true);
+    expect(isTargetGateSatisfied(dodgeModeDesc, 'anything')).toBe(true);
+  });
+
+  it('is satisfied only for the single mode in a single-value visibleWhen gate', () => {
+    const desc: SettingDescription = { type: 'select', visibleWhen: { key: 'dodgeMode', value: 'unified' } };
+    expect(isTargetGateSatisfied(desc, 'unified')).toBe(true);
+    expect(isTargetGateSatisfied(desc, 'xdodge')).toBe(false);
+  });
+
+  it('is satisfied for any mode listed in a multi-value visibleWhen gate', () => {
+    const desc: SettingDescription = {
+      type: 'select',
+      visibleWhen: { key: 'dodgeMode', values: ['rollout-grid', 'rollout-quad'] },
+    };
+    expect(isTargetGateSatisfied(desc, 'rollout-grid')).toBe(true);
+    expect(isTargetGateSatisfied(desc, 'rollout-quad')).toBe(true);
+    expect(isTargetGateSatisfied(desc, 'zdodge')).toBe(false);
+  });
+});
+
+describe('validateTarget', () => {
+  it('refuses an unknown target key', () => {
+    const outcome = validateTarget({
+      targetKey: 'notARealSetting',
+      description: undefined,
+      rawValueA: 'off',
+      rawValueB: 'on',
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.reason).toMatch(/Unknown Auto Dodge setting/);
+  });
+
+  it('refuses an illegal value for the target', () => {
+    const outcome = validateTarget({
+      targetKey: 'udodgeEnemyStandoff',
+      description: selectDesc(['off', 'auto']),
+      rawValueA: 'off',
+      rawValueB: 'bogus',
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.reason).toMatch(/bogus/);
+  });
+
+  it('refuses when A and B coerce to the same value', () => {
+    const outcome = validateTarget({
+      targetKey: 'udodgeEnemyStandoff',
+      description: selectDesc(['off', 'auto']),
+      rawValueA: 'off',
+      rawValueB: 'off',
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.reason).toMatch(/nothing to compare/);
+  });
+
+  it('accepts numeric coercion + bounds and returns the coerced values', () => {
+    const outcome = validateTarget({
+      targetKey: 'xdodgeHitScale',
+      description: { type: 'range', min: 0.5, max: 2 },
+      rawValueA: '0.5',
+      rawValueB: '2',
+    });
+    expect(outcome).toEqual({ ok: true, valueA: 0.5, valueB: 2 });
+  });
+
+  it('allows dodgeMode as a target in any current mode (no visibleWhen on dodgeMode itself)', () => {
+    const dodgeModeDesc: SettingDescription = {
+      type: 'select',
+      options: [{ value: 'off' }, { value: 'xdodge' }, { value: 'unified' }],
+    };
+    const outcome = validateTarget({
+      targetKey: 'dodgeMode',
+      description: dodgeModeDesc,
+      rawValueA: 'xdodge',
+      rawValueB: 'unified',
+      gatingValue: 'zdodge', // irrelevant: dodgeMode has no gate on itself
+    });
+    expect(outcome).toEqual({ ok: true, valueA: 'xdodge', valueB: 'unified' });
+  });
+
+  it('refuses a unified-only target when the current dodgeMode is something else', () => {
+    const outcome = validateTarget({
+      targetKey: 'udodgeEnemyStandoff',
+      description: { type: 'select', options: [{ value: 'off' }, { value: 'auto' }], visibleWhen: { key: 'dodgeMode', value: 'unified' } },
+      rawValueA: 'off',
+      rawValueB: 'auto',
+      gatingValue: 'xdodge',
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toMatch(/dodgeMode=unified/);
+      expect(outcome.reason).toMatch(/xdodge/);
+    }
+  });
+
+  it('allows a unified-only target when the current dodgeMode matches', () => {
+    const outcome = validateTarget({
+      targetKey: 'udodgeEnemyStandoff',
+      description: { type: 'select', options: [{ value: 'off' }, { value: 'auto' }], visibleWhen: { key: 'dodgeMode', value: 'unified' } },
+      rawValueA: 'off',
+      rawValueB: 'auto',
+      gatingValue: 'unified',
+    });
+    expect(outcome).toEqual({ ok: true, valueA: 'off', valueB: 'auto' });
   });
 });
