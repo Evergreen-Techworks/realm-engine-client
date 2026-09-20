@@ -160,7 +160,7 @@ bool GetWorldCorners(Il2CppObject* rtObj, app::Vector3 outCorners[4])
 {
     if (!Mem::AddrOk(rtObj) || !s_getWorldCorners || !s_vec3Class) return false;
 
-    il2cpp_array_size_t len; len.value = 4;
+    il2cpp_array_size_t len = 4;
     Il2CppArray* arr = il2cpp_array_new(s_vec3Class, len);
     if (!arr) return false;
 
