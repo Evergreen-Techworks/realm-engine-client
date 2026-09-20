@@ -15,6 +15,7 @@
 #include "FeatureState.h"
 #include "FeatureCommandRegistry.h"
 #include "DbgFileLog.h"
+#include "BridgeLatencyDiag.h"
 #include "CosmeticOverrides.h"
 #include "FloatingTextService.h"
 #include "GameState.h"
@@ -142,6 +143,14 @@ namespace {
         if (changed || nativeDesynced) {
             s_lastActive = walkActive; s_lastX = walkX; s_lastY = walkY;
             TestTAB::SetBotWalkTarget(walkX, walkY, walkActive != 0);
+            // item 4b (measurement only): this is the real game-thread apply point
+            // for walkTargetX/Y/Active — one frame after FeatureCommandRegistry
+            // wrote FeatureState (FH_DEFERRED there skips the immediate stamp on
+            // purpose). No-op if nothing was sent this window (no pending receive
+            // stamp), e.g. when only nativeDesynced fired the reconciliation.
+            BridgeLatencyDiag::NoteApplied("walkTargetX");
+            BridgeLatencyDiag::NoteApplied("walkTargetY");
+            BridgeLatencyDiag::NoteApplied("walkTargetActive");
         }
     }
 

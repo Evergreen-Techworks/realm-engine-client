@@ -716,6 +716,28 @@ void GetOffsetSummary(int& resolved, int& usingFallback, int& suspect, int& pend
     }
 }
 
+// WITNESS (Slice 4a). The ProjectileProperties layout is the one every lane's
+// speed / acceleration / laser distance comes from, and its BAKED fallbacks are
+// MEASURED stale against live 86ad651b: every default from PP_Lifetime down is 8
+// bytes early, and PP_UseAccel is out by 0x13. Name resolution masks all of it —
+// so "which of the two ran" decides whether the sensor read a projectile or junk,
+// and nothing in a Release log has ever said. "ok" = every ProjectileProperties
+// offset came from live metadata; "baked" = at least one is still a fallback (or
+// has not resolved yet), with the count of such rows.
+const char* ProjectilePropsWitness()
+{
+    static thread_local char text[24] = {};
+    int stale = 0;
+    for (int i = 0; i < kEntryCount; ++i) {
+        if (std::strcmp(s_entries[i].className, "ProjectileProperties") != 0) continue;
+        if (s_entryState[i] != OffsetState::ResolvedMatch &&
+            s_entryState[i] != OffsetState::ResolvedShifted) ++stale;
+    }
+    if (stale == 0) return "ok";
+    snprintf(text, sizeof(text), "baked:%d", stale);
+    return text;
+}
+
 void MarkSuspect(const uint32_t* offsetVar)
 {
     for (int i = 0; i < kEntryCount; ++i)

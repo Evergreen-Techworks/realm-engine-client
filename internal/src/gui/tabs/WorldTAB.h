@@ -344,6 +344,11 @@ namespace WorldTAB {
 
     int GetTileDamageLive(int tx, int ty);
 
+    // True when IsTileDamagingLive/GetTileDamageLive are actually reading the
+    // game's live square lookup this build; false when latched to the cached
+    // IsDamagingTile map (the lookup RVA is stale, or reads have faulted 8x).
+    bool IsLiveHazardActive();
+
     // Returns the XML speed multiplier of the tile at (tx, ty).
     // 0.0 = no modifier, > 1.0 = speedy ground, < 1.0 = slow ground.
     float GetTileSpeed(int tx, int ty);

@@ -169,6 +169,35 @@ size_t CollectPlayerObjectProperties(void* entity, const ObjectPropertiesTarget*
     return propertyCount;
 }
 
+// Every ObjectProperties the local player's hit test can be decided from: the
+// player entity itself and the view's destroy-entity, across the three known
+// ObjectProperties offsets, de-duplicated. One place, so the live READ (below)
+// and the WRITE (Tick) can never look at different objects.
+size_t CollectLocalPlayerProperties(void* player, void** properties, size_t capacity)
+{
+    if (!player || !properties || capacity == 0) return 0;
+    const ObjectPropertiesTarget targets[] = {
+        { "base", RuntimeOffsets::ObjProps },
+        { "map-object", RuntimeOffsets::MoObjectProps },
+        { "player-collision", RuntimeOffsets::PlayerCollisionProps },
+    };
+    EntityCandidate entities[kMaxEntityCandidates] = {
+        { player },
+        { ResolveViewDestroyEntity(player) },
+    };
+    if (entities[1].ptr == entities[0].ptr) entities[1].ptr = nullptr;
+
+    size_t propertyCount = 0;
+    for (const EntityCandidate& entity : entities) {
+        void* entityProperties[kMaxObjectPropertiesTargets]{};
+        const size_t entityPropertyCount = CollectPlayerObjectProperties(
+            entity.ptr, targets, 3, entityProperties, kMaxObjectPropertiesTargets);
+        for (size_t i = 0; i < entityPropertyCount && propertyCount < capacity; ++i)
+            AddObjectPropertiesTarget(properties, propertyCount, entityProperties[i]);
+    }
+    return propertyCount;
+}
+
 } // namespace
 
 bool ApplyEntityMultiplier(void* entityPtr,
@@ -241,26 +270,8 @@ void Tick(void* player)
         return;
     }
 
-    const ObjectPropertiesTarget targets[] = {
-        { "base", RuntimeOffsets::ObjProps },
-        { "map-object", RuntimeOffsets::MoObjectProps },
-        { "player-collision", RuntimeOffsets::PlayerCollisionProps },
-    };
-
-    EntityCandidate entities[kMaxEntityCandidates] = {
-        { player },
-        { ResolveViewDestroyEntity(player) },
-    };
-    if (entities[1].ptr == entities[0].ptr) entities[1].ptr = nullptr;
-
     void* properties[kMaxObjectPropertiesTargets]{};
-    size_t propertyCount = 0;
-    for (const EntityCandidate& entity : entities) {
-        void* entityProperties[kMaxObjectPropertiesTargets]{};
-        const size_t entityPropertyCount = CollectPlayerObjectProperties(entity.ptr, targets, 3, entityProperties, kMaxObjectPropertiesTargets);
-        for (size_t i = 0; i < entityPropertyCount; ++i)
-            AddObjectPropertiesTarget(properties, propertyCount, entityProperties[i]);
-    }
+    const size_t propertyCount = CollectLocalPlayerProperties(player, properties, kMaxObjectPropertiesTargets);
 
     if (propertyCount == 0) {
         if (g_lastTargetsZero != 1) {
@@ -355,6 +366,26 @@ uint64_t LastTickMs()
 bool OffsetTrusted()
 {
     return CollisionOffsetTrusted();
+}
+
+bool ReadLiveMultiplier(void* player, float& out)
+{
+    // Fail-closed, exactly as the write path is: an untrusted offset could point
+    // at any float, and a belief about the hit box built on that is worse than
+    // the game's own default.
+    if (!player || !CollisionOffsetTrusted()) return false;
+    void* properties[kMaxObjectPropertiesTargets]{};
+    const size_t propertyCount = CollectLocalPlayerProperties(player, properties, kMaxObjectPropertiesTargets);
+    for (size_t i = 0; i < propertyCount; ++i) {
+        float value = 0.0f;
+        // A zero is not a usable belief: it is almost certainly a prior write of
+        // ours mid-restore, and it would claim the player cannot be hit at all.
+        if (ReadCollisionMultiplier(properties[i], value) && std::isfinite(value) && value > 0.0f) {
+            out = value;
+            return true;
+        }
+    }
+    return false;
 }
 
 void ResetScene()

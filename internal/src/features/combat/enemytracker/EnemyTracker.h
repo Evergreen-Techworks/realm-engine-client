@@ -21,6 +21,13 @@ struct Entry {
     bool    hasHealthBar;    // false for walls/destructibles (noHealthBar)
     bool    isScenery;       // static object with no projectile definitions
     float   shotRangeTiles;  // longest projectile reach of this TYPE (tiles); 0 = none / unreadable
+    // ENEMY STANDOFF (UDodgeStandoff.h). The type's FASTEST projectile, in tiles
+    // per second, and whether the type has any projectile definitions at all. The
+    // two are separate because "this thing cannot shoot" (no band, so a wall or a
+    // crate never fences off a room) and "we could not read its shots" (a default
+    // band) must not collapse into the same 0. Resolved once per type, cached.
+    float   shotSpeedTilesPerSec;  // 0 = no projectiles, or unreadable
+    bool    hasProjectiles;        // the type declares at least one projectile
     void*   ptr;             // raw entity pointer (for direct field reads)
 };
 

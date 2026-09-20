@@ -1,6 +1,6 @@
 import http from 'http';
 import net from 'net';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
 import { join, extname } from 'path';
 import { execFileSync, spawn } from 'child_process';
 // NOTE: DevServer runs in a forked Node child process (electron/main.cjs
@@ -15,6 +15,7 @@ import { PacketLab } from './PacketLab.js';
 import { GameUpdater, type GameUpdateStatus } from './GameUpdater.js';
 import type { PluginManager } from '../../plugins/PluginManager.js';
 import type { PluginLoadReport } from '../../plugins/PluginManager.js';
+import type { PluginHostAccess } from '../../plugins/PluginContext.js';
 import type { MetadataStatus } from '../../startup/metadataEnrichment.js';
 import type { Proxy } from '../../proxy/Proxy.js';
 import type { GameWorldState } from '../../state/GameWorldState.js';
@@ -132,6 +133,7 @@ import {
 import { isThermalBackgroundDemotionActive } from '../process/thermalStressLayer.js';
 import { normalizeSlotCount, toBoolArray, parseOfferSlots } from '../../util/tradeSlots.js';
 import { WikiSpriteService } from './wikiSpriteService.js';
+import { getLatestCredentialLaunchByAccountLabel } from '../process/credentialLaunchRegistry.js';
 
 /**
  * Count running processes matching an image name, locale-independently.
@@ -456,6 +458,148 @@ export class DevServer {
 
   private applyPluginConfigSnapshot(snapshot: any): { ok: boolean; message: string } {
     return this.pluginConfigs.applyPluginConfigSnapshot(snapshot);
+  }
+
+  /**
+   * Apply the plugin config saved at `<configsDir>/<sanitizedId>.json` live
+   * and make it the active config id — the same effect `POST /api/configs/
+   * load` has, factored out so a caller other than that HTTP route (a
+   * plugin with host access) can use it too. Only ever reads a config that
+   * already exists on disk; never writes one.
+   */
+  loadPluginConfigById(rawId: string): { ok: boolean; message: string; notFound?: boolean } {
+    const id = this.sanitizeConfigId(String(rawId || '').trim());
+    try {
+      this.ensureDir(getRealmengineDocumentsDir());
+      const configsDir = this.getConfigsDir();
+      this.ensureDir(configsDir);
+      const filePath = join(configsDir, id + '.json');
+      if (!existsSync(filePath)) {
+        return { ok: false, message: 'Config not found.', notFound: true };
+      }
+      const raw = readFileSync(filePath, 'utf8');
+      const snapshot = JSON.parse(raw);
+      const result = this.applyPluginConfigSnapshot(snapshot);
+      if (result.ok) {
+        this.config.lastPluginConfigId = id;
+        this.saveConfig();
+        this.broadcastConfig();
+      }
+      return result;
+    } catch (err) {
+      return { ok: false, message: `Failed to load config: ${(err as Error).message}` };
+    }
+  }
+
+  /**
+   * Write `snapshot` to `<configsDir>/<sanitizedId>.json` (creating or
+   * replacing it) and then apply it exactly like {@link loadPluginConfigById}.
+   * Returns the sanitized id actually used, so a caller that only has a
+   * display name can find the file it just wrote (and later delete it).
+   */
+  writeAndLoadPluginConfig(rawId: string, snapshot: unknown): { ok: boolean; message: string; id: string } {
+    const id = this.sanitizeConfigId(String(rawId || '').trim());
+    try {
+      this.ensureDir(getRealmengineDocumentsDir());
+      const configsDir = this.getConfigsDir();
+      this.ensureDir(configsDir);
+      writeFileSync(join(configsDir, id + '.json'), JSON.stringify(snapshot, null, 2), 'utf8');
+    } catch (err) {
+      return { ok: false, message: `Failed to write config: ${(err as Error).message}`, id };
+    }
+    const result = this.loadPluginConfigById(id);
+    return { ok: result.ok, message: result.message, id };
+  }
+
+  /** Removes `<configsDir>/<id>.json` if present. Never throws. */
+  deletePluginConfigFile(rawId: string): void {
+    try {
+      const id = this.sanitizeConfigId(String(rawId || '').trim());
+      const filePath = join(this.getConfigsDir(), id + '.json');
+      if (existsSync(filePath)) unlinkSync(filePath);
+    } catch (err) {
+      Logger.warn('DevServer', `Failed to delete plugin config ${rawId}: ${(err as Error).message}`);
+    }
+  }
+
+  /** Public accessor for the active plugin-config id (e.g. `'default'`) — used to remember/restore it around a temporary switch. */
+  getCurrentPluginConfigId(): string {
+    return this.getActivePluginConfigId();
+  }
+
+  /**
+   * Launch a saved account by its display label — case-insensitive AND
+   * ignoring whitespace, `-` and `_`, so `lab-1`, `Lab 1`, `lab_1` and
+   * `LAB1` all match the same saved `lab1` — exactly as that account's own
+   * Launch button would: looked up and launched entirely here via the same
+   * `launchGameWithCredentials` path. Credentials never leave this method —
+   * the caller only ever gets back ok/error/pid, plus, when the match
+   * fails, `matchCount`/`totalAccounts` (numbers only, never a label or
+   * e-mail) so a caller can explain the failure without leaking account
+   * data. More than one match returns `'account-ambiguous'` rather than
+   * guessing. Steam accounts are supported the same way the dashboard's own
+   * Launch button supports them (the account record's `email`/`password`
+   * fields double as the Steam guid/secret when `isSteam` is set; see
+   * `AccountService.verifyDecaAccountOnce`).
+   */
+  async launchSavedAccountByLabel(
+    label: string,
+    serverName?: string,
+  ): Promise<{
+    ok: boolean;
+    error?: 'account-not-found' | 'account-ambiguous' | 'launch-failed';
+    pid?: number;
+    matchCount?: number;
+    totalAccounts?: number;
+  }> {
+    const normalize = (s: string) => String(s || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+    const target = normalize(label);
+    const accounts = this.readDashboardAccounts();
+    const totalAccounts = accounts.length;
+
+    const matches = target ? accounts.filter((a) => normalize(a.label || a.email) === target) : [];
+    if (matches.length === 0) return { ok: false, error: 'account-not-found', matchCount: 0, totalAccounts };
+    if (matches.length > 1) return { ok: false, error: 'account-ambiguous', matchCount: matches.length, totalAccounts };
+
+    const account = matches[0];
+    const accountLabel = account.label || account.email;
+    const result = await this.launchGameWithCredentials(
+      String(account.email || '').trim(),
+      String(account.password || ''),
+      String(serverName || account.serverName || 'USWest').trim() || 'USWest',
+      {
+        accountId: account.id,
+        accountLabel,
+        isSteam: account.isSteam,
+        steamId: account.steamId,
+      },
+    );
+    if (!result.ok) return { ok: false, error: 'launch-failed' };
+
+    const rec = getLatestCredentialLaunchByAccountLabel(accountLabel);
+    return { ok: true, pid: rec?.pidLauncher };
+  }
+
+  /**
+   * Generic surface a plugin can use to run a script package, temporarily
+   * swap the live plugin configuration, or launch a saved account by label,
+   * without reaching into DevServer's internals directly. `requestAppShutdown`
+   * is deliberately not included here — it's composed on top of this object
+   * by index.ts, the only place the real shutdown function is reachable.
+   * Wired via `PluginManager.setHostAccess()`.
+   */
+  getPluginHostAccess(): Omit<PluginHostAccess, 'requestAppShutdown'> {
+    return {
+      getActivePluginConfigId: () => this.getCurrentPluginConfigId(),
+      buildPluginConfigSnapshot: (name: string) => this.buildPluginConfigSnapshot(name),
+      writeAndLoadPluginConfig: (id: string, snapshot: unknown) => this.writeAndLoadPluginConfig(id, snapshot),
+      loadPluginConfigById: (id: string) => this.loadPluginConfigById(id),
+      deletePluginConfigFile: (id: string) => this.deletePluginConfigFile(id),
+      startScript: (id: string) => this.scriptHost?.start(id) ?? Promise.resolve({ ok: false, error: 'Script host unavailable' }),
+      stopScript: (id: string) => this.scriptHost?.stop(id) ?? { ok: false, error: 'Script host unavailable' },
+      launchSavedAccountByLabel: (label: string, serverName?: string) => this.launchSavedAccountByLabel(label, serverName),
+      isNativeBridgeReady: () => this.internalBridge?.isConnected ?? false,
+    };
   }
 
   public tryAutoLoadDefaultPluginConfig(): void {
@@ -1966,25 +2110,17 @@ export class DevServer {
             res.end(JSON.stringify({ error: 'Config id is required.' }));
             return;
           }
-          const id = this.sanitizeConfigId(rawId);
-          ensureRealmengineUserDir();
-          ensureConfigsDir();
-          const filePath = join(configsDir, id + '.json');
-          if (!existsSync(filePath)) {
+          const result = this.loadPluginConfigById(rawId);
+          if (result.notFound) {
             res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Config not found.' }));
+            res.end(JSON.stringify({ error: result.message }));
             return;
           }
-          const raw = readFileSync(filePath, 'utf8');
-          const snapshot = JSON.parse(raw);
-          const result = this.applyPluginConfigSnapshot(snapshot);
-          if (result.ok) {
-            this.config.lastPluginConfigId = id;
-            this.saveConfig();
-            this.broadcastConfig();
-          }
+          // Same response shape the route always returned: applyPluginConfigSnapshot's
+          // own {ok, message} result, unmodified (host-access callers get the
+          // richer {ok, message, notFound?} shape from loadPluginConfigById directly).
           res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(result));
+          res.end(JSON.stringify({ ok: result.ok, message: result.message } satisfies { ok: boolean; message: string }));
         } catch (err) {
           Logger.warn('DevServer', `configs load failed: ${(err as Error).message}`);
           res.writeHead(400, { 'Content-Type': 'application/json' });

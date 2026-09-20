@@ -3,6 +3,8 @@ import { StateManager } from '../StateManager.js';
 import { PlayerData } from '../PlayerData.js';
 import { GameWorldState } from '../GameWorldState.js';
 import type { Proxy } from '../../proxy/Proxy.js';
+import { sendDllFeature } from '../../bridge/DllFeatureBus.js';
+vi.mock('../../bridge/DllFeatureBus.js', () => ({ sendDllFeature: vi.fn(() => true) }));
 
 vi.mock('../../util/Logger.js', () => ({ Logger: { log: vi.fn() } }));
 function hooksFor(state: StateManager | GameWorldState) {
@@ -12,6 +14,16 @@ function hooksFor(state: StateManager | GameWorldState) {
 }
 
 describe('map lifecycle', () => {
+  it('publishes bounded native map dimensions and invalidates malformed dimensions', () => {
+    const emit = hooksFor(new GameWorldState());
+    const client: any = { playerData: new PlayerData(), state: {} };
+    emit('MAPINFO', client, { width: 2048, height: 256 });
+    expect(sendDllFeature).toHaveBeenLastCalledWith('navMapInfo', '2048,256');
+    for (const width of [0, -1, 2049, 1.5, '256', NaN]) {
+      emit('MAPINFO', client, { width, height: 256 });
+      expect(sendDllFeature).toHaveBeenLastCalledWith('navMapInfo', '0,0');
+    }
+  });
   it('preserves MAPINFO across player creation while clearing character state', () => {
     const emit = hooksFor(new StateManager());
     const c: any = { playerData: new PlayerData() };

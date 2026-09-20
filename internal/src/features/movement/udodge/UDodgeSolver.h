@@ -1,6 +1,7 @@
 #pragma once
 #include "UDodgeTypes.h"
 #include "UDodgePathfinder.h"   // Path::PlanResult — the worker's lookahead route
+#include "UDodgeCore.h"         // Core::Temporal::Ctx — SharedCtx below
 
 // UDodge per-tick safe-position solver (plan 64). Each server tick it computes
 // the player position — within the legal per-tick move budget — that lies
@@ -58,7 +59,40 @@
 // physical consequence of the per-tick move budget, not a solver weakness.
 namespace UDodge { namespace Solver {
 
+// udodgeFrameBudget (navigation finish plan, Item 4): per-thread, per-call
+// degrade flag. UDodge::Tick sets it (game thread only) right before the
+// solver phases when this Tick has already spent longer than the budget;
+// BuildCandidates reads it to shrink the candidate ring. thread_local so the
+// worker thread's own Solve() calls (UDodgeWorkerCycle.h) are NEVER affected —
+// the worker has no per-game-frame deadline, and this must never touch its
+// own planning. Nothing here relaxes a safety floor: Evaluate/the temporal
+// admission tests still run on whatever candidates ARE produced, unchanged.
+void SetFrameDegraded(bool degraded);
+bool GetFrameDegraded();
+
+// Item 4 follow-up (navigation finish plan, controller 2026-09-19): UDodge::Tick's
+// liveSolve and revalidate phases call Core::Temporal::Build with IDENTICAL
+// inputs whenever both run in the same Tick -- same in.map (one DangerMap
+// generation per tick; only sync/BuildMap-ReanchorMap can change it, and that
+// runs once, before either phase), same in.player (read once per Tick, never
+// mutated before either call), same kUTemporalCullTiles, same
+// in.settings.hitScale/positionUncertainty and Core::ProjectilePlayerHalf(in.settings)
+// (pure functions of in.settings, itself read once per Tick), same map->planner.
+// A caller that owns one of these per game-thread frame passes it in; Solve()/
+// RevalidateAndSolve() build into it lazily (the first call in the tick builds,
+// the second reuses) instead of each keeping its own thread_local Ctx. GAME
+// THREAD ONLY: the worker thread's own Solve() call (UDodgeWorkerCycle.h) never
+// passes one and is completely unaffected -- passing nullptr (the default)
+// reproduces today's behaviour exactly, including the thread_local storage (a
+// Ctx is up to 96 KB; it is never put on the stack).
+struct SharedCtx {
+    Core::Temporal::Ctx ctx;
+    bool built = false;
+};
+
 struct Goal {
+    bool groupActive = false;
+    Vec2 groupPos{};
     bool  active = false;   // a soft target exists (lock standoff or WASD intent)
     Vec2  pos{};            // world target we would like to progress toward
     bool  fromLock = false; // true = boss-lock orbit (may actively reposition to
@@ -172,9 +206,11 @@ struct SolveResult {
 //                     default-constructed (found=false) PlanResult when the worker
 //                     is cold / the route is too stale → pure immediate dodge.
 //   state.lastMoveDir is read (commitment term) and updated (chosen heading).
+// `shared`: see SharedCtx above. nullptr (default) = today's behaviour exactly
+// (a thread_local Ctx, rebuilt every call).
 void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
            const Path::PlanResult& route, CoreState& state, SolveResult& out,
-           const TimedAdvice& timed = {});
+           const TimedAdvice& timed = {}, SharedCtx* shared = nullptr);
 
 // Validate the committed decision on the current map and replace it immediately
 // if unsafe. Rebuilt maps also recheck a held position's prediction horizon.
@@ -182,6 +218,47 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
 bool RevalidateAndSolve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
                         const Path::PlanResult& route, CoreState& state,
                         SolveResult& committed, bool mapRebuilt,
-                        const TimedAdvice& timed = {});
+                        const TimedAdvice& timed = {}, SharedCtx* shared = nullptr);
+
+// ── Navigation finish plan, item 2: "no safe move, sidestep, do not bolt" ───
+// The reduced view of a least-bad Fallback candidate that the ranking needs —
+// exposed so the selection policy is unit-testable without reconstructing a
+// full DangerMap. `dir` is unit(pos - player), {} for the stand point; `val` is
+// the existing clearance/pocket/retreat-biased score Solve() already computes;
+// `safeTime` is Core::Temporal::TimeToDanger at this candidate (kUDwellMs dwell).
+struct FallbackCandidate {
+    Vec2  dir{};
+    float moveDist = 0.f;
+    float val      = 0.f;
+    float safeTime = 0.f;
+};
+
+// Pick the least-bad Fallback candidate out of `cands[0..n)` (already filtered
+// to the Fallback branch's own occupancy/escape/zone floors — this never widens
+// or narrows admission, only ranks).
+//
+// sidestepOn == false: today's behaviour, unchanged — latest safeTime wins,
+// ties broken by the higher val, first-seen wins an exact tie.
+//
+// sidestepOn == true (udodgeFallbackSidestep):
+//   1. Latest safeTime first, as before.
+//   2. Within kSolveFallbackTieMs of the best safeTime, prefer the candidate
+//      with the smaller ABSOLUTE radial component against `radialRef` (the
+//      unit vector pointing away from the lock target, or the mean direction
+//      the threatening lanes are travelling when unlocked; pass {} when
+//      neither is available, which disables this tie-break only) — i.e. the
+//      most tangential step, never one that is merely "less outward" while
+//      still radially INWARD. Radial motion is bad in both directions.
+//   3. Remaining ties broken by val, as before.
+//   4. A candidate whose safeTime is shorter than `standTime` (standing still)
+//      is never selected — if every candidate is worse than standing, returns
+//      -1 so the caller's existing Surrounded fallback applies.
+//   5. A selection under kSolveFallbackMinMoveTiles loses to any OTHER
+//      candidate that also clears the standTime floor and moves at least that
+//      far, ranked the same way — so a near-stationary jitter never wins over
+//      a real, longer-or-equal sidestep.
+// Returns an index into `cands`, or -1 when nothing clears the standTime floor.
+int SelectFallbackCandidate(const FallbackCandidate* cands, int n, Vec2 radialRef,
+                            bool sidestepOn, float standTime);
 
 } } // namespace UDodge::Solver

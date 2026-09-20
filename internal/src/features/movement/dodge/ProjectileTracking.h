@@ -10,6 +10,10 @@ struct WorldProjectile;
 namespace ProjectileTracking {
 
     void Install();
+    // Shot ownership witnesses for [Diag/Game]: cumulative counts this session.
+    uint32_t EnemyShotsSeen();
+    uint32_t AllyShotsSkipped();
+    bool     OwnerFlagTrusted();
     void Uninstall();
     bool IsInstalled();
 

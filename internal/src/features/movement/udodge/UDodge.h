@@ -2,6 +2,9 @@
 
 #include <cstdint>
 
+#include "features/movement/contact/Contact.h"
+#include "features/movement/udodge/UDodgeStandoff.h"
+
 // UDodge — unified auto-dodge (DodgeMode 7).
 //
 // PJDodge's predictive core (exact Chebyshev CCD, intent ladder, hysteresis,
@@ -30,6 +33,9 @@ struct SafetyState {
     float    serverX = 0.f, serverY = 0.f; // last position emitted in outbound MOVE
 };
 SafetyState GetSafetyState();
+// Raw Solver::SolveKind of the last solve (0=Hold,1=Safe,2=Fallback,3=Surrounded),
+// published unconditionally like SafetyState above — diagnostics/tests only.
+uint8_t GetLastSolveKind();
 
 // Nav wedge signal (plan 89). Published from the walk-to stuck detector inside
 // Tick(): `wedged` is true on a frame where the follower is `blocked` (its next
@@ -59,6 +65,31 @@ void RenderDebugOverlay(float camX, float camY, float angle, float zoom, float c
 void  SetLaneTiles(float t);          float GetLaneTiles();
 void  SetStepTiles(float t);          float GetStepTiles();
 void  SetHitScale(float s);           float GetHitScale();
+// udodgePlanner: "classic" = the pre-Slice-3 engine, anything else = tactician.
+void  SetPlannerPolicy(const char* text);
+Contact::Policy GetPlannerPolicy();
+// udodgeRouteCommit (navigation finish plan, Item 1). Default OFF (owner
+// ruling 2026-09-19). "off" (default) = today's follower (5-tile deviation →
+// re-plan, no objective-changed trigger, no lattice snap under Classic);
+// anything else = route commitment on.
+void  SetRouteCommit(const char* text);
+bool  GetRouteCommit();
+// udodgeEnemyStandoff. Default OFF (owner ruling 2026-09-19): "off" (default)
+// = the pre-standoff engine, anything else = auto.
+void  SetEnemyStandoff(const char* text);
+Standoff::Mode GetEnemyStandoff();
+// udodgeFrameBudget (navigation finish plan, Item 4). Default OFF (owner
+// ruling 2026-09-19). "off" (default) = no ceiling, ever (today's behaviour).
+// "auto" = when this Tick has already spent kFrameBudgetMs before the solver
+// phases, the solver degrades — fewer candidates first — for THIS frame
+// only; never touches ReanchorMap, never drops a lane the relevance cull
+// already kept, never relaxes a safety floor on the step finally chosen. See
+// UDodgeSolver.h SetFrameDegraded.
+void  SetFrameBudget(const char* text);
+bool  GetFrameBudgetAuto();
+// The live player hitbox multiplier the last BuildMap read, and whether the
+// collider offset it came from is metadata-trusted (diagnostics).
+float GetLiveHitboxMultiplier();      bool GetLiveHitboxTrusted();
     void  SetReactMargin(float m);        float GetReactMargin();
 void  SetSafeWalk(bool en);           bool  GetSafeWalk();
 void  SetSpeedScale(bool en);         bool  GetSpeedScale();
@@ -67,6 +98,7 @@ void  SetDebugOverlay(bool en);       bool  GetDebugOverlay();
 void  SetDebugWeights(bool en);       bool  GetDebugWeights();
 void  SetDiagTiming(bool en);         bool  GetDiagTiming();   // per-phase perf timing (diag, default OFF)
 void  SetLockFollow(bool en);         bool  GetLockFollow();
+void SetGroupPreference(const char* payload);
 void  SetFollowLantern(bool en);      bool  GetFollowLantern();
 void  SetAutopilot(bool en);          bool  GetAutopilot();   // auto-lock highest-maxHp enemy
 void  SetStandOnType(int t);          int   GetStandOnType();
@@ -81,5 +113,9 @@ void  SetServerPositionError(float tiles);
 void  SetServerAnchorX(float x);
 void  SetServerAnchorY(float y);
 void  SetServerAnchorValid(bool valid);
+// udodgeFallbackSidestep (navigation finish plan, item 2). Default OFF (owner
+// ruling 2026-09-19) — see Settings::fallbackSidestep /
+// Solver::SelectFallbackCandidate.
+void  SetFallbackSidestep(bool en);   bool  GetFallbackSidestep();
 
 } // namespace UDodge

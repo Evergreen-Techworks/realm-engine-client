@@ -188,6 +188,12 @@ function session(map: string, allowPlayerTeleport = false) {
     newTick: (statuses: unknown[]) =>
       s.server('NEWTICK', { tickId: ++tickId, tickTime: 200, serverRealTimeMs: 0, serverLastRttMs: 0, statuses }),
     lastDll: (key: string) => [...recorded.dll].reverse().find(([k]) => k === key)?.[1],
+    lastNavigation: () => {
+      const command = [...recorded.dll].reverse().find(([key]) => key === 'scriptNavigationGoal' || key === 'walkTargetActive');
+      if (command?.[0] !== 'scriptNavigationGoal') return null;
+      const [goalId, x, y] = String(command[1]).split(',').map(Number);
+      return { goalId, x, y };
+    },
     lastStatus: () => recorded.activity.at(-1),
     sentNames: () => sent.map((p) => p.name),
   };
@@ -282,10 +288,10 @@ describe('Oryx runner on the real SDK', () => {
 
     expect(RealmEngine.world.objects.getById(3000)?.blocksMovement).toBe(true);
     expect(s.lastStatus()).toBe('Sanctuary: approaching Oryx the Mad God');
-    expect(s.lastDll('walkTargetActive')).toBe(true);
+    expect(s.lastNavigation()?.goalId).toBeGreaterThan(0);
     // The wall spans x 1..11 at y 3; the only way through is its open end at x 0.
-    expect(s.lastDll('walkTargetX')).toBeLessThan(10.5);
-    expect(s.lastDll('walkTargetY')).toBeLessThan(3.5);
+    expect(s.lastNavigation()?.x).toBeLessThan(10.5);
+    expect(s.lastNavigation()?.y).toBeLessThan(3.5);
   });
 
   it('isSnapshotFresh: keeps fighting a stationary boss that NEWTICK deltas stop repeating', () => {
@@ -399,8 +405,8 @@ describe("Oryx's Castle walls on the real SDK", () => {
     s.farmer.onLoop();
     expect(s.lastDll('autoAimIgnoreScenery')).toBe(true);    // the plugin's settings are back
     expect(s.lastDll('autoAimIgnoreWalls')).toBe(true);
-    expect(s.lastDll('walkTargetActive')).toBe(true);
-    expect(s.lastDll('walkTargetY')).toBeLessThan(9.5);        // through the gap, north
+    expect(s.lastNavigation()?.goalId).toBeGreaterThan(0);
+    expect(s.lastNavigation()?.y).toBeLessThan(9.5);
     expect(s.lastStatus()).toBe('Castle: clearing route toward next encounter');
   });
 
@@ -409,8 +415,8 @@ describe("Oryx's Castle walls on the real SDK", () => {
     s.farmer.onLoop();
 
     expect(s.lastStatus()).toBe('Castle: walking to Destructible Castle Wall');
-    expect(s.lastDll('walkTargetActive')).toBe(true);
-    expect(s.lastDll('walkTargetX')).toBeLessThan(13.5);
+    expect(s.lastNavigation()?.goalId).toBeGreaterThan(0);
+    expect(s.lastNavigation()?.x).toBeLessThan(13.5);
     expect(recorded.dll.some(([k, v]) => k === 'scriptCombatTargetId' && v === GATE)).toBe(false);
     expect(recorded.dll.some(([k, v]) => k === 'autoAimIgnoreScenery' && v === false)).toBe(false);
   });
@@ -427,8 +433,8 @@ describe('Lost Halls void farmer on the real SDK', () => {
 
     expect(farmer.halls.stage).toBe('halls');
     expect(s.lastStatus()).toBe('Lost Halls → Void: approaching Marble Defender');
-    expect(s.lastDll('walkTargetX')).toBeLessThan(12.5);
-    expect(s.lastDll('walkTargetY')).toBeLessThan(5.5);
+    expect(s.lastNavigation()?.x).toBeLessThan(12.5);
+    expect(s.lastNavigation()?.y).toBeLessThan(5.5);
   });
 });
 

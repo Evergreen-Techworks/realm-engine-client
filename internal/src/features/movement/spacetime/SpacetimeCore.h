@@ -118,8 +118,10 @@ void Evaluate(const Input& in, State& state, Output& out);
 void ApplyZonePlanningLimits(Input& in);
 const char* StatusName(Status status);
 const char* ReasonName(Reason reason);
-// Projectile half-width for ordinary shots; beam radius for beam capsules.
-float ProjectileRadius(const UDodge::LaneThreat& lane,const UDodge::Settings& settings);
+// Projectile half-width for ordinary shots; beam radius for beam capsules. Takes
+// the whole world input because the contact rule lives on the map (Tactician
+// S3.4: the policy and the live hitbox multiplier the map was built under).
+float ProjectileRadius(const UDodge::MapInput& world,const UDodge::LaneThreat& lane);
 enum class SampleStatus { Known, Expired, Unknown };
 SampleStatus SampleProjectile(const UDodge::LaneThreat& lane,float timeMs,Vec2& position);
 // Includes the exact expiry endpoint for continuous segment clipping. Only

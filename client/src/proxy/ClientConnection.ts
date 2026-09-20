@@ -48,17 +48,42 @@ export class ClientConnection {
   admission = initialAdmission();
   readonly recovery: RecoveryCoordinator;
   lastAttemptedPortalId: number | null = null;
+  /** Epoch ms of the last USEPORTAL send. Read by the bridge to pace retries and expire a stale attempt. */
+  lastPortalAttemptAt = 0;
+  /** Consecutive-attempt bookkeeping for the `[Portal] USEPORTAL sent ... attempt=n` log line. */
+  portalAttemptObjectId: number | null = null;
+  portalAttemptCount = 0;
+  /** Last-logged time per drop reason, so a fast retry loop logs once then at most every 10 s. */
+  portalDropLogAt: Record<string, number> = {};
+  /** The full-server FAILURE while an attempt is pending: consecutive-refusal backoff (15 s, doubling, 120 s cap). */
+  private portalRefusalPortalId: number | null = null;
+  private portalRefusalBackoffMs = 0;
+  private static readonly PORTAL_REFUSAL_BACKOFF_MIN_MS = 15_000;
+  private static readonly PORTAL_REFUSAL_BACKOFF_MAX_MS = 120_000;
   private admissionMapReceived = false;
 
   private beginAdmissionGeneration(): void {
     this.updateAdmission({ type: 'begin', generation: this.recovery.beginGeneration() });
     this.admissionMapReceived = false;
     this.lastAttemptedPortalId = null;
+    this.portalAttemptObjectId = null;
+    this.portalAttemptCount = 0;
+    this.portalRefusalPortalId = null;
+    this.portalRefusalBackoffMs = 0;
   }
 
   updateAdmission(event: AdmissionEvent): void {
     this.admission = reduceAdmission(this.admission, event);
-    if (event.generation === this.admission.generation && (event.type === 'portal-refused' || event.type === 'map-loaded')) this.lastAttemptedPortalId = null;
+    if (event.generation === this.admission.generation && (event.type === 'portal-refused' || event.type === 'map-loaded')) {
+      if (event.type === 'map-loaded' && this.lastAttemptedPortalId !== null) {
+        Logger.log('Portal', `entry completed in ${Date.now() - this.lastPortalAttemptAt}ms objectId=${this.lastAttemptedPortalId}`);
+      }
+      this.lastAttemptedPortalId = null;
+      if (event.type === 'map-loaded') {
+        this.portalRefusalPortalId = null;
+        this.portalRefusalBackoffMs = 0;
+      }
+    }
   }
 
   private observeAdmissionPacket(packet: Packet, isClient: boolean): void {
@@ -73,8 +98,27 @@ export class ClientConnection {
       this.cancelTransportRetry();
     }
     if (!isClient && packet.name === 'FAILURE') {
-      this.updateAdmission({ type: 'terminal', generation, reason: 'server-rejection-unknown' });
-      this.recovery.cancelEscape(generation);
+      // A pending portal attempt answered by the server's own full-server message is a
+      // refusal of THAT attempt, not a session-ending failure — back off and let the
+      // caller retry, instead of stopping the whole connection's admission FSM.
+      // This is the one refusal string confirmed in this codebase (see FULL_SERVER_MESSAGE,
+      // used above for the pre-HELLO connection case). Other FAILURE errorIds/messages a
+      // portal attempt might draw (realm closed, dungeon full, etc.) are NOT confirmed —
+      // they still fall through to the generic terminal handling below.
+      if (this.lastAttemptedPortalId !== null && packet.isDefined && packet.data.errorMessage === ClientConnection.FULL_SERVER_MESSAGE) {
+        const portalId = this.lastAttemptedPortalId;
+        const consecutive = this.portalRefusalPortalId === portalId;
+        const backoffMs = consecutive
+          ? Math.min(this.portalRefusalBackoffMs * 2, ClientConnection.PORTAL_REFUSAL_BACKOFF_MAX_MS)
+          : ClientConnection.PORTAL_REFUSAL_BACKOFF_MIN_MS;
+        this.portalRefusalPortalId = portalId;
+        this.portalRefusalBackoffMs = backoffMs;
+        Logger.log('Portal', `refused objectId=${portalId} reason=full-server retry-in=${backoffMs}ms`);
+        this.updateAdmission({ type: 'portal-refused', generation, portalId, retryAt: Date.now() + backoffMs, reason: 'full-server' });
+      } else {
+        this.updateAdmission({ type: 'terminal', generation, reason: 'server-rejection-unknown' });
+        this.recovery.cancelEscape(generation);
+      }
     }
     if (isClient || !packet.isDefined) return;
     if (packet.name === 'QUEUEMESSAGE') this.updateAdmission({ type: 'queue', generation, position: packet.data.curPos as number });

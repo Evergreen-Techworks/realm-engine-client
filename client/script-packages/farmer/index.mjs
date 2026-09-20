@@ -63,6 +63,10 @@ const BOSS_ADD_RULES = [
 // An add this close to its own boss protects it. Tight on purpose: the earlier 12 tiles plus
 // "any enemy beside a healing boss" sent the farmer after mobs that had nothing to do with it.
 const DEPENDENT_RADIUS = 8;
+const SKIPPED_REALM_TYPES = new Set([
+  ...BOSS_ADD_RULES.flatMap(rule => [...rule.bosses, ...rule.adds.flat()]),
+  0x0929, 0x5599,
+]);
 // An arrived event whose boss is dead or gone may hold the farmer for adds and loot, but
 // never longer than this (an untargetable object beside the corpse used to pin it forever).
 const EVENT_HOLD_MAX_MS = 60000;
@@ -73,12 +77,71 @@ const ENCOUNTER_MAX_ATTEMPTS = 2;
 // Beyond visibility a committed quest is kept while the server still names it
 // (QUESTOBJECTID). Without that signal, it is kept this long unseen before re-picking.
 const QUEST_UNSEEN_COMMIT_MS = 60000;
+// RealmEngine.ui.status() is dashboard-only and nothing persists it. setStatus()
+// below also logs it (RealmEngine.log.info reaches the dashboard script log), once
+// per distinct message and at most this often while the same message repeats, so a
+// long dwell on one status is visible after the fact instead of only live.
+const STATUS_LOG_HEARTBEAT_MS = 5000;
+// A status like "Leveling: Bandit Leader -> (643, 1658) - 104 tiles" changes
+// every tick purely because the coordinates/tile-count move — that used to
+// count as "a distinct message" and log at ~5/s. Comparing with digits
+// blanked out (see normalizeStatusForChangeCheck) tells a real change
+// (new phase, new target) apart from the same situation with fresher
+// numbers; only the latter is throttled to this interval instead of logged
+// immediately.
+const STATUS_LOG_MIN_INTERVAL_MS = 1000;
+
+/** Pure: collapses every run of digits to '#' so two status strings that
+ *  differ only in numbers (coordinates, tile counts, countdown seconds, ...)
+ *  compare equal. Used by setStatus to tell "the situation changed" apart
+ *  from "the same situation, a moment later, with fresh numbers". */
+function normalizeStatusForChangeCheck(message) {
+  return message.replace(/\d+/g, '#');
+}
+
+// ── Test Lab telemetry ────────────────────────────────────────────────────────
+// The persisted/dashboard `state: <message>` line (see setStatus below) gets a
+// machine-readable ` | ctx ...` suffix appended, so the Test Lab can plot the
+// farmer's position and know what triggered a status change without parsing
+// English. RealmEngine.ui.status(message) — the separate dashboard status
+// widget — stays bare; only the logged line carries this.
+//
+// The literal delimiter ' | ctx ', the key names, and one-decimal-place
+// formatting are a contract with the Test Lab's log parser: don't change them
+// without updating that parser too.
+
+/** Pure: raw context fields -> the suffix string. Any missing/non-finite value renders as '-'. */
+function formatStatusContextSuffix({ pos, goal, enemyDistance, questObjectId } = {}) {
+  const isPoint = (p) => !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
+  const point = (p) => (isPoint(p) ? `${p.x.toFixed(1)},${p.y.toFixed(1)}` : '-');
+  const num = (value) => (typeof value === 'number' && Number.isFinite(value) ? value.toFixed(1) : '-');
+  const distance = (isPoint(pos) && isPoint(goal)) ? Math.hypot(goal.x - pos.x, goal.y - pos.y) : null;
+  const quest = (typeof questObjectId === 'number' && Number.isFinite(questObjectId)) ? String(questObjectId) : '-';
+  return ` | ctx pos=${point(pos)} goal=${point(goal)} d=${num(distance)} enemy=${num(enemyDistance)} quest=${quest}`;
+}
+
+/**
+ * Runs `collectContext` (a live SDK read that can throw — missing self, a
+ * malformed enemy entry, whatever) and formats the result. Never throws: any
+ * failure yields the ' | ctx err' marker instead, so the state line is always
+ * written even when the context behind it could not be read.
+ */
+function buildStatusContextSuffix(collectContext) {
+  try {
+    return formatStatusContextSuffix(collectContext());
+  } catch {
+    return ' | ctx err';
+  }
+}
 
 export default class Farmer {
   constructor() {
     this.mapName = '';
     this.oryx = new OryxRunner(this, RealmEngine);
     this.mapUnsubscribe = null;
+    this.navigationUnsubscribe = null;
+    this.navigationGoal = null;
+    this.unreachablePositions = [];
     this.beaconSkipReason = null;
     this.zoneGoal = null;
     this.centerTripDone = false;
@@ -95,6 +158,8 @@ export default class Farmer {
     this.centerGoal = null;
     this.lootBagId = 0;
     this.lootArrivedAt = 0;
+    this.lootRetryAfter = new Map();
+    this.addGoal = null;
     this.lastItemActionAt = 0;
     this.lastPortalUseAt = 0;
     this.nexusSearchGoal = null;
@@ -112,6 +177,9 @@ export default class Farmer {
     this.beaconListedFor = '';       // map whose beacon candidates we already logged
     this.eventHoldSince = null;      // when an arrived event's boss was first seen dead or gone
     this.encounterGiveUps = new Map(); // boss objectId -> encounters that ended with nothing targetable
+    this.lastLoggedStatus = null;
+    this.lastLoggedStatusNormalized = null;
+    this.lastStatusLogAt = 0;
   }
 
   setFiring(enabled) {
@@ -120,10 +188,129 @@ export default class Farmer {
     RealmEngine.combat.setAutoFire(enabled);
   }
 
+  // Live inputs for the ' | ctx ...' suffix. Called only once setStatus
+  // has already decided a line is going to be logged — not on every call, since
+  // a moving position must not itself force a log line (see setStatus). May
+  // throw (self not spawned yet, a malformed enemy entry, ...); the caller
+  // (buildStatusContextSuffix) is what makes that safe.
+  collectStatusContext() {
+    const pos = { x: RealmEngine.self.getX(), y: RealmEngine.self.getY() };
+    const goal = this.navigationGoal ? { x: this.navigationGoal.x, y: this.navigationGoal.y } : null;
+    let enemyDistance = null;
+    for (const enemy of RealmEngine.enemies.getAll()) {
+      if (!(enemy?.hp > 0) || !enemy.position) continue;
+      const d = Math.hypot(enemy.position.x - pos.x, enemy.position.y - pos.y);
+      if (enemyDistance === null || d < enemyDistance) enemyDistance = d;
+    }
+    return { pos, goal, enemyDistance, questObjectId: this.questGoal?.objectId };
+  }
+
+  setStatus(message) {
+    RealmEngine.ui.status(message);
+    if (!message) return;
+    const now = Date.now();
+    const normalized = normalizeStatusForChangeCheck(message);
+    let shouldLog;
+    if (normalized !== this.lastLoggedStatusNormalized) {
+      // A real change (new phase, new target, or the very first status) —
+      // never throttled.
+      shouldLog = true;
+    } else if (message !== this.lastLoggedStatus) {
+      // Same situation, only the digits moved (coordinates, tile count,
+      // countdown, ...): at most one line per STATUS_LOG_MIN_INTERVAL_MS.
+      shouldLog = now - this.lastStatusLogAt >= STATUS_LOG_MIN_INTERVAL_MS;
+    } else {
+      // The exact same message: the existing heartbeat.
+      shouldLog = now - this.lastStatusLogAt >= STATUS_LOG_HEARTBEAT_MS;
+    }
+    if (shouldLog) {
+      RealmEngine.log.info(`state: ${message}${buildStatusContextSuffix(() => this.collectStatusContext())}`);
+      this.lastLoggedStatus = message;
+      this.lastLoggedStatusNormalized = normalized;
+      this.lastStatusLogAt = now;
+    }
+  }
+
+  subscribeNavigation() {
+    this.navigationUnsubscribe?.();
+    this.navigationUnsubscribe = RealmEngine.dodge.onNavigationStatus?.(status => this.handleNavigationStatus(status)) ?? null;
+  }
+
+  canNavigate(position) {
+    if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return false;
+    const now = Date.now();
+    this.unreachablePositions = this.unreachablePositions.filter(entry => entry.until > now);
+    return !this.unreachablePositions.some(entry => Math.hypot(entry.x - position.x, entry.y - position.y) < 2);
+  }
+
+  // Walk to weapon range of a shooting enemy, not onto its own tile. Native
+  // ENEMY STANDOFF gives every shooting enemy a 2-tile impassable core, so a
+  // destination exactly on the enemy's position never resolves — the route
+  // gets asymptotically close and the native layer reports it unreachable
+  // forever (see UDodgeStandoff.h). Aim for the TARGET_RADIUS ring around it
+  // instead, along the line back to our current position, mirroring the ring
+  // handleBossAdds already returns to when it is pulled off a boss.
+  fightPosition(position, distance) {
+    if (!(distance > 0)) return position;
+    const standoff = Math.min(TARGET_RADIUS, distance);
+    const dx = RealmEngine.self.getX() - position.x, dy = RealmEngine.self.getY() - position.y;
+    return { x: position.x + dx / distance * standoff, y: position.y + dy / distance * standoff };
+  }
+
+  navigateToPosition(position) {
+    if (!this.canNavigate(position)) return false;
+    const accepted = RealmEngine.dodge.navigateToPosition(position);
+    if (accepted !== false) {
+      const owners = new Map();
+      for (const name of ['questGoal', 'eventGoal', 'zoneGoal', 'searchBeaconGoal', 'centerGoal', 'bossEncounter']) {
+        const goal = this[name];
+        if (goal?.position && Math.hypot(goal.position.x - position.x, goal.position.y - position.y) < 0.25) owners.set(name, goal);
+      }
+      this.navigationGoal = { x: position.x, y: position.y, owners };
+    }
+    return accepted;
+  }
+
+  handleNavigationStatus(status) {
+    if (status.state !== 'unreachable' || !this.navigationGoal
+      || Math.hypot(status.position.x - this.navigationGoal.x, status.position.y - this.navigationGoal.y) >= 0.25) return;
+    const failed = this.navigationGoal;
+    this.navigationGoal = null;
+    if (status.reason !== 'map_changed') {
+      this.unreachablePositions.push({ x: failed.x, y: failed.y, until: Date.now() + 30000 });
+      if (this.unreachablePositions.length > 64) this.unreachablePositions.shift();
+    }
+    const matches = goal => goal?.position && Math.hypot(goal.position.x - failed.x, goal.position.y - failed.y) < 0.25;
+    const owned = name => {
+      const original = failed.owners.get(name);
+      return original && this[name] && (original === this[name]
+        || (original.objectId > 0 && original.objectId === this[name].objectId));
+    };
+    for (const name of ['questGoal', 'eventGoal', 'zoneGoal', 'searchBeaconGoal', 'centerGoal']) {
+      if (!owned(name)) continue;
+      this[name] = null;
+      if (name === 'centerGoal') this.centerTripDone = true;
+      if (name === 'eventGoal') {
+        this.eventArrived = false; this.eventMissingAt = null; this.eventHoldSince = null;
+      }
+    }
+    if (owned('bossEncounter')) {
+      this.bossEncounter = null;
+      this.updateTarget(0, false);
+    }
+    this.questMissingAt = 0;
+    const bag = RealmEngine.loot.getBags().find(entry => entry.objectId === this.lootBagId);
+    if (matches(bag)) this.lootBagId = 0;
+    if (matches({ position: this.nexusSearchGoal })) this.nexusSearchGoal = null;
+    this.lastGoalAt = 0;
+    RealmEngine.dodge.clearWaypoint();
+  }
+
   onStart() {
     this.chatUnsubscribe = RealmEngine.chat?.onMessage?.(event => this.oryx.onMessage(event));
     this.mapUnsubscribe = RealmEngine.events.onMapChanged(() => this.resetMap(RealmEngine.world.getName()));
     this.resetMap(RealmEngine.world.getName());
+    this.subscribeNavigation();
     RealmEngine.dodge.clearWaypoint();
     RealmEngine.dodge.setMode('unified');
     RealmEngine.dodge.setSafeWalk(true);
@@ -141,11 +328,14 @@ export default class Farmer {
     // — it owns AutoAim's master switch, which no script API can set.
     RealmEngine.combat.setKillAura(false);
     this.setFiring(false);
-    RealmEngine.ui.status('Realm Farmer starting');
+    this.setStatus('Realm Farmer starting');
     RealmEngine.log.info('Realm Farmer started with Unified Dodge, safe-walk, loot detours, and target switching.');
   }
 
   onStop() {
+    this.navigationUnsubscribe?.();
+    this.navigationUnsubscribe = null;
+    this.navigationGoal = null;
     this.chatUnsubscribe?.();
     this.chatUnsubscribe = null;
     this.mapUnsubscribe?.();
@@ -154,10 +344,13 @@ export default class Farmer {
     RealmEngine.dodge.clearEnemyLock();
     RealmEngine.combat.stopAiming();
     this.setFiring(false);
-    RealmEngine.ui.status(null);
+    this.setStatus(null);
   }
 
   resetMap(name) {
+    this.navigationGoal = null;
+    this.unreachablePositions = [];
+    if (this.navigationUnsubscribe) this.subscribeNavigation();
     this.mapName = name;
     this.oryx.reset(name);
     this.beaconSkipReason = null;
@@ -176,6 +369,8 @@ export default class Farmer {
     this.centerGoal = null;
     this.lootBagId = 0;
     this.lootArrivedAt = 0;
+    this.lootRetryAfter.clear();
+    this.addGoal = null;
     this.lockId = 0;
     this.patrolStep = 0;
     this.lastGoalAt = 0;
@@ -213,18 +408,23 @@ export default class Farmer {
         || Math.hypot(a.position.x - px, a.position.y - py) - Math.hypot(b.position.x - px, b.position.y - py));
   }
 
+  shouldSkipRealmEnemy(enemy) {
+    return SKIPPED_REALM_TYPES.has(enemy?.objectType)
+      && RealmEngine.world.isRealm() && RealmEngine.self.getLevel() >= 20;
+  }
+
   updateTarget(preferredId = 0, enabled = true) {
     const px = RealmEngine.self.getX();
     const py = RealmEngine.self.getY();
     const all = enabled ? RealmEngine.enemies.getAll() : [];
     const eligible = all
-      .filter((e) => e.hp > 0 && (e.isTargetable || e.objectId === this.lockId)
+      .filter((e) => e.hp > 0 && !RealmEngine.world.objects.isDead?.(e.objectId) && !this.shouldSkipRealmEnemy(e) && this.canNavigate(e.position) && (e.isTargetable || e.objectId === this.lockId)
         && Math.hypot(e.position.x - px, e.position.y - py)
           <= (e.objectId === this.lockId ? TARGET_RELEASE_RADIUS : TARGET_RADIUS))
       // Something we can damage beats a bigger thing we cannot, even the preferred or locked one.
       .sort((a, b) => Number(b.isTargetable) - Number(a.isTargetable)
-        || Number(b.objectId === preferredId) - Number(a.objectId === preferredId)
         || Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
+        || Number(b.objectId === preferredId) - Number(a.objectId === preferredId)
         || b.maxHp - a.maxHp || b.hp - a.hp
         || Math.hypot(a.position.x - px, a.position.y - py)
           - Math.hypot(b.position.x - px, b.position.y - py));
@@ -262,21 +462,26 @@ export default class Farmer {
     if (distance > 14) {
       this.updateTarget(0, false);
       const dx = RealmEngine.self.getX() - center.x, dy = RealmEngine.self.getY() - center.y;
-      RealmEngine.dodge.navigateToPosition({ x: center.x + dx / distance * 8, y: center.y + dy / distance * 8 });
-      RealmEngine.ui.status(`${label}: returning to boss area`);
+      this.navigateToPosition({ x: center.x + dx / distance * 8, y: center.y + dy / distance * 8 });
+      this.setStatus(`${label}: returning to boss area`);
       return;
     }
-    const add = guards ? guards[0] : enemies.filter(e => e.objectId !== boss.objectId && e.hp > 0 && e.isTargetable
-      && Math.hypot(e.position.x - center.x, e.position.y - center.y) <= 12)
-      .sort((a, b) => Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
-        || RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position))[0];
+    const addCandidates = (guards ?? enemies).filter(e => !this.shouldSkipRealmEnemy(e) && e.objectId !== boss.objectId && e.hp > 0 && !RealmEngine.world.objects.isDead?.(e.objectId) && e.isTargetable && this.canNavigate(e.position)
+      && (guards || Math.hypot(e.position.x - center.x, e.position.y - center.y) <= 12))
+      .sort((a, b) => guards ? guards.indexOf(a) - guards.indexOf(b)
+        : Number(b.objectId === this.lockId) - Number(a.objectId === this.lockId)
+          || RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position));
+    const retained = this.addGoal?.bossId === boss.objectId
+      ? addCandidates.find(enemy => enemy.objectId === this.addGoal.objectId) : null;
+    const add = guards ? addCandidates[0] : retained ?? addCandidates[0];
+    this.addGoal = add ? { bossId: boss.objectId, objectId: add.objectId } : null;
     if (!add) {
       this.updateTarget(0, false); RealmEngine.dodge.clearWaypoint();
-      RealmEngine.ui.status(`${label}: ${waitingStatus}`);
+      this.setStatus(`${label}: ${waitingStatus}`);
       return;
     }
     if (RealmEngine.self.distanceTo(add.position) > (this.lockId === add.objectId ? 12 : 8)) {
-      this.updateTarget(0, false); RealmEngine.dodge.navigateToPosition(add.position);
+      this.updateTarget(0, false); this.navigateToPosition(add.position);
     } else {
       RealmEngine.dodge.clearWaypoint();
       if (this.lockId !== add.objectId) {
@@ -285,15 +490,27 @@ export default class Farmer {
       }
       this.setFiring(true);
     }
-    RealmEngine.ui.status(`${label}: clearing adds — ${add.name}`);
+    this.setStatus(`${label}: clearing adds — ${add.name}`);
   }
 
   handleBossEncounter(quest, now) {
+    if (this.shouldSkipRealmEnemy(quest)
+      || this.shouldSkipRealmEnemy(this.bossEncounter)
+      || (this.bossEncounter && this.shouldSkipRealmEnemy(RealmEngine.world.objects.getById(this.bossEncounter.objectId)))) {
+      this.endBossEncounter(false);
+      RealmEngine.dodge.clearWaypoint();
+      return false;
+    }
+    if (this.bossEncounter && !this.canNavigate(this.bossEncounter.position)) {
+      this.endBossEncounter(false);
+      return false;
+    }
+    if (quest && !this.canNavigate(quest.position)) return false;
     if (quest && this.objectIsDead(quest.objectId)) {
       this.endBossEncounter(false);
       RealmEngine.dodge.clearWaypoint();
       if (quest.isEventBoss && this.eventArrived) {
-        RealmEngine.ui.status(`${quest.name}: defeated — waiting for loot or next phase`);
+        this.setStatus(`${quest.name}: defeated — waiting for loot or next phase`);
         return true;
       }
       return false;
@@ -304,8 +521,8 @@ export default class Farmer {
       const anchor = boss ?? (quest.isEventBoss ? quest : null);
       if (anchor && RealmEngine.self.distanceTo(anchor.position) <= 12
         && (this.encounterGiveUps.get(anchor.objectId) ?? 0) < ENCOUNTER_MAX_ATTEMPTS)
-        this.bossEncounter = { objectId: anchor.objectId, position: { ...anchor.position }, name: anchor.name,
-          everTargetable: false, waitingSince: null };
+        this.bossEncounter = { objectId: anchor.objectId, objectType: anchor.objectType, position: { ...anchor.position }, name: anchor.name,
+          isEventBoss: !!(quest.isEventBoss || anchor.isEventBoss), everTargetable: false, waitingSince: null, phaseMissingAt: null };
     }
     if (!this.bossEncounter) return false;
     const boss = enemies.find(e => e.objectId === this.bossEncounter.objectId);
@@ -314,7 +531,10 @@ export default class Farmer {
     }
     if (boss) {
       this.bossEncounter.position = { ...boss.position }; this.bossMissingAt = null;
-      if (boss.isTargetable) this.bossEncounter.everTargetable = true;
+      if (boss.isTargetable) {
+        this.bossEncounter.everTargetable = true;
+        this.bossEncounter.phaseMissingAt = null;
+      }
     } else {
       if (this.bossMissingAt === null) this.bossMissingAt = now;
       const changedQuest = quest && quest.objectId !== this.bossEncounter.objectId;
@@ -323,10 +543,23 @@ export default class Farmer {
       }
     }
     if (!boss || !boss.isTargetable) {
+      if (this.bossEncounter.isEventBoss && this.bossEncounter.everTargetable) {
+        if (this.bossEncounter.phaseMissingAt === null) this.bossEncounter.phaseMissingAt = now;
+        if (now - this.bossEncounter.phaseMissingAt < QUEST_MISSING_GRACE_MS) {
+          if (this.lockId && this.lockId !== this.bossEncounter.objectId) this.updateTarget(0, false);
+          this.setFiring(false);
+          RealmEngine.dodge.clearWaypoint();
+          this.setStatus(`${this.bossEncounter.name}: waiting through brief boss transition`);
+          return true;
+        }
+      }
       // Nothing on the boss to damage. Targetable adds keep the wait useful; with none,
       // a present-but-untargetable boss is waited on for ENCOUNTER_WAIT_MS at most.
       const center = this.bossEncounter.position;
-      const addAlive = enemies.some((e) => e.objectId !== this.bossEncounter.objectId && e.hp > 0 && e.isTargetable
+      const guards = this.bossEncounter.isEventBoss && RealmEngine.world.isRealm()
+        ? this.bossGuards(this.bossEncounter, enemies) : null;
+      const addAlive = (guards ?? enemies).some((e) => e.objectId !== this.bossEncounter.objectId && e.hp > 0 && e.isTargetable
+        && !RealmEngine.world.objects.isDead?.(e.objectId) && !this.shouldSkipRealmEnemy(e)
         && Math.hypot(e.position.x - center.x, e.position.y - center.y) <= 12);
       if (addAlive) this.bossEncounter.waitingSince = null;
       else if (this.bossEncounter.waitingSince === null) this.bossEncounter.waitingSince = now;
@@ -334,7 +567,7 @@ export default class Farmer {
         this.endBossEncounter(true); return false;
       }
       this.handleBossAdds(enemies, this.bossEncounter, this.bossEncounter.name,
-        boss ? 'waiting for adds or vulnerable boss' : 'waiting for encounter visibility');
+        boss ? 'waiting for adds or vulnerable boss' : 'waiting for encounter visibility', guards);
       return true;
     }
     // A vulnerable boss can still be protected by its adds; clear those first.
@@ -345,7 +578,7 @@ export default class Farmer {
     }
     const distance = RealmEngine.self.distanceTo(boss.position);
     if (distance > (this.lockId === boss.objectId ? 12 : 8)) {
-      this.updateTarget(0, false); RealmEngine.dodge.navigateToPosition(boss.position);
+      this.updateTarget(0, false); this.navigateToPosition(boss.position);
     } else {
       RealmEngine.dodge.clearWaypoint();
       if (this.lockId !== boss.objectId) {
@@ -354,7 +587,7 @@ export default class Farmer {
       }
       this.setFiring(true);
     }
-    RealmEngine.ui.status(`Fighting: ${boss.name}`);
+    this.setStatus(`Fighting: ${boss.name}`);
     return true;
   }
 
@@ -363,6 +596,7 @@ export default class Farmer {
   // engaged, and an event goal for it is finished so the next event is chosen instead
   // of re-creating the same empty encounter every 30 seconds.
   endBossEncounter(failedAttempt) {
+    this.addGoal = null;
     const encounter = this.bossEncounter;
     this.bossEncounter = null; this.bossMissingAt = null; this.updateTarget(0, false);
     if (!failedAttempt || !encounter || encounter.everTargetable) return;
@@ -400,10 +634,14 @@ export default class Farmer {
   }
 
   chooseLootBag(whiteOnly = false) {
+    const now = Date.now();
+    for (const [objectId, until] of this.lootRetryAfter) {
+      if (until <= now) this.lootRetryAfter.delete(objectId);
+    }
     const px = RealmEngine.self.getX();
     const py = RealmEngine.self.getY();
     return RealmEngine.loot.getNearbyBags(LOOT_RADIUS)
-      .filter((bag) => this.bagIsUseful(bag) && (!whiteOnly || bag.rarity === 'white'))
+      .filter((bag) => !this.lootRetryAfter.has(bag.objectId) && this.canNavigate(bag.position) && this.bagIsUseful(bag) && (!whiteOnly || bag.rarity === 'white'))
       .sort((a, b) => Number(b.rarity === 'white') - Number(a.rarity === 'white')
         || Number(b.items.some((item) => RealmEngine.loot.isUT(item.objectType) || RealmEngine.loot.isST(item.objectType)))
           - Number(a.items.some((item) => RealmEngine.loot.isUT(item.objectType) || RealmEngine.loot.isST(item.objectType)))
@@ -451,14 +689,14 @@ export default class Farmer {
 
     const distance = RealmEngine.self.distanceTo(bag.position);
     if (distance > BAG_ARRIVE) {
-      RealmEngine.dodge.navigateToPosition(bag.position);
-      RealmEngine.ui.status(`Loot detour (${distance.toFixed(1)} tiles)`);
+      this.navigateToPosition(bag.position);
+      this.setStatus(`Loot detour (${distance.toFixed(1)} tiles)`);
       return true;
     }
 
     RealmEngine.dodge.clearWaypoint();
     if (!this.lootArrivedAt) this.lootArrivedAt = now;
-    RealmEngine.ui.status(bag.rarity === 'white' ? 'Collecting white bag' : 'Waiting for Auto Loot');
+    this.setStatus(bag.rarity === 'white' ? 'Collecting white bag' : 'Waiting for Auto Loot');
     if (now - this.lootArrivedAt < BAG_SETTLE_MS || now - this.lastItemActionAt < ITEM_ACTION_MS) return true;
 
     // White bags are rare and may contain items that are not a numerical tier
@@ -494,6 +732,7 @@ export default class Farmer {
     // standing on the bag through that bounded wait instead of reinstalling a
     // quest waypoint between the first and second item.
     if (now - this.lastItemActionAt < 5000) return true;
+    this.lootRetryAfter.set(bag.objectId, now + 30000);
     this.lootBagId = 0;
     return false;
   }
@@ -663,7 +902,7 @@ export default class Farmer {
       x: RealmEngine.self.getX(),
       y: RealmEngine.self.getY(),
     };
-    RealmEngine.ui.status(`${beacon.teleportKind === 'player' ? 'Player' : 'Beacon'} teleport → ${beacon.name}`);
+    this.setStatus(`${beacon.teleportKind === 'player' ? 'Player' : 'Beacon'} teleport → ${beacon.name}`);
     return true;
   }
 
@@ -672,7 +911,7 @@ export default class Farmer {
     if (!this.centerGoal) {
       const size = RealmEngine.world.getSize();
       if (!(size.width > 0 && size.height > 0)) {
-        RealmEngine.ui.status('Level 20: waiting for Realm dimensions');
+        this.setStatus('Level 20: waiting for Realm dimensions');
         this.updateTarget(0, false);
         RealmEngine.dodge.clearWaypoint();
         return true;
@@ -696,15 +935,21 @@ export default class Farmer {
       return false;
     }
     if (this.tryBeaconTeleport(now, this.centerGoal)) return true;
-    RealmEngine.dodge.navigateToPosition(this.centerGoal.position);
-    RealmEngine.ui.status('Level 20: travelling to central Realm');
+    this.navigateToPosition(this.centerGoal.position);
+    this.setStatus('Level 20: travelling to central Realm');
     return true;
   }
 
   getEventGoal(now) {
+    if (this.shouldSkipRealmEnemy(this.eventGoal)) {
+      this.finishedEvents.add(this.eventGoal.objectId);
+      this.eventGoal = null; this.eventArrived = false; this.eventMissingAt = null; this.eventHoldSince = null;
+      this.endBossEncounter(false);
+      RealmEngine.dodge.clearWaypoint();
+    }
     if (now - this.eventScanAt >= 1000 || !this.eventScanAt) {
       this.eventScanAt = now;
-      this.eventCandidates = RealmEngine.world.objects.getAll().filter(o => o.isEventBoss
+      this.eventCandidates = RealmEngine.world.objects.getAll().filter(o => o.isEventBoss && !this.shouldSkipRealmEnemy(o)
         && Number.isFinite(o.position?.x) && Number.isFinite(o.position?.y)
         && !(o.hp <= 0 && o.maxHp > 0)
         && !RealmEngine.world.objects.isDead?.(o.objectId));
@@ -713,10 +958,19 @@ export default class Farmer {
       const distance = RealmEngine.self.distanceTo(this.eventGoal.position);
       if (distance <= 12) this.eventArrived = true;
       const live = RealmEngine.world.objects.getById(this.eventGoal.objectId);
+      // Owner ruling 2026-09-19: vanishing from the local object table is NEVER
+      // death evidence on its own — native standoff can hold a fight further out
+      // or route us around a pack, dropping an object from the snapshot without
+      // it dying. Death requires positive evidence: an explicit kill signal, or
+      // an hp<=0 snapshot while still resolvable. A corpse that despawns
+      // instantly may show neither, so a loot bag at its last known position
+      // corroborates (without proving) a kill and only shortens the wait below.
       const dead = RealmEngine.world.objects.isDead?.(this.eventGoal.objectId)
         || (live && live.hp <= 0 && live.maxHp > 0);
+      const bagAtLastPosition = !live && !dead && RealmEngine.loot.getBags()
+        .some(bag => Math.hypot(bag.position.x - this.eventGoal.position.x, bag.position.y - this.eventGoal.position.y) <= 3);
       if (live && !dead) { this.eventGoal = live; this.eventMissingAt = null; this.eventHoldSince = null; }
-      else if (dead || this.eventArrived || distance <= 12) {
+      else if (dead || bagAtLastPosition || this.eventArrived || distance <= 12) {
         // One object can be just a phase/controller. Stay local if the event
         // replaces it, rather than treating that object's death as travel permission.
         const replacement = this.eventArrived && this.eventCandidates.find(o =>
@@ -730,18 +984,22 @@ export default class Farmer {
           RealmEngine.log.info(`Realm Farmer: continuing nearby event phase — ${replacement.name}`);
           return this.eventGoal;
         }
-        const addsAlive = !dead && this.eventArrived && RealmEngine.enemies.getAll().some(e =>
-          e.objectId !== this.eventGoal.objectId && e.hp > 0 && e.isTargetable
+        const addsAlive = !dead && this.eventArrived && this.bossGuards(this.eventGoal, RealmEngine.enemies.getAll()).some(e =>
+          !this.shouldSkipRealmEnemy(e) && e.objectId !== this.eventGoal.objectId && e.hp > 0 && e.isTargetable
           && Math.hypot(e.position.x-this.eventGoal.position.x, e.position.y-this.eventGoal.position.y) <= 12);
         if (this.eventArrived && this.eventHoldSince === null) this.eventHoldSince = now;
         const overHold = this.eventHoldSince !== null && now - this.eventHoldSince >= EVENT_HOLD_MAX_MS;
         if (addsAlive && !overHold) this.eventMissingAt = null;
         else if (this.eventMissingAt === null) this.eventMissingAt = now;
-        // A remote kill can switch immediately. After arrival, allow time for
-        // phase swaps and delayed bag spawns; handleLoot still runs every loop.
-        const waitMs = this.eventArrived ? (dead ? 10000 : 30000) : (dead ? 0 : 30000);
+        // A remote kill can switch immediately. A corroborating bag shortens the
+        // "might still be alive" wait without treating absence as proof. Neither
+        // signal available: wait the full window for phase swaps/delayed drops;
+        // handleLoot still runs every loop, so a late bag is not missed.
+        const waitMs = dead ? (this.eventArrived ? 10000 : 0) : (bagAtLastPosition ? 10000 : 30000);
         if (overHold || (!addsAlive && this.eventMissingAt !== null && now - this.eventMissingAt >= waitMs)) {
-          RealmEngine.log.info(`Realm Farmer: event ended — ${this.eventGoal.name}; selecting another boss.`);
+          const reason = dead ? 'kill signal' : bagAtLastPosition ? 'loot bag at last position' : overHold ? 'hold window elapsed' : 'missing-boss timeout';
+          RealmEngine.log.info(`Realm Farmer: event ended — ${this.eventGoal.name}; selecting another boss (${reason}).`);
+          this.setStatus(`${this.eventGoal.name}: released — ${reason}`);
           this.finishedEvents.add(this.eventGoal.objectId);
           this.eventGoal = null; this.eventArrived = false; this.eventMissingAt = null; this.eventHoldSince = null;
           this.bossEncounter = null;
@@ -750,7 +1008,7 @@ export default class Farmer {
       } else this.eventMissingAt = null;
     }
     if (!this.eventGoal) {
-      this.eventGoal = this.eventCandidates.filter(o => !this.finishedEvents.has(o.objectId)
+      this.eventGoal = this.eventCandidates.filter(o => !this.shouldSkipRealmEnemy(o) && !this.finishedEvents.has(o.objectId) && this.canNavigate(o.position)
         && !RealmEngine.world.objects.isDead?.(o.objectId))
         .sort((a,b) => RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position))[0] ?? null;
       if (this.eventGoal) {
@@ -772,7 +1030,7 @@ export default class Farmer {
       this.searchBeaconGoal = null;
     }
     if (!this.searchBeaconGoal) {
-      this.searchBeaconGoal = RealmEngine.world.objects.getBeacons().filter(b => b.objectClass === 'Beacon'
+      this.searchBeaconGoal = RealmEngine.world.objects.getBeacons().filter(b => b.objectClass === 'Beacon' && this.canNavigate(b.position)
         && !BEACON_NAME_BAD.test(b.name) && RealmEngine.self.distanceTo(b.position) > 8
         && now - (this.searchBeaconVisits.get(b.objectId) ?? -Infinity) > 30000)
         .sort((a,b) => (this.searchBeaconVisits.get(a.objectId) ?? 0) - (this.searchBeaconVisits.get(b.objectId) ?? 0)
@@ -780,11 +1038,11 @@ export default class Farmer {
     }
     if (this.searchBeaconGoal) {
       if (this.tryBeaconTeleport(now, this.searchBeaconGoal)) return;
-      RealmEngine.dodge.navigateToPosition(this.searchBeaconGoal.position);
-      RealmEngine.ui.status('Realm Farmer: searching other beacon areas for purple/white bosses');
+      this.navigateToPosition(this.searchBeaconGoal.position);
+      this.setStatus('Realm Farmer: searching other beacon areas for purple/white bosses');
     } else {
       RealmEngine.dodge.clearWaypoint();
-      RealmEngine.ui.status('Realm Farmer: waiting for purple/white boss markers');
+      this.setStatus('Realm Farmer: waiting for purple/white boss markers');
     }
   }
 
@@ -792,7 +1050,7 @@ export default class Farmer {
     // Commit to the selected quest while travelling. Realm quest ids and tracked
     // entities can change as visibility/nearest-region changes, so an object merely
     // leaving the snapshot is not evidence the boss disappeared.
-    if (this.questGoal && (this.objectIsDead(this.questGoal.objectId)
+    if (this.questGoal && (this.shouldSkipRealmEnemy(this.questGoal) || this.objectIsDead(this.questGoal.objectId)
       || (this.questGoal.hp <= 0 && this.questGoal.maxHp > 0))) {
       this.questGoal = null; this.questMissingAt = 0;
     }
@@ -805,35 +1063,32 @@ export default class Farmer {
         this.questMissingAt = 0;
         return live;
       }
-      if (distance > QUEST_VISIBLE_RANGE) {
-        // BEYOND VISIBILITY its absence proves nothing, so the protocol decides: the
-        // server names the current quest (QUESTOBJECTID). While that is still ours,
-        // keep the commitment however long the walk. Once it names another quest (or
-        // none) the coordinate is stale: after a short grace for a flip, re-pick.
-        // Without that signal, re-pick after QUEST_UNSEEN_COMMIT_MS rather than
-        // walking to a dead boss's last coordinate indefinitely.
-        const serverQuestId = RealmEngine.world.objects.getQuestTargetId?.();
-        const known = typeof serverQuestId === 'number';
-        if (known && serverQuestId === this.questGoal.objectId) {
-          this.questMissingAt = 0;
-          return this.questGoal;
-        }
-        if (!this.questMissingAt) this.questMissingAt = now;
-        if (now - this.questMissingAt < (known ? QUEST_MISSING_GRACE_MS : QUEST_UNSEEN_COMMIT_MS)) return this.questGoal;
-      } else {
-        // WITHIN VISIBILITY the object SHOULD be in the snapshot, so a sustained
-        // absence is the kill it looks like. (The gate used to be QUEST_AREA_ARRIVE,
-        // 4 tiles, but quest mobs die from weapon range, 5-8 tiles out, so the
-        // liveness check never ran on the kill that mattered.)
-        if (!this.questMissingAt) this.questMissingAt = now;
-        if (now - this.questMissingAt < QUEST_MISSING_GRACE_MS) return this.questGoal;
+      // Local absence proves nothing on its own, at any distance: native standoff
+      // can now hold a fight further out or route around a pack, dropping an
+      // object from the local snapshot without it dying, even well inside
+      // QUEST_VISIBLE_RANGE. The protocol decides: while the server still names
+      // this object as the active quest (QUESTOBJECTID), it is alive no matter
+      // what the local object table says.
+      const serverQuestId = RealmEngine.world.objects.getQuestTargetId?.();
+      const known = typeof serverQuestId === 'number';
+      if (known && serverQuestId === this.questGoal.objectId) {
+        this.questMissingAt = 0;
+        return this.questGoal;
       }
+      // No authoritative signal, or the server has already moved on: fall back to
+      // a grace timer before re-picking. Once the server points elsewhere (or is
+      // silent and the object is nearby) a short grace is enough; only "we never
+      // had the signal and it's far away" gets the long commit, rather than
+      // walking to a dead boss's last coordinate indefinitely.
+      if (!this.questMissingAt) this.questMissingAt = now;
+      const grace = (!known && distance > QUEST_VISIBLE_RANGE) ? QUEST_UNSEEN_COMMIT_MS : QUEST_MISSING_GRACE_MS;
+      if (now - this.questMissingAt < grace) return this.questGoal;
       this.questGoal = null;
       this.questMissingAt = 0;
     }
 
     const quest = RealmEngine.world.objects.getQuestObject();
-    if (!quest || RealmEngine.world.objects.isDead?.(quest.objectId)
+    if (!quest || this.shouldSkipRealmEnemy(quest) || !this.canNavigate(quest.position) || RealmEngine.world.objects.isDead?.(quest.objectId)
       || (quest.hp <= 0 && quest.maxHp > 0)
       || !Number.isFinite(quest.position?.x) || !Number.isFinite(quest.position?.y)) return null;
     this.questGoal = quest;
@@ -847,7 +1102,7 @@ export default class Farmer {
     if (RealmEngine.self.getHP() <= 0) {
       if (this.nexusReady || this.nexusSearchGoal) RealmEngine.dodge.clearWaypoint();
       this.nexusReady = false; this.nexusSearchGoal = null; this.nexusPortalId = 0;
-      RealmEngine.ui.status('Nexus: waiting for player spawn');
+      this.setStatus('Nexus: waiting for player spawn');
       return;
     }
     if (!this.nexusReady) {
@@ -857,7 +1112,7 @@ export default class Farmer {
       this.nexusReady = true;
     }
     const portals = RealmEngine.world.objects.getOpenPortals()
-      .filter((portal) => portal.isRealm)
+      .filter((portal) => portal.isRealm && this.canNavigate(portal.position))
       .sort((a, b) => RealmEngine.self.distanceTo(a.position) - RealmEngine.self.distanceTo(b.position)
         || a.playerCount - b.playerCount);
     const portal = portals.find(p => p.objectId === this.nexusPortalId) ?? portals[0];
@@ -869,21 +1124,29 @@ export default class Farmer {
           y: RealmEngine.self.getY() - NEXUS_FORWARD_DISTANCE,
         };
       }
-      RealmEngine.dodge.navigateToPosition(this.nexusSearchGoal);
-      RealmEngine.ui.status('Searching for Realm portal: walking forward');
+      this.navigateToPosition(this.nexusSearchGoal);
+      this.setStatus('Searching for Realm portal: walking forward');
       return;
     }
     this.nexusSearchGoal = null;
     const distance = RealmEngine.self.distanceTo(portal.position);
     if (distance > PORTAL_RANGE) {
-      RealmEngine.dodge.navigateToPosition(portal.position);
-      RealmEngine.ui.status(`Walking to ${portal.name} (${portal.playerCount}/85)`);
+      this.navigateToPosition(portal.position);
+      this.setStatus(`Walking to ${portal.name} (${portal.playerCount}/85)`);
     } else {
       RealmEngine.dodge.clearWaypoint();
-      RealmEngine.ui.status(`Entering ${portal.name} (${portal.playerCount}/85)`);
-      if (now - this.lastPortalUseAt >= PORTAL_RETRY_MS) {
-        this.lastPortalUseAt = now;
-        portal.enter();
+      if (portal.availability === 'full') {
+        const waitS = Math.max(0, Math.ceil(((portal.retryAt ?? now) - now) / 1000));
+        this.setStatus(`Portal refused — retrying in ${waitS}s`);
+      } else {
+        let pending = now - this.lastPortalUseAt < PORTAL_RETRY_MS;
+        if (!pending) {
+          this.lastPortalUseAt = now;
+          pending = portal.enter();
+        }
+        this.setStatus(pending
+          ? `Entering ${portal.name} (${portal.playerCount}/85)`
+          : `Waiting to enter ${portal.name} (${portal.playerCount}/85)`);
       }
     }
   }
@@ -932,7 +1195,7 @@ export default class Farmer {
     if (target) {
       this.lootBagId = 0;
       this.lootArrivedAt = 0;
-      RealmEngine.ui.status(`Fighting: ${target.name}`);
+      this.setStatus(`Fighting: ${target.name}`);
       return LOOP_MS;
     }
 
@@ -946,9 +1209,9 @@ export default class Farmer {
           // exactly where walking is worst: across water and around map-scale
           // obstacles the bounded nav window cannot plan around at all.
           if (this.tryBeaconTeleport(now, quest)) return LOOP_MS;
-          RealmEngine.dodge.navigateToPosition(quest.position);
+          this.navigateToPosition(this.fightPosition(quest.position, distance));
         }
-        RealmEngine.ui.status(level < 20
+        this.setStatus(level < 20
           ? `${distance > QUEST_AREA_ARRIVE ? 'Leveling' : 'Fighting'}: ${quest.name} → (${quest.position.x.toFixed(0)}, ${quest.position.y.toFixed(0)}) · ${distance.toFixed(0)} tiles`
           : `${distance > QUEST_AREA_ARRIVE ? 'Maxing' : 'Fighting'}: ${quest.name} → (${quest.position.x.toFixed(0)}, ${quest.position.y.toFixed(0)}) · ${distance.toFixed(0)} tiles`);
         return LOOP_MS;
@@ -962,17 +1225,17 @@ export default class Farmer {
         this.lastGoalAt = now;
       }
       if (this.zoneGoal) {
-        RealmEngine.dodge.navigateToPosition(this.zoneGoal.position);
-        RealmEngine.ui.status(level >= 20
+        this.navigateToPosition(this.zoneGoal.position);
+        this.setStatus(level >= 20
           ? `Maxing: walking toward center for a new quest${target ? ` · ${target.name}` : ''}`
           : `Leveling: walking toward center for a new quest${target ? ` · ${target.name}` : ''}`);
       } else {
-        RealmEngine.ui.status('Learning Realm map bounds');
+        this.setStatus('Learning Realm map bounds');
       }
     } else {
       // In dungeons, preserve any red-dot/manual waypoint owned by the native
       // planner. Farmer only supplies combat target selection and loot detours.
-      RealmEngine.ui.status(target ? `Dungeon combat: ${target.name}` : 'Dungeon: following selected waypoint');
+      this.setStatus(target ? `Dungeon combat: ${target.name}` : 'Dungeon: following selected waypoint');
     }
     return LOOP_MS;
   }

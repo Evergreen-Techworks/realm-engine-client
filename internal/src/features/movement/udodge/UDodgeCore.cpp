@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 
 // UDodge core (plan 64) — pruned to the pure spatial safety primitives the
 // per-tick solver uses. The 35-candidate reactive scoring machinery (probe-and-
@@ -121,6 +123,23 @@ float PointSegDistEuclid(Vec2 c, Vec2 a, Vec2 b)
     return Len(Sub(c, Add(a, Mul(ab, t))));
 }
 
+// Min EUCLIDEAN distance between segment a→b and segment p→q. Same convexity
+// argument as SegSegCheb, with the Euclidean metric: absent a proper crossing the
+// minimum sits at one segment's endpoint against the other segment. BEAMS ONLY —
+// the game's laser job (JNHOCNOANFC::Execute, RVA 0x16468B0) is a Euclidean
+// point-to-segment test, so a Chebyshev answer over-covers a beam diagonally by up
+// to sqrt(2) and disagrees with SpacetimeCore, which already measures beams this
+// way (SegmentSeparation). Ordinary shots keep SegSegCheb: their job IS per-axis.
+float SegSegEuclid(Vec2 a, Vec2 b, Vec2 p, Vec2 q)
+{
+    if (SegmentsIntersect(a, b, p, q)) return 0.f;
+    float d = PointSegDistEuclid(a, p, q);
+    d = std::min(d, PointSegDistEuclid(b, p, q));
+    d = std::min(d, PointSegDistEuclid(p, a, b));
+    d = std::min(d, PointSegDistEuclid(q, a, b));
+    return d;
+}
+
 float PositionUncertainty(const MapInput& in)
 {
     return std::clamp(in.settings.positionUncertainty, 0.f, 0.35f);
@@ -137,6 +156,42 @@ float LanePlayerHalf(const MapInput& in)
 float ZonePlayerHalf(const MapInput& in)
 {
     return kUPlayerHalf + PositionUncertainty(in);
+}
+
+// ── ONE CONTACT RULE (Tactician S3.4, contact-model-study.md) ───────────────
+// Under tactician every spatial projectile test below measures against
+// Contact::PlanHalf — the game's own proven box (T clamped, times the LIVE
+// collisionRadiusMultiplier this map was built under) plus one fixed 0.10-tile
+// cross-track comfort — and the player is a point, because the binary says it is.
+// Under classic every formula is exactly what it was: T x the udodgeHitScale
+// belief, plus whatever player half the caller folds in.
+bool Tactician(const MapInput& in)
+{
+    return in.map && in.map->planner == Contact::Policy::Tactician;
+}
+
+// The shot's own half for a SPATIAL test (no player term).
+//
+// BEAMS (Slice 4a): the laser job applies NO multiplier of any kind — not the
+// player's live collisionRadiusMultiplier and not the udodgeHitScale belief that
+// mirrors it (Contact::TruthHalfBeam). Both policies therefore measure a beam
+// against T itself; scaling it by the owner's 0.65 made every laser 35 % narrower
+// than the one that actually hits.
+float ShotHalf(const MapInput& in, const LaneThreat& L, float hitScale)
+{
+    if (L.beam) {
+        return Tactician(in) ? Contact::PlanHalfBeam(L.hitHalf)
+                             : std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf);
+    }
+    if (Tactician(in)) return Contact::PlanHalf(L.hitHalf, in.map->targetScale);
+    return std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * hitScale;
+}
+
+// The player term folded into projectile tests: none under tactician (the game's
+// player IS a point, and the comfort already lives in the box).
+float LaneHalfFor(const MapInput& in)
+{
+    return Tactician(in) ? 0.f : LanePlayerHalf(in);
 }
 
 } // namespace
@@ -159,7 +214,7 @@ bool PointClear(const MapInput& in, Vec2 pos)
     const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
-        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale;
+        const float half = ShotHalf(in, L, hitScale);
         if (LaneDistCheb(L, pos) <= half) return false;
     }
     for (int i = 0; i < in.map->zoneCount; ++i) {
@@ -178,7 +233,7 @@ float PointClearance(const MapInput& in, Vec2 pos)
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
         if (L.instantCount <= 0) continue;
-        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale;
+        const float half = ShotHalf(in, L, hitScale);
         best = std::min(best, LaneDistCheb(L, pos) - half);
     }
     for (int i = 0; i < in.map->zoneCount; ++i) {
@@ -281,13 +336,13 @@ float PointSafety(const MapInput& in, Vec2 pos)
 {
     if (!in.map) return 0.f;
     const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
-    const float laneHalf = LanePlayerHalf(in);
+    const float laneHalf = LaneHalfFor(in);
     const float zoneHalf = ZonePlayerHalf(in);
     float best = kHugeClearance;
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
         if (L.instantCount <= 0) continue;
-        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + laneHalf;
+        const float half = ShotHalf(in, L, hitScale) + laneHalf;
         // Exact pruning: a lane can only lower `best` if its distance is below
         // best + half; the slack keeps the float subtraction below on the same
         // side of `best` as the unpruned loop (see kPruneSlackTiles).
@@ -318,14 +373,14 @@ float SegmentSafety(const MapInput& in, Vec2 a, Vec2 b)
 {
     if (!in.map) return 0.f;
     const float hitScale = std::clamp(in.settings.hitScale, 0.25f, 2.5f);
-    const float laneHalf = LanePlayerHalf(in);
+    const float laneHalf = LaneHalfFor(in);
     const float zoneHalf = ZonePlayerHalf(in);
     float best = kHugeClearance;
     for (int i = 0; i < in.map->laneCount; ++i) {
         const LaneThreat& L = in.map->lanes[i];
         const int n = L.instantCount;   // PAINT span, same as LaneDistCheb
         if (n <= 0) continue;
-        const float half = std::clamp(L.hitHalf, 0.05f, 2.5f) * hitScale + laneHalf;
+        const float half = ShotHalf(in, L, hitScale) + laneHalf;
         float dCheb;
         if (n == 1) {
             // Point lane: min Cheb from the single bullet point to the swept segment.
@@ -488,6 +543,100 @@ void SampleLane(const LaneThreat& L, Vec2* outPos)
     SampleLaneTimes(L, 0.f, kSamples, outPos);
 }
 
+// ── EXACT BROAD PHASE for the lane queries (2026-09-18) ─────────────────────
+// Measured on the dense boss scenarios with a ring search running: EdgeClear was
+// 87-89 % of the pathfinder's time, every relaxed edge marched against all 38-39
+// lanes in the cull radius, and 97 % of those lane visits were lanes nowhere near
+// the edge. Ctx::reach lets a query drop such a lane with four compares.
+//
+// WHY A SKIP CAN NEVER CHANGE AN ANSWER. Every narrow-phase test below has the form
+//     ChebyshevDistance(lane point, player point) <= half + arrPad
+// (MinChebOnSegment over a relative segment, SegSegCheb against the traced path, or
+// Cheb at one instant). Every lane point it can read is a stored sample or a convex
+// combination of two stored samples, so it lies in the box of the samples; every
+// player point lies on the queried segment, so it lies in the box of its two ends.
+// If those boxes are further apart than half + arrPad on either axis, that axis
+// alone keeps every such distance above half + arrPad: no test can fire.
+//
+// ROUNDING. The narrow phase works in float: an interpolated point can land a few
+// ulp outside its box and the closed-form minimum adds a few more. The slack is an
+// absolute kBroadSlackTiles (the same 0.01 tile the PointSafety pruning above uses)
+// plus kBroadSlackRel of the largest coordinate involved, taken on the lane side at
+// Build and on the player side per query. kBroadSlackRel is ~33 ulp; the narrow
+// phase accumulates under 15, so the bound holds at any finite coordinate, not only
+// at realm scale (2048 tiles, where 33 ulp is 0.008 tile).
+//
+// THE ONE TEST THAT IS NOT A DISTANCE. SegSegCheb (the traced-path floor, reached by
+// beams, short traces and windows that run past the trusted end) returns 0 when its
+// crossing test fires, and that test is SIGN arithmetic on cross products, not a
+// distance. In exact arithmetic two segments that cross have overlapping boxes; in
+// float the test can fire on four nearly collinear points of two segments that are
+// well apart (measured: an edge on a beam's own line, 0.89 tile past its end, contact
+// size 0.84, read as a crossing). That answer is a false contact, but it is the
+// answer this code gives, and this broad phase changes no answer. So a lane out of
+// reach is dropped outright only where the crossing test cannot be reached (not a
+// beam, window inside the trusted prefix); where it can, the lane still goes through
+// TracedPathClear with `distancesClear` set, which keeps the crossing test and skips only
+// the distances the boxes have already settled.
+//
+// A skip only ever says "this distance cannot be within the contact size", so a wrong
+// margin can only show up as a missed contact. udodge_temporal_broadphase_tests runs
+// every query against the plain all-lanes code and requires identical answers.
+constexpr float kBroadSlackTiles = 0.01f;
+constexpr float kBroadSlackRel   = 4.0e-6f;
+
+// The box nothing lies outside of: a lane or a query carrying it is never skipped.
+static inline Ctx::Box EverywhereBox()
+{
+    const float inf = std::numeric_limits<float>::infinity();
+    return { -inf, -inf, inf, inf };
+}
+
+// Box of every position the queries can read for lane `li`, grown by its contact
+// size and the slack. Call once the lane's samples, half and arrPad are final.
+static void SetReach(Ctx& c, int li)
+{
+    float minX = c.pos[li][0].x, maxX = minX;
+    float minY = c.pos[li][0].y, maxY = minY;
+    float sum = 0.f, big = 0.f;
+    const auto take = [&](Vec2 p) {
+        minX = std::min(minX, p.x); maxX = std::max(maxX, p.x);
+        minY = std::min(minY, p.y); maxY = std::max(maxY, p.y);
+        sum += p.x + p.y;                                   // NaN or infinity anywhere poisons it
+        big = std::max(big, Cheb(p.x, p.y));
+    };
+    for (int k = 0; k < kSamples; ++k) take(c.pos[li][k]);
+    if (c.sub[li])
+        for (int k = 0; k < kUTemporalSteps; ++k) take(c.mid[li][k]);
+    // The along-track stretch moves a sampled point by at most speed x alongMs,
+    // so the box has to hold it too or the broad phase could drop a real contact.
+    const float grow = c.half[li] + c.arrPad[li] + c.speed[li] * c.alongMs +
+                       kBroadSlackTiles + kBroadSlackRel * big;
+    if (!std::isfinite(sum) || !std::isfinite(grow)) {
+        c.reach[li] = EverywhereBox();                      // never skipped: the narrow phase decides
+        return;
+    }
+    c.reach[li] = { minX - grow, minY - grow, maxX + grow, maxY + grow };
+}
+
+// Box of a player path that stays on the segment a→b, grown by the player-side
+// rounding slack. Non-finite input gives the infinite box, which skips nothing.
+static inline Ctx::Box PlayerBox(Vec2 a, Vec2 b)
+{
+    if (!std::isfinite(a.x + a.y + b.x + b.y)) return EverywhereBox();
+    const float slack = kBroadSlackRel * std::max(Cheb(a.x, a.y), Cheb(b.x, b.y));
+    return { std::min(a.x, b.x) - slack, std::min(a.y, b.y) - slack,
+             std::max(a.x, b.x) + slack, std::max(a.y, b.y) + slack };
+}
+
+// True when the player's box lies wholly outside the lane's reach. Written so that
+// any NaN compares false, i.e. "not outside".
+static inline bool OutOfReach(const Ctx::Box& lane, const Ctx::Box& player)
+{
+    return player.minX > lane.maxX || player.maxX < lane.minX ||
+           player.minY > lane.maxY || player.maxY < lane.minY;
+}
+
 // Build the temporal context: predict every lane's future positions once, and
 // cull lanes whose whole traced path stays > cullTiles from cullCenter over the
 // horizon (far / receding shots contribute nothing to the search region).
@@ -496,35 +645,78 @@ void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2
 {
     out.count = 0;
     const float scale = std::clamp(hitScale, 0.25f, 2.5f);
+    // ONE CONTACT RULE (S3.4). Under tactician the box is the game's own (the map's
+    // live hitbox multiplier) plus cross-track comfort, the player is a point, and
+    // the timing uncertainty becomes an along-track stretch in the queries instead
+    // of an isotropic pad. hitScale / positionUncertainty / playerHalf are ignored.
+    const bool tactician = map.planner == Contact::Policy::Tactician;
+    out.alongMs = tactician ? Contact::kAlongPadMs : 0.f;
     for (int i = 0; i < map.laneCount && out.count < kMaxProjectiles; ++i) {
         const LaneThreat& L = map.lanes[i];
         if (L.pointCount <= 0) continue;
         // Cull against the SOURCE polyline, not isolated march samples. A fast
         // shot can cross the entire search region between two sampled endpoints.
-        float minD = Len(Sub(L.points[0], cullCenter));
-        float maxSpeed = 0.f;
-        for (int j = 1; j < L.pointCount; ++j) {
-            minD = std::min(minD, PointSegDistEuclid(cullCenter, L.points[j - 1], L.points[j]));
-            const float dt = L.pointTimesMs[j] - L.pointTimesMs[j - 1];
-            if (dt > 1e-3f)
-                maxSpeed = std::max(maxSpeed, Len(Sub(L.points[j], L.points[j - 1])) / dt);
+        //
+        // Item 4 (navigation finish plan): this loop runs on EVERY Build() call —
+        // three call sites, every game-thread frame (RevalidateAndSolve
+        // unconditionally, Solve conditionally, plus the worker's own pathfinder
+        // pass) — over EVERY lane, including the ones about to be culled. A
+        // runtime-VERIFIED constant-velocity lane (hasLinearMotion, set by
+        // UDodgeLaneMotion.h's DetectLinear — the overwhelmingly common case: boss
+        // rings, aimed volleys and every straight shot) is EXACTLY collinear, so its
+        // minimum distance to cullCenter over the whole traced polyline is exactly
+        // the point-to-segment distance between its first and last traced point —
+        // no need to walk every intermediate sample. This is not an approximation:
+        // for a straight line the per-point scan below and this closed form agree
+        // exactly (the per-point version is actually a discretization of the same
+        // continuous segment). Curved/beam lanes are unaffected: they fall through
+        // to the original per-point scan, unchanged.
+        float minD, maxSpeed;
+        if (L.hasLinearMotion && !L.beam) {
+            minD = PointSegDistEuclid(cullCenter, L.points[0], L.points[L.pointCount - 1]);
+            maxSpeed = Len(L.linearVelocity);
+        } else {
+            minD = Len(Sub(L.points[0], cullCenter));
+            maxSpeed = 0.f;
+            for (int j = 1; j < L.pointCount; ++j) {
+                minD = std::min(minD, PointSegDistEuclid(cullCenter, L.points[j - 1], L.points[j]));
+                const float dt = L.pointTimesMs[j] - L.pointTimesMs[j - 1];
+                if (dt > 1e-3f)
+                    maxSpeed = std::max(maxSpeed, Len(Sub(L.points[j], L.points[j - 1])) / dt);
+            }
         }
-        const float hitHalf = std::clamp(L.hitHalf, 0.05f, 2.5f) * scale + std::max(playerHalf, 0.f) +
-                              std::clamp(positionUncertainty, 0.f, 0.35f);
-        const float timingPad = kUArrivalMargin + std::min(maxSpeed * kUPredErrMs, kUPredPadMaxTiles);
-        // Euclidean broad phase encloses the complete Chebyshev hit square.
-        if (minD > cullTiles + 1.414214f * (hitHalf + timingPad)) continue;
+        // BEAMS (Slice 4a): T unscaled under BOTH policies — the laser job carries no
+        // multiplier slot at all, so neither hitScale nor the live collider value may
+        // shrink it. The classic player/uncertainty pads stay, since they are that
+        // policy's comfort, not a belief about the shot's size.
+        const float hitHalf = L.beam
+            ? (tactician ? Contact::PlanHalfBeam(L.hitHalf)
+                         : std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) + std::max(playerHalf, 0.f) +
+                           std::clamp(positionUncertainty, 0.f, 0.35f))
+            : (tactician
+                ? Contact::PlanHalf(L.hitHalf, map.targetScale)
+                : std::clamp(L.hitHalf, 0.05f, kUMaxProjectileHalf) * scale + std::max(playerHalf, 0.f) +
+                  std::clamp(positionUncertainty, 0.f, 0.35f));
+        const float timingPad = tactician
+            ? 0.f
+            : kUArrivalMargin + std::min(maxSpeed * kUPredErrMs, kUPredPadMaxTiles);
+        // Euclidean broad phase encloses the complete Chebyshev hit square. The
+        // along-track stretch reaches one alongMs of travel further each way.
+        if (minD > cullTiles + 1.414214f * (hitHalf + timingPad + maxSpeed * out.alongMs)) continue;
         if (L.beam && L.pointCount >= 2) {
             const int idx = out.count++;
             out.beam[idx] = true;
             out.pos[idx][0] = L.points[0];
             for (int k = 1; k < kSamples; ++k) out.pos[idx][k] = L.points[L.pointCount - 1];
             out.half[idx] = hitHalf;
-            out.arrPad[idx] = kUArrivalMargin;
+            // A beam never had the speed term; under tactician its comfort is
+            // already inside PlanHalf, so there is nothing left to add.
+            out.arrPad[idx] = tactician ? 0.f : kUArrivalMargin;
             out.speed[idx] = 0.f;
             out.sub[idx] = false;
             out.trust[idx] = kUTemporalSteps;
             out.expiresMs[idx] = L.remainingLifeMs >= 0.f ? L.remainingLifeMs + kUPredErrMs : 0.f;
+            SetReach(out, idx);
             continue;
         }
         Vec2 samples[kSamples];
@@ -591,6 +783,7 @@ void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2
             const int t = static_cast<int>(std::floor(tracedMs / kUTemporalStepMs));
             out.trust[idx] = std::clamp(t, 0, kUTemporalSteps);
         }
+        SetReach(out, idx);   // after arrPad has taken the curve error
     }
 }
 
@@ -611,15 +804,36 @@ void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2
 // Cost is bounded and paid by truncated lanes only: (kUTemporalSteps − trust)
 // query steps × trust traced segments ≤ 16 SegSegCheb per lane per query, and a
 // fully-traced lane pays a single int compare.
-static bool TracedPathClear(const Ctx& c, int li, Vec2 a, Vec2 b, float half)
+//
+// `distancesClear` (broad phase, see SetReach): the caller has shown that every DISTANCE
+// between this lane and the segment a→b exceeds `half`. SegSegCheb is 0 when its
+// crossing test fires and one of those distances otherwise, so only the crossing
+// test is left to evaluate; it is sign arithmetic, the boxes say nothing about what
+// it computes, and it is never skipped.
+//
+// METRIC (Slice 4a). A BEAM is measured in EUCLIDEAN distance because the game's
+// laser job is (JNHOCNOANFC::Execute: pointToSegmentDist^2 <= T^2); everything else
+// keeps Chebyshev because the box job is per-axis. The broad phase is unaffected:
+// Euclidean distance is never smaller than Chebyshev, so a `distancesClear` proof
+// that every Chebyshev distance exceeds `half` still proves it for Euclidean.
+static bool TracedPathClear(const Ctx& c, int li, Vec2 a, Vec2 b, float half, bool distancesClear = false)
 {
     const int n = c.trust[li];
+    const bool beam = c.beam[li];
     if (n <= 0) {   // nothing traced at all (single-point lane): the live disc
+        if (distancesClear) return true;   // a pure distance, already known to exceed half
         return MinChebOnSegment(c.pos[li][0].x - a.x, c.pos[li][0].y - a.y,
                                 c.pos[li][0].x - b.x, c.pos[li][0].y - b.y) > half;
     }
-    for (int j = 0; j < n; ++j)
-        if (SegSegCheb(a, b, c.pos[li][j], c.pos[li][j + 1]) <= half) return false;
+    for (int j = 0; j < n; ++j) {
+        if (distancesClear) {
+            if (SegmentsIntersect(a, b, c.pos[li][j], c.pos[li][j + 1]) && 0.f <= half) return false;
+            continue;
+        }
+        const float d = beam ? SegSegEuclid(a, b, c.pos[li][j], c.pos[li][j + 1])
+                             : SegSegCheb(a, b, c.pos[li][j], c.pos[li][j + 1]);
+        if (d <= half) return false;
+    }
     return true;
 }
 
@@ -677,6 +891,20 @@ static inline Vec2 BulletInStep(const Ctx& c, int li, int k, float f)
     const Vec2 a = c.pos[li][k];
     const Vec2 b = c.pos[li][k + 1];
     return Add(a, Mul(Sub(b, a), f));
+}
+
+// ALONG-TRACK TIMING PAD (Tactician S3.4). Zero under classic, and zero for a
+// shot that is not moving. The shot may be up to Ctx::alongMs early or late along
+// its own path, so its swept sub-segment is stretched by (velocity x alongMs) at
+// BOTH ends — never sideways, which is what the old isotropic speed term did (it
+// widened an 8 tiles/s lane by 0.28 tile in every direction, closing the very gaps
+// the reflex threads; see contact-model-study.md section 3). The velocity comes
+// from the sub-segment itself, so a curve is followed piece by piece.
+static inline Vec2 AlongPad(const Ctx& c, Vec2 bPrev, Vec2 bCur, float dtMs)
+{
+    if (c.alongMs <= 0.f || !(dtMs > 1e-4f)) return Vec2{};
+    const float k = c.alongMs / dtMs;
+    return Vec2{ (bCur.x - bPrev.x) * k, (bCur.y - bPrev.y) * k };
 }
 
 // TIME-parameterized clearance test (solver query). The player walks STRAIGHT
@@ -744,6 +972,30 @@ float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P, float scanUnt
         return (t >= tArrive) ? P : Add(player, Mul(dir, v * t));
     };
 
+    // BROAD PHASE (see SetReach). The walk-then-hold path stays on the segment
+    // player→P for any speed >= 0 (it moves toward P and stops there; a speed at or
+    // under the 1e-6 arrival threshold drifts at most 0.0008 tile past P inside the
+    // horizon, which kBroadSlackTiles covers). A negative or NaN speed walks off the
+    // segment, so that case filters nothing.
+    //   • A lane out of reach that is fully traced and not a beam only ever runs
+    //     distance tests here, so it is dropped from the march.
+    //   • A beam or a short trace out of reach can still reach TracedPathClear's
+    //     crossing test; it stays in the list flagged kOutOfReachBit, which skips its distance
+    //     tests only.
+    // A dropped test could not have fired at any step, so the earliest violating step,
+    // and with it the returned time, is unchanged.
+    constexpr uint16_t kOutOfReachBit = 0x8000;
+    static_assert(kMaxProjectiles <= 0x8000, "active-lane list keeps a flag in bit 15");
+    uint16_t active[kMaxProjectiles];
+    int      activeCount = 0;
+    const Ctx::Box walk = (v >= 0.f) ? PlayerBox(player, P) : EverywhereBox();
+    for (int li = 0; li < c.count; ++li) {
+        const bool outOfReach = OutOfReach(c.reach[li], walk);
+        if (outOfReach && !c.beam[li] && c.trust[li] >= kUTemporalSteps) continue;
+        active[activeCount++] = static_cast<uint16_t>(li | (outOfReach ? kOutOfReachBit : 0));
+    }
+    if (activeCount == 0) return kNoDanger;
+
     for (int k = 0; k < kUTemporalSteps; ++k) {
         const float t0 = static_cast<float>(k) * kUTemporalStepMs;
         if (t0 >= tEnd) break;                       // past the scanned window
@@ -768,12 +1020,14 @@ float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P, float scanUnt
             ps[i] = playerAt(ts[i]);
         }
 
-        for (int li = 0; li < c.count; ++li) {
+        for (int ai = 0; ai < activeCount; ++ai) {
+            const int  li  = active[ai] & (kOutOfReachBit - 1);
+            const bool outOfReach = (active[ai] & kOutOfReachBit) != 0;
             const float expiry = ExpiryMs(c, li);
             if (t0 >= expiry) continue;
             if (c.beam[li]) {
                 const float end = std::min({t1, tEnd, expiry});
-                if (!TracedPathClear(c, li, playerAt(t0), playerAt(end), c.half[li] + c.arrPad[li])) return t0;
+                if (!TracedPathClear(c, li, playerAt(t0), playerAt(end), c.half[li] + c.arrPad[li], outOfReach)) return t0;
                 continue;
             }
             const int trust = c.trust[li];
@@ -789,23 +1043,26 @@ float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P, float scanUnt
                 Vec2 pa = ps[0];
                 const float tailEnd = std::min(tEnd, expiry);
                 if (tArrive > t0 && tArrive < tailEnd) {
-                    if (!TracedPathClear(c, li, pa, P, half)) return t0;
+                    if (!TracedPathClear(c, li, pa, P, half, outOfReach)) return t0;
                     pa = P;
                 }
-                if (!TracedPathClear(c, li, pa, playerAt(tailEnd), half)) return t0;
+                if (!TracedPathClear(c, li, pa, playerAt(tailEnd), half, outOfReach)) return t0;
                 continue;
             }
+            if (outOfReach) continue;   // the march below is distance tests only
             const bool useMid = c.sub[li];
-            Vec2 pPrev = ps[0];
-            Vec2 bPrev = BulletInStep(c, li, k, 0.f);
+            Vec2  pPrev = ps[0];
+            Vec2  bPrev = BulletInStep(c, li, k, 0.f);
+            float tPrev = ts[0];
             for (int i = 1; i < n; ++i) {
                 if (isMid[i] && !useMid) continue;   // slow lane: one chord across the step
                 const float curTime = std::min(ts[i], expiry);
                 const Vec2 pCur = curTime == ts[i] ? ps[i] : playerAt(curTime);
                 const Vec2 bCur = BulletInStep(c, li, k, (curTime - t0) / kUTemporalStepMs);
-                if (MinChebOnSegment(bPrev.x - pPrev.x, bPrev.y - pPrev.y,
-                                     bCur.x  - pCur.x,  bCur.y  - pCur.y) <= half) return t0;
-                pPrev = pCur; bPrev = bCur;
+                const Vec2 e = AlongPad(c, bPrev, bCur, curTime - tPrev);
+                if (MinChebOnSegment(bPrev.x - pPrev.x - e.x, bPrev.y - pPrev.y - e.y,
+                                     bCur.x  - pCur.x  + e.x, bCur.y  - pCur.y  + e.y) <= half) return t0;
+                pPrev = pCur; bPrev = bCur; tPrev = curTime;
                 if (curTime >= expiry) break;
             }
         }
@@ -875,7 +1132,13 @@ float EvidenceHorizonMs(const Ctx& c)
 // their additional half-step samples.
 bool ArrivalClear(const Ctx& c, Vec2 B, float tA, float tB)
 {
+    // BROAD PHASE (see SetReach). The player is the single point B, and the crossing
+    // test cannot fire on a point: both cross products taken from B→B are exactly
+    // 0 for finite input, never strictly opposite. So every test here is a distance
+    // and a lane out of reach is dropped outright.
+    const Ctx::Box stand = PlayerBox(B, B);
     for (int li = 0; li < c.count; ++li) {
+        if (OutOfReach(c.reach[li], stand)) continue;
         const float laneEnd = std::min(tB, ExpiryMs(c, li));
         if (tA >= ExpiryMs(c, li)) continue;
         const float half = c.half[li] + c.arrPad[li];   // speed-scaled (kUPredErrMs)
@@ -902,8 +1165,9 @@ bool ArrivalClear(const Ctx& c, Vec2 B, float tA, float tB)
             float tn = (std::floor(t / dt) + 1.f) * dt;
             if (tn > tEnd || tn <= t) tn = tEnd;
             const Vec2 cur = BulletPosFine(c, li, tn);
-            if (MinChebOnSegment(prev.x - B.x, prev.y - B.y,
-                                 cur.x  - B.x, cur.y  - B.y) <= half) return false;
+            const Vec2 e = AlongPad(c, prev, cur, tn - t);
+            if (MinChebOnSegment(prev.x - B.x - e.x, prev.y - B.y - e.y,
+                                 cur.x  - B.x + e.x, cur.y  - B.y + e.y) <= half) return false;
             prev   = cur;
             t      = tn;
             tested = true;
@@ -929,15 +1193,32 @@ bool EdgeClear(const Ctx& c, Vec2 A, Vec2 B, float tA, float tB)
         return Add(A, Mul(Sub(B, A), f));
     };
 
+    // playerAt clamps to the segment A→B, but only for a finite window: an infinite tA
+    // makes it return NaN, and the narrow phase does not read NaN one way (the
+    // untraced-lane floor in TracedPathClear blocks on it, every other test passes
+    // it). So a non-finite window is not filtered at all.
+    const Ctx::Box edge = (std::isfinite(tA) && std::isfinite(tB - tA)) ? PlayerBox(A, B) : EverywhereBox();
     for (int li = 0; li < c.count; ++li) {
+        // `outOfReach`: every distance test between this lane and this edge is settled
+        // (clear). What is left is TracedPathClear's crossing test, reached by a beam and
+        // by a window running past the trusted end; any other such lane is done.
+        // (Not named `far`: that is a macro in the Windows headers.)
+        const bool outOfReach = OutOfReach(c.reach[li], edge);
         const float laneEnd = std::min(tB, ExpiryMs(c, li));
         if (tA >= ExpiryMs(c, li)) continue;
         const float half = c.half[li] + c.arrPad[li];
         if (c.beam[li]) {
-            if (!TracedPathClear(c, li, A, playerAt(laneEnd), half)) return false;
+            if (!TracedPathClear(c, li, A, playerAt(laneEnd), half, outOfReach)) return false;
             continue;
         }
         const float tTrust = static_cast<float>(c.trust[li]) * kUTemporalStepMs;
+        if (outOfReach) {
+            if (laneEnd > tTrust) {
+                const Vec2 u0 = playerAt(std::max(tA, tTrust));
+                if (!TracedPathClear(c, li, u0, playerAt(laneEnd), half, true)) return false;
+            }
+            continue;
+        }
         const float trustedEnd = std::min(laneEnd, tTrust);
 
         float t = std::max(tA, 0.f);
@@ -950,8 +1231,9 @@ bool EdgeClear(const Ctx& c, Vec2 A, Vec2 B, float tA, float tB)
             if (tn > tEnd || tn <= t) tn = tEnd;
             const Vec2 pCur = playerAt(tn);
             const Vec2 bCur = BulletPosFine(c, li, tn);
-            if (MinChebOnSegment(bPrev.x - pPrev.x, bPrev.y - pPrev.y,
-                                 bCur.x  - pCur.x,  bCur.y  - pCur.y) <= half) return false;
+            const Vec2 e = AlongPad(c, bPrev, bCur, tn - t);
+            if (MinChebOnSegment(bPrev.x - pPrev.x - e.x, bPrev.y - pPrev.y - e.y,
+                                 bCur.x  - pCur.x  + e.x, bCur.y  - pCur.y  + e.y) <= half) return false;
             pPrev = pCur;
             bPrev = bCur;
             t = tn;

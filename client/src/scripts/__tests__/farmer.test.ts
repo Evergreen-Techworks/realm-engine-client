@@ -6,10 +6,21 @@ import { StatType } from '../../constants/StatType.js';
 const runnerSource = readFileSync(new URL('../../../script-packages/farmer/oryx-runner.mjs', import.meta.url), 'utf8')
   .replace('export default class OryxRunner', 'return class OryxRunner');
 const OryxRunner = new Function(runnerSource)();
-const source = readFileSync(new URL('../../../script-packages/farmer/index.mjs', import.meta.url), 'utf8')
+const rawSource = readFileSync(new URL('../../../script-packages/farmer/index.mjs', import.meta.url), 'utf8');
+const source = rawSource
   .replace("import { RealmEngine } from '@realmengine/sdk';", '')
   .replace("import OryxRunner from './oryx-runner.mjs';", '')
   .replace('export default class Farmer', 'return class Farmer');
+// The status-context helpers are plain top-level functions declared
+// before the class, so they can be pulled out and unit-tested standalone —
+// same trick as OryxRunner above, just stopping before the class body instead
+// of renaming its export.
+const contextHelpersSource = rawSource.split('export default class Farmer')[0]
+  .replace("import { RealmEngine } from '@realmengine/sdk';", '')
+  .replace("import OryxRunner from './oryx-runner.mjs';", '');
+const { formatStatusContextSuffix, buildStatusContextSuffix, normalizeStatusForChangeCheck } = new Function(
+  `${contextHelpersSource}\nreturn { formatStatusContextSuffix, buildStatusContextSuffix, normalizeStatusForChangeCheck };`,
+)();
 function fixture() {
   let enemies: any[] = [];
   const quest = { objectId: 10, name: 'Boss', position: { x: 6, y: 0 }, hp: 100, maxHp: 100, isTargetable: true };
@@ -31,6 +42,287 @@ function fixture() {
   return { farmer, sdk, quest, setEnemies: (value: any[]) => { enemies = value; } };
 }
 afterEach(() => vi.useRealTimers());
+it('does not chase unrelated mobs during a Realm event boss phase', () => {
+  const { farmer, sdk, quest, setEnemies } = fixture();
+  sdk.self.getLevel = () => 20;
+  Object.assign(quest, { isEventBoss: true, objectType: 0x1234, isTargetable: false });
+  const unrelated = { ...quest, objectId: 22, objectType: 0x2345, position: { x: 15, y: 0 }, isTargetable: true };
+  setEnemies([quest, unrelated]);
+  expect(farmer.handleBossEncounter(quest, 10000)).toBe(true);
+  expect(sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+  expect(sdk.dodge.lockEnemy).not.toHaveBeenCalled();
+  expect(sdk.ui.status).toHaveBeenLastCalledWith('Boss: waiting for adds or vulnerable boss');
+  quest.isTargetable = true;
+  expect(farmer.handleBossEncounter(quest, 10200)).toBe(true);
+  expect(sdk.dodge.lockEnemy).toHaveBeenLastCalledWith(quest.objectId);
+  expect(sdk.combat.setAutoFire).toHaveBeenLastCalledWith(true);
+});
+it('unrelated Realm mobs do not prevent an undamageable encounter timing out', () => {
+  const { farmer, sdk, quest, setEnemies } = fixture();
+  sdk.self.getLevel = () => 20;
+  Object.assign(quest, { isEventBoss: true, objectType: 0x1234, isTargetable: false });
+  setEnemies([quest, { ...quest, objectId: 22, isTargetable: true }]);
+  expect(farmer.handleBossEncounter(quest, 10000)).toBe(true);
+  expect(farmer.handleBossEncounter(quest, 41000)).toBe(false);
+  expect(farmer.bossEncounter).toBeNull();
+});
+it('does not repeatedly reacquire a bag whose item actions failed', () => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const { farmer, sdk } = fixture();
+  const bag = { objectId: 50, rarity: 'blue', position: { x: 0, y: 0 }, items: [{ objectType: 100, slotIndex: 2 }] };
+  sdk.loot.getNearbyBags.mockReturnValue([bag]);
+  sdk.loot.getBags = () => [bag];
+  sdk.loot.useFromBag.mockReturnValue(false);
+  expect(farmer.handleLoot(10000)).toBe(true);
+  vi.setSystemTime(11000);
+  expect(farmer.handleLoot(11000)).toBe(false);
+  for (let now = 11200; now < 20000; now += 200) {
+    vi.setSystemTime(now);
+    expect(farmer.handleLoot(now)).toBe(false);
+  }
+  vi.setSystemTime(42000);
+  expect(farmer.handleLoot(42000)).toBe(true);
+});
+it('keeps the selected add while approaching instead of switching to the nearest each loop', () => {
+  const { farmer, sdk, quest } = fixture();
+  quest.position.x = 0;
+  const first = { ...quest, objectId: 21, position: { x: 10, y: 0 } };
+  const second = { ...quest, objectId: 22, position: { x: -11, y: 0 } };
+  farmer.handleBossAdds([first, second], quest, 'Boss');
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(first.position);
+  second.position.x = -9;
+  farmer.handleBossAdds([first, second], quest, 'Boss');
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(first.position);
+  first.hp = 0;
+  farmer.handleBossAdds([first, second], quest, 'Boss');
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(second.position);
+});
+it('does not switch a live combat lock just because the preferred mob changes', () => {
+  const { farmer, sdk, quest, setEnemies } = fixture();
+  const other = { ...quest, objectId: 20 };
+  sdk.world.objects.getById = (objectId: number) => [quest, other].find(enemy => enemy.objectId === objectId);
+  setEnemies([quest, other]);
+  expect(farmer.updateTarget(10).objectId).toBe(10);
+  expect(farmer.updateTarget(20).objectId).toBe(10);
+  quest.hp = 0;
+  expect(farmer.updateTarget(20).objectId).toBe(20);
+});
+it('releases a committed add on death packets and clears commitment on map reset', () => {
+  const { farmer, sdk, quest } = fixture();
+  const first = { ...quest, objectId: 21, position: { x: 10, y: 0 } };
+  const second = { ...quest, objectId: 22, position: { x: 11, y: 0 } };
+  farmer.handleBossAdds([first, second], quest, 'Boss');
+  sdk.world.objects.isDead = (objectId: number) => objectId === 21;
+  farmer.handleBossAdds([first, second], quest, 'Boss');
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(second.position);
+  farmer.lootRetryAfter.set(50, Date.now() + 30000);
+  farmer.resetMap('Other');
+  expect(farmer.addGoal).toBeNull();
+  expect(farmer.lootRetryAfter.size).toBe(0);
+});
+it.each([0x091b, 0x091c, 0x55B0, 0x0928, 0x092d, 0x5598, 0x559A])('skips Realm encounter type %i without selecting its adds', (objectType) => {
+  const { farmer, sdk, quest, setEnemies } = fixture();
+  sdk.self.getLevel = () => 20;
+  Object.assign(quest, { objectType, isEventBoss: true });
+  const otherBoss = { ...quest, objectId: 30, objectType: 0x1234, position: { x: 20, y: 0 } };
+  sdk.world.objects.getAll = () => [quest, otherBoss];
+  setEnemies([quest]);
+  expect(farmer.getEventGoal(10000)).toBe(otherBoss);
+  expect(farmer.getQuestGoal(10000)).toBeNull();
+  expect(farmer.handleBossEncounter(quest, 10000)).toBe(false);
+  expect(farmer.updateTarget(quest.objectId)).toBeNull();
+  expect(sdk.dodge.lockEnemy).not.toHaveBeenCalled();
+});
+it.each([0x091d, 0x091e, 0x55B1, 0x55B2, 0x0929, 0x5599, 0x092a, 0x092b, 0x092c, 0x559B, 0x559C, 0x559D])('ignores skipped encounter add type %i', (objectType) => {
+  const { farmer, sdk, quest, setEnemies } = fixture();
+  sdk.self.getLevel = () => 20;
+  Object.assign(quest, { objectType });
+  setEnemies([quest]);
+  expect(farmer.updateTarget()).toBeNull();
+});
+it('releases a previously selected skipped encounter and picks another boss', () => {
+  const { farmer, sdk, quest } = fixture();
+  sdk.self.getLevel = () => 20;
+  Object.assign(quest, { objectType: 0x55B0, isEventBoss: true });
+  farmer.eventGoal = quest;
+  farmer.questGoal = quest;
+  farmer.bossEncounter = { ...quest };
+  farmer.lockId = quest.objectId;
+  const otherBoss = { ...quest, objectId: 30, objectType: 0x1234 };
+  sdk.world.objects.getAll = () => [quest, otherBoss];
+  expect(farmer.getEventGoal(10000)).toBe(otherBoss);
+  expect(farmer.bossEncounter).toBeNull();
+  expect(farmer.lockId).toBe(0);
+  expect(farmer.getQuestGoal(10000)).toBeNull();
+  expect(sdk.dodge.clearWaypoint).toHaveBeenCalled();
+});
+it('does not pull skipped adds into an unrelated boss encounter', () => {
+  const { farmer, sdk, quest } = fixture();
+  sdk.self.getLevel = () => 20;
+  const ignoredAdd = { ...quest, objectId: 20, objectType: 0x55B1 };
+  farmer.handleBossAdds([ignoredAdd], quest, 'Other boss');
+  expect(sdk.dodge.lockEnemy).not.toHaveBeenCalled();
+  expect(sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+});
+it('abandons only the matching unreachable travel goal and does not immediately select it again', () => {
+  const { farmer, sdk, quest } = fixture();
+  sdk.dodge.navigateToPosition.mockReturnValue(true);
+  farmer.questGoal = quest;
+  farmer.navigateToPosition(quest.position);
+  farmer.handleNavigationStatus({ state: 'partial', position: quest.position, reason: 'frontier' });
+  expect(farmer.questGoal).toBe(quest);
+  farmer.handleNavigationStatus({ state: 'unreachable', position: { x: 100, y: 100 }, reason: 'stuck' });
+  expect(farmer.questGoal).toBe(quest);
+  farmer.handleNavigationStatus({ state: 'unreachable', position: quest.position, reason: 'stuck' });
+  expect(farmer.questGoal).toBeNull();
+  expect(farmer.getQuestGoal(Date.now())).toBeNull();
+  expect(farmer.navigateToPosition(quest.position)).toBe(false);
+  farmer.resetMap('Other');
+  expect(farmer.navigateToPosition(quest.position)).toBe(true);
+});
+it('approaches a distant quest boss to weapon range instead of walking onto its tile', () => {
+  // A shooting enemy's native standoff gives it a 2-tile impassable core, so a
+  // destination exactly on its position never resolves ("unreachable" forever).
+  // The farmer must aim for the fighting ring around it instead.
+  const { farmer, sdk, quest } = fixture();
+  quest.position.x = 20;
+  farmer.onLoop();
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 12, y: 0 });
+});
+it('does not blacklist the fighting-range approach when only the enemy tile itself was reported unreachable', () => {
+  const { farmer, sdk, quest } = fixture();
+  quest.position.x = 20;
+  farmer.questGoal = quest;
+  // Something upstream asked to walk onto the enemy's own tile and native
+  // standoff refused it — that must not poison the fighting-range approach
+  // the farmer actually uses from onLoop.
+  farmer.navigateToPosition(quest.position);
+  farmer.handleNavigationStatus({ state: 'unreachable', position: quest.position, reason: 'stuck' });
+  expect(farmer.canNavigate(farmer.fightPosition(quest.position, 20))).toBe(true);
+});
+it('does not release a quest target merely because it is momentarily unresolvable while the server still names it', () => {
+  // Native standoff can hold a fight further out or route around a pack,
+  // dropping an object from the local snapshot without it dying — even well
+  // inside QUEST_VISIBLE_RANGE. The authoritative signal is the server's
+  // quest pointer, not local resolvability.
+  const { farmer, sdk, quest } = fixture();
+  sdk.world.objects.getQuestTargetId = () => quest.objectId;
+  sdk.world.objects.getById = () => undefined;
+  sdk.world.objects.getQuestObject = () => null; // isolate: a drop-and-repick would surface as null
+  farmer.questGoal = quest;
+  for (let now = 10000; now < 40000; now += 3100) {
+    expect(farmer.getQuestGoal(now)).toBe(quest); // well past the old flat 3 s grace
+  }
+});
+it('still releases a nearby quest target once the server names a different quest and it stays unresolvable', () => {
+  const { farmer, sdk, quest } = fixture();
+  let serverQuest = quest.objectId;
+  sdk.world.objects.getQuestTargetId = () => serverQuest;
+  sdk.world.objects.getById = () => undefined;
+  sdk.world.objects.getQuestObject = () => null; // isolate the drop from any re-pick
+  farmer.questGoal = quest;
+  expect(farmer.getQuestGoal(10000)).toBe(quest);
+  serverQuest = 999;
+  expect(farmer.getQuestGoal(10100)).toBe(quest); // short grace for the flip
+  expect(farmer.getQuestGoal(13200)).toBeNull(); // grace elapsed
+});
+it('keeps unrelated encounter ownership and unsubscribes navigation on reset and stop', () => {
+  const { farmer, sdk, quest } = fixture();
+  const unsubscribe = vi.fn();
+  sdk.dodge.onNavigationStatus = vi.fn(() => unsubscribe);
+  farmer.subscribeNavigation();
+  farmer.questGoal = quest;
+  farmer.navigateToPosition(quest.position);
+  const otherBoss = { objectId: 99, position: { x: 40, y: 40 } };
+  farmer.bossEncounter = otherBoss;
+  farmer.handleNavigationStatus({ state: 'unreachable', position: quest.position, reason: 'map_changed' });
+  expect(farmer.bossEncounter).toBe(otherBoss);
+  expect(farmer.canNavigate(quest.position)).toBe(true);
+  farmer.resetMap('Other');
+  expect(unsubscribe).toHaveBeenCalledOnce();
+  expect(sdk.dodge.onNavigationStatus).toHaveBeenCalledTimes(2);
+  farmer.onStop();
+  expect(unsubscribe).toHaveBeenCalledTimes(2);
+});
+it('does not reacquire an unreachable event boss in the next farming loop', () => {
+  const { farmer, sdk, quest, setEnemies } = fixture();
+  Object.assign(quest, { isEventBoss: true });
+  sdk.self.getLevel = () => 20;
+  sdk.world.objects.getAll = () => [quest];
+  setEnemies([quest]);
+  farmer.eventGoal = quest;
+  farmer.bossEncounter = { ...quest };
+  farmer.centerTripDone = true;
+  farmer.navigateToPosition(quest.position);
+  farmer.handleNavigationStatus({ state: 'unreachable', position: quest.position, reason: 'stuck' });
+  sdk.dodge.lockEnemy.mockClear();
+  sdk.dodge.navigateToPosition.mockClear();
+  farmer.onLoop();
+  expect(farmer.eventGoal).toBeNull();
+  expect(farmer.bossEncounter).toBeNull();
+  expect(sdk.dodge.lockEnemy).not.toHaveBeenCalled();
+  expect(sdk.dodge.navigateToPosition).not.toHaveBeenCalled();
+});
+it.each(['invulnerable', 'missing'])('keeps event boss priority through brief %s phases instead of chasing unrelated adds', (phase) => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const fixtureState = fixture();
+  fixtureState.sdk.self.getLevel = () => 20;
+  Object.assign(fixtureState.quest, { isEventBoss: true });
+  fixtureState.sdk.world.objects.getAll = () => [fixtureState.quest];
+  const add = { objectId: 20, name: 'Unrelated mob', position: { x: 2, y: 0 }, hp: 100, maxHp: 100, isTargetable: true };
+  fixtureState.setEnemies([fixtureState.quest, add]);
+  fixtureState.farmer.onLoop();
+  expect(fixtureState.farmer.lockId).toBe(10);
+  fixtureState.quest.isTargetable = false;
+  fixtureState.setEnemies(phase === 'missing' ? [add] : [fixtureState.quest, add]);
+  vi.setSystemTime(10100); fixtureState.farmer.onLoop();
+  expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(20);
+  expect(fixtureState.farmer.lockId).toBe(10);
+  expect(fixtureState.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(false);
+  fixtureState.quest.isTargetable = true;
+  fixtureState.setEnemies([fixtureState.quest, add]);
+  vi.setSystemTime(10200); fixtureState.farmer.onLoop();
+  expect(fixtureState.farmer.lockId).toBe(10);
+  expect(fixtureState.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(true);
+});
+it('ends event transition grace after three seconds and still releases confirmed death immediately', () => {
+  const fixtureState = fixture();
+  Object.assign(fixtureState.quest, { isEventBoss: true });
+  const add = { objectId: 20, name: 'Unrelated mob', position: { x: 2, y: 0 }, hp: 100, maxHp: 100, isTargetable: true };
+  fixtureState.setEnemies([fixtureState.quest, add]);
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 10000);
+  fixtureState.quest.isTargetable = false;
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 10100);
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 13099);
+  expect(fixtureState.farmer.lockId).toBe(10);
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 13100);
+  expect(fixtureState.farmer.lockId).toBe(0);
+  expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(20);
+  fixtureState.quest.isTargetable = true;
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 13200);
+  expect(fixtureState.farmer.lockId).toBe(10);
+  fixtureState.quest.isTargetable = false;
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 13300);
+  fixtureState.quest.hp = 0;
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 13400);
+  expect(fixtureState.farmer.lockId).toBe(0);
+  expect(fixtureState.farmer.bossEncounter).toBeNull();
+});
+it('discards event transition grace on map reset without treating unrelated mobs as marker adds', () => {
+  const fixtureState = fixture();
+  Object.assign(fixtureState.quest, { isEventBoss: true });
+  const add = { objectId: 20, name: 'Unrelated mob', position: { x: 2, y: 0 }, hp: 100, maxHp: 100, isTargetable: true };
+  fixtureState.setEnemies([fixtureState.quest, add]);
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 10000);
+  fixtureState.quest.isTargetable = false;
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 10100);
+  fixtureState.farmer.resetMap('Other');
+  expect(fixtureState.farmer.bossEncounter).toBeNull();
+  fixtureState.setEnemies([add]);
+  fixtureState.farmer.handleBossEncounter(fixtureState.quest, 10200);
+  expect(fixtureState.farmer.lockId).toBe(0);
+  expect(fixtureState.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(20);
+});
 // Bags built by the real loot bridge from an UPDATE, so their rarity comes from the
 // bridge's BAG_RARITY table (after #77: only Loot Bag 6 and its Boost are 'white').
 const bridgeBags = (() => {
@@ -372,7 +664,8 @@ it('at level 20 prioritizes purple/white markers over the ordinary quest and vis
   f.sdk.world.objects.getById = (id: number) => objects.find(o => o.objectId === id);
   f.setEnemies([mini]); f.farmer.onLoop();
   expect(f.farmer.eventGoal.objectId).toBe(40);
-  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(event.position);
+  // Weapon range from the event boss (100,0), not its own tile: see fightPosition.
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 92, y: 0 });
   expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalled();
   expect(f.farmer.centerGoal).toBeNull(); // event travel immediately overrides center fallback
   event.hp = 0; vi.setSystemTime(11100); f.farmer.onLoop();
@@ -390,7 +683,8 @@ it('event search keeps loot priority and handles markers without a damageable bo
   const add = { ...f.quest, objectId: 50 };
   f.setEnemies([add]); f.farmer.onLoop();
   expect(f.farmer.eventGoal.objectId).toBe(40);
-  expect(f.farmer.lockId).toBe(50);
+  expect(f.farmer.lockId).toBe(0);
+  expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalledWith(50);
   const bag = { objectId: 60, rarity: 'white', position: { x: 2, y: 0 }, items: [{ objectType: 1 }] };
   f.sdk.loot.getNearbyBags.mockReturnValue([bag]); f.farmer.onLoop();
   expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(bag.position);
@@ -442,7 +736,8 @@ it('switches a distant dead event even after its object drops and while teleport
   f.farmer.onLoop();
   expect(f.farmer.eventGoal.objectId).toBe(41);
   expect(f.farmer.finishedEvents.has(40)).toBe(true);
-  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(next.position);
+  // Weapon range from next's tile (200,0), not its own tile: see fightPosition.
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 192, y: 0 });
 });
 
 it('pins an arrived event through its death/loot window, even if displaced from the boss', () => {
@@ -675,6 +970,79 @@ it('living adds cannot extend a confirmed kill past the loot window', () => {
   expect(f.farmer.eventGoal.objectId).toBe(41);
 });
 
+it('does not release an event boss on absence alone, even after being engaged — vanish is not death', () => {
+  // Owner ruling 2026-09-19: vanishing from the local object table is NEVER
+  // death evidence by itself — native standoff can hold a fight further out or
+  // route around a pack, dropping an object from the snapshot without it
+  // dying. Absence alone must wait the full 30 s "missing boss" window.
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const f = fixture(); f.sdk.self.getLevel = () => 20;
+  const boss = { ...f.quest, objectId: 40, isEventBoss: true };
+  const next = { ...boss, objectId: 41, position: { x: 200, y: 0 } };
+  let objects = [boss, next];
+  f.sdk.world.objects.getAll = () => objects;
+  f.sdk.world.objects.getById = (id: number) => objects.find(o => o.objectId === id);
+  f.setEnemies([boss]); f.farmer.onLoop();
+  expect(f.farmer.eventArrived).toBe(true);
+  // The boss disappears entirely — not hp<=0, just gone from world state, no
+  // DAMAGE(kill=true) captured, and no loot bag corroborates it.
+  objects = [next];
+  f.setEnemies([]); vi.setSystemTime(11000); f.farmer.onLoop();
+  // 10.5 s after it vanished: past the old (wrong) 10 s confirmed-death window.
+  // Absence alone must still be pending — not released yet.
+  vi.setSystemTime(21500); f.farmer.onLoop();
+  expect(f.farmer.finishedEvents.has(40)).toBe(false);
+  expect(f.farmer.eventGoal.objectId).toBe(40);
+  // 30.5 s after it vanished: the full missing-boss window elapses, so it
+  // releases on the timeout alone (no positive evidence ever arrived).
+  vi.setSystemTime(41500); f.farmer.onLoop();
+  expect(f.farmer.finishedEvents.has(40)).toBe(true);
+  expect(f.farmer.eventGoal.objectId).toBe(41);
+});
+it('releases a vanished event boss early when a loot bag corroborates the kill at its last position', () => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const f = fixture(); f.sdk.self.getLevel = () => 20;
+  const boss = { ...f.quest, objectId: 40, isEventBoss: true };
+  const next = { ...boss, objectId: 41, position: { x: 200, y: 0 } };
+  let objects = [boss, next];
+  f.sdk.world.objects.getAll = () => objects;
+  f.sdk.world.objects.getById = (id: number) => objects.find(o => o.objectId === id);
+  f.setEnemies([boss]); f.farmer.onLoop();
+  expect(f.farmer.eventArrived).toBe(true);
+  objects = [next];
+  f.setEnemies([]);
+  // A bag drops right where the boss was last seen (f.quest.position is (6,0)).
+  f.sdk.loot.getBags = () => [{ objectId: 90, rarity: 'white', position: { x: 6, y: 1 }, items: [] }];
+  vi.setSystemTime(11000); f.farmer.onLoop();
+  // 10.5 s after it vanished: the corroborated wait (10 s) has elapsed.
+  vi.setSystemTime(21500); f.farmer.onLoop();
+  expect(f.farmer.finishedEvents.has(40)).toBe(true);
+  expect(f.farmer.eventGoal.objectId).toBe(41);
+});
+
+it('does not confirm a boss dead merely because it once was arrived, when it vanishes only after backing off', () => {
+  // Native standoff can hold a fight further out or route around a pack well
+  // after arrival, so a boss that is simply out of local range right now must
+  // not be declared dead just because eventArrived was set earlier.
+  const f = fixture(); f.sdk.self.getLevel = () => 20;
+  const boss = { ...f.quest, objectId: 40, isEventBoss: true };
+  let objects = [boss];
+  f.sdk.world.objects.getAll = () => objects;
+  f.sdk.world.objects.getById = (id: number) => objects.find(o => o.objectId === id);
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  f.setEnemies([boss]); f.farmer.onLoop();
+  expect(f.farmer.eventArrived).toBe(true);
+  // Displaced 24 tiles out (boss.position is (6,0), the fixture default), then
+  // the boss vanishes entirely — not confirmed dead, and not currently close.
+  f.sdk.self.distanceTo = (p: any) => Math.hypot(p.x - 30, p.y);
+  objects = []; f.setEnemies([]); vi.setSystemTime(11000); f.farmer.onLoop();
+  // Past the 10 s confirmed-death window this used to wrongly take (sticky
+  // eventArrived), still short of the 30 s missing-boss window it must take.
+  vi.setSystemTime(21500); f.farmer.onLoop();
+  expect(f.farmer.eventGoal?.objectId).toBe(40);
+  expect(f.farmer.finishedEvents.has(40)).toBe(false);
+});
+
 it.each(['packet', 'hp'])('releases a dead event combat lock immediately after %s evidence, even when displaced', (evidence) => {
   vi.useFakeTimers(); vi.setSystemTime(10000);
   const fixtureState = fixture(); fixtureState.sdk.self.getLevel = () => 20;
@@ -725,14 +1093,15 @@ it('re-picks a far committed quest once the server names another quest and the o
   f.sdk.world.objects.getQuestTargetId = () => serverQuest;
   f.sdk.walking.canTeleport = () => false;
   f.farmer.onLoop();
-  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(f.quest.position);
+  // Weapon range from the quest's tile (100,0), not its own tile: see fightPosition.
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 92, y: 0 });
   visible = []; vi.setSystemTime(70000); f.farmer.onLoop();
   expect(f.farmer.questGoal.objectId).toBe(10);         // out of view, but the server still names it
   serverQuest = 11; visible = [other]; vi.setSystemTime(71000); f.farmer.onLoop();
   expect(f.farmer.questGoal.objectId).toBe(10);         // short grace for a flip
   vi.setSystemTime(74500); f.farmer.onLoop();
   expect(f.farmer.questGoal.objectId).toBe(11);
-  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(other.position);
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: -52, y: 0 });
 });
 
 it('prefers a targetable enemy over a bigger locked one that can no longer be damaged', () => {
@@ -742,4 +1111,138 @@ it('prefers a targetable enemy over a bigger locked one that can no longer be da
   f.farmer.lockId = 30;
   f.setEnemies([shielded, mob]);
   expect(f.farmer.updateTarget(0).objectId).toBe(31);
+});
+
+// Test Lab: the persisted `state:` line carries a machine-readable
+// ` | ctx ...` suffix so the Test Lab can plot position without parsing English.
+// The literal delimiter, key names, and one-decimal formatting are a contract
+// with its log parser — do not change them casually.
+describe('status context suffix (Test Lab)', () => {
+  describe('formatStatusContextSuffix (pure)', () => {
+    it('formats every known field to one decimal place', () => {
+      expect(formatStatusContextSuffix({
+        pos: { x: 1.23, y: 4.56 }, goal: { x: 7.891, y: 0 }, enemyDistance: 9.999, questObjectId: 42,
+      })).toBe(' | ctx pos=1.2,4.6 goal=7.9,0.0 d=8.1 enemy=10.0 quest=42');
+    });
+
+    it('reports unknowns as - for a missing goal, including the derived distance', () => {
+      expect(formatStatusContextSuffix({ pos: { x: 0, y: 0 }, goal: null, enemyDistance: 3, questObjectId: 1 }))
+        .toBe(' | ctx pos=0.0,0.0 goal=- d=- enemy=3.0 quest=1');
+    });
+
+    it('reports unknowns as - for a missing position too', () => {
+      expect(formatStatusContextSuffix({ pos: null, goal: { x: 5, y: 5 }, enemyDistance: null, questObjectId: null }))
+        .toBe(' | ctx pos=- goal=5.0,5.0 d=- enemy=- quest=-');
+    });
+
+    it('reports unknowns as - for a missing enemy distance', () => {
+      expect(formatStatusContextSuffix({ pos: { x: 0, y: 0 }, goal: { x: 0, y: 0 }, enemyDistance: null, questObjectId: 5 }))
+        .toBe(' | ctx pos=0.0,0.0 goal=0.0,0.0 d=0.0 enemy=- quest=5');
+    });
+
+    it('reports unknowns as - for a missing quest target', () => {
+      expect(formatStatusContextSuffix({ pos: { x: 0, y: 0 }, goal: null, enemyDistance: null, questObjectId: undefined }))
+        .toBe(' | ctx pos=0.0,0.0 goal=- d=- enemy=- quest=-');
+    });
+
+    it('is entirely - when given nothing', () => {
+      expect(formatStatusContextSuffix()).toBe(' | ctx pos=- goal=- d=- enemy=- quest=-');
+      expect(formatStatusContextSuffix({})).toBe(' | ctx pos=- goal=- d=- enemy=- quest=-');
+    });
+  });
+
+  describe('buildStatusContextSuffix (wraps a live read)', () => {
+    it('formats whatever the getter returns', () => {
+      expect(buildStatusContextSuffix(() => ({ pos: { x: 1, y: 1 }, goal: null, enemyDistance: null, questObjectId: 9 })))
+        .toBe(' | ctx pos=1.0,1.0 goal=- d=- enemy=- quest=9');
+    });
+
+    it('never throws: a throwing getter yields the err marker instead', () => {
+      expect(buildStatusContextSuffix(() => { throw new Error('SDK not ready'); })).toBe(' | ctx err');
+    });
+  });
+
+  describe('Farmer.setStatus wiring', () => {
+    it('appends live context to the persisted/log line but leaves the dashboard status bare', () => {
+      const f = fixture();
+      f.farmer.navigationGoal = { x: 3, y: 4, owners: new Map() };
+      f.farmer.questGoal = { objectId: 77 };
+      f.setEnemies([
+        { hp: 100, position: { x: 3, y: 0 } },   // living, distance 3 from (0,0)
+        { hp: 0, position: { x: 1, y: 0 } },     // dead — must not count as nearest
+      ]);
+      f.farmer.setStatus('Fighting');
+      expect(f.sdk.ui.status).toHaveBeenLastCalledWith('Fighting');
+      expect(f.sdk.log.info).toHaveBeenLastCalledWith('state: Fighting | ctx pos=0.0,0.0 goal=3.0,4.0 d=5.0 enemy=3.0 quest=77');
+    });
+
+    it('reports all-unknown context when there is no goal, enemy, or quest', () => {
+      const f = fixture();
+      f.setEnemies([]);
+      f.farmer.setStatus('Idle');
+      expect(f.sdk.log.info).toHaveBeenLastCalledWith('state: Idle | ctx pos=0.0,0.0 goal=- d=- enemy=- quest=-');
+    });
+
+    it('still logs on a throwing context read, and never breaks the bare-message change/heartbeat gate', () => {
+      vi.useFakeTimers(); vi.setSystemTime(10000);
+      const f = fixture();
+      const originalGetX = f.sdk.self.getX;
+      f.sdk.self.getX = () => { throw new Error('not spawned'); };
+      f.farmer.setStatus('Booting');
+      expect(f.sdk.log.info).toHaveBeenLastCalledWith('state: Booting | ctx err');
+      f.sdk.self.getX = originalGetX;
+
+      // Same message again immediately: must not re-log just because position/context changed.
+      f.farmer.navigationGoal = { x: 1, y: 1, owners: new Map() };
+      f.farmer.setStatus('Booting');
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(1);
+
+      // Heartbeat: same message after 5s does re-log, with fresh context.
+      vi.setSystemTime(15000);
+      f.farmer.setStatus('Booting');
+      expect(f.sdk.log.info).toHaveBeenLastCalledWith('state: Booting | ctx pos=0.0,0.0 goal=1.0,1.0 d=1.4 enemy=- quest=-');
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(2);
+    });
+
+    it('normalizeStatusForChangeCheck blanks every digit run so number-only differences compare equal', () => {
+      expect(normalizeStatusForChangeCheck('Leveling: Bandit Leader -> (643, 1658) - 104 tiles'))
+        .toBe(normalizeStatusForChangeCheck('Leveling: Bandit Leader -> (644, 1660) - 103 tiles'));
+      expect(normalizeStatusForChangeCheck('Fighting: Bandit Leader'))
+        .not.toBe(normalizeStatusForChangeCheck('Leveling: Bandit Leader -> (644, 1660) - 103 tiles'));
+    });
+
+    it('number-only churn (coordinates/tile-count moving) logs at most once per second', () => {
+      vi.useFakeTimers(); vi.setSystemTime(10000);
+      const f = fixture();
+      const status = (n) => `Leveling: Bandit Leader -> (${640 + n}, ${1658 + n}) - ${104 - n} tiles`;
+
+      f.farmer.setStatus(status(0));
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(1); // first ever -> immediate
+
+      vi.setSystemTime(10100);
+      f.farmer.setStatus(status(1));
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(1); // <1s since last log -> throttled
+
+      vi.setSystemTime(10300);
+      f.farmer.setStatus(status(2));
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(1); // still <1s -> throttled
+
+      vi.setSystemTime(11050); // >=1000ms since the 10000 log
+      f.farmer.setStatus(status(3));
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(2);
+      expect(f.sdk.log.info).toHaveBeenLastCalledWith(expect.stringContaining(status(3)));
+    });
+
+    it('a real (non-digit) change logs immediately, even inside the number-only throttle window', () => {
+      vi.useFakeTimers(); vi.setSystemTime(10000);
+      const f = fixture();
+      f.farmer.setStatus('Leveling: Bandit Leader -> (643, 1658) - 104 tiles');
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(10100); // well inside the 1s number-only throttle window
+      f.farmer.setStatus('Fighting: Bandit Leader');
+      expect(f.sdk.log.info).toHaveBeenCalledTimes(2);
+      expect(f.sdk.log.info).toHaveBeenLastCalledWith(expect.stringContaining('state: Fighting: Bandit Leader'));
+    });
+  });
 });

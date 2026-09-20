@@ -9,6 +9,7 @@
 #include "IpcBridge.h"   // IpcThreat / IpcGround
 
 namespace IpcMessages {
+int BuildNavStatus(char* buf, int bufSize, const char* goalKind, uint64_t goalId, uint64_t generation, const char* state, const char* reason);
 
 // Threat wire schema version. Bump only in lockstep with the TS decoder's
 // THREAT_SCHEMA_VERSION in client/src/bridge/DllThreatBus.ts. A version skew is

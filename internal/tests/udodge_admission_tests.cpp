@@ -1,6 +1,7 @@
 #include "UDodgeCore.h"
 #include "UDodgeSolver.h"
 #include "UDodgePathfinder.h"
+#include "UDodgeGroupPreference.h"
 #include <cstdio>
 #include "../src/features/movement/dodge/DodgeGeometry.h"
 
@@ -15,6 +16,59 @@ static void Check(bool ok, const char* name)
 
 int main()
 {
+    GroupPreference preference{};
+    Vec2 groupTarget{};
+    preference.Set("42,1,0", 1000);
+    Check(preference.Read(1000, 42, {}, groupTarget), "fresh group preference matches its boss lock");
+    Check(!preference.Read(1751, 42, {}, groupTarget), "group preference expires after bounded TTL");
+    preference.Set("42,1,0", 1000);
+    Check(!preference.Read(1100, 43, {}, groupTarget), "changing boss invalidates group preference");
+    Check(!preference.Read(1101, 42, {}, groupTarget), "old lock cannot revive invalidated group preference");
+    preference.Set("42,nan,0", 1000);
+    Check(!preference.Read(1000, 42, {}, groupTarget), "invalid coordinate fails closed");
+    preference.Set("42,1,0", 1000); preference.Set("", 1001);
+    Check(!preference.Read(1001, 42, {}, groupTarget), "map reset or clear drops group preference");
+    preference.Set("999999999999999999999999,1,0", 1000);
+    Check(!preference.Read(1000, 42, {}, groupTarget), "oversized boss id fails closed");
+    preference.Set("42,1,0extra", 1000);
+    Check(!preference.Read(1000, 42, {}, groupTarget), "malformed group command fails closed");
+    preference.Set("42,1,0", 1000);
+    Check(!preference.Read(999, 42, {}, groupTarget), "reversed clock invalidates group preference");
+    preference.Set("42,20,0", 1000);
+    Check(!preference.Read(1000, 42, {}, groupTarget), "distant group goal cannot pull across arena");
+    {
+        static DangerMap empty{};
+        MapInput groupInput{}; groupInput.map = &empty; groupInput.speed = .005f;
+        Solver::Goal groupGoal{}; groupGoal.fromLock = true;
+        groupGoal.groupActive = true; groupGoal.groupPos = {1.f, 0.f};
+        Path::PlanResult groupRoute{}; CoreState groupState{}; Solver::SolveResult groupDecision{};
+        Solver::Solve(groupInput, 1.f, groupGoal, groupRoute, groupState, groupDecision);
+        Check(groupDecision.shouldMove && groupDecision.target.x > 0.5f,
+              "safe secondary group preference can reposition without a walk goal");
+        Check(groupGoal.fromLock && !groupGoal.walkTo,
+              "group preference preserves boss lock and timed-advisor eligibility");
+        empty.laneCount = 1;
+        auto& closingShot = empty.lanes[0];
+        closingShot.hitHalf = .05f; closingShot.pointCount = closingShot.instantCount = 2;
+        closingShot.points[0] = {2.5f, 0.f}; closingShot.points[1] = {1.f, 0.f};
+        closingShot.pointTimesMs[1] = 800.f;
+        Solver::Solve(groupInput, 1.f, groupGoal, groupRoute, groupState, groupDecision);
+        Check(!groupDecision.shouldMove,
+              "optional regroup keeps durable stand instead of entering a soon-closing pocket");
+        empty.laneCount = 1;
+        auto& wallShot = empty.lanes[0];
+        wallShot.hitHalf = .05f; wallShot.pointCount = wallShot.instantCount = 2;
+        wallShot.points[0] = wallShot.points[1] = {.5f, 0.f};
+        wallShot.pointTimesMs[1] = 1000.f;
+        Solver::Solve(groupInput, 1.f, groupGoal, groupRoute, groupState, groupDecision);
+        Check(!groupDecision.shouldMove || groupDecision.target.x < .2f,
+              "secondary group cannot pull a safe stand through a closed projectile wall");
+        empty.laneCount = 0;
+        groupInput.env.canOccupy = [](float positionX, float, bool) { return positionX < .4f; };
+        Solver::Solve(groupInput, 1.f, groupGoal, groupRoute, groupState, groupDecision);
+        Check(!groupDecision.shouldMove || groupDecision.target.x < .4f,
+              "secondary group cannot cross a blocked terrain doorway");
+    }
     static DangerMap map{};
     MapInput in{};
     in.map = &map;
@@ -48,6 +102,14 @@ int main()
           "solver finds a safe alternative");
     Check(Core::Temporal::PathClear(ctx, {}, in.speed, decision.target),
           "spatially clear candidate cannot bypass temporal veto");
+
+    goal.walkTo = true;
+    Solver::Solve(in, 1.f, goal, route, state, decision);
+    Check(decision.kind != Solver::SolveKind::Fallback,
+          "group waypoint with a safe alternative does not require exposed fallback");
+    Check(Core::Temporal::PathClear(ctx, {}, in.speed, decision.target),
+          "group waypoint cannot override a known projectile transit collision");
+    goal.walkTo = false;
 
     decision.kind = Solver::SolveKind::Safe;
     decision.shouldMove = true;

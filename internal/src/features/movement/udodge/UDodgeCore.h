@@ -155,6 +155,25 @@ struct Ctx {
     // place"; past trust[i] the queries fall back to the present-tense floor
     // instead. See the UNKNOWN TAIL comment in UDodgeCore.cpp.
     int   trust[kMaxProjectiles];
+    // BROAD PHASE (exact). `reach[i]` is the axis-aligned box of EVERY position the
+    // queries can read for lane i (all march samples, plus the half-step samples of a
+    // fast lane — a beam's two ends included), grown on every side by the lane's full
+    // contact size half[i] + arrPad[i] plus a rounding slack. Every DISTANCE test in
+    // the narrow phase is a Chebyshev distance between a point of that lane and a point
+    // of the player's path compared against half[i] + arrPad[i], so for a player path
+    // whose own box lies wholly outside reach[i] all of them are settled and skipped.
+    // The traced-path floor's crossing test is not a distance and is never skipped
+    // (see SetReach in UDodgeCore.cpp). A lane with a non-finite sample or size gets
+    // an infinite box, i.e. nothing of it is skipped.
+    // Written by Build only; a Ctx filled any other way must set it too.
+    struct Box { float minX, minY, maxX, maxY; };
+    Box   reach[kMaxProjectiles];
+    // ALONG-TRACK timing pad (ms), tactician only; 0 under classic. A timing
+    // error moves a shot ALONG its own path, so the queries stretch each lane's
+    // swept sub-segment by (its velocity there) x alongMs at both ends instead of
+    // widening the contact box sideways — the sideways growth is what turned an
+    // aimed triple 0.9 tiles apart into one solid wall (contact-model-study.md 3).
+    float alongMs = 0.f;
 };
 // Solver contexts are thread-local (game thread and worker never share scratch).
 // Keep an explicit memory ceiling as projectile capacity increases.
@@ -172,6 +191,9 @@ void SampleLane(const LaneThreat& L, Vec2* outPos);
 // `playerHalf` is the projectile-contact player half (Core::ProjectilePlayerHalf);
 // it defaults to the legacy padded value so existing callers/tests keep their
 // contract, and production passes the setting-derived value.
+// UNDER TACTICIAN (map.planner) `hitScale`, `positionUncertainty` and `playerHalf`
+// are IGNORED: the contact size is Contact::PlanHalf over the map's own live
+// hitbox multiplier, and the timing pad moves along the shot (Ctx::alongMs).
 void Build(const DangerMap& map, float hitScale, float positionUncertainty, Vec2 cullCenter,
            float cullTiles, Ctx& out, float playerHalf = kUPlayerHalf);
 

@@ -1,7 +1,7 @@
 import { readdirSync, existsSync } from 'fs';
 import { join, basename, resolve, relative } from 'path';
 import { pathToFileURL } from 'url';
-import { PluginContext, type PluginCategory } from './PluginContext.js';
+import { PluginContext, type PluginCategory, type PluginHostAccess } from './PluginContext.js';
 import { UserPluginContext, type UserPluginCleanup } from './UserPluginContext.js';
 import type { Proxy } from '../proxy/Proxy.js';
 import type { ClientConnection } from '../proxy/ClientConnection.js';
@@ -156,6 +156,8 @@ export class PluginManager {
   private dashboardLogListeners = new Set<(pluginName: string, message: string) => void>();
   private broadcastDataListeners = new Set<(pluginId: string, type: string, data: any) => void>();
   private pluginStateChangedListeners = new Set<() => void>();
+  /** Set via `setHostAccess()`; applied to every bundled-context plugin created from then on. */
+  private hostAccess: PluginHostAccess | null = null;
 
   constructor(
     private proxy: Proxy,
@@ -315,6 +317,15 @@ export class PluginManager {
   onBroadcastData(listener: (pluginId: string, type: string, data: any) => void): () => void {
     this.broadcastDataListeners.add(listener);
     return () => this.broadcastDataListeners.delete(listener);
+  }
+
+  /**
+   * Wire generic host services (script start/stop, plugin-config read/write/
+   * apply) into every bundled plugin context. Call before `loadAll()` — a
+   * plugin context created before this runs simply gets `hostAccess: null`.
+   */
+  setHostAccess(access: PluginHostAccess): void {
+    this.hostAccess = access;
   }
 
   /** Subscribe to runtime changes in dashboard-visible plugin definitions. */
@@ -533,6 +544,26 @@ export class PluginManager {
             try { listener(); } catch {}
           }
         };
+        // Cross-plugin read/update, used by controllers like the Test Lab
+        // A/B interleaver that flip another plugin's setting (e.g. Auto
+        // Dodge's udodgeEnemyStandoff) through the exact same call the
+        // dashboard's 'updateSetting' websocket handler makes.
+        context.onGetOtherPluginSetting = (pluginId, key) => {
+          const plugin = this.loadedPlugins.get(pluginId);
+          return plugin ? plugin.context.getSetting(key) : undefined;
+        };
+        context.onUpdateOtherPluginSetting = (pluginId, key, value) => this.updateSetting(pluginId, key, value);
+        // Read-only description (type/options/min/max/visibleWhen) of a
+        // different plugin's setting, with no current value and no side
+        // effect — lets a controller validate a free-text setting key/value
+        // pair against the live plugin before ever calling updateSetting.
+        context.onDescribeOtherPluginSetting = (pluginId, key) => {
+          const plugin = this.loadedPlugins.get(pluginId);
+          const def = plugin?.context.getSettings().find((s) => s.key === key);
+          if (!def) return undefined;
+          return { type: def.type, options: def.options, min: def.min, max: def.max, visibleWhen: def.visibleWhen };
+        };
+        context.hostAccess = this.hostAccess;
       }
 
       const registerResult = await module.register(context);

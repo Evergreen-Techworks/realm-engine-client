@@ -67,10 +67,12 @@ struct Check {
             }
             // The player is a point. Ordinary projectile contact uses the
             // game's per-axis threshold, not an inscribed circular radius.
-            box.half=ProjectileRadius(lane,in.world.settings);
+            box.half=ProjectileRadius(in.world,lane);
             const float life=lane.remainingLifeMs>=0.f?lane.remainingLifeMs:
                 (lane.tailAtShotEnd?lane.pointTimesMs[lane.pointCount-1]:1e9f);
-            box.expiry=life;
+            // Same beam grace as LaneInLookRange / UDodgeCore, or `Bullets` would
+            // skip at ta>=expiry the beam the look-range test just admitted.
+            box.expiry=(lane.beam&&lane.remainingLifeMs>=0.f)?life+UDodge::kUPredErrMs:life;
             Vec2 future{};
             if(ProjectLinearTail(lane,std::min(in.settings.horizonMs,life),future)) {
                 box.lo.x=std::min(box.lo.x,future.x); box.lo.y=std::min(box.lo.y,future.y);
@@ -318,8 +320,25 @@ Vec2 PositionAt(const Plan& plan, float t) {
 // plan this planner calls safe is not then rejected by the gate for disagreeing
 // about the hit box. Under the default point-player model the player half is
 // zero and this is exactly the game's per-axis threshold T.
-float ProjectileRadius(const UDodge::LaneThreat& lane,const UDodge::Settings& settings) {
-    return std::clamp(lane.hitHalf, 0.05f, 2.5f) * std::clamp(settings.hitScale, 0.25f, 2.5f)
+float ProjectileRadius(const UDodge::MapInput& world,const UDodge::LaneThreat& lane) {
+    // Tactician: the one shared box (the game's own threshold x the live hitbox
+    // multiplier, plus cross-track comfort), so this planner departs on exactly
+    // the size the solver's floors then measure the step against.
+    const bool tactician = world.map && world.map->planner == Contact::Policy::Tactician;
+    // BEAMS (Slice 4a): the laser job carries no multiplier slot, so a beam is
+    // never scaled — not by the live collider value and not by udodgeHitScale.
+    if (lane.beam) {
+        if (tactician) return Contact::PlanHalfBeam(lane.hitHalf);
+        return std::clamp(lane.hitHalf, 0.05f, UDodge::kUMaxProjectileHalf)
+             + UDodge::Core::ProjectilePlayerHalf(world.settings)
+             + std::clamp(world.settings.positionUncertainty, 0.f, 0.35f);
+    }
+    if (tactician)
+        return Contact::PlanHalf(lane.hitHalf, world.map->targetScale);
+    // Classic, with the stale 2.5 clamp corrected to the one clamp every other
+    // layer uses (c05e0c4 raised five Core sites and missed this one).
+    const UDodge::Settings& settings = world.settings;
+    return std::clamp(lane.hitHalf, 0.05f, UDodge::kUMaxProjectileHalf) * std::clamp(settings.hitScale, 0.25f, 2.5f)
          + UDodge::Core::ProjectilePlayerHalf(settings)
          + std::clamp(settings.positionUncertainty, 0.f, 0.35f);
 }
@@ -371,10 +390,21 @@ SampleStatus SampleProjectile(const UDodge::LaneThreat& lane,float time,Vec2& po
     return time<=end || ProjectLinearTail(lane,time,position)?SampleStatus::Known:SampleStatus::Unknown;
 }
 
+// A BEAM's live window carries the same short late-expiry grace UDodgeCore gives it
+// (Temporal::Build: expiresMs = remainingLife + kUPredErrMs). Without it this layer
+// dropped a beam outright on the frame remainingLifeMs reached 0 while the solver's
+// floor still blocked on it — the two layers disagreed about a live laser at exactly
+// the moment it is still damaging (accel-and-laser-check.md section 6d).
+static float LaneLiveWindowMs(const UDodge::LaneThreat& lane,float horizonMs) {
+    if(lane.remainingLifeMs<0.f) return horizonMs;
+    const float life=lane.beam?lane.remainingLifeMs+UDodge::kUPredErrMs:lane.remainingLifeMs;
+    return std::min(horizonMs,life);
+}
+
 bool LaneInLookRange(const Input& in,const UDodge::LaneThreat& lane) {
     if(lane.pointCount<1) return false;
-    const float reach=in.settings.lookRange+ProjectileRadius(lane,in.world.settings)*(lane.beam?1.f:1.414214f);
-    const float until=std::min(in.settings.horizonMs,lane.remainingLifeMs>=0.f?lane.remainingLifeMs:in.settings.horizonMs);
+    const float reach=in.settings.lookRange+ProjectileRadius(in.world,lane)*(lane.beam?1.f:1.414214f);
+    const float until=LaneLiveWindowMs(lane,in.settings.horizonMs);
     if(until<=0.f) return false;
     const auto close=[&](Vec2 a,Vec2 b) {
         a=UDodge::Sub(a,in.world.player); b=UDodge::Sub(b,in.world.player);

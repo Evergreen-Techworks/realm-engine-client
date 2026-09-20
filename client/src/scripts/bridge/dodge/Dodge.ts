@@ -7,7 +7,10 @@ export class BridgeDodge {
     Dodge.setMode = (mode: DodgeMode) => movement.setMode(mode);
     Dodge.navigateTo = (x: number, y: number) => movement.navigateTo(x, y);
     Dodge.navigateToPosition = (p: Position) => Dodge.navigateTo(Number(p?.x), Number(p?.y));
+    Dodge.onNavigationStatus = handler => movement.onNavigationStatus(handler);
     Dodge.clearWaypoint = () => movement.clearWaypoint();
+    Dodge.setGroupPreference = (bossId: number, x: number, y: number) => movement.setGroupPreference(bossId, x, y);
+    Dodge.clearGroupPreference = () => movement.clearGroupPreference();
     Dodge.lockEnemy = (objectId: number) => movement.lockEnemy(objectId);
     Dodge.clearEnemyLock = () => movement.clearEnemyLock();
     Dodge.setLockFollow = (enabled: boolean) => movement.setLockFollow(enabled);

@@ -13,6 +13,26 @@ static void Check(bool ok, const char* name)
 
 int main()
 {
+    static DangerMap oversized{};
+    oversized.laneCount = 1;
+    auto& oversizedLane = oversized.lanes[0];
+    oversizedLane.pointCount = oversizedLane.instantCount = 1;
+    oversizedLane.hitHalf = 4.f;
+    oversizedLane.points[0] = {};
+    MapInput oversizedInput{};
+    oversizedInput.map = &oversized;
+    const Vec2 insideLargeShot{3.f, 0.f};
+    Check(!Core::PointClear(oversizedInput, insideLargeShot), "large contact threshold blocks standing inside its outer edge");
+    Check(Core::PointClearance(oversizedInput, insideLargeShot) < 0.f, "large contact threshold has negative raw clearance");
+    Check(Core::PointSafety(oversizedInput, insideLargeShot) < 0.f, "large contact threshold blocks point safety");
+    Check(Core::SegmentSafety(oversizedInput, {3.f, -1.f}, {3.f, 1.f}) < 0.f, "large contact threshold blocks movement across its outer edge");
+    static Core::Temporal::Ctx oversizedContext;
+    Core::Temporal::Build(oversized, 1.f, 0.f, {}, 20.f, oversizedContext, 0.f);
+    Check(!Core::Temporal::PathClear(oversizedContext, insideLargeShot, 0.f, insideLargeShot), "large contact threshold survives temporal prediction");
+    Check(Core::PointClear(oversizedInput, {4.5f, 0.f}), "large contact threshold does not inflate beyond its boundary");
+    oversizedLane.hitHalf = 0.5f;
+    Check(Core::PointClear(oversizedInput, insideLargeShot), "ordinary contact threshold stays unchanged");
+
     static_assert(kMaxProjectiles >= 512, "dense volleys require the increased lane capacity");
     static DangerMap dense{};
     dense.laneCount = kMaxProjectiles;
@@ -145,6 +165,59 @@ int main()
         Core::Temporal::Build(pm, 1.f, 0.f, {}, 4.f, pc, kUPlayerHalf);
         Check(!Core::Temporal::PathClear(pc, {}, 0.f, {}),
               "padded temporal contact still blocks the same stand when the player half is folded in");
+    }
+    // ── BEAM CONTACT (Slice 4a) ─────────────────────────────────────────────
+    // PROVEN from 86ad651b: the laser job JNHOCNOANFC::Execute hits iff the
+    // EUCLIDEAN point-to-segment distance^2 <= T^2, and its job record has no
+    // collisionRadiusMultiplier slot — so neither the udodgeHitScale belief
+    // (classic) nor the live collider multiplier (tactician) may shrink a beam.
+    // Before this fix a beam of T = 0.5 under the owner's 0.65 was modelled as
+    // 0.325 + 0.10 = 0.425, and a stand 0.45 tiles off the beam read CLEAR.
+    {
+        static DangerMap bm{};
+        bm.laneCount = 1;
+        auto& b = bm.lanes[0];
+        b = LaneThreat{};
+        b.beam = true;
+        b.pointCount = b.instantCount = 2;
+        b.hitHalf = 0.5f;
+        b.points[0] = {0.f, 0.f};
+        b.points[1] = {6.f, 0.f};
+        b.pointTimesMs[0] = b.pointTimesMs[1] = 0.f;
+        b.remainingLifeMs = 200.f;                 // laser defs: Speed 0, LifetimeMS 200
+
+        // CLASSIC with hitScale 0.65: half = T = 0.5, plus the policy's own
+        // kUArrivalMargin comfort (0.10) — the pad policy is unchanged.
+        Core::Temporal::Ctx bc{};
+        Core::Temporal::Build(bm, 0.65f, 0.f, {3.f, 0.f}, 20.f, bc, /*playerHalf=*/0.f);
+        Check(bc.count == 1, "beam lane survives the temporal cull");
+        Check(!Core::Temporal::PathClear(bc, {3.f, 0.45f}, 0.f, {3.f, 0.45f}),
+              "classic: a beam blocks a stand 0.45 tiles off it (T unscaled by hitScale)");
+        Check(Core::Temporal::PathClear(bc, {3.f, 0.75f}, 0.f, {3.f, 0.75f}),
+              "classic: a beam clears a stand beyond T + comfort");
+        // SHAPE: diagonally past the beam's end the Chebyshev distance is 0.55
+        // (inside 0.60) while the Euclidean one is 0.778 (outside). The game uses
+        // Euclidean, so this stand is clear.
+        Check(Core::Temporal::PathClear(bc, {6.55f, 0.55f}, 0.f, {6.55f, 0.55f}),
+              "classic: beam contact is Euclidean, not Chebyshev, past the beam end");
+
+        // TACTICIAN with a live collider multiplier of 0.65: same answer — the
+        // multiplier the box job applies is absent from the laser job.
+        bm.planner = Contact::Policy::Tactician;
+        bm.targetScale = 0.65f;
+        Core::Temporal::Build(bm, 1.f, 0.f, {3.f, 0.f}, 20.f, bc, 0.f);
+        Check(!Core::Temporal::PathClear(bc, {3.f, 0.45f}, 0.f, {3.f, 0.45f}),
+              "tactician: a beam blocks a stand 0.45 tiles off it (live multiplier not applied)");
+        Check(Core::Temporal::PathClear(bc, {3.f, 0.75f}, 0.f, {3.f, 0.75f}),
+              "tactician: a beam clears a stand beyond PlanHalfBeam");
+        // An ORDINARY shot at the same T still takes the multiplier (0.5 x 0.65 +
+        // 0.10 = 0.425), so the beam branch has not leaked into the box rule.
+        b.beam = false;
+        b.points[1] = b.points[0];
+        b.pointTimesMs[1] = 1200.f;
+        Core::Temporal::Build(bm, 1.f, 0.f, {}, 20.f, bc, 0.f);
+        Check(Core::Temporal::PathClear(bc, {0.f, 0.45f}, 0.f, {0.f, 0.45f}),
+              "tactician: an ordinary shot still scales T by the live multiplier");
     }
     std::printf("Temporal regression tests: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

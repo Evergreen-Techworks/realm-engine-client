@@ -147,6 +147,16 @@ struct GameStats {
     int32_t  maxLanes = 0, maxZones = 0, maxEnemies = 0;
     uint32_t mapLimited = 0;
     float    workerDodgeMsMax = 0.f, workerNavMsMax = 0.f, workerTimedMsMax = 0.f, workerSolveMsMax = 0.f;
+    // Item 4 (navigation finish plan): the relevance cull ahead of the solver
+    // (UDodgeSensors.cpp BuildMap/ReanchorMap). laneCullSeen is every lane the
+    // sensors read this window; laneCullDropped is how many never entered the
+    // danger map because no candidate the solver's horizon can reach could ever
+    // see them. Off (0/0) unless the cull is compiled in and diagnostics are on.
+    uint32_t laneCullSeen = 0, laneCullDropped = 0;
+    // Item 4: how many Ticks this window degraded the solver's candidate ring
+    // because the frame was already over budget before the solver phases
+    // (UDodge.cpp, gated by udodgeFrameBudget != off).
+    uint32_t frameBudgetHits = 0;
     void ResetWindow()
     {
         origUpdate.Reset(); dodgeBody.Reset(); updateGap.Reset();
@@ -161,6 +171,8 @@ struct GameStats {
         maxLanes = maxZones = maxEnemies = 0;
         mapLimited = 0;
         workerDodgeMsMax = workerNavMsMax = workerTimedMsMax = workerSolveMsMax = 0.f;
+        laneCullSeen = laneCullDropped = 0;
+        frameBudgetHits = 0;
     }
 };
 inline GameStats& Game() { static GameStats s; return s; }

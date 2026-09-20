@@ -25,9 +25,16 @@ const byUnityPid = new Map<number, CredentialLaunchRecord>();
 const latestByAccountId = new Map<string, CredentialLaunchRecord>();
 /** Latest row per normalized email. */
 const latestByEmailNormalized = new Map<string, CredentialLaunchRecord>();
+/** Latest row per normalized display label — the only handle a caller that
+ *  never sees credentials (e.g. an automated launch by label) can look up by. */
+const latestByLabelNormalized = new Map<string, CredentialLaunchRecord>();
 
 function normalizeEmail(email: string): string {
   return String(email || '').trim().toLowerCase();
+}
+
+function normalizeLabel(label: string): string {
+  return String(label || '').trim().toLowerCase();
 }
 
 /**
@@ -65,6 +72,7 @@ export function registerCredentialLaunch(params: {
   byLauncherPid.set(launcherPid, rec);
   latestByEmailNormalized.set(emailNormalized, rec);
   if (accountId) latestByAccountId.set(accountId, rec);
+  if (accountLabel) latestByLabelNormalized.set(normalizeLabel(accountLabel), rec);
 
   Logger.log(
     'CredentialLaunch',
@@ -115,6 +123,13 @@ export function getLatestCredentialLaunchByAccountId(accountId: string): Credent
 /** Most recent launch row for an email (normalized like login). */
 export function getLatestCredentialLaunchByEmail(email: string): CredentialLaunchRecord | undefined {
   return latestByEmailNormalized.get(normalizeEmail(email));
+}
+
+/** Most recent launch row for a dashboard display label (case/whitespace-insensitive). */
+export function getLatestCredentialLaunchByAccountLabel(label: string): CredentialLaunchRecord | undefined {
+  const l = normalizeLabel(label);
+  if (!l) return undefined;
+  return latestByLabelNormalized.get(l);
 }
 
 /** Read-only copy of the “latest per account id” index (for tooling). */

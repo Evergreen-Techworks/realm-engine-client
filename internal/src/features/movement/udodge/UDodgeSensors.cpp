@@ -3,6 +3,7 @@
 #include "UDodgeEnemyHazards.h"
 #include "UDodgeTrajectoryPhase.h"
 #include "UDodgeLaneMotion.h"
+#include "UDodgePredErr.h"
 
 #include "AoeTracking.h"
 #include "GameState.h"
@@ -14,6 +15,7 @@
 #include "DangerPlanner.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
 #include "features/combat/enemytracker/LockLiveness.h"
+#include "features/movement/collider/PlayerCollider.h"
 #include "features/movement/nav/Collision.h"
 #include "features/movement/sensors/TileSensor.h"
 #include "gui/tabs/TestTAB.h"
@@ -91,6 +93,7 @@ constexpr float kAoeArmWindowFallbackMs = 900.f;
 // no per-frame heap allocation. Single game-update-thread consumer; cleared at
 // the top of BuildMap/ReanchorMap.
 Movement::TileSensor::HazardMemo s_hazardMemo;
+PredErr::State s_predErr;   // [Diag/PredErr] calibration telemetry; untouched while diagOn is false
 
 using Movement::TileSensor::IsFinite;
 using Movement::TileSensor::IsFinitePoint;
@@ -128,13 +131,42 @@ bool CouldReachThreatRegion(const WorldProjectile& p, float playerX, float playe
     float windowMs = kLaneCoverMs;
     if (IsFinite(p.lifetime) && p.lifetime > 0.f && IsFinite(elapsedMs))
         windowMs = std::min(windowMs, std::max(0.f, p.lifetime - elapsedMs));
-    float travel = (p.speed / 10000.f) * speedMul * windowMs;
+    const float v0 = (p.speed / 10000.f) * speedMul;         // tiles/ms
+    float travel = v0 * windowMs;
     if (!IsFinite(travel) || travel < 0.f) return true;
 
-    // Acceleration metadata is not normalized to one universally reliable unit
-    // across all projectile definitions. A modest factor keeps accelerated shots
-    // in the set; the exact positionAt trace performs the real narrow-phase test.
-    if (p.isAccelerating || p.useAccel) travel *= 2.f;
+    // REACH OF AN ACCELERATING SHOT (Slice 4a). The units are PROVEN from
+    // 86ad651b (`ProjectileProperties::PGHAGLDAKMH` RVA 0x18CD670, consumed by
+    // `HBEAKBIHANL::LEOBAFOLBML` RVA 0x169D6D0): the fields we read are already
+    // parsed — AccelerationValue is tiles/s^2 (raw/10), SpeedClampValue is
+    // tiles/s (raw/10), AccelerationDelayValue is seconds (raw/1000, normalised to
+    // ms here), and the gate is IsAccelerating alone. The old `travel *= 2` guess
+    // under-counted badly: a Floral Hand shot (Speed 10, Accel 9999, Delay 800,
+    // Clamp 80) was credited 2.1 tiles of reach over the window while a launched
+    // one covers 8.4, so it was dropped for that frame beyond 18.1 tiles.
+    //
+    // The bound is the PEAK SPEED the window can reach, held for the whole window:
+    // an over-estimate of the true integral, which is what a safety-positive cull
+    // wants. Pre-delay travel is at the BASE speed (the shot is not stationary) and
+    // SpeedClamp clamps the SPEED, never the distance.
+    if (p.isAccelerating || p.useAccel) {
+        const float accelTpMs2 = (p.acceleration / 1000000.f) * speedMul;   // tiles/ms^2
+        if (IsFinite(accelTpMs2) && std::fabs(accelTpMs2) > 1e-12f) {
+            const float delayMs = (IsFinite(p.accelDelay) && p.accelDelay > 0.f)
+                ? p.accelDelay / speedMul : 0.f;
+            const float tau = std::max(0.f, windowMs - delayMs);
+            float vPeak = v0 + accelTpMs2 * tau;
+            const float clampTpMs = (p.speedClamp / 1000.f) * speedMul;     // tiles/ms
+            if (IsFinite(clampTpMs) && clampTpMs > 0.f)
+                vPeak = (accelTpMs2 >= 0.f) ? std::min(vPeak, std::max(clampTpMs, v0))
+                                            : std::max(vPeak, std::min(clampTpMs, v0));
+            vPeak = std::max(v0, vPeak);            // deceleration can never out-reach v0
+            const float bound = vPeak * windowMs;
+            travel = (IsFinite(bound) && bound > travel) ? bound : travel;
+        } else {
+            travel *= 2.f;   // flagged accelerating but the magnitude is unreadable: keep the old guess
+        }
+    }
     return d <= kThreatCullTiles + travel;
 }
 
@@ -266,8 +298,23 @@ struct PacketShot {
     int32_t bullet = 0;
     float x = 0.f, y = 0.f, angle = 0.f;
     float speed = 0.f, lifetimeMs = 0.f, hitHalf = 0.5f;
+    // objects.xml <Laser> for this projectile, in tiles (0 = not a laser). The
+    // client reads it from the same definition it takes speed/lifetime from, so a
+    // laser known only from ENEMYSHOOT can be recovered as a BEAM instead of the
+    // 5 tiles/s moving dot the Speed-0 fallback used to produce.
+    float laserDistance = 0.f;
     uint64_t receivedMs = 0;
 };
+// ── BEAM LENGTHS (Slice 4a) ─────────────────────────────────────────────────
+// A laser whose live LaserDistance is unreadable must not collapse to a box at the
+// emitter — that is a beam the solver cannot see at all. The shipped 86ad651b
+// objects.xml carries these <Laser> lengths in tiles: 10 (x6), 11 (x2), 20 (x28),
+// 24 (x6), 25 (x2), 30 (x6), 31 (x1), 40 (x14), 100 (x1). 20 is the mode and the
+// floor of 58 of the 66 definitions, so it covers the common laser at full length
+// without painting a map-crossing wall for the single 100-tile one.
+constexpr float kBeamFallbackTiles = 20.f;
+constexpr float kMaxBeamTiles      = 100.f;   // longest shipped <Laser>; a cap on packet input
+
 constexpr int kMaxPacketShots = 1024;
 constexpr uint64_t kPacketRecoveryMs = 750;
 std::mutex s_packetMutex;
@@ -310,6 +357,32 @@ void AppendPacketLanes(DangerMap& out, float playerX, float playerY, float laneC
         const PacketShot& s = local[i];
         const float ageMs = static_cast<float>(nowMs - s.receivedMs);
         if (s.lifetimeMs > 0.f && ageMs >= s.lifetimeMs) continue;
+        // A LASER recovered from ENEMYSHOOT is a static beam, not a travelling shot.
+        // It has Speed 0 in the data, so the generic path below took the 0.005 t/ms
+        // fallback and modelled it as a 5 tiles/s moving dot at the emitter — the
+        // whole beam body was invisible to every layer. Emit the same 2-point lane
+        // TraceLane builds for a runtime-tracked laser (both points timed 0, the
+        // paint slider deliberately not applied, so the beam is never truncated).
+        if (s.laserDistance > 0.f && IsFinite(s.laserDistance) && IsFinite(s.angle)) {
+            const Vec2 emitter{ s.x, s.y };
+            if (Len(Sub(emitter, { playerX, playerY })) > kThreatCullTiles + s.laserDistance) continue;
+            if (out.laneCount >= kMaxProjectiles) { out.limited = true; break; }
+            LaneThreat& beam = out.lanes[out.laneCount++];
+            beam = LaneThreat{};
+            beam.bulletId = s.bullet;
+            beam.attackerObjId = s.owner;
+            beam.ownerObjId = static_cast<uint32_t>(s.owner);
+            beam.hitHalf = std::clamp(s.hitHalf, 0.05f, kUMaxProjectileHalf);
+            beam.provisional = true;
+            beam.beam = true;
+            beam.remainingLifeMs = s.lifetimeMs > 0.f ? std::max(0.f, s.lifetimeMs - ageMs) : -1.f;
+            beam.points[0] = emitter;
+            beam.points[1] = Add(emitter, Mul(Vec2{ std::cos(s.angle), std::sin(s.angle) }, s.laserDistance));
+            beam.pointTimesMs[0] = beam.pointTimesMs[1] = 0.f;
+            beam.pointCount = beam.instantCount = 2;
+            beam.tailAtShotEnd = false;
+            continue;
+        }
         const float tilesPerMs = (s.speed > 0.f && IsFinite(s.speed)) ? s.speed / 10000.f : 0.005f;
         const Vec2 dir{ std::cos(s.angle), std::sin(s.angle) };
         const Vec2 live{ s.x + dir.x * tilesPerMs * ageMs,
@@ -325,7 +398,7 @@ void AppendPacketLanes(DangerMap& out, float playerX, float playerY, float laneC
         lane.bulletId = s.bullet;
         lane.attackerObjId = s.owner;
         lane.ownerObjId = static_cast<uint32_t>(s.owner);
-        lane.hitHalf = std::clamp(s.hitHalf, 0.05f, 2.5f);
+        lane.hitHalf = std::clamp(s.hitHalf, 0.05f, kUMaxProjectileHalf);
         lane.provisional = true;
         lane.remainingLifeMs = s.lifetimeMs > 0.f ? std::max(0.f, s.lifetimeMs - ageMs) : -1.f;
         lane.points[0] = live;
@@ -601,12 +674,22 @@ void SetInstantSpan(LaneThreat& lane, float laneCap)
 void TraceLane(LaneThreat& lane, const WorldProjectile& p, float elapsedMs, float laneCap)
 {
     lane.hasLinearMotion = false; lane.linearVelocity = {};
-    lane.beam = p.laser && IsFinite(p.laserDistance) && p.laserDistance > 0.f && IsFinite(p.angle);
+    // A LASER needs only its angle to be drawn as a beam. When the live
+    // LaserDistance is unreadable the lane used to fall through to the generic
+    // trace, where a Speed-0 shot samples the same point over and over and the beam
+    // becomes a single box at the emitter — invisible danger along its whole body.
+    // Take the conservative full-length beam along the known angle instead. (In the
+    // current build ProjectileRuntimeReader derives `laser` FROM laserDistance, so
+    // this arms only for a producer that knows the shot is a laser some other way;
+    // the [Diag/Game] `ppNames=` witness is what says whether the offset is sound.)
+    lane.beam = p.laser && IsFinite(p.angle);
     if (lane.beam) {
+        const float beamTiles = (IsFinite(p.laserDistance) && p.laserDistance > 0.f)
+            ? std::min(p.laserDistance, kMaxBeamTiles) : kBeamFallbackTiles;
         lane.pointCount = lane.instantCount = 2;
         lane.points[0] = {p.x, p.y};
-        lane.points[1] = {p.x + std::cos(p.angle) * p.laserDistance,
-                          p.y + std::sin(p.angle) * p.laserDistance};
+        lane.points[1] = {p.x + std::cos(p.angle) * beamTiles,
+                          p.y + std::sin(p.angle) * beamTiles};
         lane.pointTimesMs[0] = lane.pointTimesMs[1] = 0.f;
         lane.tailAtShotEnd = false;
         return;
@@ -856,7 +939,27 @@ float BlockerRadiusFor(const EnemyTracker::Entry& e)
     return (!e.hasHealthBar || e.isScenery) ? kStaticBlockerRadius : kEnemyRadius;
 }
 
-void PopulateEnemies(DangerMap& out, float playerX, float playerY)
+// ENEMY STANDOFF: the two radii this enemy contributes (UDodgeStandoff.h). Every
+// input is cached per TYPE by EnemyTracker, so this is arithmetic, not a read.
+//
+// The LOCKED target keeps its core but carries NO band: how close we fight it is
+// the engagement geometry's decision (ComputeLockGeometry), not navigation's — the
+// same split the burst keep-out already makes. An enemy that cannot shoot and has
+// learned no self-blast contributes nothing at all, so a crate or a wall segment
+// never fences off a room.
+void FillStandoff(EnemyBlocker& b, const EnemyTracker::Entry& e, const Settings& settings, bool isLock)
+{
+    b.standoffCore = 0.f;
+    b.standoffBand = 0.f;
+    if (settings.enemyStandoff == Standoff::Mode::Off) return;
+    if (e.hp <= 0 && !e.isInvulnerable) return;
+    const float band = Standoff::BandRadius(e.shotSpeedTilesPerSec, b.radius, e.hasProjectiles,
+                                            EnemyHazards::KeepoutRadius(e.objType));
+    b.standoffCore = Standoff::CoreRadius(b.passiveScenery, band);
+    b.standoffBand = isLock ? 0.f : std::max(band, b.standoffCore);
+}
+
+void PopulateEnemies(DangerMap& out, float playerX, float playerY, const Settings& settings)
 {
     out.enemyCount = 0;
     out.hasLock = false;
@@ -896,6 +999,7 @@ void PopulateEnemies(DangerMap& out, float playerX, float playerY)
                 b.pos = { e.x, e.y };
                 b.radius = BlockerRadiusFor(e);
                 b.passiveScenery = !e.hasHealthBar || e.isScenery;
+                FillStandoff(b, e, settings, userLockId != 0 && e.id == userLockId);
                 if (out.enemyCount == kMaxEnemies) refreshFarthest();   // just filled
             } else {
                 // Full: the snapshot exceeded capacity (still reported via
@@ -907,6 +1011,7 @@ void PopulateEnemies(DangerMap& out, float playerX, float playerY)
                     b.pos = { e.x, e.y };
                     b.radius = BlockerRadiusFor(e);
                     b.passiveScenery = !e.hasHealthBar || e.isScenery;
+                    FillStandoff(b, e, settings, userLockId != 0 && e.id == userLockId);
                     refreshFarthest();
                 }
             }
@@ -918,6 +1023,16 @@ void PopulateEnemies(DangerMap& out, float playerX, float playerY)
     const EnemyTracker::LockInfo lock = EnemyTracker::GetLock(userLockId);
     if (EnemyTracker::Engages(lock)) {
         out.hasLock = true; out.lockId = lock.id; out.lockPos = { lock.x, lock.y };
+        // The locked target's band feeds the fight distance, never navigation.
+        out.lockBand = 0.f;
+        if (settings.enemyStandoff != Standoff::Mode::Off)
+            for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot())
+                if (e.id == lock.id) {
+                    out.lockBand = Standoff::BandRadius(e.shotSpeedTilesPerSec, BlockerRadiusFor(e),
+                                                        e.hasProjectiles,
+                                                        EnemyHazards::KeepoutRadius(e.objType));
+                    break;
+                }
     }
 }
 
@@ -931,16 +1046,20 @@ void RecordPacketShot(const char* encoded)
         return;
     }
     PacketShot shot{};
-    if (sscanf_s(encoded, "%d,%d,%f,%f,%f,%f,%f,%f",
+    // 9 fields since Slice 4a (trailing laser distance). An 8-field message from an
+    // older client still parses: sscanf leaves the tail at its default 0 = no laser.
+    const int parsed = sscanf_s(encoded, "%d,%d,%f,%f,%f,%f,%f,%f,%f",
                  &shot.owner, &shot.bullet, &shot.x, &shot.y, &shot.angle,
-                 &shot.speed, &shot.lifetimeMs, &shot.hitHalf) != 8)
-        return;
+                 &shot.speed, &shot.lifetimeMs, &shot.hitHalf, &shot.laserDistance);
+    if (parsed != 8 && parsed != 9) return;
     if (shot.owner == 0 || !IsFinitePoint(shot.x, shot.y) || !IsFinite(shot.angle)) return;
     shot.bullet &= 0xffff;
     shot.receivedMs = GetTickCount64();
     if (!IsFinite(shot.speed) || shot.speed < 0.f) shot.speed = 0.f;
     if (!IsFinite(shot.lifetimeMs) || shot.lifetimeMs < 0.f) shot.lifetimeMs = 0.f;
     if (!IsFinite(shot.hitHalf) || shot.hitHalf <= 0.f) shot.hitHalf = 0.5f;
+    if (!IsFinite(shot.laserDistance) || shot.laserDistance <= 0.f) shot.laserDistance = 0.f;
+    if (shot.laserDistance > kMaxBeamTiles) shot.laserDistance = kMaxBeamTiles;
 
     std::lock_guard<std::mutex> lk(s_packetMutex);
     for (int i = 0; i < s_packetCount; ++i) {
@@ -978,7 +1097,7 @@ void ClearPacketShots()
     s_packetCount = 0;
 }
 
-void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& settings)
+void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& settings, bool diagOn)
 {
     out.laneCount = 0;
     out.zoneCount = 0;
@@ -988,6 +1107,22 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
     out.hasLock = false;
     out.lockId = 0;
     out.lockPos = {};
+    out.planner = settings.planner;
+    out.enemyStandoff = settings.enemyStandoff;
+    // LIVE HIT BOX (S3.3). One read per map build of the multiplier the game's own
+    // hit test uses — the value the collider feature writes when armed, the game's
+    // own otherwise. Untrusted offset or unreadable => 1.0, the game default and
+    // the larger box. Under tactician this replaces udodgeHitScale as the belief
+    // about how big a shot is; classic ignores it.
+    out.targetScale = 1.f;
+    out.colliderTrusted = false;
+    {
+        float live = 1.f;
+        if (PlayerCollider::ReadLiveMultiplier(GameState::GetLocalPtr(), live)) {
+            out.targetScale = std::clamp(live, 0.05f, 4.f);
+            out.colliderTrusted = true;
+        }
+    }
     s_hazardMemo.Clear();
     // tickId/tickValid deliberately untouched — the caller owns the stamp.
 
@@ -1001,7 +1136,7 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
     const int32_t localId = ProjectileTracking::GetLocalPlayerObjectId();
 
     // Enemies → hard-no-go blockers + the user's enemy lock (live snapshot).
-    PopulateEnemies(out, playerX, playerY);
+    PopulateEnemies(out, playerX, playerY, settings);
 
     // Prune shots the game deleted early (wall/enemy/player hit) BEFORE reading the
     // tracked list, so their lanes vanish immediately instead of lingering to their
@@ -1072,6 +1207,9 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
         // here: the live position is the anchor.
         TraceLane(lane, p, elapsedMs, laneCap);
         if (lane.pointCount >= 1) ++out.laneCount;
+        if (diagOn)   // [Diag/PredErr]: arm/observe against the lane model's own forecast (UDodgePredErr.h)
+            PredErr::Sample(s_predErr, { lane.bulletId, lane.attackerObjId, lane.ownerObjId }, lane,
+                            Vec2{ p.x, p.y }, nowMs, IsCurvedShot(p), elapsedMs, /*allowArm=*/true);
 
         // A shot that never moves and sits on its owner is a stationary damage
         // field around that enemy: learn a keep-out for the enemy's type so the
@@ -1099,6 +1237,7 @@ void BuildMap(DangerMap& out, float playerX, float playerY, const Settings& sett
             DBG_FILE_LOG("[UDodge] BuildMap DONE lanes=" << out.laneCount
                 << " zones=" << out.zoneCount << " enemies=" << out.enemyCount);
     }
+    if (diagOn) PredErr::MaybeEmit(s_predErr, nowMs, &DbgFileLogWrite);
 }
 
 bool ReadWorldTick(uint32_t& outTickId)
@@ -1111,7 +1250,7 @@ bool ReadWorldTick(uint32_t& outTickId)
     return true;
 }
 
-bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& settings)
+bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& settings, bool diagOn)
 {
     if (!ProjectileTracking::IsInstalled()) return false;
     s_hazardMemo.Clear();   // per-frame hazard memo reset (same contract as Build)
@@ -1206,6 +1345,9 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
             // Core::Temporal takes over rather than the freeze silently under-counting.
             SetInstantSpan(lane, laneCap);
         }
+        if (diagOn)   // [Diag/PredErr]: observe only — BuildMap owns arming (UDodgePredErr.h)
+            PredErr::Sample(s_predErr, { lane.bulletId, lane.attackerObjId, lane.ownerObjId }, lane,
+                            Vec2{ p.x, p.y }, nowMs, curved, elapsedMs, /*allowArm=*/false);
     }
     int runtimeLaneCount = 0;
     for (int i = 0; i < map.laneCount; ++i)
@@ -1234,7 +1376,8 @@ bool ReanchorMap(DangerMap& map, float playerX, float playerY, const Settings& s
     // a HARD no-go, so a moving add's CURRENT position must be reflected each frame
     // — otherwise the immediate solve / step re-validation would clear a spot the
     // add has already walked onto. Cheap: EnemyTracker::Tick() is self-throttled.
-    PopulateEnemies(map, playerX, playerY);
+    PopulateEnemies(map, playerX, playerY, settings);
+    if (diagOn) PredErr::MaybeEmit(s_predErr, nowMs, &DbgFileLogWrite);
     return true;
 }
 

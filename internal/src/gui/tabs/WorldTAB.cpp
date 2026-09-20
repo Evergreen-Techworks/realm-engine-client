@@ -2672,6 +2672,8 @@ namespace WorldTAB {
         return (it != s_tileMaxDmgMap.end()) ? it->second : 0;
     }
 
+    bool IsLiveHazardActive() { return s_liveHazOk; }
+
     uint8_t GetTileFlags(int tx, int ty)
     {
         std::lock_guard<std::mutex> lock(s_tileMapMutex);

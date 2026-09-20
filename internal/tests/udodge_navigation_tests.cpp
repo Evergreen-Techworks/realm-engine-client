@@ -1,13 +1,135 @@
 #include "UDodgePathfinder.h"
 #include "UDodgeNavigation.h"
 #include "UDodgeSolver.h"
+#include "UDodgeCore.h"
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 using namespace UDodge;
 void Check(bool ok, const char* name) {
     if (!ok) { std::fprintf(stderr, "FAIL: %s\n", name); std::exit(1); }
 }
+
+// ── The result ladder prefers the ring (Tactician Slice 2) ───────────────────
+// A boss at lockPos fires one volley of 45 shots, one every 8 degrees, each traced
+// from r = 1 to r = 9 tiles where it dies. Every other shot is fast (800 ms to r = 9),
+// the ones between are slow (1600 ms), and the player stands at r = 9.6 on the bearing
+// of a slow shot, beyond every shot's end. With weapon range 7 the engagement ring is
+// [2.45, 6.25]. Measured against whole shot paths (PointSafety) no cell of the ring is
+// shot-free, and the ground outside r = 9 is. Measured in time the ring can be entered:
+// the fast shots pass either side of the player's bearing 0.9 tiles away and the slow
+// shot on it is still 2 tiles short of the ring's outer cells when the player gets there.
+// (The plan's first fixture, every shot at 800 ms, is a closed wave: 8 degrees apart the
+// shots' arrival boxes overlap out to r = 10.7, so nothing crosses it and the ring can
+// only be entered once the volley is dead, which no bounded-wait route expresses.)
+namespace Ring {
+constexpr float kOuter = 6.25f, kInner = 2.45f;   // LockGeometry for weapon range 7
+const Vec2 kLock{ -9.6f, 0.f };                   // the player stands at the origin: r = 9.6, bearing +x
+
+void Volley(Path::PlannerSnapshot& s)
+{
+    s = Path::PlannerSnapshot{};
+    s.lockPos = kLock;
+    s.weaponRangeTiles = kOuter;
+    s.innerStandoffTiles = kInner;
+    s.speed = .005f;
+    s.moveBudget = .5f;
+    for (int k = -22; k <= 22; ++k) {
+        const float a = static_cast<float>(k) * 8.f * kTwoPi / 360.f;
+        const Vec2 dir{ std::cos(a), std::sin(a) };
+        const float lifeMs = (k % 2 == 0) ? 1600.f : 800.f;   // k = 0, the player's bearing, is slow
+        auto& lane = s.map.lanes[s.map.laneCount++];
+        lane.hitHalf = .3f;
+        lane.pointCount = lane.instantCount = 2;
+        lane.points[0] = Add(kLock, Mul(dir, 1.f));
+        lane.points[1] = Add(kLock, Mul(dir, 9.f));
+        lane.pointTimesMs[1] = lifeMs;
+        lane.remainingLifeMs = lifeMs;
+        lane.tailAtShotEnd = true;
+    }
+}
+
+int failures = 0;
+void Expect(bool ok, const char* name) {
+    if (!ok) { std::fprintf(stderr, "FAIL: %s\n", name); ++failures; }
+}
+
+void LadderTests()
+{
+    static Path::PlannerSnapshot snap{};
+    static Path::PlanResult plan{};
+    Volley(snap);
+
+    // The fixture's premise, checked against the production safety test.
+    MapInput mi{}; mi.player = snap.player; mi.settings = snap.settings; mi.map = &snap.map;
+    Check(Core::PointSafety(mi, snap.player) >= kUDurablePocketMargin,
+          "fixture: the stand outside the ring is shot-free");
+    int ringCells = 0, shotFreeRingCells = 0;
+    for (int gy = -kUPathMaxRadCells; gy <= kUPathMaxRadCells; ++gy)
+        for (int gx = -kUPathMaxRadCells; gx <= kUPathMaxRadCells; ++gx) {
+            const Vec2 w{ gx * kUPathCellTiles, gy * kUPathCellTiles };
+            const float r = Len(Sub(w, kLock));
+            if (r < kInner || r > kOuter + kUInRangeSlack) continue;
+            ++ringCells;
+            if (Core::PointSafety(mi, w) >= kUDurablePocketMargin) ++shotFreeRingCells;
+        }
+    Check(ringCells > 100 && shotFreeRingCells == 0, "fixture: no cell of the ring is shot-free");
+
+    // 1. Approaching a ring, a shot-free stand outside it is not a goal.
+    snap.ringApproach = true;
+    Path::Compute(snap, plan);
+    Expect(!plan.startIsGoal,
+           "a shot-free stand outside the ring is not a goal while a ring is being approached");
+
+    // 2. The in-ring time-clear spot wins over the shot-free ground outside the ring.
+    Expect(plan.found && plan.ringGoal && !plan.outOfRange,
+           "an in-ring time-clear spot outranks the shot-free ground outside the ring");
+    Expect(plan.found && plan.tempGoal && !plan.partial,
+           "fixture: the ring is entered on the time-aware goal, not a shot-free cell");
+    const float goalR = Len(Sub(plan.goalPos, kLock));
+    Expect(plan.found && goalR >= kInner && goalR <= kOuter + kUInRangeSlack,
+           "the ring goal lies inside the ring");
+    Core::Temporal::Ctx time{};
+    Core::Temporal::Build(snap.map, snap.settings.hitScale, snap.settings.positionUncertainty,
+        snap.player, 20.f, time, Core::ProjectilePlayerHalf(snap.settings));
+    Expect(plan.wptCount >= 2, "the way into the ring is a route");
+    float arrival = 0.f;
+    for (int vertex = 1; vertex < plan.wptCount; ++vertex) {
+        const float nextArrival = arrival + Len(Sub(plan.wpts[vertex], plan.wpts[vertex - 1])) / snap.speed;
+        Expect(Core::Temporal::EdgeClear(time, plan.wpts[vertex - 1], plan.wpts[vertex], arrival, nextArrival),
+               "the way into the ring never crosses a shot");
+        arrival = nextArrival;
+    }
+
+    // 3. Without a ring, nothing changes: a shot-free stand ends the search.
+    snap.ringApproach = false;
+    snap.hasLock = false;
+    Path::Compute(snap, plan);
+    Expect(plan.startIsGoal && !plan.ringGoal, "unlocked play still short-circuits on a shot-free stand");
+
+    if (failures) { std::fprintf(stderr, "Ring ladder tests: %d failures\n", failures); std::exit(1); }
+    std::puts("Ring ladder tests passed (ring goal outranks out-of-range ground, start rule, unlocked unchanged).");
+}
+} // namespace Ring
+
 int main() {
+    Check(Navigation::SameRouteRequest(true, 7, 42, 7, 42), "same global request retains local route across corridor refresh");
+    Check(!Navigation::SameRouteRequest(true, 8, 42, 7, 42), "scene changes invalidate the old local route");
+    Check(!Navigation::SameRouteRequest(true, 7, 43, 7, 42), "new goals invalidate the old local route");
+    Check(!Navigation::SameRouteRequest(false, 7, 42, 7, 42), "manual and legacy goal changes never retain stale routes");
+    Check(!Navigation::SameRouteRequest(true, 0, 0, 0, 0), "uncorrelated routes cannot be retained");
+    Check(Navigation::TravelStepConsumed(true, true, false, true, {1,0}, {1,0}, {4,0}, 0.1f),
+          "completed safe travel steps refresh before the next server tick");
+    Check(!Navigation::TravelStepConsumed(true, true, false, false, {1,0}, {1,0}, {4,0}, 0.1f),
+          "intentional hold and fallback decisions never trigger travel continuation");
+    Check(!Navigation::TravelStepConsumed(true, true, true, true, {1,0}, {1,0}, {4,0}, 0.1f),
+          "waiting for a verified route never authorizes travel continuation");
+    Check(!Navigation::TravelStepConsumed(true, true, false, true, {1,0}, {1,0}, {1,0}, 0.1f),
+          "arrived travel does not repeatedly solve");
+    Check(!Navigation::TravelStepConsumed(true, true, false, true, {1,0}, {1,0}, {4,0}, 0.f),
+          "paralysis cannot trigger travel continuation");
+    Check(!Navigation::TravelStepConsumed(true, true, false, true, {1,0}, {1.05f,0}, {4,0}, 0.1f),
+          "short corner steps finish before choosing another step");
     static DangerMap emptyMap{};
     MapInput cornerInput{}; cornerInput.map = &emptyMap; cornerInput.speed = 5.f;
     Solver::Goal cornerGoal{}; cornerGoal.active = true; cornerGoal.walkTo = true;
@@ -51,6 +173,12 @@ int main() {
     Check(!progress.Stalled({-0.4f,0}, 4000, true), "worker waiting time does not count as stuck movement");
     Check(!progress.Stalled({-0.4f,0}, 5000), "fresh route receives a fresh movement-progress window");
     Check(progress.Stalled({-0.4f,0}, 5500), "a real stall after route arrival still triggers recovery");
+    // Item 1 S2: route commitment passes a longer stall window (1.5 s) so a
+    // detour has time to rejoin before the follower gives up on the route.
+    Navigation::Progress committed;
+    Check(!committed.Stalled({}, 6000, false, 1500), "committed progress starts with a fresh observation");
+    Check(!committed.Stalled({}, 7000, false, 1500), "still short of 1.5s: not yet a stall");
+    Check(committed.Stalled({}, 7500, false, 1500), "1.5s without 0.5 tiles of movement is a stall");
     MapInput padded{};
     padded.env.canOccupy = [](float, float y, bool) { return y > 0.f; };
     Check(!Navigation::PaddedPathClear(padded, {0,1}, {2,0.1f}), "navigation refuses wall-hugging shortcut");
@@ -75,7 +203,7 @@ int main() {
     in.env.occFlags=snap.navGrid.flags; in.env.occSide=kUNavSide;
     in.env.occRadius=kUNavRadCells; in.env.occCellTiles=1;
     auto clear = [&](Vec2 a, Vec2 b) { return OccupancyPathClear(in,a,b); };
-    float dev; bool end;
+    float dev; bool end; bool con;
     // The closest segment is across a tree/wall. Rejoin the visible earlier
     // leg instead of repeatedly aiming at the inaccessible nearby projection.
     Vec2 folded[] = {{0,0}, {0,3}, {1,3}, {1,0}};
@@ -86,28 +214,37 @@ int main() {
         }
         return true;
     };
-    Vec2 rejoin=Navigation::Follow(folded,4,{0.6f,1},6,dev,end,wallClear);
+    Vec2 rejoin=Navigation::Follow(folded,4,{0.6f,1},6,dev,end,con,wallClear);
     Check(wallClear({0.6f,1},rejoin) && rejoin.y>1,
           "folded route follows visible leg around wall");
+    Check(con, "a rejoin point on a folded-but-reachable route reports connected");
     Vec2 inaccessible[]={{0,0},{2,0}};
-    Vec2 hold=Navigation::Follow(inaccessible,2,{0,0},6,dev,end,wallClear);
+    Vec2 hold=Navigation::Follow(inaccessible,2,{0,0},6,dev,end,con,wallClear);
     Check(wallClear({0,0},hold), "blocked first bend is never returned unchecked");
     Vec2 shortRoute[]={{0,0},{2,0}};
-    Navigation::Follow(shortRoute,2,{0,0},6,dev,end,[](Vec2,Vec2){return true;});
+    Navigation::Follow(shortRoute,2,{0,0},6,dev,end,con,[](Vec2,Vec2){return true;});
     Check(!end, "lookahead reaching the end does not consume a route before arrival");
-    Navigation::Follow(shortRoute,2,{1.8f,0},6,dev,end,[](Vec2,Vec2){return true;});
+    Navigation::Follow(shortRoute,2,{1.8f,0},6,dev,end,con,[](Vec2,Vec2){return true;});
     Check(end, "route is consumed when the player actually reaches its endpoint");
-    Vec2 prefix=Navigation::Follow(inaccessible,2,{0,0},6,dev,end,wallClear);
+    Vec2 prefix=Navigation::Follow(inaccessible,2,{0,0},6,dev,end,con,wallClear);
     Check(prefix.x>0.3f && wallClear({0,0},prefix),
           "blocked lookahead still advances along the verified open prefix");
+    Check(con, "a verified open prefix still reports the route connected");
+    // Item 1 S2: a route with NO clear line anywhere is disconnected, not merely
+    // deviated — the one case that should still trigger a fresh search.
+    Vec2 never=Navigation::Follow(inaccessible,2,{5,5},6,dev,end,con,
+        [](Vec2,Vec2){ return false; });
+    Check(!con && LenSq(Sub(never,Vec2{5,5}))==0.f,
+          "a fully blocked route reports disconnected and holds at the player");
     Vec2 p{};
     for (int frame=0; frame<200 && Len(Sub(p,{4,4}))>0.05f; ++frame) {
-        Vec2 next=Navigation::Follow(plan.navWpts,plan.navWptCount,p,6,dev,end,clear);
+        Vec2 next=Navigation::Follow(plan.navWpts,plan.navWptCount,p,6,dev,end,con,clear);
         Check(clear(p,next), "every follower shortcut stays inside L corridor");
+        Check(con, "an on-map route stays connected while it is followed");
         p=Add(p,Mul(Normalize(Sub(next,p)),std::min(0.1f,Len(Sub(next,p)))));
     }
     Check(Len(Sub(p,{4,4}))<=0.05f, "follower traverses corner without stalling");
-    Vec2 target=Navigation::Follow(plan.navWpts,3,{0,0},6,dev,end,
+    Vec2 target=Navigation::Follow(plan.navWpts,3,{0,0},6,dev,end,con,
         [](Vec2,Vec2){return true;});
     Check(target.y>0, "open space retains smooth lookahead");
     // Approach a square tree from each cardinal direction; exercise replanning
@@ -122,7 +259,7 @@ int main() {
         Check(plan.navFound && !plan.navPartial, "tree detour found");
         p=start;
         for (int frame=0; frame<400 && Len(Sub(p,snap.navGoal))>0.05f; ++frame) {
-            Vec2 next=Navigation::Follow(plan.navWpts,plan.navWptCount,p,6,dev,end,clear);
+            Vec2 next=Navigation::Follow(plan.navWpts,plan.navWptCount,p,6,dev,end,con,clear);
             Check(clear(p,next), "tree shortcut has clear swept footprint");
             p=Add(p,Mul(Normalize(Sub(next,p)),std::min(0.1f,Len(Sub(next,p)))));
         }
@@ -138,4 +275,34 @@ int main() {
     Check(!plan.navArrived && plan.navWptCount==1 && LenSq(plan.navStepTarget)==0.f,
           "boxed-in A* never returns the raw destination as a steering step");
     std::puts("Navigation regressions passed (real A*, corner compression, swept steering, completion).");
+    // A locked fight: nine stationary shots form a closed arm between the player and
+    // weapon range. The route must go round it, never through it.
+    static Path::PlannerSnapshot fight{};
+    fight.hasLock = true;
+    fight.lockPos = {4.f, 0.f};
+    fight.weaponRangeTiles = 2.f;
+    fight.innerStandoffTiles = 1.f;
+    fight.speed = .005f;
+    fight.moveBudget = .5f;
+    for (int shot = 0; shot < 9; ++shot) {
+        auto& lane = fight.map.lanes[fight.map.laneCount++];
+        lane.hitHalf = .3f;
+        lane.pointCount = lane.instantCount = 2;
+        lane.points[0] = lane.points[1] = {1.f, (shot - 4) * .5f};
+        lane.pointTimesMs[1] = 3000.f;
+    }
+    Path::Compute(fight, plan);
+    Check(plan.found && !plan.partial, "locked fight finds a reachable pocket around the shot arm");
+    Core::Temporal::Ctx fightTime{};
+    Core::Temporal::Build(fight.map, fight.settings.hitScale, fight.settings.positionUncertainty,
+        fight.player, 20.f, fightTime, Core::ProjectilePlayerHalf(fight.settings));
+    float arrival = 0.f;
+    for (int vertex = 1; vertex < plan.wptCount; ++vertex) {
+        const float nextArrival = arrival + Len(Sub(plan.wpts[vertex], plan.wpts[vertex - 1])) / fight.speed;
+        Check(Core::Temporal::EdgeClear(fightTime, plan.wpts[vertex - 1], plan.wpts[vertex], arrival, nextArrival),
+            "locked fight route never crosses a closed projectile arm to reach weapon range");
+        arrival = nextArrival;
+    }
+    std::puts("Locked fight route passed (time-checked round the shot arm).");
+    Ring::LadderTests();
 }

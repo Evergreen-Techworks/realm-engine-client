@@ -157,6 +157,30 @@ it('enforces the absolute MP cost even at zero reserve and refreshes cached XML 
   f.setXml('<Object><MpCost>5</MpCost></Object>'); f.tick();
   expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
 });
+it.each([
+  '<MpCost>0</MpCost><MpEndCost>30</MpEndCost><MultiPhase/><Activate>ShurikenAbility</Activate>',
+  '<MpCost>0</MpCost><MultiPhase></MultiPhase>',
+  '<MpCost>0</MpCost><MpEndCost>30</MpEndCost>',
+])('does not repeatedly start unsupported multiphase abilities: %s', (body) => {
+  const fixtureState = fixture();
+  fixtureState.pd.classType = 806;
+  fixtureState.setXml(`<Object>${body}</Object>`);
+  fixtureState.settings.get('diagnostics')!.set(true);
+  fixtureState.tick();
+  vi.setSystemTime(13000);
+  fixtureState.tick();
+  expect(fixtureState.client.sendToServer).not.toHaveBeenCalled();
+  expect(fixtureState.ctx.log).toHaveBeenCalledWith(expect.stringContaining('multiphase ability requires manual use'));
+  const manualPacket = { data: { slotObject: { objectId: 1, slotId: 1, objectType: 321 }, useType: 0 }, send: true };
+  fixtureState.hooks.get('USEITEM')!(fixtureState.client, manualPacket);
+  expect(manualPacket.send).toBe(true);
+  expect(manualPacket.data.useType).toBe(0);
+  fixtureState.setXml('<Object><MpCost>20</MpCost></Object>');
+  fixtureState.settings.get('targetMaxStaleMs')!.set(0);
+  vi.setSystemTime(16000);
+  fixtureState.tick();
+  expect(fixtureState.client.sendToServer).toHaveBeenCalledOnce();
+});
 it('accepts missing MpCost, rejects invalid costs, and never sends movement abilities', () => {
   const f = fixture();
   for (const cost of ['NaN', '-1', '']) {

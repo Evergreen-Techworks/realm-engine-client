@@ -26,9 +26,14 @@
 //                     per fault rather than once per message.
 #include <cstdio>
 #include <cstdarg>
+#include <cstring>
 #include <ctime>
 #include <Windows.h>
 #include <sstream>
+#include <string>
+#include <vector>
+#include <mutex>
+#include <atomic>
 
 inline const char* DbgFileLogPath()
 {
@@ -71,18 +76,107 @@ inline bool DbgFileLogEnabled()
 #endif
 }
 
-inline void DbgFileLogWrite(const char* line)
+// ── Buffering (navigation finish plan, Item 4) ───────────────────────────────
+// This is the ungated writer: 11,290 lines in 28 minutes with diag timing on
+// was 11,290 synchronous fopen/fprintf/fflush/fclose round-trips on the game
+// thread, perturbing the very numbers the flag exists to measure. Lines are now
+// queued in memory (their timestamp/tid is still stamped HERE, at emit time —
+// only the disk write is deferred) and flushed as ONE fopen/fwrite/fclose when
+// the queue reaches kFlushBytes or kFlushPeriodMs have passed since the last
+// flush, whichever comes first — checked opportunistically on each write, since
+// there is no dedicated logging thread to own a timer. Behaviour with nothing
+// calling this function is unchanged: an empty queue never flushes itself.
+//
+// Crash safety is preserved, not weakened: DbgFileLogEnterCrashMode() (wired to
+// CrashProbe's vectored/top-level handlers and to DLL_PROCESS_DETACH) flushes
+// whatever is queued and switches every LATER call back to the original
+// unbuffered, immediately-flushed behaviour — so the crash report CrashProbe is
+// about to write, and everything queued before it, both reach disk before the
+// process can die. try_lock only in that path: a vectored handler can fire on
+// the same thread that is mid-push_back under BufMutex(), and a blocking
+// re-lock there would hang the crash handler itself instead of writing a report.
+namespace DbgFileLogDetail {
+inline std::mutex& BufMutex() { static std::mutex m; return m; }
+inline std::vector<std::string>& Buf() { static std::vector<std::string> v; return v; }
+inline size_t& BufBytes() { static size_t n = 0; return n; }
+inline ULONGLONG& LastFlushMs() { static ULONGLONG t = 0; return t; }
+inline std::atomic<bool>& ImmediateMode() { static std::atomic<bool> b{ false }; return b; }
+constexpr size_t     kFlushBytes    = 64 * 1024;
+constexpr ULONGLONG  kFlushPeriodMs = 250;
+
+// Caller already holds BufMutex() (or crash mode, where nothing else can be
+// concurrently appending on this thread). ONE fopen/fwrite/fclose for the
+// whole queue.
+inline void FlushLocked()
+{
+    std::vector<std::string>& buf = Buf();
+    if (buf.empty()) { LastFlushMs() = GetTickCount64(); return; }
+    FILE* f = nullptr;
+    if (fopen_s(&f, DbgFileLogPath(), "ab") == 0 && f) {
+        for (const std::string& s : buf) fwrite(s.data(), 1, s.size(), f);
+        fflush(f);
+        fclose(f);
+    }
+    buf.clear();
+    BufBytes() = 0;
+    LastFlushMs() = GetTickCount64();
+}
+
+inline void WriteImmediate(const char* formatted, size_t len)
 {
     FILE* f = nullptr;
     if (fopen_s(&f, DbgFileLogPath(), "ab") != 0 || !f) return;
-
-    SYSTEMTIME st;
-    GetLocalTime(&st);
-    fprintf(f, "[%02d:%02d:%02d.%03d] [tid=%lu] %s\n",
-            st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
-            GetCurrentThreadId(), line ? line : "");
+    fwrite(formatted, 1, len, f);
     fflush(f);
     fclose(f);
+}
+} // namespace DbgFileLogDetail
+
+// Flush whatever is currently queued. Safe to call any time; a no-op with an
+// empty queue.
+inline void DbgFileLogFlush()
+{
+    std::lock_guard<std::mutex> lk(DbgFileLogDetail::BufMutex());
+    DbgFileLogDetail::FlushLocked();
+}
+
+// Fatal-exception / shutdown path only (CrashProbe.h, dllmain.cpp
+// DLL_PROCESS_DETACH). Flushes the queue with try_lock (see the note above —
+// never blocks) and puts every later DbgFileLogWrite call back to unbuffered,
+// immediately-flushed writes for the rest of the process's life.
+inline void DbgFileLogEnterCrashMode()
+{
+    if (DbgFileLogDetail::ImmediateMode().exchange(true, std::memory_order_seq_cst))
+        return;   // already in crash mode (a second fault, or detach after a crash)
+    std::unique_lock<std::mutex> lk(DbgFileLogDetail::BufMutex(), std::try_to_lock);
+    if (lk.owns_lock()) DbgFileLogDetail::FlushLocked();
+}
+
+inline void DbgFileLogWrite(const char* line)
+{
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char formatted[1200];
+    const int n = snprintf(formatted, sizeof(formatted), "[%02d:%02d:%02d.%03d] [tid=%lu] %s\n",
+                            st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+                            GetCurrentThreadId(), line ? line : "");
+    if (n <= 0) return;
+    const size_t len = n < static_cast<int>(sizeof(formatted)) ? static_cast<size_t>(n) : sizeof(formatted) - 1;
+
+    if (DbgFileLogDetail::ImmediateMode().load(std::memory_order_relaxed)) {
+        DbgFileLogDetail::WriteImmediate(formatted, len);
+        return;
+    }
+
+    std::lock_guard<std::mutex> lk(DbgFileLogDetail::BufMutex());
+    DbgFileLogDetail::Buf().emplace_back(formatted, len);
+    DbgFileLogDetail::BufBytes() += len;
+    ULONGLONG& last = DbgFileLogDetail::LastFlushMs();
+    const ULONGLONG now = GetTickCount64();
+    if (last == 0) last = now;   // first write of the process: start the window, don't flush yet
+    if (DbgFileLogDetail::BufBytes() >= DbgFileLogDetail::kFlushBytes ||
+        now - last >= DbgFileLogDetail::kFlushPeriodMs)
+        DbgFileLogDetail::FlushLocked();
 }
 
 // The guard wraps the FORMATTING, not just the write. Building the ostringstream

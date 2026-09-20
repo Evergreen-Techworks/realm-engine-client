@@ -2,6 +2,9 @@ import type { PluginContext, ClientConnection, Packet, GameDataLoader } from './
 import { sendDllFeature, StatType, getDllThreats, getDllThreatsAgeMs } from './api.js';
 import { remainingHitMs } from './auto-nexus/forecastTiming.js';
 import { HealthEvidence } from './auto-nexus/healthEvidence.js';
+import { DiagGate } from '../src/util/DiagGate.js';
+import { RateLimiter } from '../src/util/DiagRateLimit.js';
+import { Logger } from '../src/util/Logger.js';
 import {
   type ShotRecord,
   appliedDamage,
@@ -127,7 +130,18 @@ interface NexusState {
   charges: Charge[];
   /** Condition bits charged bullets applied since the last server HP. */
   ledgerEffects: [number, number];
+  /** item 4b (measurement only): performance.now() at the last noteConfirmedHp,
+   *  i.e. the "decision" instant checkForm() reasons from. Undefined until the
+   *  first HP event with diagnostics on. */
+  hpEventAtMs?: number;
 }
+
+// item 4b, part D (measurement only): decision->socket-write latency, logged
+// only when it exceeds 50ms (per the plan; no periodic aggregate for this
+// one — see .superpowers/sdd/2026-09-18-process-stalls/investigation.md
+// section 8). Rate-limited alongside the rest of this task's [Diag/*] lines.
+const NEXUS_SLOW_MS = 50;
+const nexusSlowLineLimiter = new RateLimiter(5, 5000);
 
 export function register(ctx: PluginContext, testHooks?: { allowActivePredictionForTests?: boolean }) {
   ctx.name = 'Auto Nexus';
@@ -355,6 +369,15 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
     if (!client.connected || !ctx.enabled || state.generation !== client.admission.generation ||
         ['dead', 'disconnected', 'cancelled', 'terminal'].includes(client.admission.phase)) return;
     if (!client.recovery.requestEscape(state.generation, { retries: retryCount, retryMs })) return;
+    // item 4b (measurement only): requestEscape() synchronously calls
+    // sendEscape() before returning (RecoveryCoordinator.ts), so this point is
+    // "escape packet send call returns" per the investigation's design.
+    if (DiagGate.on() && state.hpEventAtMs !== undefined) {
+      const elapsedMs = performance.now() - state.hpEventAtMs;
+      if (elapsedMs > NEXUS_SLOW_MS && nexusSlowLineLimiter.allow()) {
+        Logger.log('Diag/Nexus', `decision->write=${elapsedMs.toFixed(1)}ms (>${NEXUS_SLOW_MS}ms) layer=${layer}`);
+      }
+    }
     state.escapeRequestedAt = recordTransition(client, 'escape-requested', state.generation);
     const now = Date.now();
     const point = state.maxHp > 0 ? escapePoint(state, now) : null;
@@ -377,6 +400,10 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
   }
   /** Record a newly confirmed HP value and any loss it completes within one reaction window. */
   function noteConfirmedHp(state: NexusState, now: number): void {
+    // item 4b (measurement only): mark the decision instant. Set unconditionally
+    // (not gated on armed()/escape happening) so it always reflects the most
+    // recent HP event a decision could react to, per the investigation's design.
+    if (DiagGate.on()) state.hpEventAtMs = performance.now();
     if (state.hp === null || state.maxHp <= 0) return;
     // A max-HP change (gear, death, character) makes earlier values incomparable.
     state.samples = state.samples.filter(s => now - s.at <= BURST_WINDOW_MS && s.maxHp === state.maxHp);
