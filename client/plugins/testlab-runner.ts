@@ -10,35 +10,36 @@
  * all beyond the one existence check below — no timers, no further file
  * access, ever, for the rest of the session.
  *
- * This file, its pure core (`src/testlab/runnerCore.ts`), the renderer
- * helper it talks to (`src/dashboard/public/js/testlab-runner.js`) and their
- * tests are listed in `client/private-only.json` and must be removable from
- * customer builds by deleting exactly those paths (plus the small general
- * hooks documented inline where they're added, which stay behind and are
- * inert without this file).
+ * This file, its pure core (`src/testlab/runnerCore.ts`) and their tests are
+ * listed in `client/private-only.json` and must be removable from customer
+ * builds by deleting exactly those paths (plus the small general hooks
+ * documented inline where they're added, which stay behind and are inert
+ * without this file).
  *
  * Thin by design: this file sequences real side effects (read/rename the
- * request file, broadcast a launch request, poll admission/packets, call
- * host access for scripts/config, terminate the game process, write the
- * result file, quit) and hands every decision — validation, phase
- * transitions, stop reasons, the result shape — to `runnerCore.ts`, which is
- * why that module carries the state-machine tests.
+ * request file, launch by label, poll admission/packets, call host access
+ * for scripts/config, terminate the game process tree, write the result
+ * file, quit) and hands every decision — validation, phase transitions,
+ * stop reasons, the result shape — to `runnerCore.ts`, which is why that
+ * module carries the state-machine tests.
  *
- * Credentials never appear here: the account is identified only by its
- * dashboard label, and the actual launch happens in the renderer
- * (`src/dashboard/public/js/testlab-runner.js`), through the exact same
- * function its own Launch button uses. This file only ever sees a label
- * string and an ok/error result.
+ * Credentials never appear here, anywhere: the account is identified only
+ * by its dashboard label, and the actual lookup + launch happens entirely
+ * inside `ctx.hostAccess.launchSavedAccountByLabel` (DevServer, server-side)
+ * — this file only ever sees a label string in, and an ok/error/pid result
+ * out.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
-import { dirname, join, resolve } from 'path';
+import { dirname, resolve, join } from 'path';
 import { fileURLToPath } from 'url';
 import type { PluginContext, ClientConnection } from './api.js';
 import { RuntimeScheduler } from './api.js';
 import { readBuildInfoFile } from '../src/util/buildInfo.js';
 import { loggerDirectory } from '../src/util/Logger.js';
-import { terminateGameProcessByPid } from '../src/dashboard/server/GameLauncher.js';
+import { terminateGameProcessTree, type TerminatePidSpec } from '../src/dashboard/server/GameLauncher.js';
 import { getLatestCredentialLaunchByAccountLabel } from '../src/dashboard/process/credentialLaunchRegistry.js';
+import { ROTMG_EXALT_IMAGE, ROTMG_EXALT_CHILD_IMAGE } from '../src/dashboard/process/rotmgWindowsClientTune.js';
+import { PROXY_EXIT_QUIT_APP } from '../electron/proxyExitCodes.cjs';
 import {
   TESTLAB_PRIVATE_ONLY,
   runnerCoreMarker,
@@ -47,7 +48,6 @@ import {
   consumedRequestFileName,
   resultFileName,
   throwawayConfigId,
-  buildLaunchBroadcast,
   buildThrowawayConfigSnapshot,
   buildRejectedResult,
   RunnerStateMachine,
@@ -70,14 +70,7 @@ const RECORDER_BUS_SLOT_KEY = '__realmengine_testlabRecorderBus_v1';
 
 const POLL_MS = 2000;
 const NEVER_IN_WORLD_TIMEOUT_MS = 3 * 60_000;
-const LAUNCH_TIMEOUT_MS = 90_000;
-const LAUNCH_RETRY_MS = 4000;
 const NEXUS_WAIT_MS = 5000;
-
-interface LaunchOutcome {
-  ok: boolean;
-  error: string | null;
-}
 
 export function register(ctx: PluginContext) {
   ctx.name = 'Test Lab Runner';
@@ -101,8 +94,12 @@ export function register(ctx: PluginContext) {
   let stopPolling: (() => void) | null = null;
   let finishing = false;
   let originalConfigId: string | null = null;
-  let pendingLaunchRunId: string | null = null;
-  let pendingLaunchResolve: ((outcome: LaunchOutcome) => void) | null = null;
+  // Only true once applyThrowawayPluginConfig() actually switched the live
+  // config away from originalConfigId — every early-exit path (account not
+  // found, launch failed, never reached the world) leaves this false, so
+  // restorePluginConfig() correctly leaves live plugin state alone instead
+  // of "restoring" a switch that never happened.
+  let throwawayConfigApplied = false;
 
   function log(message: string): void {
     ctx.log(`[TestLabRun] ${message}`);
@@ -151,15 +148,6 @@ export function register(ctx: PluginContext) {
     if (machine?.onDeath()) void finishRun();
   });
 
-  ctx.onClientMessage('testlabLaunchResult', (msg: unknown) => {
-    if (!pendingLaunchResolve) return;
-    const m = msg as { runId?: unknown; ok?: unknown; error?: unknown };
-    if (String(m?.runId ?? '') !== pendingLaunchRunId) return; // a stale reply from a previous run
-    const resolve = pendingLaunchResolve;
-    pendingLaunchResolve = null;
-    resolve({ ok: m?.ok === true, error: typeof m?.error === 'string' ? m.error : null });
-  });
-
   // ── The one-shot startup check. See this file's header. ──
 
   checkForRequestOnce();
@@ -206,9 +194,9 @@ export function register(ctx: PluginContext) {
 
     try {
       log(`launching accountLabel="${request.accountLabel}" runId=${request.runId}`);
-      const launch = await requestLaunch(request);
-      const gamePid = launch.ok ? getGamePidForLabel(request.accountLabel) : null;
-      machine.onLaunchResult(launch.ok, launch.error, gamePid);
+      const launch = await (ctx.hostAccess?.launchSavedAccountByLabel(request.accountLabel, request.serverName) ??
+        Promise.resolve({ ok: false as const, error: 'launch-failed' as const }));
+      machine.onLaunchResult(launch.ok, launch.error ?? null, launch.ok ? launch.pid ?? null : null);
       if (machine.getPhase() !== 'waiting-world') {
         await finishRun();
         return;
@@ -249,47 +237,6 @@ export function register(ctx: PluginContext) {
     }
   }
 
-  function getGamePidForLabel(accountLabel: string): number | null {
-    const rec = getLatestCredentialLaunchByAccountLabel(accountLabel);
-    return rec ? rec.pidLauncher : null;
-  }
-
-  function requestLaunch(request: RunRequest): Promise<LaunchOutcome> {
-    return new Promise((resolvePromise) => {
-      pendingLaunchRunId = request.runId;
-      pendingLaunchResolve = resolvePromise;
-      const broadcast = buildLaunchBroadcast(request);
-      const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
-
-      const send = () => {
-        try {
-          ctx.broadcastData(broadcast.type, {
-            runId: broadcast.runId,
-            accountLabel: broadcast.accountLabel,
-            serverName: broadcast.serverName,
-          });
-        } catch {
-          /* best effort — the retry loop below will try again */
-        }
-      };
-
-      send();
-      const stopRetrying = scheduler.scheduleRepeating(LAUNCH_RETRY_MS, () => {
-        if (pendingLaunchResolve !== resolvePromise) {
-          stopRetrying();
-          return;
-        }
-        if (Date.now() >= deadline) {
-          stopRetrying();
-          pendingLaunchResolve = null;
-          resolvePromise({ ok: false, error: 'launch-failed' });
-          return;
-        }
-        send();
-      });
-    });
-  }
-
   function waitForWorld(): Promise<boolean> {
     return new Promise((resolveWait) => {
       const check = () => {
@@ -323,13 +270,18 @@ export function register(ctx: PluginContext) {
       const base = access.buildPluginConfigSnapshot('testlab run') as PluginConfigSnapshot;
       const snapshot = buildThrowawayConfigSnapshot(base, request.runId, request.plugins, Date.now());
       const result = access.writeAndLoadPluginConfig(snapshot.id, snapshot);
-      if (!result.ok) log(`failed to apply per-run plugin config: ${result.message}`);
+      if (result.ok) {
+        throwawayConfigApplied = true;
+      } else {
+        log(`failed to apply per-run plugin config: ${result.message}`);
+      }
     } catch (err) {
       log(`per-run plugin config error: ${(err as Error).message}`);
     }
   }
 
   function restorePluginConfig(request: RunRequest | null): void {
+    if (!throwawayConfigApplied) return; // the live config was never switched -- nothing to restore.
     const access = ctx.hostAccess;
     if (!access) return;
     try {
@@ -361,6 +313,26 @@ export function register(ctx: PluginContext) {
     return new Promise((r) => setTimeout(r, ms));
   }
 
+  /**
+   * Every PID this run is responsible for verifying/terminating: the
+   * launcher PID the launch result reported, plus — when it has since
+   * resolved — the Unity child PID `credentialLaunchRegistry` tracks
+   * separately (it may not be a descendant of the launcher PID at all if
+   * the Steam relaunch path took over; see GameLauncher.ensureSteamAppIdFile).
+   */
+  function pidsToTerminate(request: RunRequest | null): TerminatePidSpec[] {
+    const specs: TerminatePidSpec[] = [];
+    const launcherPid = machine?.getGamePid() ?? null;
+    if (launcherPid != null) specs.push({ pid: launcherPid, expectedImageName: ROTMG_EXALT_IMAGE });
+    if (request) {
+      const rec = getLatestCredentialLaunchByAccountLabel(request.accountLabel);
+      if (rec?.pidUnity != null && rec.pidUnity !== launcherPid) {
+        specs.push({ pid: rec.pidUnity, expectedImageName: ROTMG_EXALT_CHILD_IMAGE });
+      }
+    }
+    return specs;
+  }
+
   async function finishRun(): Promise<void> {
     if (finishing || !machine) return;
     finishing = true;
@@ -368,7 +340,10 @@ export function register(ctx: PluginContext) {
     stopPolling = null;
 
     const request = machine.getRequest();
-    let gameTerminated = false;
+    // Vacuously true when there is nothing this run is responsible for
+    // (e.g. the account was never found, so nothing was ever launched) —
+    // only a PID we tracked and failed to confirm dead makes this false.
+    let gameTerminated = true;
     try {
       if (request?.scriptId) {
         try {
@@ -388,11 +363,11 @@ export function register(ctx: PluginContext) {
         await delay(NEXUS_WAIT_MS);
       }
 
-      const pid = machine.getGamePid();
-      if (pid != null) {
-        const term = terminateGameProcessByPid(pid);
+      const specs = pidsToTerminate(request);
+      if (specs.length > 0) {
+        const term = terminateGameProcessTree(specs);
         gameTerminated = term.ok;
-        if (!term.ok) log(`did not terminate game pid=${pid}: ${term.error}`);
+        if (!term.ok) log(`did not fully terminate the game process tree: ${term.error}`);
       }
     } finally {
       const result = machine.finish(Date.now(), {
@@ -411,15 +386,20 @@ export function register(ctx: PluginContext) {
 
   function quitApp(): void {
     try {
-      // Reuses the proxy's own graceful shutdown (src/index.ts's SIGTERM
-      // handler: stops the dashboard/script host/proxy, uninstalls the game
-      // hook, then exits 0) rather than duplicating any of that here.
-      // Electron's main process quits the rest of the app on that clean
-      // exit — see electron/main.cjs's proxy exit handler.
-      process.emit('SIGTERM');
+      if (!ctx.hostAccess) {
+        log('no host access available to quit the app; exiting this process only.');
+        process.exit(PROXY_EXIT_QUIT_APP);
+        return;
+      }
+      // Reuses the proxy's own graceful shutdown (src/index.ts's shutdown()):
+      // stops the dashboard/script host/proxy, uninstalls the game hook,
+      // then exits with PROXY_EXIT_QUIT_APP — a dedicated code, so a normal
+      // clean exit (0) elsewhere is untouched. Electron's main process quits
+      // the rest of the app only on that dedicated code (electron/main.cjs).
+      ctx.hostAccess.requestAppShutdown(PROXY_EXIT_QUIT_APP);
     } catch (err) {
-      log(`quit signal failed, forcing exit: ${(err as Error).message}`);
-      process.exit(0);
+      log(`quit failed, forcing exit: ${(err as Error).message}`);
+      process.exit(PROXY_EXIT_QUIT_APP);
     }
   }
 }
