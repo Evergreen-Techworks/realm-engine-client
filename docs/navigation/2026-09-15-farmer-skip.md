@@ -1,7 +1,0 @@
-# Realm Farmer encounter exclusions
-
-2026-09-15 Owner requested skipping Liches and the other add-heavy encounter. Interpreted the second as Ghost King, matching the two existing dependency-rule encounters. Level-20 Realm farming now excludes both old/new boss forms, their known adds and Ghost Master controllers from event/quest/combat selection, including existing encounter release. Below-level-20 leveling is unchanged. The owner was told which second boss was selected.
-
-2026-09-15 Test-first: 19 new cases failed before implementation; final full suite 66 files / 650 tests passes, with test typecheck and diff check passing. Added active-encounter release and unrelated-boss add filtering regressions. Source and installed `RE_ASSETS/Scripts/farmer/index.mjs` matched committed base before selective replacement; backups in `C:\realm-engine-pinned\farmer-skip-backup-20260915`. Stop/start the script to load changes. No EXE rebuild: restarting the application can restore its bundled script until the next portable includes this patch.
-
-2026-09-15 Movement choppiness is not fixed in this patch. Inspection shows updated global corridor endpoints can trigger local goal-moved cache invalidation and a worker wait; this is a candidate cause, not a measured diagnosis of the owner's pauses. A follow-up should reproduce waypoint-refresh pauses and preserve a locally safe route during same-goal refresh, without reusing routes after genuine goal/map changes or bypassing collision/shot checks.

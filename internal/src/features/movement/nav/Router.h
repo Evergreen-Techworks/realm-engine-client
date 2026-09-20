@@ -31,7 +31,7 @@ enum class CaptureGuard : uint8_t {
     None,               // not currently pending
     NoMapInfo,          // the client has not bridged valid map dimensions yet (navMapInfo)
     ListUnreadable,      // the world/tile-list pointer chain did not read this tick
-    AwaitingReplacement, // docs/navigation/2026-09-15-global-routing-integration.md's fail-closed
+    AwaitingReplacement, // the D* global router's fail-closed
                           // limitation: the game reused both the world and list pointers with an
                           // equal-or-larger count, so pointer/size evidence alone cannot prove the
                           // list holds the new map. Waiting on the own-tile+ring proof instead.

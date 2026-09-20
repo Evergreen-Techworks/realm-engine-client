@@ -1,7 +1,7 @@
 #pragma once
 // UDodgeMapDiag — Item 3 observability (navigation finish plan, 2026-09-19).
 //
-// WHY: docs/navigation/2026-09-15-global-routing-integration.md documents a
+// WHY: the D* global router has a
 // fail-closed limitation in the D* global router's map capture — after a map
 // epoch change, if the game reuses both the WorldMgr and its tile-list
 // pointers with an equal-or-larger count, the old pointer/size-only readiness

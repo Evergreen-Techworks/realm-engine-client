@@ -214,7 +214,7 @@ int main()
     Runtime::Stop();
 
     // ── Item 3: capture state machine (map capture readiness) ────────────────
-    // docs/navigation/2026-09-15-global-routing-integration.md's documented
+    // The D* global router's documented
     // fail-closed limitation: after an epoch change, if the game reuses both
     // the world and list pointers with an equal-or-larger count, the old
     // pointer/size-only test can never prove the list was replaced and

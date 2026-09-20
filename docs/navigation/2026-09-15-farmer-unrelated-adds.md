@@ -1,9 +1,0 @@
-# Realm event add ownership
-
-2026-09-15 Validation complete: `npm test` passed 66 files / 662 tests; `git diff --check` passed. Committed locally with message `fix(farmer): stop treating unrelated Realm mobs as boss adds`.
-
-2026-09-15 Owner clarified that the blue destination marker is correct while the orange/yellow route goes away and returns, and that the farmer reports clearing adds while chasing unrelated mobs. Inspection found that after the brief event phase grace expired, every targetable enemy within twelve tiles counted as an add. This both redirected movement and could indefinitely reset the undamageable-encounter wait timer. No native route change was made on this evidence.
-
-2026-09-15 Realm event phases now permit add-clearing only for the existing explicit boss/type dependency rules. Unknown ownership is not inferred from proximity. Unrelated enemies no longer keep an undamageable encounter alive or extend missing-event add waits. A vulnerable boss resumes its direct encounter path immediately. Event identity is retained from the quest even when the enemy snapshot omits its event flag. Non-event leveling and dungeon-specific add handling are unchanged. New dependency-heavy events require verified rules rather than guessing ownership.
-
-2026-09-15 Two new tests failed before implementation (2 failed / 80 passed targeted). Three existing assertions intentionally expected the old proximity-based behavior; changed those expectations to assert no unrelated lock while retaining phase grace, death release, map reset and white-loot coverage. Full npm test results recorded with the local commit; logs /tmp/farmer-unrelated-adds-red.log and /tmp/farmer-unrelated-adds-suite.log. Source-only fix, not installed into the existing private 1.0.9 portable. Any orange/yellow detour occurring without an add-clearing status still needs separate live evidence; legitimate wall/lava/projectile avoidance remains untouched.
