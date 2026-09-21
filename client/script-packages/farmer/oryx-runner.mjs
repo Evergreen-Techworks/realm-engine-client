@@ -92,6 +92,12 @@ export default class OryxRunner {
 
   holdFire(label) {
     this.stopCombat();
+    // stopCombat releases the locks, but ambient autofire (owner request
+    // 2026-09-20) is armed for the whole run and updateTarget re-arms on
+    // release — so the hold itself must disarm, explicitly. These holds are
+    // load-bearing: Oryx's guard animation reflects shots, and the
+    // Dammah/Celestial/Gemsbok waits must not fire at all.
+    this.farmer.setFiring(false);
     this.sdk.combat.pauseAutomaticAbility?.(1000);
     this.sdk.dodge.clearWaypoint();
     this.status(label);

@@ -27,8 +27,12 @@ function fixture() {
   const sdk: any = {
     self: { getHP: () => 100, getX: () => 0, getY: () => 0, getLevel: () => 19, distanceTo: (p: any) => Math.hypot(p.x, p.y) },
     enemies: { getAll: () => enemies },
-    dodge: { clearWaypoint: vi.fn(), lockEnemy: vi.fn(), clearEnemyLock: vi.fn(), navigateToPosition: vi.fn() },
-    combat: { setAutoFire: vi.fn(), aimAt: vi.fn(), stopAiming: vi.fn() },
+    dodge: { clearWaypoint: vi.fn(), lockEnemy: vi.fn(), clearEnemyLock: vi.fn(), navigateToPosition: vi.fn(),
+      setMode: vi.fn(), setSafeWalk: vi.fn(), setLockFollow: vi.fn(), setAutopilot: vi.fn() },
+    combat: { setAutoFire: vi.fn(), setKillAura: vi.fn(), aimAt: vi.fn(), stopAiming: vi.fn() },
+    // onStart subscribes to map changes; existing tests never call onStart, so
+    // this was absent before the ambient-autofire tests needed it.
+    events: { onMapChanged: vi.fn(() => vi.fn()) },
     world: { getSize: () => ({ width: 1000, height: 1000 }), getName: () => 'Realm', isRealm: () => true, isNexus: () => false,
       objects: { getAll: () => [], getById: () => quest, getQuestObject: () => quest, getBeacons: () => [] } },
     loot: { getNearbyBags: vi.fn(() => []), getBags: () => [], isUsefulStatPot: () => true,
@@ -465,6 +469,58 @@ describe('farmer control ownership', () => {
   });
 });
 
+// Owner request 2026-09-20: autofire armed like the in-game feature from the
+// moment the script starts, so a leveling character auto-shoots at the enemies
+// around it instead of only once the fight state locks a target (the rig walked
+// 81 tiles to its quest and never fired). Native AutoFire only ever shoots
+// AutoAim's live pick — alive, in the snapshot, in range — and settles 500 ms
+// after a map change, so an armed trigger with nothing to shoot at stays
+// silent. The remaining holds are a locked untargetable target, the boss phase
+// transition, and onStop.
+describe('farmer ambient autofire (owner request 2026-09-20)', () => {
+  it('arms autofire when the script starts and disarms it on stop', () => {
+    const f = fixture();
+    f.farmer.onStart();
+    expect(f.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(true);
+    f.farmer.onStop();
+    expect(f.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(false);
+  });
+
+  it('keeps autofire armed while walking to a distant quest, without locking bystanders', () => {
+    const f = fixture();
+    f.farmer.onStart();
+    f.sdk.combat.setAutoFire.mockClear();
+    f.quest.position.x = 81; // the rig's "Great Coil Snake, 81 tiles" leveling walk
+    f.setEnemies([{ ...f.quest, objectId: 33, name: 'Bystander', position: { x: 3, y: 0 } }]);
+    f.farmer.onLoop();
+    expect(f.sdk.dodge.navigateToPosition).toHaveBeenCalled();   // still travelling to the quest
+    expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalled();       // no fight-state lock: ambient fire only
+    // Armed already, so the loop must send nothing — most importantly never a
+    // disarm. The old code called setAutoFire(false) here on the very first
+    // travel tick.
+    expect(f.farmer.firing).toBe(true);
+    expect(f.sdk.combat.setAutoFire).not.toHaveBeenCalled();
+  });
+
+  it('keeps autofire armed across a map change', () => {
+    const f = fixture();
+    f.farmer.onStart();
+    f.farmer.resetMap('New Realm');
+    expect(f.farmer.firing).toBe(true);
+    expect(f.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(true);
+  });
+
+  it('re-arms ambient autofire on the next loop after a fight-state hold', () => {
+    const f = fixture();
+    f.farmer.onStart();
+    f.quest.position.x = 81;
+    f.farmer.setFiring(false); // e.g. the trailing hold of a boss phase transition
+    f.sdk.combat.setAutoFire.mockClear();
+    f.farmer.onLoop();
+    expect(f.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(true);
+  });
+});
+
 describe('farmer beacon selection and level 20 relocation', () => {
   it('uses the biome beacon closest to the destination, excluding guardian objects', () => {
     const f = fixture();
@@ -634,7 +690,10 @@ it('cancels stale Nexus waypoints, waits for spawn, and keeps portal travel free
   f.farmer.onLoop();
   expect(f.sdk.dodge.clearWaypoint).toHaveBeenCalledTimes(clears);
   expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalled();
-  expect(f.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(false);
+  // Ambient autofire stays armed in the Nexus (owner request 2026-09-20): the
+  // native trigger only fires at an AutoAim target, and the Nexus has none, so
+  // an armed trigger there is silent. What must stay false is the combat LOCK.
+  expect(f.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(true);
 });
 
 it('anchors add clearing to the quest boss and switches back on vulnerability', () => {

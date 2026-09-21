@@ -229,7 +229,11 @@ it('clears targetable encounter adds during invincibility and immediately switch
   expect(f.sdk.combat.aimAt).toHaveBeenLastCalledWith(99);
   leader.isTargetable = false; add.hp = 0; f.script.onLoop();
   expect(f.script.lockId).toBe(0);
-  expect(f.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(false);
+  // Lock released with nothing lockable left: ambient autofire stays ARMED
+  // (owner request 2026-09-20, inherited from Farmer) instead of disarming.
+  // The invulnerable leader is filtered out by native AutoAim, so this is
+  // armed-but-silent unless a shootable mob is around.
+  expect(f.sdk.combat.setAutoFire).toHaveBeenLastCalledWith(true);
   expect(f.script.leaderQuest).not.toBeNull();
   expect(f.sdk.walking.teleportToBeacon).not.toHaveBeenCalled();
 });

@@ -327,9 +327,17 @@ export default class Farmer {
     // AutoAim into Locked mode). This requires the Auto Aim plugin to be enabled
     // — it owns AutoAim's master switch, which no script API can set.
     RealmEngine.combat.setKillAura(false);
-    this.setFiring(false);
+    // Owner request 2026-09-20: arm autofire the moment the script starts —
+    // like the in-game autofire feature, so a leveling character shoots at the
+    // enemies around it from the first moment instead of only once a
+    // fight-state lock exists. Native AutoFire only ever shoots AutoAim's live
+    // pick (alive, in the snapshot, in range) and holds 500 ms after each map
+    // change, so an armed trigger with nothing to shoot at stays silent.
+    // Firing stays armed for the whole run; only a locked untargetable target,
+    // a boss phase transition, or onStop turns it off.
+    this.setFiring(true);
     this.setStatus('Realm Farmer starting');
-    RealmEngine.log.info('Realm Farmer started with Unified Dodge, safe-walk, loot detours, and target switching.');
+    RealmEngine.log.info('Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.');
   }
 
   onStop() {
@@ -389,7 +397,11 @@ export default class Farmer {
     RealmEngine.dodge.clearWaypoint();
     RealmEngine.dodge.clearEnemyLock();
     RealmEngine.combat.stopAiming();
-    this.setFiring(false);
+    // The script is still running, so the new map starts with ambient autofire
+    // armed (see onStart). The previous map's fight-state hold must not leak
+    // across the portal; native AutoFire's own 500 ms map-settle covers the
+    // transition itself.
+    this.setFiring(true);
   }
 
   // Targetable adds of `boss` that must die first, best first: only the add types of
@@ -434,7 +446,14 @@ export default class Farmer {
       .find((e) => Math.hypot(e.position.x - px, e.position.y - py) <= TARGET_RELEASE_RADIUS);
     const target = guard ?? eligible[0] ?? null;
     if (!target) {
-      this.setFiring(false);
+      // No farmer-selected target — the fight ended, or we are travelling with
+      // target selection disabled. That must NOT disarm autofire (owner request
+      // 2026-09-20): this branch runs every loop tick of a leveling walk, and
+      // the old setFiring(false) here is what kept a travelling character from
+      // ever shooting. Autofire stays armed and AutoAim picks its own targets;
+      // the holds that do disarm are the untargetable locked target below, the
+      // boss phase transition, and onStop.
+      this.setFiring(true);
       if (this.lockId) {
         this.lockId = 0;
         RealmEngine.dodge.clearEnemyLock();
