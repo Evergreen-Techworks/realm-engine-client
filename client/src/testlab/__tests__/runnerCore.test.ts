@@ -20,6 +20,8 @@ import {
   buildThrowawayConfigSnapshot,
   buildRejectedResult,
   formatAccountMatchDetail,
+  playerLogSourcePath,
+  playerLogEvidenceFileName,
   RunnerStateMachine,
   ReconnectClassifier,
   type RunRequest,
@@ -843,5 +845,76 @@ describe('no request -> inert (documented at the plugin level; core-level guaran
     expect(m.onDeath()).toBe(false);
     expect(m.onReconnect(0)).toBe(false);
     expect(m.getPhase()).toBe('idle');
+  });
+});
+
+describe('never-in-world refinement — no-character (2026-09-20 defect D1)', () => {
+  // A run that never reaches the world on an account whose only character
+  // died earlier in the day is really "no-character": the game sits at
+  // character select, which no admission phase distinguishes from any other
+  // stall. The plugin runs one best-effort character-count check at the
+  // never-in-world timeout and re-labels the stop; the state machine needs
+  // a deliberate late override for exactly that, because requestStop() is
+  // first-reason-wins once stopping.
+  it('getStopReason() exposes the pending stop reason (null before any stop)', () => {
+    const m = new RunnerStateMachine();
+    m.begin(0, req());
+    m.onLaunchResult(true, null, 1);
+    expect(m.getStopReason()).toBeNull();
+    m.checkNeverInWorld(180_000);
+    expect(m.getStopReason()).toBe('never-in-world');
+  });
+
+  it('overrideStopReason() re-labels a never-in-world stop as no-character in the final result', () => {
+    const m = new RunnerStateMachine();
+    m.begin(0, req());
+    m.onLaunchResult(true, null, 1);
+    m.checkNeverInWorld(180_000);
+    m.overrideStopReason('no-character', 'the account has no living character');
+    const result = m.finish(180_100, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: true });
+    expect(result.reason).toBe('no-character');
+    expect(result.detail).toBe('the account has no living character');
+  });
+
+  it('overrideStopReason() after finish() changes nothing — the written result is final', () => {
+    const m = new RunnerStateMachine();
+    m.begin(0, req());
+    m.onLaunchResult(true, null, 1);
+    m.checkNeverInWorld(180_000);
+    const result = m.finish(180_100, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: true });
+    m.overrideStopReason('no-character', 'too late');
+    expect(m.finish(180_200, { build: { version: null, commit: null }, logFile: 'log', recording: null, gameTerminated: true }).reason).toBe('never-in-world');
+    expect(result.reason).toBe('never-in-world');
+  });
+
+  it('overrideStopReason() cannot invent a stop while the run is still waiting-world', () => {
+    const m = new RunnerStateMachine();
+    m.begin(0, req());
+    m.onLaunchResult(true, null, 1);
+    m.overrideStopReason('no-character', 'premature');
+    expect(m.getPhase()).toBe('waiting-world');
+    expect(m.getStopReason()).toBeNull();
+  });
+});
+
+describe('game Player.log evidence naming (2026-09-20 defect D2)', () => {
+  it('playerLogSourcePath() builds the Unity LocalLow path from a profile root', () => {
+    expect(playerLogSourcePath('C:\\Users\\Jesse'))
+      .toBe('C:\\Users\\Jesse\\AppData\\LocalLow\\DECA Live Operations GmbH\\RotMGExalt\\Player.log');
+  });
+
+  it('playerLogSourcePath() tolerates a trailing separator', () => {
+    expect(playerLogSourcePath('C:\\Users\\Jesse\\'))
+      .toBe('C:\\Users\\Jesse\\AppData\\LocalLow\\DECA Live Operations GmbH\\RotMGExalt\\Player.log');
+  });
+
+  it('playerLogSourcePath() is null without a usable profile root', () => {
+    expect(playerLogSourcePath(undefined)).toBeNull();
+    expect(playerLogSourcePath('')).toBeNull();
+    expect(playerLogSourcePath('   ')).toBeNull();
+  });
+
+  it('playerLogEvidenceFileName() names the archived copy after the run', () => {
+    expect(playerLogEvidenceFileName('ab-20260921-014401-001')).toBe('player-log.ab-20260921-014401-001.log');
   });
 });

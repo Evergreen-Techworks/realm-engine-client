@@ -30,6 +30,7 @@ export type RunStopReason =
   | 'reconnect-limit'
   | 'launch-failed'
   | 'never-in-world'
+  | 'no-character'
   | 'native-not-connected'
   | 'no-movement'
   | 'account-not-found'
@@ -150,6 +151,22 @@ export function consumedRequestFileName(runId: string): string {
 /** `run-result.<runId>.json` — see contract. */
 export function resultFileName(runId: string): string {
   return `run-result.${runId}.json`;
+}
+
+/**
+ * Where the game itself writes its Unity player log (Windows only — the only
+ * platform the run mode launches on). `null` whenever no profile root is
+ * available; the caller treats that as "nothing to archive".
+ */
+export function playerLogSourcePath(userProfile: string | undefined): string | null {
+  const profile = String(userProfile || '').trim().replace(/[\\/]+$/, '');
+  if (!profile) return null;
+  return `${profile}\\AppData\\LocalLow\\DECA Live Operations GmbH\\RotMGExalt\\Player.log`;
+}
+
+/** The per-run archive copy of the game's Player.log, beside the result file. */
+export function playerLogEvidenceFileName(runId: string): string {
+  return `player-log.${runId}.log`;
 }
 
 /** `testlab-run-<runId>` — the throwaway plugin-config id for one run. */
@@ -661,6 +678,28 @@ export class RunnerStateMachine {
   requestStop(reason: RunStopReason, detail: string): void {
     if (this.phase === 'stopping' || this.phase === 'done') return;
     this.phase = 'stopping';
+    this.stopReason = reason;
+    this.stopDetail = detail;
+  }
+
+  /** The stop requestStop() captured, if any — `null` until one lands. Lets
+   *  the caller ask *why* a wait resolved false before deciding what to do. */
+  getStopReason(): RunStopReason | null {
+    return this.stopReason;
+  }
+
+  /**
+   * Deliberate post-hoc re-label of an already-requested stop — the ONE
+   * sanctioned exception to requestStop()'s first-reason-wins rule. Exists
+   * for the no-character refinement (2026-09-20 defect D1): a never-in-world
+   * timeout on an account whose only character died earlier is really
+   * "no-character", and the plugin only learns that from a best-effort
+   * character-count check *after* the timeout fired. No-op unless the run is
+   * in the stopping phase — it can neither invent a stop on a live run nor
+   * reopen one that has already finished.
+   */
+  overrideStopReason(reason: RunStopReason, detail: string): void {
+    if (this.phase !== 'stopping') return;
     this.stopReason = reason;
     this.stopDetail = detail;
   }

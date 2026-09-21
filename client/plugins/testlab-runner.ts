@@ -29,7 +29,7 @@
  * — this file only ever sees a label string in, and an ok/error/pid result
  * out.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { dirname, resolve, join } from 'path';
 import { fileURLToPath } from 'url';
 import type { PluginContext, ClientConnection } from './api.js';
@@ -50,6 +50,8 @@ import {
   throwawayConfigId,
   buildThrowawayConfigSnapshot,
   buildRejectedResult,
+  playerLogSourcePath,
+  playerLogEvidenceFileName,
   RunnerStateMachine,
   ReconnectClassifier,
   SCRIPT_START_SETTLE_MS,
@@ -231,6 +233,7 @@ export function register(ctx: PluginContext) {
       log(`waiting for world (timeout ${Math.round(NEVER_IN_WORLD_TIMEOUT_MS / 1000)}s)`);
       const enteredWorld = await waitForWorld();
       if (!enteredWorld) {
+        await refineNeverInWorldStop(request);
         await finishRun();
         return;
       }
@@ -310,6 +313,51 @@ export function register(ctx: PluginContext) {
       const stop = scheduler.scheduleRepeating(POLL_MS, check);
       check();
     });
+  }
+
+  /**
+   * No-character refinement (2026-09-20 defect D1): a never-in-world timeout
+   * on an account with zero living characters is really "no-character" — the
+   * game sits at character select, which no admission phase can distinguish
+   * from any other stall, and the day the lab character died this looked
+   * like an unexplained never-in-world until a human read the account. One
+   * best-effort web check at the timeout re-labels it; ANY failure of the
+   * check keeps the original never-in-world answer (a refinement must never
+   * mask the thing it refines).
+   */
+  async function refineNeverInWorldStop(request: RunRequest): Promise<void> {
+    if (!machine || machine.getStopReason() !== 'never-in-world') return;
+    try {
+      const result = await (ctx.hostAccess?.accountCharacterCountByLabel?.(request.accountLabel) ??
+        Promise.resolve({ ok: false as const, error: 'host access unavailable' }));
+      if (result.ok && result.livingCharacters === 0) {
+        machine.overrideStopReason('no-character', 'the account has no living character — create one before the next run');
+        log('never-in-world refined to no-character (account has 0 living characters)');
+      } else if (!result.ok) {
+        log(`character-count check unavailable (${result.error}); keeping never-in-world`);
+      }
+    } catch (err) {
+      log(`character-count check threw (${(err as Error).message}); keeping never-in-world`);
+    }
+  }
+
+  /**
+   * Snapshots the game's own Player.log into the run's evidence directory as
+   * the result is written (2026-09-20 defect D2) — Unity keeps only two
+   * generations (Player.log / Player-prev.log), so without a copy the next
+   * run overwrites the only record of what the game itself did. Called from
+   * finishRun's finally, after the game tree is terminated (Unity flushes
+   * the log on exit). Best-effort: never throws, never blocks the result.
+   */
+  function copyPlayerLogIntoEvidence(runId: string): void {
+    try {
+      const src = playerLogSourcePath(process.env.USERPROFILE);
+      if (!src || !existsSync(src)) return;
+      copyFileSync(src, join(testlabDir, playerLogEvidenceFileName(runId)));
+      log(`archived game Player.log as ${playerLogEvidenceFileName(runId)}`);
+    } catch (err) {
+      log(`could not archive game Player.log: ${(err as Error).message}`);
+    }
   }
 
   /**
@@ -487,6 +535,7 @@ export function register(ctx: PluginContext) {
         if (!term.ok) log(`did not fully terminate the game process tree: ${term.error}`);
       }
     } finally {
+      copyPlayerLogIntoEvidence(request?.runId ?? 'unknown');
       const result = machine.finish(Date.now(), {
         build: buildInfoStamp(),
         logFile: proxyLogFilePath,

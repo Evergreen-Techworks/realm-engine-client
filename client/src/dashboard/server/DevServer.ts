@@ -40,6 +40,7 @@ import {
 import { GameLauncher } from './GameLauncher.js';
 import { BUNDLED_PLUGIN_DEFAULTS_FILE, PluginConfigService } from './PluginConfigService.js';
 import { DASHBOARD_BIND_HOST, isDashboardRequest } from './loopbackGuard.js';
+import { countLivingCharacters } from './charListCount.js';
 
 // ── Debug logging ─────────────────────────────────────────────────────────────
 // Gated behind the 'accounts' debug channel (see util/DebugManager.ts). OFF by
@@ -552,16 +553,10 @@ export class DevServer {
     matchCount?: number;
     totalAccounts?: number;
   }> {
-    const normalize = (s: string) => String(s || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
-    const target = normalize(label);
-    const accounts = this.readDashboardAccounts();
-    const totalAccounts = accounts.length;
+    const resolved = this.resolveUniqueAccountByLabel(label);
+    if (!resolved.ok) return { ok: false, error: resolved.error, matchCount: resolved.matchCount, totalAccounts: resolved.totalAccounts };
 
-    const matches = target ? accounts.filter((a) => normalize(a.label || a.email) === target) : [];
-    if (matches.length === 0) return { ok: false, error: 'account-not-found', matchCount: 0, totalAccounts };
-    if (matches.length > 1) return { ok: false, error: 'account-ambiguous', matchCount: matches.length, totalAccounts };
-
-    const account = matches[0];
+    const account = resolved.account;
     const accountLabel = account.label || account.email;
     const result = await this.launchGameWithCredentials(
       String(account.email || '').trim(),
@@ -578,6 +573,62 @@ export class DevServer {
 
     const rec = getLatestCredentialLaunchByAccountLabel(accountLabel);
     return { ok: true, pid: rec?.pidLauncher };
+  }
+
+  /** The label matching `launchSavedAccountByLabel` documents — case,
+   *  whitespace and separator-insensitive, and refusing to guess between
+   *  multiple matches — factored out so the character-count check below
+   *  resolves exactly the same account a launch would. */
+  private resolveUniqueAccountByLabel(
+    label: string,
+  ):
+    | { ok: true; account: DashboardAccountRecord }
+    | { ok: false; error: 'account-not-found' | 'account-ambiguous'; matchCount: number; totalAccounts: number } {
+    const normalize = (s: string) => String(s || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+    const target = normalize(label);
+    const accounts = this.readDashboardAccounts();
+    const totalAccounts = accounts.length;
+
+    const matches = target ? accounts.filter((a) => normalize(a.label || a.email) === target) : [];
+    if (matches.length === 0) return { ok: false, error: 'account-not-found', matchCount: 0, totalAccounts };
+    if (matches.length > 1) return { ok: false, error: 'account-ambiguous', matchCount: matches.length, totalAccounts };
+    return { ok: true, account: matches[0] };
+  }
+
+  /**
+   * Living-character count for the saved account `label` names — the Test
+   * Lab runner's no-character check (2026-09-20 defect D1). Verifies the
+   * account server-side (minting a fresh token; credentials never leave
+   * this call, exactly like a launch) and counts `<Char>` nodes in
+   * char/list, which only ever lists LIVING characters. Any failure is
+   * `{ ok: false, error }` so the caller can keep its original answer.
+   */
+  async accountCharacterCountByLabel(
+    label: string,
+  ): Promise<{ ok: true; livingCharacters: number } | { ok: false; error: string }> {
+    try {
+      const resolved = this.resolveUniqueAccountByLabel(label);
+      if (!resolved.ok) return { ok: false, error: resolved.error };
+
+      const account = resolved.account;
+      const clientToken = getClientToken();
+      if (!clientToken) return { ok: false, error: 'Client token unavailable.' };
+
+      const verify = await this.accounts.verifyDecaAccount(
+        String(account.email || '').trim(),
+        String(account.password || ''),
+        clientToken,
+        account.isSteam ? { steamId: String(account.steamId || '') } : undefined,
+      );
+      if ('error' in verify) return { ok: false, error: verify.error };
+
+      const charList = await this.accounts.fetchCharListXml(verify.token);
+      if ('error' in charList) return { ok: false, error: charList.error };
+
+      return { ok: true, livingCharacters: countLivingCharacters(charList.xml) };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
   }
 
   /**
@@ -598,6 +649,7 @@ export class DevServer {
       startScript: (id: string) => this.scriptHost?.start(id) ?? Promise.resolve({ ok: false, error: 'Script host unavailable' }),
       stopScript: (id: string) => this.scriptHost?.stop(id) ?? { ok: false, error: 'Script host unavailable' },
       launchSavedAccountByLabel: (label: string, serverName?: string) => this.launchSavedAccountByLabel(label, serverName),
+      accountCharacterCountByLabel: (label: string) => this.accountCharacterCountByLabel(label),
       isNativeBridgeReady: () => this.internalBridge?.isConnected ?? false,
     };
   }

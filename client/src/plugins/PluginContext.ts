@@ -66,6 +66,18 @@ export interface PluginHostAccess {
     totalAccounts?: number;
   }>;
   /**
+   * Living-character count for the saved account `label` names, using the
+   * same matching as `launchSavedAccountByLabel`. char/list only ever lists
+   * LIVING characters, so 0 means the account cannot reach the world at all
+   * — the Test Lab runner reports that as `no-character` instead of a bare
+   * `never-in-world` (2026-09-20 defect D1). Credentials are verified and
+   * used entirely server-side, exactly like the launch call; the caller only
+   * ever receives ok/livingCharacters (or ok/error). Never throws.
+   */
+  accountCharacterCountByLabel(
+    label: string,
+  ): Promise<{ ok: true; livingCharacters: number } | { ok: false; error: string }>;
+  /**
    * Whether the native DLL bridge is currently connected (past the `hello`
    * handshake) — read-only, small, and generic: any plugin that needs to
    * know before sending the DLL something time-sensitive can check it, with

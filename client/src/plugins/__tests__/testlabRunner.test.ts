@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mutable holders the mock factories below close over (vi.mock factories are
@@ -35,7 +35,7 @@ vi.mock('../../../electron/proxyExitCodes.cjs', () => ({
 
 const { register } = await import('../../../plugins/testlab-runner.js');
 import type { PluginContext } from '../../../plugins/api.js';
-import { NATIVE_BRIDGE_TIMEOUT_MS, NO_MOVEMENT_TIMEOUT_MS } from '../../testlab/runnerCore.js';
+import { NATIVE_BRIDGE_TIMEOUT_MS, NO_MOVEMENT_TIMEOUT_MS, playerLogEvidenceFileName, playerLogSourcePath } from '../../testlab/runnerCore.js';
 
 const REQUEST_FILE_NAME = 'run-request.json';
 
@@ -71,6 +71,7 @@ interface HostAccessFake {
   startScript: ReturnType<typeof vi.fn>;
   stopScript: ReturnType<typeof vi.fn>;
   launchSavedAccountByLabel: ReturnType<typeof vi.fn>;
+  accountCharacterCountByLabel: ReturnType<typeof vi.fn>;
   isNativeBridgeReady: ReturnType<typeof vi.fn>;
   requestAppShutdown: ReturnType<typeof vi.fn>;
 }
@@ -85,6 +86,10 @@ function makeHostAccess(overrides: Partial<HostAccessFake> = {}): HostAccessFake
     startScript: vi.fn(async () => ({ ok: true })),
     stopScript: vi.fn(() => ({ ok: true })),
     launchSavedAccountByLabel: vi.fn(async () => ({ ok: true, pid: 4321 })),
+    // One living character by default — keeps never-in-world tests honest
+    // (the no-character refinement below must not misfire when a character
+    // exists).
+    accountCharacterCountByLabel: vi.fn(async () => ({ ok: true, livingCharacters: 1 })),
     // Bridge already connected by default — most tests aren't exercising the
     // wait-for-bridge path itself and shouldn't need to know about it.
     isNativeBridgeReady: vi.fn(() => true),
@@ -326,6 +331,66 @@ describe('Test Lab Runner plugin', () => {
     expect(result.reason).toBe('never-in-world');
     expect(hostAccess.writeAndLoadPluginConfig).not.toHaveBeenCalled();
     expect(hostAccess.loadPluginConfigById).not.toHaveBeenCalled();
+  });
+
+  it('re-labels never-in-world as no-character when the account has 0 living characters (D1)', async () => {
+    const hostAccess = makeHostAccess({
+      launchSavedAccountByLabel: vi.fn(async () => ({ ok: true, pid: 1 })),
+      accountCharacterCountByLabel: vi.fn(async () => ({ ok: true, livingCharacters: 0 })),
+    });
+    writeRequest(testlabDir, { runId: 'run-nochar', accountLabel: 'lab-1' });
+    const { ctx } = makeCtx(hostAccess);
+    register(ctx);
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(3 * 60_000 + 1000);
+    await advancePastNexusWait();
+
+    expect(hostAccess.accountCharacterCountByLabel).toHaveBeenCalledWith('lab-1');
+    const result = readResult(testlabDir, 'run-nochar');
+    expect(result.reason).toBe('no-character');
+    expect(result.detail).toContain('no living character');
+  });
+
+  it('keeps never-in-world when the character-count check itself fails (D1)', async () => {
+    const hostAccess = makeHostAccess({
+      launchSavedAccountByLabel: vi.fn(async () => ({ ok: true, pid: 1 })),
+      accountCharacterCountByLabel: vi.fn(async () => ({ ok: false, error: 'Client token unavailable.' })),
+    });
+    writeRequest(testlabDir, { runId: 'run-charerr', accountLabel: 'lab-1' });
+    const { ctx } = makeCtx(hostAccess);
+    register(ctx);
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(3 * 60_000 + 1000);
+    await advancePastNexusWait();
+
+    const result = readResult(testlabDir, 'run-charerr');
+    expect(result.reason).toBe('never-in-world');
+  });
+
+  it('archives the game Player.log beside the result file when the result is written (D2)', async () => {
+    const prevProfile = process.env.USERPROFILE;
+    process.env.USERPROFILE = testDir;
+    try {
+      const src = playerLogSourcePath(testDir)!;
+      mkdirSync(dirname(src), { recursive: true });
+      writeFileSync(src, 'UnityEngine: logging started\n', 'utf8');
+
+      const hostAccess = makeHostAccess({ launchSavedAccountByLabel: vi.fn(async () => ({ ok: true, pid: 1 })) });
+      writeRequest(testlabDir, { runId: 'run-plog', accountLabel: 'lab-1' });
+      const { ctx } = makeCtx(hostAccess);
+      register(ctx);
+      await flushAsync();
+      await vi.advanceTimersByTimeAsync(3 * 60_000 + 1000);
+      await advancePastNexusWait();
+
+      const result = readResult(testlabDir, 'run-plog');
+      expect(result.reason).toBe('never-in-world'); // the run itself stopped normally for other reasons
+      const archivedPath = join(testlabDir, playerLogEvidenceFileName('run-plog'));
+      expect(existsSync(archivedPath)).toBe(true);
+      expect(readFileSync(archivedPath, 'utf8')).toBe('UnityEngine: logging started\n');
+    } finally {
+      process.env.USERPROFILE = prevProfile;
+    }
   });
 
   it('PID-scoped termination: refuses a PID whose image name is not the game, and reports gameTerminated:false', async () => {
