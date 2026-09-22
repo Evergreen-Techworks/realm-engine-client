@@ -44,7 +44,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-export function fixture(testHooks?: { allowActivePredictionForTests?: boolean }) {
+export function fixture() {
   vi.useFakeTimers();
   const hooks = new Map<string, (...args: any[]) => void>();
   const settings = new Map<string, (...args: any[]) => void>();
@@ -81,7 +81,7 @@ export function fixture(testHooks?: { allowActivePredictionForTests?: boolean })
       },
     },
   };
-  const controls = register(ctx as unknown as PluginContext, testHooks);
+  const controls = register(ctx as unknown as PluginContext);
 
   const emit = (name: string, data: any = {}) => {
     if (name === 'MAPINFO') client.admission.generation = client.recovery.beginGeneration();
