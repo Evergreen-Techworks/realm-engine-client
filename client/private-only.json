@@ -13,6 +13,9 @@
     "plugins/testlab-runner.ts",
     "src/testlab/runnerCore.ts",
     "src/testlab/__tests__/runnerCore.test.ts",
-    "src/plugins/__tests__/testlabRunner.test.ts"
+    "src/plugins/__tests__/testlabRunner.test.ts",
+    "plugins/testlab-supply.ts",
+    "src/testlab/supplyCore.ts",
+    "src/testlab/__tests__/supplyCore.test.ts"
   ]
 }
