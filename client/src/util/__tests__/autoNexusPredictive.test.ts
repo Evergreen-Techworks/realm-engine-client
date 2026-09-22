@@ -157,15 +157,17 @@ describe('hit ledger (layer 2)', () => {
     expect(f.escapeLog()[0]).toContain('unknown owner raw 80 -> 80 pierce(unknown)');
   });
 
-  it('never charges a bullet without a packet damage, and charges each identity once', () => {
+  it('charges an unannounced bullet at the assumed damage, and charges each identity once', () => {
     const f = plain();
-    f.hp(230);
-    f.playerHit(55, JELLY_ID);                              // never announced
+    f.hp(300);
+    f.playerHit(55, JELLY_ID);                              // never announced: assumed 175 -> 125 <= 100? no: 125 > 100
+    expect(f.escapes()).toBe(0);                            // 300 - 175 = 125 above the 100 HP point
     f.enemyShoot(JELLY_ID, 7, 1, 120);
-    f.playerHit(7, JELLY_ID);                               // 120 -> 110
+    f.playerHit(7, JELLY_ID);                               // 120 -> 5 <= 100
+    expect(f.escapes()).toBe(1);
     f.playerHit(7, JELLY_ID);                               // duplicate report of the same bullet
     f.playerHit(7, JELLY_ID);
-    expect(f.escapes()).toBe(0);
+    expect(f.escapes()).toBe(1);
   });
 
   it('expands numShots and wraps bullet ids the way the uint16 PLAYERHIT does', () => {
@@ -220,6 +222,7 @@ describe('hit ledger (layer 2)', () => {
     f.hp(300);
     f.enemyShoot(JELLY_ID, 100, 1, 120, 3);
     f.playerHit(100, JELLY_ID);                             // 180 predicted
+    f.settings.get('PredictiveNexusUnknownDamage')!(false); // isolate map-reset semantics from the unknown charge
     f.emit('MAPINFO', { name: 'Realm of the Mad God' }); f.emit('CREATESUCCESS');
     f.client.playerData.health = 250;
     f.emit('NEWTICK', { statuses: [] });                   // seeds 250 without an explicit HP stat
@@ -234,6 +237,7 @@ describe('hit ledger (layer 2)', () => {
     f.hp(300);
     f.enemyShoot(JELLY_ID, 100, 1, 120, 3);
     f.playerHit(100, JELLY_ID);
+    f.settings.get('PredictiveNexusUnknownDamage')!(false); // isolate the reset from the unknown charge
     f.disable(); f.enable();
     f.client.playerData.health = 250;
     f.emit('NEWTICK', { statuses: [] });
@@ -254,6 +258,7 @@ describe('hit ledger (layer 2)', () => {
 
   it('charges enemy-owned SERVERPLAYERSHOOT and ignores player-owned ones', () => {
     const f = plain(); f.client.playerData.defense = 58;
+    f.settings.get('PredictiveNexusUnknownDamage')!(false); // the player-owned hit stays uncharged: this test classifies owners
     f.entityTypes.set(42, 0x0300);                          // another player: no <Enemy/>
     f.hp(125);
     f.serverPlayerShoot(42, 5, 0x0a00, 500);
@@ -397,14 +402,16 @@ describe('short forecast (layer 3)', () => {
     expect(f.escapeLog()[0]).toContain('layer=hit-ledger');
   });
 
-  it('arms the native projectile forecast only, and disarms it when the plugin is disabled', () => {
+  it('arms the native projectile + ground forecasts, and disarms them when the plugin is disabled', () => {
     const f = plain();
     const last = (key: string) => vi.mocked(sendDllFeature).mock.calls.filter(([k]) => k === key).at(-1)?.[1];
     expect(last('autoNexusEnabled')).toBe(true);
     expect(last('autoNexusProjPredict')).toBe(true);
-    expect(last('autoNexusTilePredict')).toBe(false);
+    expect(last('autoNexusTilePredict')).toBe(true);        // ground counting default on (option C)
     expect(last('autoNexusDebugDraw')).toBe(false);
     expect(last('autoNexusPredictedTimeMs')).toBe(350);
+    f.settings.get('PredictiveNexusGround')!(false);
+    expect(last('autoNexusTilePredict')).toBe(false);       // ground off disarms the tile predictor
     f.disable();
     expect(last('autoNexusEnabled')).toBe(false);
     expect(last('autoNexusProjPredict')).toBe(false);

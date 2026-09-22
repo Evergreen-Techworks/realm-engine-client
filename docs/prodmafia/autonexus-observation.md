@@ -68,3 +68,25 @@ unmet and the owner's live sessions are the acceptance path.
   marker, ground/AoE geometry and XML-only damage still never charge.
 - `escape()` reports whether a request went out, so a latched recovery keeps
   observing the rest of the volley instead of truncating the observation.
+
+### Option C — full #52 coverage (same day, owner decision)
+
+- **Ground**: `PredictiveNexusGround` (default on) arms the native tile
+  predictor (`autoNexusTilePredict`) and charges its ground forecasts — the
+  soonest event within the horizon, in full (piercing; tile damage has no
+  projectile defense rules here). The wire GROUNDDAMAGE/AOEACK packets carry
+  no damage, so the native channel is the only ground source.
+- **AoE**: `PredictiveNexusAoe` (default on) tracks server AOE packets —
+  which carry their own position, radius, damage and armorPierce — for their
+  duration (seconds/ms per AoeCapturePolicy) and charges every zone the
+  player stands inside, at the packet's own numbers.
+- **Regen**: the method_29 model (2*(1+0.12*VIT)/s, +20 Healing, none Sick,
+  −20 Bleeding, halved in combat) accrues as credit between explicit server
+  HPs and lifts `predictedHp`, capped at max HP; any explicit HP restarts it.
+  It is a prediction like any other — it can only delay, never veto.
+- **Unknown PLAYERHIT**: a hit the game reports for a bullet the server never
+  announced charges the assumed damage as a real shot record, so the forecast
+  cannot double-count it and a server DAMAGE reconciles it like any charge.
+  Follows `PredictiveNexusUnknownDamage`.
+- Still never: packet holding/dropping/modification, native ESCAPE, the debug
+  overlay, XML-only damage as a bullet source.

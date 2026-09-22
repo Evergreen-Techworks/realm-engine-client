@@ -85,14 +85,13 @@ describe('synthetic forecast policy replays, not current-game acceptance', () =>
     expect(state.escapes()).toBe(1);
   });
 
-  it('ground/AoE geometry and XML-only damage never count; a numeric fallback does', () => {
+  it('malformed ground, XML-only damage and geometry-free warnings never count; a numeric fallback does', () => {
     const state = replay();
     state.enemy(7001, 0x9999, 'Synthetic fixture', { 0: { damage: 30000 } });
-    vi.mocked(getDllGround).mockReturnValue({ rawDamage: 30000, tHitMs: 0, events: [] });
+    vi.mocked(getDllGround).mockReturnValue({ rawDamage: 0, tHitMs: 0, events: [] });     // zero damage + no events: unusable
     scan(20, 100, [999]);
     vi.advanceTimersByTime(20);
     expect(state.observation()).toMatchObject({ predictedHp: 350 });   // bullet 999 charged at the fallback 450
-    expect(getDllGround).not.toHaveBeenCalled();
     expect(state.escapes()).toBe(0);                                   // 350 > the 100 HP point
   });
 });

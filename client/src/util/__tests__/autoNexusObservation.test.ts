@@ -24,8 +24,7 @@ describe('prediction-origin ESCAPE gate', () => {
     vi.advanceTimersByTime(20);
     expect(fixtureState.escapes()).toBe(1);
     expect(fixtureState.escapeLog().some(l => l.includes('layer=forecast'))).toBe(true);
-    expect(sendDllFeature).not.toHaveBeenCalledWith('autoNexusTilePredict', true);
-    expect(sendDllFeature).not.toHaveBeenCalledWith('autoNexusDebugDraw', true);
+    expect(sendDllFeature).not.toHaveBeenCalledWith('autoNexusDebugDraw', true);   // the overlay never arms
   });
 
   it.each(['observe', 'off'])('%s cannot enable prediction-origin ESCAPE', mode => {
@@ -42,8 +41,7 @@ describe('prediction-origin ESCAPE gate', () => {
     expect(fixtureState.escapes()).toBe(0);
     fixtureState.hp(0);
     expect(fixtureState.escapes()).toBe(1);
-    expect(sendDllFeature).not.toHaveBeenCalledWith('autoNexusTilePredict', true);
-    expect(sendDllFeature).not.toHaveBeenCalledWith('autoNexusDebugDraw', true);
+    expect(sendDllFeature).not.toHaveBeenCalledWith('autoNexusDebugDraw', true);   // the overlay never arms
   });
 
   it('legacy PredictiveNexusForecast=true alone does not switch the mode', () => {
