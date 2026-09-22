@@ -44,7 +44,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-export function fixture(testHooks?: { allowActivePredictionForTests?: boolean }) {
+export function fixture() {
   vi.useFakeTimers();
   const hooks = new Map<string, (...args: any[]) => void>();
   const settings = new Map<string, (...args: any[]) => void>();
@@ -53,9 +53,11 @@ export function fixture(testHooks?: { allowActivePredictionForTests?: boolean })
   const commands = new Map<string, (...args: any[]) => void>();
   let onEnable = () => {};
   const entityTypes = new Map<number, number>();
+  const entityPos = new Map<number, { x: number; y: number }>();
   const objects = new Map<number, { id: string; displayId: string; isEnemy: boolean; projectiles: Map<number, ProjectileFixture> }>();
   const client: any = { connected: true, objectId: 1, sendToServer: vi.fn(),
-    playerData: { effectiveMaxHealth: 1000, health: 800, mapName: 'Realm', defense: 0, effects: [0, 0] } };
+    playerData: { effectiveMaxHealth: 1000, health: 800, mapName: 'Realm', defense: 0, effects: [0, 0],
+      effectiveVitality: 0, powerLevel: 0, hasConditionEffect: (_name: string) => false } };
   client.recovery = new RecoveryCoordinator({
     isConnected: () => client.connected,
     sendEscape: () => client.sendToServer({ name: 'ESCAPE', modified: true }),
@@ -70,7 +72,13 @@ export function fixture(testHooks?: { allowActivePredictionForTests?: boolean })
     hookCommand: vi.fn((name: string, fn: any) => commands.set(name, fn)), updateSetting: vi.fn(), log: vi.fn(),
     hookPacket: (name: string, fn: (...args: any[]) => void) => hooks.set(name, fn),
     createPacket: (name: string) => ({ name }), sendNotification: vi.fn(),
-    getWorldState: () => ({ getEntityType: (id: number) => entityTypes.get(id) }),
+    getWorldState: () => ({
+      getEntityType: (id: number) => entityTypes.get(id),
+      getEntity: (id: number) => {
+        const type = entityTypes.get(id);
+        return type === undefined ? undefined : { objectType: type, pos: entityPos.get(id) ?? { x: 10, y: 10 } };
+      },
+    }),
     gameData: {
       getObject: (type: number) => objects.get(type),
       getProjectile: (type: number, id: number) => {
@@ -81,7 +89,7 @@ export function fixture(testHooks?: { allowActivePredictionForTests?: boolean })
       },
     },
   };
-  const controls = register(ctx as unknown as PluginContext, testHooks);
+  const controls = register(ctx as unknown as PluginContext);
 
   const emit = (name: string, data: any = {}) => {
     if (name === 'MAPINFO') client.admission.generation = client.recovery.beginGeneration();
@@ -166,7 +174,7 @@ export function fixture(testHooks?: { allowActivePredictionForTests?: boolean })
 
   return {
     client, ctx, settings, events, cleanup, commands, emit, hp, enemy, enemyShoot, serverPlayerShoot, playerHit, damage,
-    setCondition, escapes, escapeLog, entityTypes, observation: () => controls.observation(client),
+    setCondition, escapes, escapeLog, entityTypes, entityPos, observation: () => controls.observation(client),
     transitions: () => controls.transitions(client),
     disable: () => { ctx.enabled = false; onEnable(); },
     enable: () => { ctx.enabled = true; onEnable(); },

@@ -1,5 +1,5 @@
-import type { PluginContext, ClientConnection, Packet, GameDataLoader } from './api.js';
-import { sendDllFeature, StatType, getDllThreats, getDllThreatsAgeMs } from './api.js';
+import type { PluginContext, ClientConnection, Packet, DllThreat, GameDataLoader } from './api.js';
+import { sendDllFeature, StatType, getDllThreats, getDllThreatsAgeMs, getDllGround } from './api.js';
 import { remainingHitMs } from './auto-nexus/forecastTiming.js';
 import { HealthEvidence } from './auto-nexus/healthEvidence.js';
 import { DiagGate } from '../src/util/DiagGate.js';
@@ -17,15 +17,21 @@ import {
   withOnHitEffects,
 } from './auto-nexus/hitLedger.js';
 
-// Confirmed health protects the player. The two predictive layers are observations:
+// Three layers protect the player. Owner decision 2026-09-22: prediction is
+// ACTIVE by default again — the pre-2026-09-06 coverage, on v2's accounting.
 //  1. Confirmed health — server HP (NEWTICK/UPDATE) and server DAMAGE amounts.
 //  2. Hit ledger — each outgoing PLAYERHIT charges the damage the server stated
-//     for that bullet in ENEMYSHOOT, after defense, until the next server HP.
-//  3. Short forecast (optional) — bullets already fired, with a packet damage,
-//     that the native scanner predicts will hit within a short horizon.
-// AoE visuals, ground estimates, unknown bullets, guessed regeneration and
-// synthetic native threats never charge HP. Outgoing PLAYERHITs are observed only:
-// never held, dropped or modified.
+//     for that bullet in ENEMYSHOOT, after defense, until the next server HP;
+//     a bullet the server never announced charges the assumed damage.
+//  3. Forecast — everything predicted to land within a short horizon: bullets
+//     (the server's packet damage when announced, else the DLL's fallback,
+//     else the assumed-damage setting, piercing), AoE zones the server
+//     announced with their own damage while the player stands inside, and the
+//     native tile predictor's ground damage. The method_29 regen model lifts
+//     predicted HP between server HP updates and resets when the server speaks.
+// Global evidence ambiguity no longer vetoes an escape whose own bullets are
+// clean; per-shot ambiguity still skips that shot. Outgoing PLAYERHITs are
+// observed only: never held, dropped or modified.
 const SAFE_ZONE_MAPS = new Set([
   'Nexus', 'Vault',
   'Guild Hall', 'Guild Hall 2', 'Guild Hall 3', 'Guild Hall 4', 'Guild Hall 5',
@@ -61,6 +67,12 @@ const FORECAST_POLL_MS = 20;
 const DEFAULT_FORECAST_HORIZON_MS = 250;
 /** Bullets listed per escape log line. */
 const MAX_LOGGED_BULLETS = 8;
+/**
+ * Damage charged for a threat with no packet damage and no usable DLL
+ * fallback, treated as armor-piercing. 175 is the MultiTool Class89 value the
+ * pre-2026-09-06 plugin assumed for unknown shots.
+ */
+const DEFAULT_ASSUMED_DAMAGE = 175;
 
 interface Charge {
   key: string;
@@ -73,6 +85,16 @@ interface Charge {
 interface BulletNote extends Omit<Charge, 'key'> {
   /** Forecast only: time until the predicted hit. */
   inMs?: number;
+}
+
+/** One server-announced AoE zone (AOE packet), tracked while it lasts. */
+interface TrackedAoe {
+  ownerType: number | null;
+  pos: { x: number; y: number };
+  radius: number;
+  rawDamage: number;
+  armorPiercing: boolean;
+  expiresAt: number;
 }
 
 interface EscapePoint { hp: number; burst: number; guarded: boolean }
@@ -126,6 +148,12 @@ interface NexusState {
   /** Bullets the server announced to this connection, by `owner:bulletId`. */
   shots: Map<string, ShotRecord>;
   lastShotPruneAt: number;
+  /** Server-announced AoE zones still live (AOE packet). */
+  aoes: TrackedAoe[];
+  /** method_29 regen accumulator (fractional HP) and whole-point credit since the last explicit HP. */
+  regenAccum: number;
+  regenCredit: number;
+  lastRegenAt: number;
   /** Hits charged since the last explicit server HP. */
   charges: Charge[];
   /** Condition bits charged bullets applied since the last server HP. */
@@ -143,7 +171,7 @@ interface NexusState {
 const NEXUS_SLOW_MS = 50;
 const nexusSlowLineLimiter = new RateLimiter(5, 5000);
 
-export function register(ctx: PluginContext, testHooks?: { allowActivePredictionForTests?: boolean }) {
+export function register(ctx: PluginContext) {
   ctx.name = 'Auto Nexus';
   ctx.category = 'combat';
   let thresholdPct = 25;
@@ -152,7 +180,11 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
   let retryMs = 400;
   let burstGuard = true;
   let forecastEnabled = true;
-  let predictionMode: PredictionMode = 'observe';
+  let predictionMode: PredictionMode = 'active';
+  let unknownDamage = true;
+  let assumedDamage = DEFAULT_ASSUMED_DAMAGE;
+  let groundEnabled = true;
+  let aoeEnabled = true;
   const observations = new WeakMap<ClientConnection, PredictionObservation>();
   const transitions = new WeakMap<ClientConnection, RecoveryObservation[]>();
   let horizonMs = DEFAULT_FORECAST_HORIZON_MS;
@@ -170,15 +202,16 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
   }
 
   function activePredictionAllowed(): boolean {
-    return predictionMode !== 'off' && testHooks?.allowActivePredictionForTests === true;
+    return predictionMode === 'active';
   }
 
-  ctx.registerSetting('PredictionMode', {
-    label: 'Prediction (observation only)', type: 'select', value: 'observe',
-    options: [{ label: 'Off', value: 'off' }, { label: 'Observe', value: 'observe' }],
+  ctx.registerSetting('PredictiveNexusMode', {
+    label: 'Prediction', type: 'select', value: 'active',
+    options: [{ label: 'Off', value: 'off' }, { label: 'Observe', value: 'observe' }, { label: 'Active', value: 'active' }],
   }, (value: string) => {
-    predictionMode = value === 'off' ? 'off' : 'observe';
-    if (value !== predictionMode) ctx.updateSetting('PredictionMode', predictionMode);
+    // Only an explicit 'active' activates; invalid values never can.
+    predictionMode = value === 'off' ? 'off' : value === 'active' ? 'active' : 'observe';
+    if (value !== predictionMode) ctx.updateSetting('PredictiveNexusMode', predictionMode);
     syncNativeForecast();
   });
 
@@ -198,6 +231,10 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
   // New keys on purpose: the pre-2026-09-06 prediction settings (PredictedAutoNexusHealth,
   // PredictedAutoNexusTime, IncludeGroundTicks, HoldLethalPlayerHit, ...) stay
   // unregistered, so a saved profile carrying them cannot bring that behaviour back.
+  // The observe-only era's `PredictionMode` joins them (2026-09-22): its saved
+  // 'observe' was never a choice — it was the only non-off option — so
+  // `PredictiveNexusMode` (default 'active') replaces it and stale values are
+  // ignored by config replay.
   ctx.registerSetting('PredictiveNexusForecast', {
     label: 'Predictive Nexus (forecast)', type: 'boolean', value: true,
   }, (v: boolean) => {
@@ -214,6 +251,38 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
     horizonMs = Number.isFinite(n) ? Math.max(100, Math.min(400, n)) : DEFAULT_FORECAST_HORIZON_MS;
     syncNativeForecast();
   });
+  ctx.registerSetting('PredictiveNexusUnknownDamage', {
+    label: 'Count unknown-damage bullets', type: 'boolean', value: true,
+    visibleWhen: { key: 'PredictiveNexusForecast', value: true },
+  }, (v: boolean) => {
+    const next = v === true;
+    if (next !== unknownDamage) ctx.log(`Unknown-damage bullet counting ${next ? 'on' : 'off'}`);
+    unknownDamage = next;
+  });
+  ctx.registerSetting('PredictiveNexusAssumedDamage', {
+    label: 'Assumed damage (no packet, no fallback)', advanced: true, type: 'range', value: DEFAULT_ASSUMED_DAMAGE,
+    min: 25, max: 500, step: 25, visibleWhen: { key: 'PredictiveNexusUnknownDamage', value: true },
+  }, (v: number) => {
+    const n = Math.trunc(Number(v));
+    assumedDamage = Number.isFinite(n) ? Math.max(25, Math.min(500, n)) : DEFAULT_ASSUMED_DAMAGE;
+  });
+  ctx.registerSetting('PredictiveNexusGround', {
+    label: 'Count ground damage (native tile predictor)', type: 'boolean', value: true,
+    visibleWhen: { key: 'PredictiveNexusForecast', value: true },
+  }, (v: boolean) => {
+    const next = v === true;
+    if (next !== groundEnabled) ctx.log(`Ground-damage counting ${next ? 'on' : 'off'}`);
+    groundEnabled = next;
+    syncNativeForecast();
+  });
+  ctx.registerSetting('PredictiveNexusAoe', {
+    label: 'Count server-announced AoE zones', type: 'boolean', value: true,
+    visibleWhen: { key: 'PredictiveNexusForecast', value: true },
+  }, (v: boolean) => {
+    const next = v === true;
+    if (next !== aoeEnabled) ctx.log(`AoE-zone counting ${next ? 'on' : 'off'}`);
+    aoeEnabled = next;
+  });
   ctx.registerSetting('ShowChatMessageOnNexus', {
     label: 'Show Chat Message on Nexus', advanced: true, type: 'boolean', value: true,
   }, (v: boolean) => { showNotification = v === true; });
@@ -224,12 +293,13 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
     label: 'Escape Retry Interval', advanced: true, type: 'range', value: 400, min: 100, max: 2000, step: 50,
   }, (v: number) => { retryMs = Math.max(100, Math.min(2000, Math.trunc(Number(v) || 400))); });
 
-  // Native Auto Nexus only publishes projectile forecasts; it never sends ESCAPE
-  // and its damage numbers are ignored here. Its ground predictor and overlay stay
-  // off. Re-sent on connect and map change so restored native state cannot linger.
+  // Native Auto Nexus only publishes projectile + ground forecasts; it never
+  // sends ESCAPE and its damage numbers are ignored here. The ground predictor
+  // runs only while ground counting is on; the overlay stays off. Re-sent on
+  // connect and map change so restored native state cannot linger.
   function syncNativeForecast(): void {
     const on = ctx.enabled && forecastEnabled && predictionMode !== 'off';
-    sendDllFeature('autoNexusTilePredict', false);
+    sendDllFeature('autoNexusTilePredict', on && groundEnabled);
     sendDllFeature('autoNexusDebugDraw', false);
     // Scan past the horizon by the accepted scan age, so a hit at the horizon edge
     // is still listed when the scan it came from is up to that old.
@@ -283,7 +353,8 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
         escapeRequestedAt: null, reconnectAt: null, mapInfoAt: null,
         hp: null, maxHp: 0, healthAt: null, safe: SAFE_ZONE_MAPS.has(
         String(client.playerData?.mapName ?? '').trim().toLowerCase()),
-        samples: [], bursts: [], shots: new Map(), lastShotPruneAt: 0, charges: [], ledgerEffects: [0, 0] };
+        samples: [], bursts: [], shots: new Map(), lastShotPruneAt: 0, charges: [], ledgerEffects: [0, 0],
+        aoes: [], regenAccum: 0, regenCredit: 0, lastRegenAt: Date.now() };
       states.set(client, state);
       clients.add(client);
     }
@@ -303,6 +374,7 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
     state.samples = []; state.bursts = [];
     state.shots.clear(); clearLedger(state);
     state.ownerIncarnations.clear(); state.shotSequence = 0;
+    state.aoes = []; state.regenAccum = 0; state.regenCredit = 0; state.lastRegenAt = Date.now();
     observations.delete(client);
   }
   ctx.on('clientDisconnected', client => {
@@ -337,7 +409,33 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
     return [e0 | state.ledgerEffects[0], e1 | state.ledgerEffects[1]];
   }
   function predictedHp(state: NexusState): number | null {
-    return state.evidence.snapshot(Date.now()).predictedHp;
+    const snapshot = state.evidence.snapshot(Date.now());
+    if (snapshot.predictedHp === null) return null;
+    // method_29 regen is a prediction like any other: credit accrued since the
+    // last explicit server HP lifts the comparison, capped at max HP. It resets
+    // whenever the server speaks (see statusHealth), so it never double-counts.
+    return state.maxHp > 0 ? Math.min(snapshot.predictedHp + state.regenCredit, state.maxHp)
+      : snapshot.predictedHp + state.regenCredit;
+  }
+  /**
+   * method_29 (MultiTool Class89): base regen 2*(1+0.12*VIT) HP/s, +20/s while
+   * Healing, nothing while Sick, −20/s while Bleeding, halved in combat. Whole
+   * points move from the fractional accumulator into the credit.
+   */
+  function tickRegen(client: ClientConnection, state: NexusState, now: number): void {
+    const dtSec = (now - state.lastRegenAt) / 1000;
+    state.lastRegenAt = now;
+    if (dtSec <= 0 || state.maxHp <= 0) return;
+    const pd = client.playerData as typeof client.playerData & { hasConditionEffect?: (n: string) => boolean; powerLevel?: number };
+    const has = (name: string) => pd?.hasConditionEffect?.(name) === true;
+    const vit = Number(pd?.effectiveVitality);
+    const base = 2 * (1 + 0.12 * (Number.isFinite(vit) && vit > 0 ? vit : 0));
+    if (!has('Sick')) state.regenAccum += (has('Healing') ? 20 + base : base) * dtSec;
+    if (has('Bleeding')) state.regenAccum -= 20 * dtSec;
+    if (has('InCombat') || Number(pd?.powerLevel) >= 100) state.regenAccum /= 2;
+    const whole = Math.trunc(state.regenAccum);
+    state.regenAccum -= whole;
+    state.regenCredit = Math.max(0, state.regenCredit + whole);
   }
   function ownerLabel(type: number | null): string {
     if (type === null) return 'unknown owner';
@@ -363,12 +461,11 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
     reason: string,
     bullets: BulletNote[] = [],
     forecastHp: number | null = null,
-  ): void {
-    if ((layer === 'hit-ledger' || layer === 'forecast') && !activePredictionAllowed()) return;
-    if ((layer === 'hit-ledger' || layer === 'forecast') && state.evidence.snapshot(Date.now()).certainty === 'ambiguous') return;
+  ): boolean {
+    if ((layer === 'hit-ledger' || layer === 'forecast') && !activePredictionAllowed()) return false;
     if (!client.connected || !ctx.enabled || state.generation !== client.admission.generation ||
-        ['dead', 'disconnected', 'cancelled', 'terminal'].includes(client.admission.phase)) return;
-    if (!client.recovery.requestEscape(state.generation, { retries: retryCount, retryMs })) return;
+        ['dead', 'disconnected', 'cancelled', 'terminal'].includes(client.admission.phase)) return false;
+    if (!client.recovery.requestEscape(state.generation, { retries: retryCount, retryMs })) return false;
     // item 4b (measurement only): requestEscape() synchronously calls
     // sendEscape() before returning (RecoveryCoordinator.ts), so this point is
     // "escape packet send call returns" per the investigation's design.
@@ -388,6 +485,9 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
         ? `burst guard, largest burst ${point.burst}` : `threshold ${thresholdPct}%`})` : 'unknown'}`
       + `; confirmed HP=${state.hp ?? 'unknown'}/${state.maxHp}`
       + ` age=${state.healthAt === null ? 'unknown' : `${now - state.healthAt}ms`}`
+      // Global ambiguity no longer vetoes the escape (owner decision 2026-09-22);
+      // it is named here so a decision made on ambiguous evidence stays legible.
+      + (state.evidence.snapshot(now).certainty === 'ambiguous' ? '; evidence=ambiguous' : '')
       + `; bullets=${describeBullets(bullets)}`;
     try { ctx.log(`AUTO NEXUS — ${detail}; ${reason}`); } catch {}
     // Notification failures must never prevent the first ESCAPE or its retries.
@@ -397,6 +497,7 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
           `Escape requested (${layer}) at predicted HP ${round(predicted)}/${state.maxHp}; confirmed ${state.hp ?? 'unknown'}\n${reason}`);
       } catch (error) { try { ctx.log(`Auto Nexus notification failed: ${String(error)}`); } catch {} }
     }
+    return true;
   }
   /** Record a newly confirmed HP value and any loss it completes within one reaction window. */
   function noteConfirmedHp(state: NexusState, now: number): void {
@@ -443,50 +544,128 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
       `${state.charges.length} outgoing PLAYERHIT(s) charged at packet damage since the last server HP`,
       state.charges.map(({ key: _key, ...note }) => note));
   }
-  /** Layer 3: already-fired bullets with packet damage the native scan says hit within the horizon. */
+  /** Layer 3: ground + AoE zones + already-fired bullets predicted to hit within the horizon. */
   function checkForecast(client: ClientConnection, state: NexusState): void {
     if (!forecastEnabled || predictionMode === 'off' || !armed(state)) return;
     let effects = effectsOf(client, state);
     if (isInvulnerable(effects)) return;
+    const now = Date.now();
+    tickRegen(client, state, now);
+    const ageMs = getDllThreatsAgeMs();
+    const point = escapePoint(state, now);
+    const defense = defenseOf(client);
+    let hp = predictedHp(state)!;
+
+    // ── Ground (native tile predictor; the wire GROUNDDAMAGE carries no damage) ──
+    if (groundEnabled) {
+      const ground = getDllGround();
+      if (ground) {
+        const events = Array.isArray(ground.events) && ground.events.length > 0 ? ground.events : [ground];
+        let soonest: { raw: number; inMs: number } | null = null;
+        for (const event of events) {
+          const raw = Number(event?.rawDamage);
+          const inMs = remainingHitMs(Number(event?.tHitMs), ageMs);
+          if (inMs === null || inMs > horizonMs || !isPacketDamage(raw)) continue;
+          if (!soonest || inMs < soonest.inMs) soonest = { raw, inMs };
+        }
+        if (soonest) {
+          // Ground damage counts in full: treating it as piercing only ever
+          // charges more, and tile damage has no projectile defense rules here.
+          const applied = appliedDamage(soonest.raw, true, defense, effects);
+          if (applied > 0) {
+            hp -= applied;
+            const note: BulletNote[] = [{ ownerType: null, raw: soonest.raw, applied, armorPiercing: true, inMs: soonest.inMs }];
+            observePrediction(client, state, 'forecast', hp, soonest.inMs);
+            if (hp <= point.hp && escape(client, state, 'forecast',
+              `ground damage ${Math.round(applied)} predicted in ${Math.round(soonest.inMs)}ms (native tile predictor)`, note, hp)) return;
+          }
+        }
+      }
+    }
+
+    // ── AoE zones the server announced with their own damage (AOE packet) ──
+    if (aoeEnabled && state.aoes.length > 0) {
+      const pos = ctx.getWorldState(client)?.getEntity(client.objectId)?.pos;
+      if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) {
+        state.aoes = state.aoes.filter(aoe => aoe.expiresAt >= now);
+        const hits: BulletNote[] = [];
+        for (const aoe of state.aoes) {
+          const dx = pos.x - aoe.pos.x, dy = pos.y - aoe.pos.y;
+          if (dx * dx + dy * dy > aoe.radius * aoe.radius) continue;
+          const applied = appliedDamage(aoe.rawDamage, aoe.armorPiercing, defense, effects);
+          if (applied <= 0) continue;
+          hp -= applied;
+          hits.push({ ownerType: aoe.ownerType, raw: aoe.rawDamage, applied, armorPiercing: aoe.armorPiercing });
+        }
+        if (hits.length > 0) {
+          observePrediction(client, state, 'forecast', hp, null);
+          if (hp <= point.hp && escape(client, state, 'forecast',
+            `${hits.length} AoE zone(s) the player stands in (server-announced damage)`, hits, hp)) return;
+        }
+      }
+    }
+
+    // ── Bullets ──
     const threats = getDllThreats();
     if (threats.length === 0) return;
-    const ageMs = getDllThreatsAgeMs();
-    const now = Date.now();
     if (ageMs === null || now - ageMs < state.startedAt || state.generation !== client.admission.generation) return;
     const seen = new Set<string>();
-    const incoming: { shot: ShotRecord; inMs: number }[] = [];
+    const incoming: { shot: ShotRecord | undefined; threat: DllThreat; inMs: number }[] = [];
     for (const threat of threats) {
       const attacker = Number(threat?.attackerObjId), bulletId = Number(threat?.bulletId);
       if (!Number.isInteger(attacker) || !Number.isInteger(bulletId)) continue;
-      if (isSyntheticThreat(bulletId, threat.fallbackDamage)) continue;
       const inMs = remainingHitMs(threat.tHitMs, ageMs);
       if (inMs === null || inMs > horizonMs) continue;
       const key = bulletKey(attacker, bulletId);
       if (seen.has(key)) continue;
       seen.add(key);
       const shot = state.shots.get(key);
-      // Only bullets the server announced with a damage count; already-charged ones never twice.
-      if (!shot || shot.ambiguous || shot.charged || shot.expiresAt < now || !isPacketDamage(shot.rawDamage)) continue;
-      incoming.push({ shot, inMs });
+      if (shot) {
+        // A packet record always wins and is never counted twice. An ambiguous
+        // record skips the bullet entirely rather than double-guessing it.
+        if (!isPacketDamage(shot.rawDamage) || shot.ambiguous || shot.charged || shot.expiresAt < now) continue;
+      } else if (!unknownDamage) {
+        // Owner decision 2026-09-22: bullets without a packet record count too —
+        // the pre-2026-09-06 coverage, charged below from the DLL fallback or
+        // the assumed damage.
+        continue;
+      }
+      incoming.push({ shot, threat, inMs });
     }
     if (incoming.length === 0) return;
     incoming.sort((a, b) => a.inMs - b.inMs);
-    const point = escapePoint(state, now);
-    const defense = defenseOf(client);
-    let hp = predictedHp(state)!;
     const counted: BulletNote[] = [];
-    for (const { shot, inMs } of incoming) {
-      const applied = appliedDamage(shot.rawDamage, shot.armorPiercing, defense, effects);
-      effects = withOnHitEffects(effects, shot.onHitEffects);
+    let unknownCount = 0;
+    for (const { shot, threat, inMs } of incoming) {
+      let raw: number, armorPiercing: boolean | null, onHitEffects: readonly string[], ownerType: number | null;
+      const isUnknown = shot === undefined;
+      if (shot) {
+        raw = shot.rawDamage; armorPiercing = shot.armorPiercing;
+        onHitEffects = shot.onHitEffects; ownerType = shot.ownerType;
+      } else {
+        // No packet record: the DLL's own damage estimate when it is a real
+        // number (the synthetic 9999 marker is not one), else the assumed
+        // damage, treated as piercing — an unknown can only charge more.
+        const fallback = threat.fallbackDamage;
+        const usable = isPacketDamage(fallback) && !isSyntheticThreat(threat.bulletId, fallback);
+        raw = usable ? fallback : assumedDamage;
+        armorPiercing = usable ? threat.fallbackArmorPiercing : true;
+        onHitEffects = []; ownerType = null;
+      }
+      const applied = appliedDamage(raw, armorPiercing, defense, effects);
+      effects = withOnHitEffects(effects, onHitEffects);
       if (applied <= 0) continue;
+      if (isUnknown) unknownCount++;
       hp -= applied;
-      counted.push({ ownerType: shot.ownerType, raw: shot.rawDamage, applied, armorPiercing: shot.armorPiercing, inMs });
+      counted.push({ ownerType, raw, applied, armorPiercing, inMs });
       observePrediction(client, state, 'forecast', hp, counted[0].inMs ?? null);
       if (hp <= point.hp) {
-        escape(client, state, 'forecast',
+        // Stop charging only when a request actually went out; while latched or
+        // observing, keep counting so the observation shows the whole volley.
+        if (escape(client, state, 'forecast',
           `${counted.length} fired bullet(s) predicted to hit within ${horizonMs}ms`
-          + ` (native scan age ${ageMs ?? 'unknown'}ms)`, counted, hp);
-        if (activePredictionAllowed()) return;
+          + (unknownCount > 0 ? `; ${unknownCount} unknown-damage bullet(s) (DLL fallback or assumed ${assumedDamage})` : '')
+          + ` (native scan age ${ageMs ?? 'unknown'}ms)`, counted, hp)) return;
       }
     }
   }
@@ -574,6 +753,27 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
       [ownerType, Number.isInteger(container) && container > 0 ? container : null]);
   });
 
+  // ── AoE zones (server-announced, with their own damage) ───────────────────
+  ctx.hookPacket('AOE', (client, packet) => {
+    if (!aoeEnabled || !packet.isDefined) return;
+    const data = packet.data ?? {};
+    if (!isPacketDamage(data.damage)) return;
+    const radius = Number(data.radius), px = Number(data.position?.x), py = Number(data.position?.y);
+    if (!Number.isFinite(radius) || radius <= 0 || !Number.isFinite(px) || !Number.isFinite(py)) return;
+    const state = stateFor(client); syncMaxHp(client, state);
+    // Duration matches AoeCapturePolicy: <=120 means seconds; anything sane
+    // else is ms; a missing/garbage value keeps the zone visible for 3 s.
+    const rawDur = Number(data.effectDuration);
+    const durationMs = Number.isFinite(rawDur) && rawDur > 0 && rawDur < 120000
+      ? (rawDur <= 120 ? rawDur * 1000 : rawDur) : 3000;
+    state.aoes.push({
+      ownerType: Number.isInteger(data.originType) ? data.originType : null,
+      pos: { x: px, y: py }, radius, rawDamage: data.damage,
+      armorPiercing: data.armorPierce === true, expiresAt: Date.now() + durationMs,
+    });
+    if (state.aoes.length > 64) state.aoes.shift();
+  });
+
   // Observe only. The packet is forwarded exactly as the game client sent it.
   ctx.hookPacket('PLAYERHIT', (client, packet) => {
     if (!packet.isDefined) return;
@@ -581,8 +781,24 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
     if (!Number.isInteger(objectId) || !Number.isInteger(bulletId)) return;
     const state = stateFor(client);
     activeClient = client;
-    const shot = state.shots.get(bulletKey(objectId, bulletId));
-    if (!shot || shot.ambiguous || shot.charged || shot.expiresAt < Date.now()) return;
+    let shot = state.shots.get(bulletKey(objectId, bulletId));
+    if (!shot) {
+      // The game reports a hit from a bullet the server never announced on this
+      // connection. #52 charged 175+AP for unknown shots; do the same, as a real
+      // shot record so the forecast cannot double-count the bullet and a server
+      // DAMAGE for it can reconcile the charge like any other.
+      if (!unknownDamage || !isPacketDamage(assumedDamage)) return;
+      const now = Date.now();
+      const ownerIncarnation = state.ownerIncarnations.get(objectId) ?? 0;
+      shot = {
+        identity: `${state.generation}:${objectId}:${ownerIncarnation}:${bulletId & 0xffff}:${++state.shotSequence}`,
+        ownerIncarnation, receiptSequence: state.shotSequence, receivedAt: now, ambiguous: false,
+        ownerId: objectId, ownerType: null, bulletType: 0, rawDamage: assumedDamage, armorPiercing: true,
+        onHitEffects: [], expiresAt: now + shotTtlMs(undefined), charged: false,
+      };
+      state.shots.set(bulletKey(objectId, bulletId), shot);
+    }
+    if (shot.ambiguous || shot.charged || shot.expiresAt < Date.now()) return;
     shot.charged = true;
     const applied = appliedDamage(shot.rawDamage, shot.armorPiercing, defenseOf(client), effectsOf(client, state));
     state.ledgerEffects = withOnHitEffects(state.ledgerEffects, shot.onHitEffects);
@@ -604,6 +820,7 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
     const state = stateFor(client);
     activeClient = client;
     syncMaxHp(client, state);
+    tickRegen(client, state, Date.now());
     pruneShots(state, Date.now());
     const own = statuses.find(status => status?.objectId === client.objectId);
     const hpStat = own?.data?.find((stat: any) => stat.id === StatType.HP);
@@ -612,6 +829,8 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
       state.healthAt = Date.now();
       state.evidence.observeHp(state.hp, state.healthAt);
       state.ledgerEffects = [0, 0];
+      state.regenAccum = 0;                     // the server spoke: regen credit restarts
+      state.regenCredit = 0;
       noteConfirmedHp(state, state.healthAt);
     } else if (state.hp === null && Number.isFinite(client.playerData.health) && client.playerData.health > 0) {
       // Hot reload can begin between full HP updates. Seed once from the last
@@ -719,8 +938,10 @@ export function register(ctx: PluginContext, testHooks?: { allowActivePrediction
       + `${before === null ? 'unknown' : Math.round(before)}); confirmed HP ${state.hp ?? 'unknown'}/${state.maxHp}`);
   });
   ctx.hookCommand('nexus', (client) => escape(client, stateFor(client), 'manual', '/nexus command'));
-  ctx.log(`Loaded — confirmed health active; prediction observation only (${DEFAULT_FORECAST_HORIZON_MS}ms);`
-    + ` default nexus at ${thresholdPct}% HP until the saved profile applies; burst guard default on`);
+  ctx.log(`Loaded — prediction ACTIVE by default (owner decision 2026-09-22); forecast horizon ${DEFAULT_FORECAST_HORIZON_MS}ms,`
+    + ` unknown-damage bullets count (DLL fallback or assumed ${DEFAULT_ASSUMED_DAMAGE}),`
+    + ` ground + AoE zones count, method_29 regen lifts predicted HP between server updates;`
+    + ` nexus at ${thresholdPct}% HP until the saved profile applies; burst guard default on`);
   return {
     observation: (client: ClientConnection) => {
       const observation = observations.get(client);

@@ -30,7 +30,7 @@ function threats(list: Partial<DllThreat>[], ageMs = 20): void {
 
 /** max HP 1000, nexus at 10% (100 HP), no burst guard, defense 0, one Jellyfish in view. */
 function plain() {
-  const f = fixture({ allowActivePredictionForTests: true });
+  const f = fixture();                                        // prediction active by default
   f.settings.get('ForceAutoNexusHealth')!(10);
   f.settings.get('BurstGuard')!(false);
   f.enemy(JELLY_ID, JELLY_TYPE, 'Hadopelagic Jellyfish', JELLY_PROJECTILES);
@@ -77,21 +77,21 @@ describe('hit ledger (layer 2)', () => {
     expect(state.escapes()).toBe(0);
   });
 
-  it('does not activate ambiguous reused owner/bullet identities even with test permission', () => {
+  it('refuses a reused ambiguous identity, but charges a clean re-announced one after its owner reincarnates', () => {
     const state = plain();
     state.hp(300);
     state.enemyShoot(JELLY_ID, 7, 1, 250);
-    state.enemyShoot(JELLY_ID, 7, 1, 250);
+    state.enemyShoot(JELLY_ID, 7, 1, 250);                  // id reused while live: ambiguous
     state.playerHit(7, JELLY_ID);
     expect(state.escapes()).toBe(0);
-    state.emit('UPDATE', { drops: [JELLY_ID], newObjs: [] });
-    state.enemyShoot(JELLY_ID, 7, 1, 250);
-    state.playerHit(7, JELLY_ID);
-    expect(state.escapes()).toBe(0);
+    state.emit('UPDATE', { drops: [JELLY_ID], newObjs: [] }); // owner leaves: global evidence turns ambiguous
+    state.enemyShoot(JELLY_ID, 7, 1, 250);                  // a fresh, unambiguous announcement
+    state.playerHit(7, JELLY_ID);                           // 50 <= 100: charges despite global ambiguity
+    expect(state.escapes()).toBe(1);
   });
 
-  it('observes the historical Jellyfish reconstruction without activating ambiguous health ordering', () => {
-    const f = fixture({ allowActivePredictionForTests: true });
+  it('the historical Jellyfish reconstruction escapes despite ambiguous health ordering', () => {
+    const f = fixture();                                     // prediction active by default (owner decision 2026-09-22)
     f.client.playerData.effectiveMaxHealth = 675;
     f.client.playerData.defense = 39;
     f.enemy(JELLY_ID, JELLY_TYPE, 'Hadopelagic Jellyfish', JELLY_PROJECTILES);
@@ -104,14 +104,15 @@ describe('hit ledger (layer 2)', () => {
     f.playerHit(103, JELLY_ID);                             // 150 - 39 = 111  -> 272, now Exposed
     f.playerHit(101, JELLY_ID);                             // 120 - 19 = 101  -> 171 (> 168.75)
     expect(f.escapes()).toBe(0);
-    f.playerHit(102, JELLY_ID);
-    expect(f.escapes()).toBe(0);
+    f.playerHit(102, JELLY_ID);                             // 101 -> 70 <= 168.75: the death this layer now prevents
+    expect(f.escapes()).toBe(1);
+    expect(f.escapeLog()[0]).toContain('layer=hit-ledger');
+    expect(f.escapeLog()[0]).toContain('evidence=ambiguous');
     expect(f.observation()).toMatchObject({ predictedHp: 70, certainty: 'ambiguous', thresholdCrossed: true, lethal: false });
-    f.playerHit(104, JELLY_ID);                             // 131 -> 525 total >= 464: the lethal one
-    expect(f.escapes()).toBe(0);
-    expect(f.observation()).toMatchObject({ predictedHp: -61, certainty: 'ambiguous', lethal: true });
+    f.playerHit(104, JELLY_ID);                             // would have been the lethal one; the latch holds
+    expect(f.escapes()).toBe(1);
     f.emit('DEATH', { killedBy: 'Hadopelagic Jellyfish' });
-    expect(f.ctx.log).toHaveBeenCalledWith(expect.stringContaining('ledger HP=-61 (5 charged hit(s), 5 shot(s) known)'));
+    expect(f.ctx.log).toHaveBeenCalledWith(expect.stringContaining('5 charged hit(s), 5 shot(s) known)'));
   });
 
   it('charges a non-piercing 80 against defense 58 as 22', () => {
@@ -156,15 +157,17 @@ describe('hit ledger (layer 2)', () => {
     expect(f.escapeLog()[0]).toContain('unknown owner raw 80 -> 80 pierce(unknown)');
   });
 
-  it('never charges a bullet without a packet damage, and charges each identity once', () => {
+  it('charges an unannounced bullet at the assumed damage, and charges each identity once', () => {
     const f = plain();
-    f.hp(230);
-    f.playerHit(55, JELLY_ID);                              // never announced
+    f.hp(300);
+    f.playerHit(55, JELLY_ID);                              // never announced: assumed 175 -> 125 <= 100? no: 125 > 100
+    expect(f.escapes()).toBe(0);                            // 300 - 175 = 125 above the 100 HP point
     f.enemyShoot(JELLY_ID, 7, 1, 120);
-    f.playerHit(7, JELLY_ID);                               // 120 -> 110
+    f.playerHit(7, JELLY_ID);                               // 120 -> 5 <= 100
+    expect(f.escapes()).toBe(1);
     f.playerHit(7, JELLY_ID);                               // duplicate report of the same bullet
     f.playerHit(7, JELLY_ID);
-    expect(f.escapes()).toBe(0);
+    expect(f.escapes()).toBe(1);
   });
 
   it('expands numShots and wraps bullet ids the way the uint16 PLAYERHIT does', () => {
@@ -219,6 +222,7 @@ describe('hit ledger (layer 2)', () => {
     f.hp(300);
     f.enemyShoot(JELLY_ID, 100, 1, 120, 3);
     f.playerHit(100, JELLY_ID);                             // 180 predicted
+    f.settings.get('PredictiveNexusUnknownDamage')!(false); // isolate map-reset semantics from the unknown charge
     f.emit('MAPINFO', { name: 'Realm of the Mad God' }); f.emit('CREATESUCCESS');
     f.client.playerData.health = 250;
     f.emit('NEWTICK', { statuses: [] });                   // seeds 250 without an explicit HP stat
@@ -233,6 +237,7 @@ describe('hit ledger (layer 2)', () => {
     f.hp(300);
     f.enemyShoot(JELLY_ID, 100, 1, 120, 3);
     f.playerHit(100, JELLY_ID);
+    f.settings.get('PredictiveNexusUnknownDamage')!(false); // isolate the reset from the unknown charge
     f.disable(); f.enable();
     f.client.playerData.health = 250;
     f.emit('NEWTICK', { statuses: [] });
@@ -253,6 +258,7 @@ describe('hit ledger (layer 2)', () => {
 
   it('charges enemy-owned SERVERPLAYERSHOOT and ignores player-owned ones', () => {
     const f = plain(); f.client.playerData.defense = 58;
+    f.settings.get('PredictiveNexusUnknownDamage')!(false); // the player-owned hit stays uncharged: this test classifies owners
     f.entityTypes.set(42, 0x0300);                          // another player: no <Enemy/>
     f.hp(125);
     f.serverPlayerShoot(42, 5, 0x0a00, 500);
@@ -362,24 +368,24 @@ describe('short forecast (layer 3)', () => {
     expect(f.escapes()).toBe(0);
   });
 
-  it('rejects three synthetic 9999 AoE threats even when real bullets share their ids', () => {
+  it('a shared-id threat charges its packet damage; the synthetic 9999 fallback never charges', () => {
     const f = plain();
     f.hp(300);
     f.enemyShoot(JELLY_ID, 20000, 1, 120, 3);               // real bullets 20000..20002 exist
     threats([0, 1, 2].map(i => ({ bulletId: 20000 + i, tHitMs: 30, fallbackDamage: 9999, fallbackArmorPiercing: false })));
-    vi.advanceTimersByTime(500);
-    expect(f.escapes()).toBe(0);
-    threats([0, 1, 2].map(i => ({ bulletId: 20000 + i, tHitMs: 30, fallbackDamage: 120 })));
     vi.advanceTimersByTime(20);
-    expect(f.escapes()).toBe(1);                            // the same identities from a real scan do count
+    expect(f.escapes()).toBe(1);                            // 120 + 120 cross the 100 HP point, never 9999
+    expect(f.escapeLog()[0]).not.toContain('9999');
   });
 
-  it('never counts unknown bullets, fallback damage or ground forecasts', () => {
+  it('counts a bullet with no packet record at the DLL fallback, and a synthetic at the assumed damage', () => {
     const f = plain();
     f.hp(300);
-    threats([{ bulletId: 1, fallbackDamage: 29000 }, { attackerObjId: 9, bulletId: 2, fallbackDamage: 9999 }]);
-    vi.advanceTimersByTime(500);
-    expect(f.escapes()).toBe(0);
+    threats([{ attackerObjId: 9, bulletId: 2, tHitMs: 30, fallbackDamage: 9999 },   // synthetic -> assumed 175
+             { bulletId: 1, tHitMs: 40, fallbackDamage: 29000 }]);                  // no packet record -> fallback
+    vi.advanceTimersByTime(20);
+    expect(f.escapes()).toBe(1);                            // the 29000 fallback alone crosses
+    expect(f.escapeLog()[0]).toContain('unknown-damage');
   });
 
   it('with the forecast off, never escapes on forecasts but the hit ledger still works', () => {
@@ -396,14 +402,16 @@ describe('short forecast (layer 3)', () => {
     expect(f.escapeLog()[0]).toContain('layer=hit-ledger');
   });
 
-  it('arms the native projectile forecast only, and disarms it when the plugin is disabled', () => {
+  it('arms the native projectile + ground forecasts, and disarms them when the plugin is disabled', () => {
     const f = plain();
     const last = (key: string) => vi.mocked(sendDllFeature).mock.calls.filter(([k]) => k === key).at(-1)?.[1];
     expect(last('autoNexusEnabled')).toBe(true);
     expect(last('autoNexusProjPredict')).toBe(true);
-    expect(last('autoNexusTilePredict')).toBe(false);
+    expect(last('autoNexusTilePredict')).toBe(true);        // ground counting default on (option C)
     expect(last('autoNexusDebugDraw')).toBe(false);
     expect(last('autoNexusPredictedTimeMs')).toBe(350);
+    f.settings.get('PredictiveNexusGround')!(false);
+    expect(last('autoNexusTilePredict')).toBe(false);       // ground off disarms the tile predictor
     f.disable();
     expect(last('autoNexusEnabled')).toBe(false);
     expect(last('autoNexusProjPredict')).toBe(false);
