@@ -3,6 +3,9 @@ import OryxRunner from './oryx-runner.mjs';
 
 const LOOP_MS = 100;
 const TARGET_RADIUS = 8;
+// Native considers a waypoint reached within 0.5 tiles. Leave room inside
+// acquisition range so arrival hands movement to combat instead of stalling.
+const APPROACH_RADIUS = TARGET_RADIUS - 1;
 const TARGET_RELEASE_RADIUS = 12;
 const LOOT_RADIUS = 24;
 const BAG_ARRIVE = 0.7;
@@ -141,6 +144,7 @@ export default class Farmer {
     this.mapUnsubscribe = null;
     this.navigationUnsubscribe = null;
     this.navigationGoal = null;
+    this.fightApproach = null;
     this.unreachablePositions = [];
     this.beaconSkipReason = null;
     this.zoneGoal = null;
@@ -243,18 +247,30 @@ export default class Farmer {
     return !this.unreachablePositions.some(entry => Math.hypot(entry.x - position.x, entry.y - position.y) < 2);
   }
 
-  // Walk to weapon range of a shooting enemy, not onto its own tile. Native
-  // ENEMY STANDOFF gives every shooting enemy a 2-tile impassable core, so a
-  // destination exactly on the enemy's position never resolves — the route
-  // gets asymptotically close and the native layer reports it unreachable
-  // forever (see UDodgeStandoff.h). Aim for the TARGET_RADIUS ring around it
-  // instead, along the line back to our current position, mirroring the ring
-  // handleBossAdds already returns to when it is pulled off a boss.
+  // Aim outside the enemy core, but inside acquisition range including the
+  // native arrival tolerance. Bullet threading belongs to local movement.
   fightPosition(position, distance) {
     if (!(distance > 0)) return position;
-    const standoff = Math.min(TARGET_RADIUS, distance);
+    const standoff = Math.min(APPROACH_RADIUS, distance);
     const dx = RealmEngine.self.getX() - position.x, dy = RealmEngine.self.getY() - position.y;
     return { x: position.x + dx / distance * standoff, y: position.y + dy / distance * standoff };
+  }
+
+  approachEnemy(enemy) {
+    const distance = RealmEngine.self.distanceTo(enemy.position);
+    const prior = this.fightApproach;
+    let position = prior?.objectId === enemy.objectId && enemy.objectId > 0
+      ? { x: enemy.position.x + prior.dx, y: enemy.position.y + prior.dy } : null;
+    // Keep the approach bearing through local dodges. Follow actual enemy
+    // movement, and choose a fresh bearing after a failed route or teleport
+    // to the other side of the enemy; do not route back through its core.
+    if (!position || !this.canNavigate(position)
+      || RealmEngine.self.distanceTo(position) > distance + APPROACH_RADIUS / 2) {
+      position = this.fightPosition(enemy.position, distance);
+    }
+    this.fightApproach = { objectId: enemy.objectId,
+      dx: position.x - enemy.position.x, dy: position.y - enemy.position.y };
+    return this.navigateToPosition(position);
   }
 
   navigateToPosition(position) {
@@ -276,6 +292,7 @@ export default class Farmer {
       || Math.hypot(status.position.x - this.navigationGoal.x, status.position.y - this.navigationGoal.y) >= 0.25) return;
     const failed = this.navigationGoal;
     this.navigationGoal = null;
+    this.fightApproach = null;
     if (status.reason !== 'map_changed') {
       this.unreachablePositions.push({ x: failed.x, y: failed.y, until: Date.now() + 30000 });
       if (this.unreachablePositions.length > 64) this.unreachablePositions.shift();
@@ -344,6 +361,7 @@ export default class Farmer {
     this.navigationUnsubscribe?.();
     this.navigationUnsubscribe = null;
     this.navigationGoal = null;
+    this.fightApproach = null;
     this.chatUnsubscribe?.();
     this.chatUnsubscribe = null;
     this.mapUnsubscribe?.();
@@ -357,6 +375,7 @@ export default class Farmer {
 
   resetMap(name) {
     this.navigationGoal = null;
+    this.fightApproach = null;
     this.unreachablePositions = [];
     if (this.navigationUnsubscribe) this.subscribeNavigation();
     this.mapName = name;
@@ -500,9 +519,10 @@ export default class Farmer {
       return;
     }
     if (RealmEngine.self.distanceTo(add.position) > (this.lockId === add.objectId ? 12 : 8)) {
-      this.updateTarget(0, false); this.navigateToPosition(add.position);
+      this.updateTarget(0, false); this.approachEnemy(add);
     } else {
       RealmEngine.dodge.clearWaypoint();
+      this.fightApproach = null;
       if (this.lockId !== add.objectId) {
         this.updateTarget(0, false); this.lockId = add.objectId;
         RealmEngine.dodge.lockEnemy(add.objectId); RealmEngine.combat.aimAt(add.objectId);
@@ -597,9 +617,10 @@ export default class Farmer {
     }
     const distance = RealmEngine.self.distanceTo(boss.position);
     if (distance > (this.lockId === boss.objectId ? 12 : 8)) {
-      this.updateTarget(0, false); this.navigateToPosition(boss.position);
+      this.updateTarget(0, false); this.approachEnemy(boss);
     } else {
       RealmEngine.dodge.clearWaypoint();
+      this.fightApproach = null;
       if (this.lockId !== boss.objectId) {
         this.updateTarget(0, false); this.lockId = boss.objectId;
         RealmEngine.dodge.lockEnemy(boss.objectId); RealmEngine.combat.aimAt(boss.objectId);
@@ -1228,7 +1249,7 @@ export default class Farmer {
           // exactly where walking is worst: across water and around map-scale
           // obstacles the bounded nav window cannot plan around at all.
           if (this.tryBeaconTeleport(now, quest)) return LOOP_MS;
-          this.navigateToPosition(this.fightPosition(quest.position, distance));
+          this.approachEnemy(quest);
         }
         this.setStatus(level < 20
           ? `${distance > QUEST_AREA_ARRIVE ? 'Leveling' : 'Fighting'}: ${quest.name} → (${quest.position.x.toFixed(0)}, ${quest.position.y.toFixed(0)}) · ${distance.toFixed(0)} tiles`

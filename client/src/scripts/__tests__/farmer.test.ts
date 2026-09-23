@@ -93,13 +93,13 @@ it('keeps the selected add while approaching instead of switching to the nearest
   const first = { ...quest, objectId: 21, position: { x: 10, y: 0 } };
   const second = { ...quest, objectId: 22, position: { x: -11, y: 0 } };
   farmer.handleBossAdds([first, second], quest, 'Boss');
-  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(first.position);
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 3, y: 0 });
   second.position.x = -9;
   farmer.handleBossAdds([first, second], quest, 'Boss');
-  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(first.position);
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 3, y: 0 });
   first.hp = 0;
   farmer.handleBossAdds([first, second], quest, 'Boss');
-  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(second.position);
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: -2, y: 0 });
 });
 it('does not switch a live combat lock just because the preferred mob changes', () => {
   const { farmer, sdk, quest, setEnemies } = fixture();
@@ -118,7 +118,7 @@ it('releases a committed add on death packets and clears commitment on map reset
   farmer.handleBossAdds([first, second], quest, 'Boss');
   sdk.world.objects.isDead = (objectId: number) => objectId === 21;
   farmer.handleBossAdds([first, second], quest, 'Boss');
-  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(second.position);
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 4, y: 0 });
   farmer.lootRetryAfter.set(50, Date.now() + 30000);
   farmer.resetMap('Other');
   expect(farmer.addGoal).toBeNull();
@@ -191,7 +191,58 @@ it('approaches a distant quest boss to weapon range instead of walking onto its 
   const { farmer, sdk, quest } = fixture();
   quest.position.x = 20;
   farmer.onLoop();
-  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 12, y: 0 });
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 13, y: 0 });
+});
+it('keeps a quest approach anchored while local dodging changes our bearing', () => {
+  const { farmer, sdk, quest } = fixture();
+  quest.position = { x: 20, y: 0 };
+  farmer.onLoop();
+  const first = { ...sdk.dodge.navigateToPosition.mock.lastCall[0] };
+  sdk.self.getY = () => 6;
+  sdk.self.distanceTo = (p: any) => Math.hypot(p.x, p.y - 6);
+  farmer.onLoop();
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(first);
+  quest.position.x += 4;
+  farmer.onLoop();
+  expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: first.x + 4, y: first.y });
+});
+it('arrives inside acquisition range even at the native half-tile arrival tolerance', () => {
+  const { farmer, sdk, quest, setEnemies } = fixture();
+  quest.position = { x: 20, y: 0 };
+  farmer.onLoop();
+  const goal = sdk.dodge.navigateToPosition.mock.lastCall[0];
+  sdk.self.getX = () => goal.x - 0.49;
+  sdk.self.distanceTo = (p: any) => Math.hypot(p.x - sdk.self.getX(), p.y);
+  setEnemies([quest]);
+  farmer.onLoop();
+  expect(sdk.dodge.lockEnemy).toHaveBeenLastCalledWith(quest.objectId);
+});
+it('approaches a visible boss outside its core and inside acquisition range', () => {
+  const { farmer, sdk, quest, setEnemies } = fixture();
+  quest.position = { x: 11, y: 0 };
+  setEnemies([quest]);
+  farmer.handleBossEncounter(quest, 10000);
+  const goal = sdk.dodge.navigateToPosition.mock.lastCall[0];
+  expect(Math.hypot(goal.x - quest.position.x, goal.y - quest.position.y)).toBeGreaterThan(2);
+  expect(Math.hypot(goal.x - quest.position.x, goal.y - quest.position.y) + 0.5).toBeLessThan(8);
+});
+it('reselects an approach after map changes, blocked destinations, or crossing the enemy', () => {
+  const { farmer, sdk, quest } = fixture();
+  quest.position = { x: 20, y: 0 };
+  farmer.approachEnemy(quest);
+  const first = { ...sdk.dodge.navigateToPosition.mock.lastCall[0] };
+  sdk.self.getY = () => 10;
+  sdk.self.distanceTo = (p: any) => Math.hypot(p.x - sdk.self.getX(), p.y - sdk.self.getY());
+  farmer.handleNavigationStatus({ state: 'unreachable', position: first, reason: 'stuck' });
+  farmer.approachEnemy(quest);
+  expect(sdk.dodge.navigateToPosition.mock.lastCall[0].y).toBeGreaterThan(2);
+  farmer.resetMap('Other');
+  sdk.self.getY = () => -10;
+  farmer.approachEnemy(quest);
+  expect(sdk.dodge.navigateToPosition.mock.lastCall[0].y).toBeLessThan(-2);
+  sdk.self.getX = () => 40; sdk.self.getY = () => 0;
+  farmer.approachEnemy(quest);
+  expect(sdk.dodge.navigateToPosition.mock.lastCall[0].x).toBeGreaterThan(quest.position.x);
 });
 it('does not blacklist the fighting-range approach when only the enemy tile itself was reported unreachable', () => {
   const { farmer, sdk, quest } = fixture();
@@ -724,7 +775,7 @@ it('at level 20 prioritizes purple/white markers over the ordinary quest and vis
   f.setEnemies([mini]); f.farmer.onLoop();
   expect(f.farmer.eventGoal.objectId).toBe(40);
   // Weapon range from the event boss (100,0), not its own tile: see fightPosition.
-  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 92, y: 0 });
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 93, y: 0 });
   expect(f.sdk.dodge.lockEnemy).not.toHaveBeenCalled();
   expect(f.farmer.centerGoal).toBeNull(); // event travel immediately overrides center fallback
   event.hp = 0; vi.setSystemTime(11100); f.farmer.onLoop();
@@ -796,7 +847,7 @@ it('switches a distant dead event even after its object drops and while teleport
   expect(f.farmer.eventGoal.objectId).toBe(41);
   expect(f.farmer.finishedEvents.has(40)).toBe(true);
   // Weapon range from next's tile (200,0), not its own tile: see fightPosition.
-  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 192, y: 0 });
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 193, y: 0 });
 });
 
 it('pins an arrived event through its death/loot window, even if displaced from the boss', () => {
@@ -1153,14 +1204,14 @@ it('re-picks a far committed quest once the server names another quest and the o
   f.sdk.walking.canTeleport = () => false;
   f.farmer.onLoop();
   // Weapon range from the quest's tile (100,0), not its own tile: see fightPosition.
-  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 92, y: 0 });
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 93, y: 0 });
   visible = []; vi.setSystemTime(70000); f.farmer.onLoop();
   expect(f.farmer.questGoal.objectId).toBe(10);         // out of view, but the server still names it
   serverQuest = 11; visible = [other]; vi.setSystemTime(71000); f.farmer.onLoop();
   expect(f.farmer.questGoal.objectId).toBe(10);         // short grace for a flip
   vi.setSystemTime(74500); f.farmer.onLoop();
   expect(f.farmer.questGoal.objectId).toBe(11);
-  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: -52, y: 0 });
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: -53, y: 0 });
 });
 
 it('prefers a targetable enemy over a bigger locked one that can no longer be damaged', () => {

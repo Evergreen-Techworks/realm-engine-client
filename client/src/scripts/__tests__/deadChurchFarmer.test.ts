@@ -246,11 +246,11 @@ it('walks to distant adds and preserves a hidden boss encounter while adds remai
   f.sdk.world.objects.getQuestObject = () => leader;
   f.sdk.enemies.getAll = () => [leader, add];
   f.script.onLoop();
-  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(add.position);
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 205.5, y: 0.5 });
   expect(f.sdk.walking.teleportToBeacon).not.toHaveBeenCalled();
   f.sdk.enemies.getAll = () => [add]; f.sdk.world.objects.getQuestObject = () => f.mob;
   vi.setSystemTime(11000); f.script.onLoop();
   vi.setSystemTime(50000); f.script.onLoop();
   expect(f.script.leaderQuest).not.toBeNull();
-  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(add.position);
+  expect(f.sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith({ x: 205.5, y: 0.5 });
 });

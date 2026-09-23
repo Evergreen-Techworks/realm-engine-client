@@ -1,0 +1,76 @@
+
+ RUN  v2.1.9 /home/jesse/rec-worktrees/predictive-nexus-testlab/client
+
+ ❯ src/scripts/__tests__/farmer.test.ts (110 tests | 3 failed) 224ms
+   × keeps a quest approach anchored while local dodging changes our bearing 19ms
+     → expected last "spy" call to have been called with [ { x: 12, y: +0 } ]
+   × arrives inside acquisition range even at the native half-tile arrival tolerance 4ms
+     → expected last "spy" call to have been called with [ 10 ]
+   × approaches a visible boss outside its core and inside acquisition range 7ms
+     → expected 0 to be greater than 2
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/scripts/__tests__/farmer.test.ts > keeps a quest approach anchored while local dodging changes our bearing
+AssertionError: expected last "spy" call to have been called with [ { x: 12, y: +0 } ]
+
+- Expected
++ Received
+
+  Array [
+    Object {
+-     "x": 12,
+-     "y": 0,
++     "x": 12.337389718230789,
++     "y": 2.298783084530763,
+    },
+  ]
+
+ ❯ src/scripts/__tests__/farmer.test.ts:204:40
+    202|   sdk.self.distanceTo = (p: any) => Math.hypot(p.x, p.y - 6);
+    203|   farmer.onLoop();
+    204|   expect(sdk.dodge.navigateToPosition).toHaveBeenLastCalledWith(first);
+       |                                        ^
+    205|   quest.position.x += 4;
+    206|   farmer.onLoop();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/scripts/__tests__/farmer.test.ts > arrives inside acquisition range even at the native half-tile arrival tolerance
+AssertionError: expected last "spy" call to have been called with [ 10 ]
+
+- Expected: 
+Array [
+  10,
+]
+
++ Received: 
+undefined
+
+ ❯ src/scripts/__tests__/farmer.test.ts:218:31
+    216|   setEnemies([quest]);
+    217|   farmer.onLoop();
+    218|   expect(sdk.dodge.lockEnemy).toHaveBeenLastCalledWith(quest.objectId);
+       |                               ^
+    219| });
+    220| it('approaches a visible boss outside its core and inside acquisition …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  src/scripts/__tests__/farmer.test.ts > approaches a visible boss outside its core and inside acquisition range
+AssertionError: expected 0 to be greater than 2
+ ❯ src/scripts/__tests__/farmer.test.ts:226:76
+    224|   farmer.handleBossEncounter(quest, 10000);
+    225|   const goal = sdk.dodge.navigateToPosition.mock.lastCall[0];
+    226|   expect(Math.hypot(goal.x - quest.position.x, goal.y - quest.position…
+       |                                                                            ^
+    227|   expect(Math.hypot(goal.x - quest.position.x, goal.y - quest.position…
+    228| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 107 passed (110)
+   Start at  10:19:24
+   Duration  816ms (transform 236ms, setup 0ms, collect 286ms, tests 224ms, environment 0ms, prepare 89ms)
+
