@@ -1,0 +1,15 @@
+{
+  "purpose": "Private TestLab validation only; experimental defaults unchanged",
+  "plugin_overrides": {
+    "auto-dodge.udodgePlanner": "tactician",
+    "auto-dodge.navNavigator": "legacy",
+    "auto-dodge.navCollisionRule": "legacy",
+    "auto-dodge.udodgeEnemyStandoff": "auto",
+    "auto-dodge.udodgeRouteCommit": "on",
+    "auto-dodge.udodgeFallbackSidestep": "off",
+    "auto-dodge.udodgeFrameBudget": "off",
+    "auto-nexus.ForceAutoNexusHealth": 25,
+    "auto-nexus.PredictiveNexusHealth": 10,
+    "auto-nexus.BurstGuard": true
+  }
+}
