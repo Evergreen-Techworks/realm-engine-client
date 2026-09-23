@@ -20,12 +20,11 @@ import {
 // Three layers protect the player. Owner decision 2026-09-22: prediction is
 // ACTIVE by default again — the pre-2026-09-06 coverage, on v2's accounting.
 //  1. Confirmed health — server HP (NEWTICK/UPDATE) and server DAMAGE amounts.
-//  2. Hit ledger — each outgoing PLAYERHIT charges the damage the server stated
-//     for that bullet in ENEMYSHOOT, after defense, until the next server HP.
+//  2. Hit ledger — outgoing PLAYERHIT and matched in-radius AOEACK charge
+//     server-stated damage after defense; server HP reconciles that debt.
 //  3. Forecast — everything predicted to land within a short horizon: bullets
-//     with a matching packet record, AoE zones the server announced with their
-//     own damage while the player stands inside, and the native tile predictor's
-//     ground damage. Unmatched bullets are an explicit opt-in. The method_29
+//     with a matching packet record and the native tile predictor's ground
+//     damage. Past area impacts are never lingering forecast damage. Unmatched bullets are an explicit opt-in. The method_29
 //     regen model lifts predicted HP between server HP updates and resets when
 //     the server speaks.
 // Global evidence ambiguity no longer vetoes an escape whose own bullets are
@@ -87,7 +86,7 @@ interface BulletNote extends Omit<Charge, 'key'> {
   inMs?: number;
 }
 
-/** One server-announced AoE zone (AOE packet), tracked while it lasts. */
+/** One area impact awaiting the corresponding FIFO client acknowledgement. */
 interface TrackedAoe {
   ownerType: number | null;
   pos: { x: number; y: number };
@@ -95,6 +94,7 @@ interface TrackedAoe {
   rawDamage: number;
   armorPiercing: boolean;
   expiresAt: number;
+  eligible: boolean;
 }
 
 interface EscapePoint {
@@ -154,8 +154,9 @@ interface NexusState {
   /** Bullets the server announced to this connection, by `owner:bulletId`. */
   shots: Map<string, ShotRecord>;
   lastShotPruneAt: number;
-  /** Server-announced AoE zones still live (AOE packet). */
-  aoes: TrackedAoe[];
+  /** FIFO area impacts awaiting client acknowledgements; null keeps invalid-packet alignment. */
+  aoes: (TrackedAoe | null)[];
+  aoeAckDesynced: boolean;
   /** method_29 regen accumulator (fractional HP) and whole-point credit since the last explicit HP. */
   regenAccum: number;
   regenCredit: number;
@@ -292,11 +293,10 @@ export function register(ctx: PluginContext) {
     syncNativeForecast();
   });
   ctx.registerSetting('PredictiveNexusAoe', {
-    label: 'Count server-announced AoE zones', type: 'boolean', value: true,
-    visibleWhen: { key: 'PredictiveNexusForecast', value: true },
+    label: 'Count acknowledged area damage', type: 'boolean', value: true,
   }, (v: boolean) => {
     const next = v === true;
-    if (next !== aoeEnabled) ctx.log(`AoE-zone counting ${next ? 'on' : 'off'}`);
+    if (next !== aoeEnabled) ctx.log(`Area-damage counting ${next ? 'on' : 'off'}`);
     aoeEnabled = next;
   });
   ctx.registerSetting('ShowChatMessageOnNexus', {
@@ -370,7 +370,7 @@ export function register(ctx: PluginContext) {
         hp: null, maxHp: 0, healthAt: null, safe: SAFE_ZONE_MAPS.has(
         String(client.playerData?.mapName ?? '').trim().toLowerCase()),
         samples: [], bursts: [], shots: new Map(), lastShotPruneAt: 0, charges: [], ledgerEffects: [0, 0],
-        aoes: [], regenAccum: 0, regenCredit: 0, lastRegenAt: Date.now() };
+        aoes: [], aoeAckDesynced: false, regenAccum: 0, regenCredit: 0, lastRegenAt: Date.now() };
       states.set(client, state);
       clients.add(client);
     }
@@ -390,7 +390,7 @@ export function register(ctx: PluginContext) {
     state.samples = []; state.bursts = [];
     state.shots.clear(); clearLedger(state);
     state.ownerIncarnations.clear(); state.shotSequence = 0;
-    state.aoes = []; state.regenAccum = 0; state.regenCredit = 0; state.lastRegenAt = Date.now();
+    state.aoes = []; state.aoeAckDesynced = false; state.regenAccum = 0; state.regenCredit = 0; state.lastRegenAt = Date.now();
     observations.delete(client);
   }
   ctx.on('clientDisconnected', client => {
@@ -573,10 +573,10 @@ export function register(ctx: PluginContext) {
     observePrediction(client, state, 'hit-ledger', predicted, point);
     if (predicted > point.hp) return;
     escape(client, state, 'hit-ledger',
-      `${state.charges.length} outgoing PLAYERHIT(s) charged at packet damage since the last server HP`,
+      `${state.charges.length} recorded hit/area-ack event(s); pending damage ${state.evidence.snapshot(Date.now()).pendingDamage} HP`,
       state.charges.map(({ key: _key, ...note }) => note), null, point);
   }
-  /** Layer 3: ground + AoE zones + already-fired bullets predicted to hit within the horizon. */
+  /** Layer 3: ground + already-fired bullets predicted to hit within the horizon. */
   function checkForecast(client: ClientConnection, state: NexusState): void {
     if (!forecastEnabled || predictionMode === 'off' || !armed(state)) return;
     let effects = effectsOf(client, state);
@@ -615,27 +615,8 @@ export function register(ctx: PluginContext) {
       }
     }
 
-    // ── AoE zones the server announced with their own damage (AOE packet) ──
-    if (aoeEnabled && state.aoes.length > 0) {
-      const pos = ctx.getWorldState(client)?.getEntity(client.objectId)?.pos;
-      if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) {
-        state.aoes = state.aoes.filter(aoe => aoe.expiresAt >= now);
-        const hits: BulletNote[] = [];
-        for (const aoe of state.aoes) {
-          const dx = pos.x - aoe.pos.x, dy = pos.y - aoe.pos.y;
-          if (dx * dx + dy * dy > aoe.radius * aoe.radius) continue;
-          const applied = appliedDamage(aoe.rawDamage, aoe.armorPiercing, defense, effects);
-          if (applied <= 0) continue;
-          hp -= applied;
-          hits.push({ ownerType: aoe.ownerType, raw: aoe.rawDamage, applied, armorPiercing: aoe.armorPiercing });
-        }
-        if (hits.length > 0) {
-          observePrediction(client, state, 'forecast', hp, point, null);
-          if (hp <= point.hp && escape(client, state, 'forecast',
-            `${hits.length} AoE zone(s) the player stands in (server-announced damage)`, hits, hp, point)) return;
-        }
-      }
-    }
+    // Server AOE packets describe impacts that already occurred. Their condition
+    // duration is not a future zone lifetime. AOEACK charges the event once.
 
     // ── Bullets ──
     const threats = getDllThreats();
@@ -781,25 +762,46 @@ export function register(ctx: PluginContext) {
       [ownerType, Number.isInteger(container) && container > 0 ? container : null]);
   });
 
-  // ── AoE zones (server-announced, with their own damage) ───────────────────
+  // AOE is an impact, not a lingering zone. Match one client acknowledgement
+  // per server packet in TCP order, including misses/zero-damage placeholders.
+  // effectDuration belongs to the inflicted condition and never schedules damage.
   ctx.hookPacket('AOE', (client, packet) => {
-    if (!aoeEnabled || !packet.isDefined) return;
+    const state = stateFor(client);
+    if (state.aoeAckDesynced) return;
+    if (state.aoes.length >= MAX_SHOTS) {
+      state.aoes = []; state.aoeAckDesynced = true;
+      state.evidence.noteAmbiguity();
+      ctx.log('Area acknowledgement queue overflow; association unavailable until map change.');
+      return;
+    }
     const data = packet.data ?? {};
-    if (!isPacketDamage(data.damage)) return;
-    const radius = Number(data.radius), px = Number(data.position?.x), py = Number(data.position?.y);
-    if (!Number.isFinite(radius) || radius <= 0 || !Number.isFinite(px) || !Number.isFinite(py)) return;
-    const state = stateFor(client); syncMaxHp(client, state);
-    // Duration matches AoeCapturePolicy: <=120 means seconds; anything sane
-    // else is ms; a missing/garbage value keeps the zone visible for 3 s.
-    const rawDur = Number(data.effectDuration);
-    const durationMs = Number.isFinite(rawDur) && rawDur > 0 && rawDur < 120000
-      ? (rawDur <= 120 ? rawDur * 1000 : rawDur) : 3000;
-    state.aoes.push({
-      ownerType: Number.isInteger(data.originType) ? data.originType : null,
-      pos: { x: px, y: py }, radius, rawDamage: data.damage,
-      armorPiercing: data.armorPierce === true, expiresAt: Date.now() + durationMs,
-    });
-    if (state.aoes.length > 64) state.aoes.shift();
+    const radius = Number(data.radius), x = Number(data.position?.x), y = Number(data.position?.y);
+    if (!packet.isDefined || !isPacketDamage(data.damage) || !Number.isFinite(radius) || radius <= 0
+      || !Number.isFinite(x) || !Number.isFinite(y)) {
+      state.aoes.push(null);
+      return;
+    }
+    state.aoes.push({ ownerType: Number.isInteger(data.originType) ? data.originType : null,
+      pos: { x, y }, radius, rawDamage: data.damage, armorPiercing: data.armorPierce === true,
+      eligible: aoeEnabled, expiresAt: Date.now() + 2000 });
+  });
+  ctx.hookPacket('AOEACK', (client, packet) => {
+    const state = stateFor(client);
+    const impact = state.aoes.shift();
+    if (!packet.isDefined || !impact || !impact.eligible || !aoeEnabled || impact.expiresAt < Date.now()) return;
+    const x = Number(packet.data?.position?.x), y = Number(packet.data?.position?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    const dx = x - impact.pos.x, dy = y - impact.pos.y;
+    if (dx * dx + dy * dy >= impact.radius * impact.radius) return;
+    syncMaxHp(client, state);
+    const applied = appliedDamage(impact.rawDamage, impact.armorPiercing, defenseOf(client), effectsOf(client, state));
+    if (applied <= 0) return;
+    const identity = `aoe:${state.generation}:${++state.shotSequence}`;
+    state.evidence.observeHit(identity, applied, Date.now() + 12000, Date.now());
+    state.charges.push({ key: identity, ownerType: impact.ownerType, raw: impact.rawDamage,
+      applied, armorPiercing: impact.armorPiercing });
+    if (state.charges.length > MAX_SHOTS) { state.charges.shift(); state.evidence.noteAmbiguity(); }
+    checkLedger(client, state);
   });
 
   // Observe only. The packet is forwarded exactly as the game client sent it.

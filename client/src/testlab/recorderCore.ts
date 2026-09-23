@@ -45,6 +45,7 @@ const ALLOWED_PACKET_NAMES: ReadonlySet<string> = new Set([
   'PLAYERHIT',
   'GROUNDDAMAGE',
   'AOE',
+  'AOEACK',
   'DEATH',
   'PLAYERSHOOT',
   'ENEMYHIT',
@@ -163,6 +164,13 @@ export interface AoeRecord {
   otype: number | null;
 }
 
+export interface AoeAckRecord {
+  k: 'aoeack';
+  t: number;
+  x: number | null;
+  y: number | null;
+}
+
 export interface GroundRecord {
   k: 'ground';
   t: number;
@@ -211,6 +219,7 @@ export type TestlabRecord =
   | HitRecord
   | GroundRecord
   | AoeRecord
+  | AoeAckRecord
   | DeathRecord
   | PShootRecord
   | EHitRecord
@@ -511,6 +520,10 @@ export function dispatchPacket(
 
     case 'PLAYERHIT':
       return [buildHitRecord(t, data, ctx.hit ?? EMPTY_HIT_LOOKUP)];
+
+    case 'AOEACK':
+      return [{ k: 'aoeack', t, x: round(num(data?.position?.x), COORD_DECIMALS),
+        y: round(num(data?.position?.y), COORD_DECIMALS) }];
 
     case 'AOE':
       return [{ k: 'aoe', t, x: round(num(data?.position?.x), COORD_DECIMALS),

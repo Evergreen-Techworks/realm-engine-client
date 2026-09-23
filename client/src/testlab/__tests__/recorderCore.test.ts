@@ -49,7 +49,7 @@ describe('recorderCore: private-only marker', () => {
 describe('recorderCore: allow-list', () => {
   it('accepts the explicit packet allow-list', () => {
     for (const name of [
-      'MAPINFO', 'MOVE', 'ENEMYSHOOT', 'PLAYERHIT', 'GROUNDDAMAGE', 'DEATH', 'PLAYERSHOOT', 'ENEMYHIT', 'AOE',
+      'MAPINFO', 'MOVE', 'ENEMYSHOOT', 'PLAYERHIT', 'GROUNDDAMAGE', 'DEATH', 'PLAYERSHOOT', 'ENEMYHIT', 'AOE', 'AOEACK',
     ]) {
       expect(isAllowedPacketName(name)).toBe(true);
     }
@@ -237,6 +237,11 @@ describe('recorderCore: one test per record kind', () => {
       radius: 3, damage: 50, originType: 0x4260, accountId: 'never-record-this' }, {}, new ProjDefTracker());
     expect(rows).toEqual([{ k: 'aoe', t: T, x: 10.123, y: 11, radius: 3, dmg: 50, otype: 0x4260 }]);
     expect(JSON.stringify(rows)).not.toContain('never-record-this');
+  });
+
+  it('records area acknowledgements as coordinates, without arbitrary fields', () => {
+    expect(dispatchPacket('AOEACK', T, { position: { x: 1, y: 2 }, token: 'never-copy' }, {}, new ProjDefTracker()))
+      .toEqual([{ k: 'aoeack', t: T, x: 1, y: 2 }]);
   });
 
   it('ground', () => {
