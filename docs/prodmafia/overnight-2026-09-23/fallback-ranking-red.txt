@@ -1,0 +1,3 @@
+FAIL: near-tie chain stays within the globally best safe time
+FAIL: reordered near-ties retain the same safest-band sidestep
+Fallback sidestep regression tests: 11 checks, 2 failures

@@ -97,6 +97,26 @@ int main()
         Check(offPick == 0, "switch off: today's reduction has no standing-still floor and still takes it");
     }
 
+    // A chain of pairwise near-ties must not drift outside the best candidate's
+    // time budget. 300 -> 250 -> 200 ms are pairwise close but 200 is not a tie
+    // with 300. Reordering candidates must not change that safety bound.
+    {
+        FallbackCandidate cands[3];
+        for (int i = 0; i < 3; ++i) {
+            cands[i].safeTime = 300.f - 50.f * i;
+            cands[i].moveDist = 1.f;
+            cands[i].val = 0.f;
+        }
+        cands[0].dir = {1.f, 0.f};
+        cands[1].dir = {0.5f, 0.8660254f};
+        cands[2].dir = {0.f, 1.f};
+        Check(SelectFallbackCandidate(cands, 3, {1.f, 0.f}, true, 0.f) == 1,
+              "near-tie chain stays within the globally best safe time");
+        const auto first = cands[0]; cands[0] = cands[2]; cands[2] = first;
+        Check(SelectFallbackCandidate(cands, 3, {1.f, 0.f}, true, 0.f) == 1,
+              "reordered near-ties retain the same safest-band sidestep");
+    }
+
     // Sanity: an empty candidate set never crashes and reports "nothing".
     {
         Check(SelectFallbackCandidate(nullptr, 0, Vec2{}, true, 0.f) == -1, "empty set (on) returns -1");

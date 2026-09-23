@@ -1093,11 +1093,24 @@ int SelectFallbackCandidate(const FallbackCandidate* cands, int n, Vec2 radialRe
     // still would be. If nothing clears that floor, report "nothing selected"
     // so the caller's existing Surrounded fallback (hold, standClr) applies —
     // this never relaxes a safety floor, it only refuses to prefer a worse pick.
-    int best = -1;
-    for (int i = 0; i < n; ++i) {
-        if (cands[i].safeTime + 1e-4f < standTime) continue;
-        if (best < 0 || better(cands[i], cands[best])) best = i;
-    }
+    // Anchor the tie band to the best eligible time, never the running winner.
+    // Pairwise near-ties are not transitive: 300 -> 250 -> 200 ms could otherwise
+    // spend more than the allowed 60 ms simply through candidate ordering.
+    const auto select = [&](float minMove) -> int {
+        float latest = -1.f;
+        for (int i = 0; i < n; ++i) {
+            if (cands[i].moveDist < minMove || cands[i].safeTime + 1e-4f < standTime) continue;
+            latest = std::max(latest, cands[i].safeTime);
+        }
+        int pick = -1;
+        for (int i = 0; i < n; ++i) {
+            if (cands[i].moveDist < minMove || cands[i].safeTime + 1e-4f < standTime) continue;
+            if (cands[i].safeTime < latest - kSolveFallbackTieMs) continue;
+            if (pick < 0 || better(cands[i], cands[pick])) pick = i;
+        }
+        return pick;
+    };
+    int best = select(0.f);
     if (best < 0) return -1;
 
     // Minimum displacement: a pick under kSolveFallbackMinMoveTiles loses to any
@@ -1105,12 +1118,7 @@ int SelectFallbackCandidate(const FallbackCandidate* cands, int n, Vec2 radialRe
     // that far (ranked the same way), so the reflex sidesteps for real instead
     // of settling for a jitter merely because it happened to rank first.
     if (cands[best].moveDist < kSolveFallbackMinMoveTiles) {
-        int alt = -1;
-        for (int i = 0; i < n; ++i) {
-            if (i == best || cands[i].moveDist < kSolveFallbackMinMoveTiles) continue;
-            if (cands[i].safeTime + 1e-4f < standTime) continue;
-            if (alt < 0 || better(cands[i], cands[alt])) alt = i;
-        }
+        const int alt = select(kSolveFallbackMinMoveTiles);
         if (alt >= 0) best = alt;
     }
     return best;
