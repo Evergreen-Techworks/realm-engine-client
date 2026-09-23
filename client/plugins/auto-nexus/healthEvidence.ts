@@ -73,10 +73,22 @@ export class HealthEvidence {
     this.bound();
   }
 
-  observeDamage(identity: string | null, appliedDamage: number, atMs: number): void {
+  observeDamage(identity: string | null, appliedDamage: number, atMs: number, unmatchedIsDistinct = false): void {
     if (!this.validDamage(appliedDamage) || !this.validTime(atMs)) return;
     this.prune(atMs);
-    if (!identity) { this.noteAmbiguity(); return; }
+    if (!identity) {
+      // A validated wire identity distinct from every pending hit proves this
+      // server loss cannot acknowledge one of those pending hits.
+      // Do not invent a match that retires another projectile's pending hit.
+      // As in the confirmed-health layer, receipt-order DAMAGE lowers HP;
+      // the next explicit HP sample replaces this estimate. Association stays
+      // ambiguous because a missing identity cannot be deduplicated here.
+      this.noteAmbiguity();
+      if (!unmatchedIsDistinct || (this.healthAt !== null && atMs < this.healthAt)) return;
+      if (this.confirmedHp !== null) this.confirmedHp = Math.max(0, this.confirmedHp - appliedDamage);
+      this.healthAt = atMs;
+      return;
+    }
     const entry = this.entries.get(identity);
     if (entry?.acknowledged) return;
     if (entry?.expired || (this.healthAt !== null && atMs < this.healthAt)) {

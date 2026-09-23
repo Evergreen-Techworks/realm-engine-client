@@ -49,14 +49,14 @@ describe('recorderCore: private-only marker', () => {
 describe('recorderCore: allow-list', () => {
   it('accepts the explicit packet allow-list', () => {
     for (const name of [
-      'MAPINFO', 'MOVE', 'ENEMYSHOOT', 'PLAYERHIT', 'GROUNDDAMAGE', 'DEATH', 'PLAYERSHOOT', 'ENEMYHIT', 'AOE', 'AOEACK',
+      'MAPINFO', 'MOVE', 'ENEMYSHOOT', 'PLAYERHIT', 'GROUNDDAMAGE', 'DEATH', 'PLAYERSHOOT', 'ENEMYHIT', 'AOE', 'AOEACK', 'NEWTICK', 'UPDATE', 'DAMAGE',
     ]) {
       expect(isAllowedPacketName(name)).toBe(true);
     }
   });
 
   it('rejects HELLO, LOAD, CREATE, TEXT and anything else', () => {
-    for (const name of ['HELLO', 'LOAD', 'CREATE', 'TEXT', 'UPDATE', 'FAILURE', '']) {
+    for (const name of ['HELLO', 'LOAD', 'CREATE', 'TEXT', 'FAILURE', '']) {
       expect(isAllowedPacketName(name)).toBe(false);
     }
   });
@@ -348,5 +348,35 @@ describe('recorderCore: projdef emitted once per (otype, bt) per file/session', 
     const ctx = { ownerType: null, projectile: null };
     const out = dispatchPacket('ENEMYSHOOT', T, shotData, ctx, tracker);
     expect(out.map((r) => r.k)).toEqual(['shot']);
+  });
+});
+
+describe('own-player health evidence recording', () => {
+  const self = { selfId: 1, effectiveMaxHp: 325 };
+  it.each(['NEWTICK', 'UPDATE'])('records only explicit health/condition stats from %s', name => {
+    const status = { objectId: 1, data: [{ id: 1, value: 280 }, { id: 21, value: 10 },
+      { id: 29, value: 4 }, { id: 95, value: 8 },
+      { id: 31, get value() { throw new Error('private name read'); } }] };
+    const data = name === 'NEWTICK' ? { statuses: [status] } : { newObjs: [{ status }] };
+    expect(dispatchPacket(name, T, data, self, new ProjDefTracker())).toEqual([
+      { k: 'health', t: T, source: name, hp: 280, maxhp: null, effectiveMaxHp: 325,
+        def: 10, effects: 4, effects2: 8 },
+    ]);
+  });
+  it('does not emit an HP sample for a delta tick without health facts', () => {
+    expect(dispatchPacket('NEWTICK', T, { statuses: [{ objectId: 1, data: [{ id: 22, value: 50 }] }] }, self, new ProjDefTracker())).toEqual([]);
+  });
+  it('records server DAMAGE only for the local player without arbitrary fields', () => {
+    const data = { targetId: 1, objectId: 42, bulletId: 511, damageAmount: 90, kill: false,
+      effects: [4, 8], token: 'secret', characterName: 'private' };
+    const out = dispatchPacket('DAMAGE', T, data, self, new ProjDefTracker());
+    expect(out).toEqual([{ k: 'damage', t: T, oid: 42, bid: 511, dmg: 90, kill: false }]);
+    expect(JSON.stringify(out)).not.toMatch(/secret|private/);
+    expect(dispatchPacket('DAMAGE', T, { ...data, targetId: 2 }, self, new ProjDefTracker())).toEqual([]);
+    expect(dispatchPacket('DAMAGE', T, data, {}, new ProjDefTracker())).toEqual([]);
+  });
+  it('never copies another player or the full stats list', () => {
+    expect(dispatchPacket('NEWTICK', T, { statuses: [{ objectId: 2, data: [{ id: 1, value: 7 }] }] }, self, new ProjDefTracker())).toEqual([]);
+    expect(dispatchPacket('UPDATE', T, { newObjs: [{ status: { objectId: 1, data: [{ id: 1, value: Infinity }] } }] }, self, new ProjDefTracker())).toEqual([]);
   });
 });

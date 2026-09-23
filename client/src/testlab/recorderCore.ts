@@ -13,7 +13,9 @@
  *   .superpowers/sdd/2026-09-19-testlab-core/contract-packets-jsonl.md
  * The reader side of that contract is built separately from this file —
  * field names and kinds here are load-bearing. Do not rename or add fields
- * without updating the contract file first.
+ * without updating the contract first. Additive area/health records are
+ * documented in TestLab testlab/packet-recording-health.md (the original
+ * contract path above is absent from the available checkout).
  */
 
 /**
@@ -35,8 +37,9 @@ export function testlabCoreMarker(): string {
  * Explicit ALLOW-LIST (contract privacy rule). Nothing outside this set is
  * ever inspected or written by {@link dispatchPacket} — the name check below
  * runs before any field on `data` is read, so HELLO / LOAD / CREATE / TEXT and
- * any packet carrying account/token/email/guid/character-name fields never
- * reach a builder function, regardless of what `data` contains.
+ * authentication/chat packets never reach a builder function. UPDATE/NEWTICK
+ * require the local object ID and extract only numeric combat-stat allow-lists;
+ * full status lists and arbitrary packet fields are never copied.
  */
 const ALLOWED_PACKET_NAMES: ReadonlySet<string> = new Set([
   'MAPINFO',
@@ -49,6 +52,9 @@ const ALLOWED_PACKET_NAMES: ReadonlySet<string> = new Set([
   'DEATH',
   'PLAYERSHOOT',
   'ENEMYHIT',
+  'NEWTICK',
+  'UPDATE',
+  'DAMAGE',
 ]);
 
 export function isAllowedPacketName(name: string): boolean {
@@ -210,7 +216,22 @@ export interface EndRecord {
   reason: string | null;
 }
 
+/** Additive v1 health evidence: explicit server stats, never cached HP inferred
+ * from a delta packet. Null means absent. Combat stats only, local player only. */
+export interface HealthRecord {
+  k: 'health'; t: number; source: 'NEWTICK' | 'UPDATE';
+  hp: number | null; maxhp: number | null; effectiveMaxHp: number | null;
+  def: number | null; effects: number | null; effects2: number | null;
+}
+/** A server DAMAGE observation is separate from outgoing hit claims. */
+export interface DamageRecord {
+  k: 'damage'; t: number; oid: number | null; bid: number | null;
+  dmg: number | null; kill: boolean;
+}
+
 export type TestlabRecord =
+  | HealthRecord
+  | DamageRecord
   | StartRecord
   | MapRecord
   | MoveRecord
@@ -467,6 +488,9 @@ export class ProjDefTracker {
 
 /** Everything the ENEMYSHOOT / PLAYERHIT branches need that only the plugin can resolve. */
 export interface DispatchContext {
+  /** Only for own-player health/DAMAGE extraction. Never written as account identity. */
+  selfId?: number;
+  effectiveMaxHp?: number;
   /** ENEMYSHOOT: the shot owner's resolved object type (world state). */
   ownerType?: number | null;
   /** ENEMYSHOOT: resolved GameData projectile facts for (ownerType, bulletType), or null when GameData has no match. */
@@ -492,6 +516,33 @@ export function dispatchPacket(
   if (!isAllowedPacketName(name)) return [];
 
   switch (name) {
+    case 'NEWTICK':
+    case 'UPDATE': {
+      if (!Number.isInteger(ctx.selfId) || ctx.selfId! < 0) return [];
+      const statuses = name === 'NEWTICK' ? data?.statuses
+        : Array.isArray(data?.newObjs) ? data.newObjs.map((o: any) => o?.status) : [];
+      if (!Array.isArray(statuses)) return [];
+      const own = statuses.find((s: any) => s?.objectId === ctx.selfId);
+      if (!Array.isArray(own?.data)) return [];
+      const record: HealthRecord = { k: 'health', t, source: name, hp: null, maxhp: null,
+        effectiveMaxHp: num(ctx.effectiveMaxHp), def: null, effects: null, effects2: null };
+      // StatType: MaxHP=0, HP=1, Defense=21, Effects=29, Effects2=95.
+      const keys: Record<number, 'maxhp' | 'hp' | 'def' | 'effects' | 'effects2'> = {
+        0: 'maxhp', 1: 'hp', 21: 'def', 29: 'effects', 95: 'effects2',
+      };
+      let any = false;
+      for (const stat of own.data) {
+        if (!Number.isInteger(stat?.id) || !Object.hasOwn(keys, stat.id)) continue;
+        const value = num(stat.value);
+        if (value !== null) { record[keys[stat.id]] = value; any = true; }
+      }
+      return any ? [record] : [];
+    }
+    case 'DAMAGE':
+      if (!Number.isInteger(ctx.selfId) || ctx.selfId! < 0 || data?.targetId !== ctx.selfId) return [];
+      return [{ k: 'damage', t, oid: num(data?.objectId), bid: num(data?.bulletId),
+        dmg: num(data?.damageAmount), kill: data?.kill === true }];
+
     case 'MAPINFO':
       return [buildMapRecord(t, data)];
 

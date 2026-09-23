@@ -911,8 +911,17 @@ export function register(ctx: PluginContext) {
       const objectId = Number(packet.data.objectId), bulletId = Number(packet.data.bulletId);
       const knownShot = Number.isInteger(objectId) && Number.isInteger(bulletId)
         ? state.shots.get(bulletKey(objectId, bulletId)) : undefined;
+      const validWireIdentity = typeof packet.data.objectId === 'number' && objectId > 0 && Number.isInteger(objectId)
+        && typeof packet.data.bulletId === 'number' && Number.isInteger(bulletId) && bulletId >= 0 && bulletId <= 0xffff;
+      // An unmatched server hit must still lower predicted HP when it is
+      // demonstrably distinct from pending hits. If its key is already charged
+      // (e.g. owner dropped after PLAYERHIT), association is ambiguous: do not
+      // subtract it again. An area acknowledgement also lacks a comparable wire
+      // bullet key, so retain that ambiguity. The confirmed layer still consumes DAMAGE.
+      const unmatchedIsDistinct = validWireIdentity && !state.charges.some(
+        charge => charge.key === bulletKey(objectId, bulletId) || charge.key.startsWith('aoe:'));
       state.evidence.observeDamage(knownShot && !knownShot.ambiguous && knownShot.expiresAt >= Date.now()
-        ? knownShot.identity : null, damage, Date.now());
+        ? knownShot.identity : null, damage, Date.now(), unmatchedIsDistinct);
       if (Number.isInteger(objectId) && Number.isInteger(bulletId)) {
         const key = bulletKey(objectId, bulletId);
         state.charges = state.charges.filter(c => c.key !== key);

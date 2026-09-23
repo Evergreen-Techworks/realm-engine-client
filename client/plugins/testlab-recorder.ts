@@ -188,6 +188,9 @@ export function register(ctx: PluginContext) {
  * PLAYERSHOOT/ENEMYHIT) fall straight through to `{}`.
  */
 function resolveDispatchContext(ctx: PluginContext, client: ClientConnection, packet: Packet): DispatchContext {
+  if (packet.name === 'NEWTICK' || packet.name === 'UPDATE' || packet.name === 'DAMAGE') {
+    return { selfId: client.objectId, effectiveMaxHp: client.playerData?.effectiveMaxHealth };
+  }
   if (packet.name === 'ENEMYSHOOT') {
     const worldState = ctx.getWorldState(client);
     const ownerId = Number(packet.data?.ownerId);
