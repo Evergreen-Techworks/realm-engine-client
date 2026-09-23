@@ -236,6 +236,21 @@ int main() {
         [](Vec2,Vec2){ return false; });
     Check(!con && LenSq(Sub(never,Vec2{5,5}))==0.f,
           "a fully blocked route reports disconnected and holds at the player");
+    // A reflex detour can put the nearest projection behind a short wall even
+    // though a forward bend of the SAME committed corridor remains reachable.
+    // Rejoin that bend instead of declaring the whole route disconnected.
+    Vec2 aroundWall[] = {{0.f, 0.f}, {4.f, 0.f}};
+    auto shortWall = [](Vec2 a, Vec2 b) {
+        for (int i = 0; i <= 100; ++i) {
+            const Vec2 q = Add(a, Mul(Sub(b, a), i / 100.f));
+            if (q.x >= -.5f && q.x <= 1.f && q.y >= .8f && q.y <= 1.2f) return false;
+        }
+        return true;
+    };
+    Vec2 bendRejoin = Navigation::Follow(aroundWall, 2, {0.f, 2.f}, 6.f,
+        dev, end, con, shortWall);
+    Check(con && shortWall({0.f, 2.f}, bendRejoin) && bendRejoin.x > 1.f,
+          "reflex detour rejoins a visible forward bend when the nearest projection is blocked");
     Vec2 p{};
     for (int frame=0; frame<200 && Len(Sub(p,{4,4}))>0.05f; ++frame) {
         Vec2 next=Navigation::Follow(plan.navWpts,plan.navWptCount,p,6,dev,end,con,clear);

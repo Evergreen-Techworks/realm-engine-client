@@ -151,6 +151,18 @@ Vec2 Follow(const Vec2* points, int count, Vec2 player, float lookahead,
         const float d2 = LenSq(Sub(player, proj));
         if (d2 < bestD2 && clear(player, proj)) { bestD2 = d2; bestSeg = i; bestProj = proj; }
     }
+    // A blocked nearest projection is not proof that the entire corridor is
+    // disconnected. After a reflex detour, a forward bend may still be visible
+    // around the obstacle. Try those bends before requesting a new route.
+    // Keep normal projection-following unchanged whenever it already connects.
+    if (bestSeg < 0) {
+        for (int i = 1; i < count; ++i) {
+            const float d2 = LenSq(Sub(player, points[i]));
+            if (d2 < bestD2 && clear(player, points[i])) {
+                bestD2 = d2; bestSeg = i - 1; bestProj = points[i];
+            }
+        }
+    }
     outDev = std::sqrt(bestD2);
     if (bestSeg < 0) return player; // disconnected from this corridor: request a replan
     outConnected = true;

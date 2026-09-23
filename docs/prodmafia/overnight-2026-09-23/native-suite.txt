@@ -1,0 +1,68 @@
+UDodge/AoE regression tests passed (52 cases)
+Temporal regression tests: 38 checks, 0 failures
+Admission/rebuild regression tests: 47 checks, 0 failures
+Speed/expiry tests: 90 checks, 0 failures
+Commitment tests: 12 checks, 0 failures
+Navigation regressions passed (real A*, corner compression, swept steering, completion).
+Locked fight route passed (time-checked round the shot arm).
+Ring ladder tests passed (ring goal outranks out-of-range ground, start rule, unlocked unchanged).
+Timed-escape tests: 35 checks, 0 failures
+Exact-pruning tests: 80000 checks, 0 failures
+Pathing rules tests: 43 checks, 0 failures
+Worker clock tests: 11 checks, 0 failures
+Telemetry tests: 60 checks, 0 failures
+PredErr tests: 350 checks, 0 failures
+Temporal broad-phase differential: seed 20260918, 320 trials, 16605 lanes in context (6159 half-step, 2440 short trace, 1521 beam, 4957 expiring inside the horizon)
+  EdgeClear       330000 queries,  56.1 % in contact, 0 mismatches
+  ArrivalClear    330000 queries,  48.7 % in contact, 0 mismatches
+  TimeToDanger    330000 queries,  59.0 % in contact, 0 mismatches
+  PathClear       165000 queries,  60.8 % in contact, 0 mismatches
+  NaN/infinity     47250 queries,  78.1 % in contact, 0 mismatches
+  crossing edge   360000 queries,   0.0 % in contact, 0 mismatches
+  crossing walk   360000 queries,   0.0 % in contact, 0 mismatches
+  crossing-only contacts: 88 edge, 56 walk (floor 40 in total)
+  reach boxes      16605 lanes checked, 462 infinite (non-finite lane), 0 wrong
+Temporal broad-phase tests: 1922250 checks, 0 failures
+Fallback sidestep regression tests: 9 checks, 0 failures
+Collision rule tests: 36 checks, 0 failures
+Speed model tests: 18 checks, 0 failures
+Map memory tests: 57 checks, 0 failures
+Global router tests: 350 checks, 0 failures
+Navigation runtime measured maximum worker cycle: 3.632 ms (75 and 174724-square fixtures)
+Navigation runtime p95 cycle: 3.359 ms, repair: 1.915 ms
+Navigation runtime tests: 24 checks, 0 failures
+enemy_tracker_tests: 69 checks, 0 failures
+autofire_decision_tests: 79 checks, 0 failures
+Pathing scenarios passed under navCollisionRule=legacy (49 asserted, 8 known limitations reported only)
+Pathing scenarios passed under navCollisionRule=game (51 asserted, 6 known limitations reported only)
+ok    d_boss_open_dense [game, legacy]: diagnostics off writes nothing (0 log calls, 0 bytes)
+ok    d_boss_open_dense [game, legacy]: diagnostics on writes (190 log calls)
+ok    d_boss_open_dense [game, legacy]: the run is identical with diagnostics on (telemetry only observes)
+ok    d_boss_open_dense [game, legacy]: 114 decision lines, the first says why=first
+ok    d_boss_open_dense [game, legacy]: every line carries every field (missing: none)
+ok    d_boss_open_dense [game, legacy]: 2.9 lines per scenario second (ceiling 13)
+ok    d_boss_open_dense [game, legacy]: 39 heartbeats in 40 s with an objective active
+ok    d_boss_open_dense [game, legacy]: mode, collision rule and navigator are reported
+ok    d_boss_open_dense [game, legacy]: the lock approach names its target and engagement ring
+ok    d_boss_open_dense [game, legacy]: heartbeats carry the window totals
+ok    d_boss_open_rings [legacy, legacy]: diagnostics off writes nothing (0 log calls, 0 bytes)
+ok    d_boss_open_rings [legacy, legacy]: diagnostics on writes (91 log calls)
+ok    d_boss_open_rings [legacy, legacy]: the run is identical with diagnostics on (telemetry only observes)
+ok    d_boss_open_rings [legacy, legacy]: 46 decision lines, the first says why=first
+ok    d_boss_open_rings [legacy, legacy]: every line carries every field (missing: none)
+ok    d_boss_open_rings [legacy, legacy]: 1.1 lines per scenario second (ceiling 13)
+ok    d_boss_open_rings [legacy, legacy]: 39 heartbeats in 40 s with an objective active
+ok    d_boss_open_rings [legacy, legacy]: mode, collision rule and navigator are reported
+ok    d_boss_open_rings [legacy, legacy]: the lock approach names its target and engagement ring
+ok    d_boss_open_rings [legacy, legacy]: heartbeats carry the window totals
+ok    o_pending_map_waypoint [game, dstar]: diagnostics off writes nothing (0 log calls, 0 bytes)
+ok    o_pending_map_waypoint [game, dstar]: diagnostics on writes (9 log calls)
+ok    o_pending_map_waypoint [game, dstar]: the run is identical with diagnostics on (telemetry only observes)
+ok    o_pending_map_waypoint [game, dstar]: 7 decision lines, the first says why=first
+ok    o_pending_map_waypoint [game, dstar]: every line carries every field (missing: none)
+ok    o_pending_map_waypoint [game, dstar]: 1.5 lines per scenario second (ceiling 13)
+ok    o_pending_map_waypoint [game, dstar]: 4 heartbeats in 5 s with an objective active
+ok    o_pending_map_waypoint [game, dstar]: the capture is pending all scenario long, and every walk-to line says nav=dstar map_pending=1
+ok    o_pending_map_waypoint [game, dstar]: arriving is an objective change to none
+Decision telemetry check passed
+input_focus_tests: 29 checks, 0 failures

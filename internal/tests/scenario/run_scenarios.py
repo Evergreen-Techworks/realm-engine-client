@@ -239,6 +239,9 @@ def main():
     ap.add_argument("--policy", choices=["tactician", "classic"], default="classic",
                     help="udodgePlanner the harness runs under. Default classic, so every existing "
                          "assertion and every recorded table keeps measuring the engine it measured before")
+    ap.add_argument("--profile", choices=["fixture", "shipped"], default="fixture",
+                    help="fixture preserves historical harness switches; shipped pins route commitment, "
+                         "enemy standoff, fallback sidestep and frame budget off, matching the current defaults")
     ap.add_argument("--scan-mode", type=int, default=0,
                     help="tile list selection: 1 first 65536, 2 newest 65536 + window, 3 whole list windowed; 0 = detect")
     args = ap.parse_args()
@@ -300,6 +303,10 @@ def main():
         rules = ["legacy", "game"] if args.rule == "both" else [args.rule]
         if not has_rule:
             rules = ["legacy"]
+        run_env = {**os.environ, "HARNESS_NAVIGATOR": args.navigator}
+        if args.profile == "shipped":
+            for switch in ("ROUTE_COMMIT", "ENEMY_STANDOFF", "FALLBACK_SIDESTEP", "FRAME_BUDGET"):
+                run_env["HARNESS_" + switch] = "off"
         failed = []
         rows = []
         for rule in rules:
@@ -308,7 +315,7 @@ def main():
                 if args.only and name != args.only:
                     continue
                 out = subprocess.run([str(binary), name, str(scan), rule, args.policy], check=True,
-                                     env={**os.environ, "HARNESS_NAVIGATOR": args.navigator},
+                                     env=run_env,
                                      capture_output=True, text=True).stdout.strip()
                 if not out:
                     failed.append(f"{name} [{rule}] (no result)")   # a listed scenario the harness does not run
@@ -318,6 +325,8 @@ def main():
                     row["scan_mode"] = scan
                     row["rule"] = rule
                     row["policy"] = args.policy
+                    row["profile"] = args.profile
+                    row["switches"] = {k: v for k, v in run_env.items() if k.startswith("HARNESS_") and k in {"HARNESS_ROUTE_COMMIT", "HARNESS_ENEMY_STANDOFF", "HARNESS_FALLBACK_SIDESTEP", "HARNESS_FRAME_BUDGET", "HARNESS_NAVIGATOR"}}
                     rows.append(row)
                     if args.metrics or not (args.check or args.table or args.tactician_acceptance):
                         print(json.dumps(row), flush=True)
