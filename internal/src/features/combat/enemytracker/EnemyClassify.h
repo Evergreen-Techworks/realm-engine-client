@@ -17,7 +17,8 @@
 //     and Elf Wizard Realm quests, Ent Saplings, Imps, Pythons and Den Spiders.
 //     They were never locked, aimed at or dodged around. Now kept.
 //   • objects with no <MaxHitPoints> still at that default: props, telegraphs,
-//     turrets and invisible helpers. Still dropped, as DefaultHp.
+//     turrets and invisible helpers. Non-attacking helpers remain DefaultHp;
+//     XML-invincible projectile attackers remain visible to dodge.
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -44,6 +45,8 @@ inline constexpr int32_t kGameDefaultMaxHp = 200;
 
 struct Facts {
     bool    isEnemy       = false;
+    // XML-invincible enemy with authored projectiles; remains a threat without HP.
+    bool    persistentAttacker = false;
     // The client's hidden-helper list names this type (see SetHiddenHelperTypes).
     bool    hiddenHelper  = false;
     // ObjectProperties.MaxHitPointsElement is non-null. True when it cannot be
@@ -71,9 +74,11 @@ inline Reject Classify(const Facts& f)
 {
     if (!f.isEnemy) return Reject::NotEnemy;
     if (f.hiddenHelper) return Reject::HiddenHelper;
-    if (f.hp <= 0 || f.maxHp <= 0) return Reject::NoHealth;
+    if (f.hp < 0 || f.maxHp < 0 || (!f.persistentAttacker && (f.hp == 0 || f.maxHp == 0)))
+        return Reject::NoHealth;
     if (f.hp > f.maxHp) return Reject::HpAboveMax;
-    if (!f.authoredMaxHp && f.maxHp == kGameDefaultMaxHp) return Reject::DefaultHp;
+    if (!f.authoredMaxHp && f.maxHp == kGameDefaultMaxHp && !f.persistentAttacker)
+        return Reject::DefaultHp;
     if (IsIgnoredType(f.objType)) return Reject::IgnoredType;
     if (!std::isfinite(f.x) || !std::isfinite(f.y) || (f.x == 0.f && f.y == 0.f))
         return Reject::BadPosition;

@@ -44,6 +44,7 @@ const ALLOWED_PACKET_NAMES: ReadonlySet<string> = new Set([
   'ENEMYSHOOT',
   'PLAYERHIT',
   'GROUNDDAMAGE',
+  'AOE',
   'DEATH',
   'PLAYERSHOOT',
   'ENEMYHIT',
@@ -151,6 +152,17 @@ export interface HitRecord {
   maxhp: number | null;
 }
 
+/** Server area attack; observation, not proof the player took damage. */
+export interface AoeRecord {
+  k: 'aoe';
+  t: number;
+  x: number | null;
+  y: number | null;
+  radius: number | null;
+  dmg: number | null;
+  otype: number | null;
+}
+
 export interface GroundRecord {
   k: 'ground';
   t: number;
@@ -198,6 +210,7 @@ export type TestlabRecord =
   | ShotRecord
   | HitRecord
   | GroundRecord
+  | AoeRecord
   | DeathRecord
   | PShootRecord
   | EHitRecord
@@ -498,6 +511,11 @@ export function dispatchPacket(
 
     case 'PLAYERHIT':
       return [buildHitRecord(t, data, ctx.hit ?? EMPTY_HIT_LOOKUP)];
+
+    case 'AOE':
+      return [{ k: 'aoe', t, x: round(num(data?.position?.x), COORD_DECIMALS),
+        y: round(num(data?.position?.y), COORD_DECIMALS), radius: num(data?.radius),
+        dmg: num(data?.damage), otype: num(data?.originType) }];
 
     case 'GROUNDDAMAGE':
       return [buildGroundRecord(t, data)];

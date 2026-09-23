@@ -47,9 +47,9 @@ describe('recorderCore: private-only marker', () => {
 });
 
 describe('recorderCore: allow-list', () => {
-  it('accepts exactly the eight contract packet names', () => {
+  it('accepts the explicit packet allow-list', () => {
     for (const name of [
-      'MAPINFO', 'MOVE', 'ENEMYSHOOT', 'PLAYERHIT', 'GROUNDDAMAGE', 'DEATH', 'PLAYERSHOOT', 'ENEMYHIT',
+      'MAPINFO', 'MOVE', 'ENEMYSHOOT', 'PLAYERHIT', 'GROUNDDAMAGE', 'DEATH', 'PLAYERSHOOT', 'ENEMYHIT', 'AOE',
     ]) {
       expect(isAllowedPacketName(name)).toBe(true);
     }
@@ -230,6 +230,13 @@ describe('recorderCore: one test per record kind', () => {
       k: 'hit', t: T, bid: 7, oid: 999, otype: 0x123,
       x: 1017.072, y: 500.123, odist: 3.142, edist: 1, hp: 40, maxhp: 100,
     });
+  });
+
+  it('records area-attack geometry and source without copying unrelated fields', () => {
+    const rows = dispatchPacket('AOE', T, { position: { x: 10.12345, y: 11 },
+      radius: 3, damage: 50, originType: 0x4260, accountId: 'never-record-this' }, {}, new ProjDefTracker());
+    expect(rows).toEqual([{ k: 'aoe', t: T, x: 10.123, y: 11, radius: 3, dmg: 50, otype: 0x4260 }]);
+    expect(JSON.stringify(rows)).not.toContain('never-record-this');
   });
 
   it('ground', () => {

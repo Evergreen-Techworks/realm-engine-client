@@ -252,6 +252,9 @@ static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t loc
         if (maxHpElemOffset != 0)
             f.authoredMaxHp = *reinterpret_cast<void**>(op + maxHpElemOffset) != nullptr;  // raw-access-ok: shared SEH; ObjectProperties.MaxHitPointsElement (name-resolved)
         f.hiddenHelper = hiddenTypes && EnemyClassify::IsListed(*hiddenTypes, f.objType);
+        // Permanent XML invincibility, not a transient runtime condition. These
+        // attackers can have default/zero HP (Rot Path/Cyst) but still hurt us.
+        f.persistentAttacker = isInvuln && projectileCount > 0;
 
         why = EnemyClassify::Classify(f);
         if (why != EnemyClassify::Reject::None)

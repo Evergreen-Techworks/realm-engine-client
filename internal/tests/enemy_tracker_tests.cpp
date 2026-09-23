@@ -103,6 +103,24 @@ static void TestOrdinaryEnemiesAndSoftFlagsAreKept()
 // telegraph, turret or invisible helper (Shatters dining tables, Leucoryx
 // light helpers, NM/drac walls). The old max-HP rule dropped them by accident;
 // DefaultHp keeps dropping exactly those while they sit at the default.
+static void TestInvincibleAttackersWithoutAuthoredHp()
+{
+    // Current objects.xml: Rot Path 0x4260 and Rot Cyst 0x425f have
+    // Enemy + Invincible + Projectile, but no MaxHitPoints.
+    for (int type : { 0x4260, 0x425f }) {
+        Facts hazard = Enemy(type, 200, 200);
+        hazard.authoredMaxHp = false;
+        hazard.persistentAttacker = true;
+        CHECK(Classify(hazard) == Reject::None, "invincible Rot attacker lost at default HP");
+        hazard.hp = 0;
+        CHECK(Classify(hazard) == Reject::None, "invincible Rot attacker lost without HP");
+        hazard.isEnemy = false;
+        CHECK(Classify(hazard) == Reject::NotEnemy, "attacker metadata bypassed enemy classification");
+    }
+    Facts dead = Enemy(0x4261, 0, 15000);
+    CHECK(Classify(dead) == Reject::NoHealth, "dead damageable Rot Overgrowth resurrected");
+}
+
 static void TestDefaultHpHelpersStayDropped()
 {
     Facts table = Enemy(0x825c, 200, 200);   // "Shatters Dining Table Centerpiece"
@@ -292,6 +310,7 @@ int main()
     TestHardRejects();
     TestOrdinaryEnemiesAndSoftFlagsAreKept();
     TestDefaultHpHelpersStayDropped();
+    TestInvincibleAttackersWithoutAuthoredHp();
     TestHiddenHelpers();
     TestLockPolicy();
     TestLockLiveness();
