@@ -1,0 +1,5 @@
+FAIL combat [legacy] success: off=True on=False
+FAIL combat [legacy] in_range_frames: off=816 on=469
+FAIL combat [legacy] path_tiles: off=155.2 on=174.0
+FAIL combat [game] in_range_frames: off=570 on=577
+FAIL combat [game] path_tiles: off=149.3 on=149.2

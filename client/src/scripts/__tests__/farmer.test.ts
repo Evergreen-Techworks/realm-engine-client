@@ -1286,6 +1286,13 @@ describe('status context suffix (Test Lab)', () => {
       expect(f.sdk.log.info).toHaveBeenLastCalledWith('state: Fighting | ctx pos=0.0,0.0 goal=3.0,4.0 d=5.0 enemy=3.0 quest=77');
     });
 
+    it.each(['eventGoal', 'bossEncounter'])('records %s identity for max-level navigation benchmarks', (owner) => {
+      const f = fixture();
+      f.farmer.questGoal = { objectId: 77 };
+      f.farmer[owner] = { objectId: 88 };
+      expect(f.farmer.collectStatusContext().questObjectId).toBe(88);
+    });
+
     it('reports all-unknown context when there is no goal, enemy, or quest', () => {
       const f = fixture();
       f.setEnemies([]);

@@ -87,6 +87,7 @@ with tempfile.TemporaryDirectory(prefix="autofire-decision-tests-") as directory
 subprocess.run(["python3", str(internal / "tests/scenario/run_scenarios.py"), "--check"], check=True)
 # UDodge decision telemetry through the production Tick: off is silent, on only observes.
 subprocess.run(["python3", str(internal / "tests/scenario/run_scenarios.py"), "--telemetry-check"], check=True)
+subprocess.run(["python3", str(internal / "tests/scenario/run_scenarios.py"), "--travel-commit-check"], check=True)
 
 # Native input focus gate, and SteerInput compiled on a fake Windows layer.
 with tempfile.TemporaryDirectory(prefix="input-focus-tests-") as directory:

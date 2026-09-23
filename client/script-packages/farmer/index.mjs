@@ -206,7 +206,7 @@ export default class Farmer {
       const d = Math.hypot(enemy.position.x - pos.x, enemy.position.y - pos.y);
       if (enemyDistance === null || d < enemyDistance) enemyDistance = d;
     }
-    return { pos, goal, enemyDistance, questObjectId: this.questGoal?.objectId };
+    return { pos, goal, enemyDistance, questObjectId: this.bossEncounter?.objectId ?? this.eventGoal?.objectId ?? this.questGoal?.objectId };
   }
 
   setStatus(message) {

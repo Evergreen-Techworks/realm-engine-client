@@ -1232,6 +1232,10 @@ void Tick(void* player, float px, float py, float dt)
     // ── Nav re-plan decision (walk-to route caching) ─────────────────────────
     // Follow the cached route and only re-run the A* on a real trigger. navStep is
     // the steering target ~lookahead budgets ahead along the cached polyline.
+    // Commit a strategic travel corridor, not a moving combat approach.
+    // Lock approaches are short-horizon engagement decisions; retaining their
+    // detours can strand the player outside weapon range after the lane opens.
+    const bool commitNavigation = settings.routeCommit && !lockApproach;
     bool navReplan = false;
     Telemetry::ReplanReason navReplanReason = Telemetry::ReplanReason::None;
     bool navRejoin = false;   // Item 1 S4 telemetry: a detour rejoined the route instead of re-planning
@@ -1250,7 +1254,7 @@ void Tick(void* player, float px, float py, float dt)
             g_navAwaiting = navWaiting = false;
             navStep = wg;
         }
-        // Item 1 S2: route commitment. ON (default, settings.routeCommit): once a
+        // Item 1 S2: route commitment. ON (commitNavigation): once a
         // route is accepted, keep following it through a reflex detour — Follow
         // already rejoins the polyline at the nearest forward point regardless of
         // how far the detour pushed the player (routeConnected) — and re-plan only
@@ -1258,14 +1262,14 @@ void Tick(void* player, float px, float py, float dt)
         // false), the objective changed, the cached route ran out before the goal
         // (nearEnd), or no progress for 1.5 s (below, via g_navProgress). OFF
         // reproduces the old plain "5 tiles off the route -> re-plan" rule exactly.
-        const bool objectiveChanged = g_navCache.valid && settings.routeCommit &&
+        const bool objectiveChanged = g_navCache.valid && commitNavigation &&
             !objective.SameObjective(g_lastRouteObjective);
-        const bool routeInvalidated = settings.routeCommit
+        const bool routeInvalidated = commitNavigation
             ? (g_navCache.valid && !routeConnected)
             : (dev > kNavDeviateTiles);
         const bool routeExhausted = nearEnd && (g_navCache.partial ||                    // consumed a partial route → extend
             LenSq(Sub(in.player, wg)) > kNavEndTiles * kNavEndTiles);                    // at route end but not the goal
-        navRejoin = settings.routeCommit && routeConnected && dev > kNavDeviateTiles;
+        navRejoin = commitNavigation && routeConnected && dev > kNavDeviateTiles;
         navReplan = goalMoved || !g_navCache.valid || objectiveChanged || routeInvalidated || routeExhausted;
         if (goalMoved)               navReplanReason = Telemetry::ReplanReason::GoalMoved;
         else if (!g_navCache.valid)  navReplanReason = Telemetry::ReplanReason::Invalidated;
@@ -1301,7 +1305,7 @@ void Tick(void* player, float px, float py, float dt)
         // commitment (a detour needs time to rejoin before the follower gives up
         // on the route); the pre-existing 500 ms timer otherwise.
         const bool stalled = in.speed > 0.f &&
-            g_navProgress.Stalled(in.player, nowNav, g_navAwaiting, settings.routeCommit ? 1500ULL : 500ULL);
+            g_navProgress.Stalled(in.player, nowNav, g_navAwaiting, commitNavigation ? 1500ULL : 500ULL);
         // Item 1 S2 refinement (controller ruling): a step the GAME refuses is
         // direct evidence the committed route is wrong right here — the world
         // model disagrees with what the game actually allows — so it should not
@@ -1321,7 +1325,7 @@ void Tick(void* player, float px, float py, float dt)
         // tick; measured on j_hidden_blocker, fixed by this latch).
         const bool refusedFresh = g_refusedFrames >= kNavRefusedFramesForAvoid &&
             nowNav - g_lastRefusedMs <= kNavRefusalFreshMs;
-        const bool refusedStreak = settings.routeCommit && refusedFresh && !g_refusedStreakFired;
+        const bool refusedStreak = commitNavigation && refusedFresh && !g_refusedStreakFired;
         if (refusedStreak) g_refusedStreakFired = true;
         if ((stalled || refusedStreak) && refusedFresh) {
             // Remember the square just past the player box in the refused direction,

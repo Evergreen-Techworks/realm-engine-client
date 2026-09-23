@@ -54,7 +54,7 @@ SCENARIOS = [
     "k_speedy_walk", "k_slowed_water", "k_mixed_water_land",
     "l_walk_past_shotgun", "l_walk_past_bomber", "l_lock_boss_dies", "l_lock_boss_invuln",
     "m_pinch_nowalk", "m_pinch_fulloccupy", "m_pinch_object",
-    "p_walk_through_pack", "p_lock_boss_standoff",
+    "p_walk_through_pack", "p_walk_pack_crossfire", "p_lock_boss_standoff",
     "z_moveto_no_clamp",
     "n_rooms1_nowalk_forward", "n_rooms1_nowalk_reverse",
     "n_rooms2_nowalk_forward", "n_rooms2_nowalk_reverse",
@@ -213,6 +213,37 @@ def telemetry_check(binary, scan):
     return failures
 
 
+def travel_commit_check(binary, scan):
+    """Long-route commitment must not change local combat, but must still
+    reduce route churn during point travel. Exercise production Tick."""
+    def run(name, rule, commit):
+        env = {**os.environ, "HARNESS_NAVIGATOR": "legacy",
+               "HARNESS_ROUTE_COMMIT": commit, "HARNESS_ENEMY_STANDOFF": "on",
+               "HARNESS_FALLBACK_SIDESTEP": "off", "HARNESS_FRAME_BUDGET": "off"}
+        done = subprocess.run([str(binary), name, str(scan), rule, "tactician"],
+                              check=True, env=env, capture_output=True, text=True)
+        return json.loads(done.stdout.strip().splitlines()[-1])
+
+    failures = []
+    for rule in ("legacy", "game"):
+        off = run("d_boss_open_dense_x065", rule, "off")
+        on = run("d_boss_open_dense_x065", rule, "on")
+        for key in ("success", "hits", "in_range_frames", "in_range_tail_frames", "path_tiles"):
+            if off[key] != on[key]:
+                failures.append(f"combat [{rule}] {key}: off={off[key]} on={on[key]}")
+    off = run("n_rooms1_fullocc_forward", "legacy", "off")
+    on = run("n_rooms1_fullocc_forward", "legacy", "on")
+    if not (on["success"] and on["hits"] <= off["hits"]
+            and on["replans_per_s"] < off["replans_per_s"]):
+        failures.append(f"point travel must still commit: off={off['replans_per_s']} "
+                        f"on={on['replans_per_s']}, success={on['success']}, hits={on['hits']}")
+    for failure in failures:
+        print("FAIL " + failure)
+    if not failures:
+        print("Travel commitment scope passed: combat unchanged under both rules; point-route churn reduced")
+    return failures
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--internal", default=str(HERE.parents[1]))
@@ -228,6 +259,8 @@ def main():
     ap.add_argument("--tactician-acceptance", action="store_true",
                     help="run the boss scenarios and exit non-zero unless they meet the Tactician spec's "
                          "thresholds. Separate from --check; expected to fail until the Tactician lands")
+    ap.add_argument("--travel-commit-check", action="store_true",
+                    help="verify route commitment preserves local combat and reduces point-route churn")
     ap.add_argument("--telemetry-check", action="store_true",
                     help="run the production Tick with field diagnostics off and on and check the "
                          "[Diag/Nav] decision lines (off is silent, on only observes)")
@@ -292,6 +325,8 @@ def main():
         subprocess.run(cmd, check=True)
         if args.binary_out:
             shutil.copy(binary, args.binary_out)
+        if args.travel_commit_check:
+            sys.exit(1 if travel_commit_check(binary, scan) else 0)
         if args.telemetry_check:
             failures = telemetry_check(binary, scan)
             if failures:
