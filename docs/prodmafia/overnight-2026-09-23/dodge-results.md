@@ -74,3 +74,14 @@ SHA256: `bec283060d840ec606ea5076a8dfccf88d8be06fac7072a77fb9554115a4a525`.
 The selected experimental overrides are in `preferred-test-profile.json`; packaged defaults remain unchanged. The owner portable was not replaced.
 
 The final route retry completed and the rig shut down normally. Off had 3.755 washout-adjusted minutes and on 1.920; near-passes/min and shots-landed/min were higher during on. On also had more projectile damage and Nexus exits. This does not validate enabling commitment by default. Reported fighting/phase-transition freezes are not automatically physical pathing failures. The preferred profile is a controlled-test candidate, not a live-certified recommendation.
+
+
+## Later boss and AutoNexus investigation
+
+The earlier completion above covers the initial movement comparison only. Subsequent owner feedback identified an untargetable Ravenous Rot tentacle and continued early escapes. Native commit825aa4b preserves XML-invincible projectile attackers lacking authored HP (Rot Path/Cyst), with four reproduced classifier failures corrected and76 enemy-tracker checks passing. The full native host suite passes. Retaining those entities is not yet a demonstrated complete feet-attack avoidance solution.
+
+Client commit1a9993d separately fixes AOE impacts being kept as persistent forecast zones using condition duration. Acknowledged in-radius impacts now enter the health ledger once; missed and already-settled blasts cannot be forecast again. Nine directed regressions and48 recorder tests pass; typecheck passes. Broader AutoNexus tests retain exactly19 named baseline failures (83 candidate passes versus74 parent passes).
+
+Live tests did not establish survival improvement: old1.0.36 actual5%/forecast1% died to Ethereal Shrine; replacement1.0.37 actual25%/forecast10%/BurstGuard on died to Ent Ancient. The latter recorded no area attacks/ground contacts and no requested escape: confirmed280/325, estimated130, threshold81. The unexplained damage gap needs synchronized health/DAMAGE/condition and threat evidence. The3/3 character-creation cap prevents further live testing today; it was not bypassed. The rig runner override was restored and all owned sessions ended.
+
+Full boss report: /home/jesse/realm-engine/.worktrees/testlab/testlab/boss-testing-2026-09-23.md. Rescored artifacts: C:\realm-engine-testlab\comparisons\20260923-bosses. TestLab1068 tests passed; currentuint16 bullet matching and explicit death outcomes are included. No public portable replacement, default flip, upload, push or deploy. Private1.0.38 contains both code corrections but still requires live validation.
