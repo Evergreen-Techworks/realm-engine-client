@@ -406,14 +406,14 @@ export function register(ctx: PluginContext) {
     type: 'select', value: 'legacy',
     options: [{ label: 'Legacy (local routes)', value: 'legacy' }, { label: 'D* Lite (persistent map)', value: 'dstar' }],
   }, (value: string) => sendDllFeature('navNavigator', value === 'dstar' ? 'dstar' : 'legacy'));
-  // Navigation finish plan, item 2: on a Fallback/Surrounded solve (no safe
-  // reachable cell), sidestep tangentially instead of bolting radially outward
+  // During point travel, on a Fallback/Surrounded solve (no safe reachable
+  // cell), sidestep across the threatening flow instead of running along it
   // or settling for a sub-jitter step. Off (default) = today's plain
   // least-bad pick. Default off (owner ruling 2026-09-19: unproven behaviour
   // ships behind a switch, default off, after private 1.0.18 dodged worse
   // with this on).
   registerModeSetting('unified', 'udodgeFallbackSidestep',
-    onOff('[UDodge] Fallback sidestep', 'off'),
+    onOff('[UDodge] Travel fallback sidestep', 'off'),
     (v: string) => sendDllFeature('udodgeFallbackSidestep', v === 'on' ? 1 : 0));
   // Navigation finish plan, item 4: when a Tick has already spent longer than
   // the frame-cost ceiling before the solver phases, degrade the candidate

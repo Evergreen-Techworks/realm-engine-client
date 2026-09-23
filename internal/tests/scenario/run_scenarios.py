@@ -54,7 +54,7 @@ SCENARIOS = [
     "k_speedy_walk", "k_slowed_water", "k_mixed_water_land",
     "l_walk_past_shotgun", "l_walk_past_bomber", "l_lock_boss_dies", "l_lock_boss_invuln",
     "m_pinch_nowalk", "m_pinch_fulloccupy", "m_pinch_object",
-    "p_walk_through_pack", "p_walk_pack_crossfire", "p_lock_boss_standoff",
+    "p_walk_through_pack", "p_walk_pack_crossfire", "p_walk_pack_late_crossfire", "p_lock_boss_standoff",
     "z_moveto_no_clamp",
     "n_rooms1_nowalk_forward", "n_rooms1_nowalk_reverse",
     "n_rooms2_nowalk_forward", "n_rooms2_nowalk_reverse",
@@ -244,6 +244,35 @@ def travel_commit_check(binary, scan):
     return failures
 
 
+def travel_fallback_check(binary, scan):
+    """A travel-only fallback heuristic must preserve combat and solve the
+    delayed-crossfire regression without dropping the movement objective."""
+    def run(name, rule, sidestep):
+        env = {**os.environ, "HARNESS_NAVIGATOR": "legacy",
+               "HARNESS_ROUTE_COMMIT": "on", "HARNESS_ENEMY_STANDOFF": "on",
+               "HARNESS_FALLBACK_SIDESTEP": sidestep, "HARNESS_FRAME_BUDGET": "off"}
+        done = subprocess.run([str(binary), name, str(scan), rule, "tactician"],
+                              check=True, env=env, capture_output=True, text=True)
+        return json.loads(done.stdout.strip().splitlines()[-1])
+    failures = []
+    for rule in ("legacy", "game"):
+        off = run("d_boss_wall_dense", rule, "off")
+        on = run("d_boss_wall_dense", rule, "on")
+        for key in ("hits", "in_range_frames", "in_range_tail_frames", "path_tiles"):
+            if off[key] != on[key]:
+                failures.append(f"combat [{rule}] {key}: off={off[key]} on={on[key]}")
+        off = run("p_walk_pack_late_crossfire", rule, "off")
+        on = run("p_walk_pack_late_crossfire", rule, "on")
+        if not (on["success"] and on["hits"] == 0 and on["time_s"] <= off["time_s"]):
+            failures.append(f"late crossfire [{rule}]: success={on['success']} "
+                            f"hits={on['hits']} time={on['time_s']} (control {off['time_s']})")
+    for failure in failures:
+        print("FAIL " + failure)
+    if not failures:
+        print("Travel fallback scope passed: combat unchanged; late-crossfire travel arrives with zero hits")
+    return failures
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--internal", default=str(HERE.parents[1]))
@@ -259,6 +288,8 @@ def main():
     ap.add_argument("--tactician-acceptance", action="store_true",
                     help="run the boss scenarios and exit non-zero unless they meet the Tactician spec's "
                          "thresholds. Separate from --check; expected to fail until the Tactician lands")
+    ap.add_argument("--travel-fallback-check", action="store_true",
+                    help="verify fallback sidestepping preserves combat and improves late-crossfire travel")
     ap.add_argument("--travel-commit-check", action="store_true",
                     help="verify route commitment preserves local combat and reduces point-route churn")
     ap.add_argument("--telemetry-check", action="store_true",
@@ -325,6 +356,8 @@ def main():
         subprocess.run(cmd, check=True)
         if args.binary_out:
             shutil.copy(binary, args.binary_out)
+        if args.travel_fallback_check:
+            sys.exit(1 if travel_fallback_check(binary, scan) else 0)
         if args.travel_commit_check:
             sys.exit(1 if travel_commit_check(binary, scan) else 0)
         if args.telemetry_check:

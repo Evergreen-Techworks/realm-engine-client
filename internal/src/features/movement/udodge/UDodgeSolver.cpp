@@ -959,17 +959,17 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     float best2Time = -1.f;
     const float standTime = Core::Temporal::TimeToDanger(ctx, in.player, in.speed,
                                                        in.player, kUDwellMs);
-    // Item 2 (udodgeFallbackSidestep) tie-break reference: away from the lock
-    // target, or (unlocked) the direction the threatening lanes are travelling.
-    // Only computed when the switch is on — off keeps today's behaviour exactly.
+    // A lateral fallback helps point travel escape crossing fire. Applying
+    // the same near-tie preference around a combat lock sacrifices safer
+    // moves in dense rings; keep combat's latest-danger-time ranking intact.
+    // fromLock marks orbiting only; a lock approach is encoded as walkTo.
+    // The map retains the lock in both live and worker snapshots.
+    const bool travelSidestep = in.settings.fallbackSidestep && goal.walkTo
+        && !goal.fromLock && !(in.map && in.map->hasLock);
     Vec2 radialRef{};
-    if (in.settings.fallbackSidestep) {
-        if (goal.fromLock && LenSq(Sub(in.player, goal.lockPos)) > 1e-6f) {
-            radialRef = Normalize(Sub(in.player, goal.lockPos));
-        } else {
-            const Vec2 meanDir = MeanThreatDir(in);
-            if (LenSq(meanDir) > 1e-6f) radialRef = Normalize(meanDir);
-        }
+    if (travelSidestep) {
+        const Vec2 meanDir = MeanThreatDir(in);
+        if (LenSq(meanDir) > 1e-6f) radialRef = Normalize(meanDir);
     }
     FallbackCandidate fbCands[kMaxCandidates];
     int fbOrig[kMaxCandidates];
@@ -1002,7 +1002,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     // progress out instead of freezing inside the threat. See
     // SelectFallbackCandidate for the udodgeFallbackSidestep ranking.
     const int pick = SelectFallbackCandidate(fbCands, fbCount, radialRef,
-                                             in.settings.fallbackSidestep, standTime);
+                                             travelSidestep, standTime);
     if (pick >= 0) {
         best2 = fbOrig[pick];
         best2Time = fbCands[pick].safeTime;

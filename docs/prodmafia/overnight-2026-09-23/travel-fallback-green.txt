@@ -1,0 +1,1 @@
+Travel fallback scope passed: combat unchanged; late-crossfire travel arrives with zero hits

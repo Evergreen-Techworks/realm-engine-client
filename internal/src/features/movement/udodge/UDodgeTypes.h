@@ -715,10 +715,11 @@ struct Settings {
     // udodgeFallbackSidestep (navigation finish plan, item 2). Default OFF
     // (owner ruling 2026-09-19: unproven behaviour ships behind a switch,
     // default off, after private 1.0.18 dodged worse with this on). true:
-    // Solver::Solve's Fallback branch ranks its least-bad candidates by latest
+    // During unlocked point travel, Solver::Solve's Fallback branch ranks
+    // its least-bad candidates by latest
     // time-to-danger, then within kSolveFallbackTieMs breaks the tie toward the
     // most tangential step (smaller ABSOLUTE radial component relative to the
-    // lock target, or the mean threatening-lane direction when unlocked) instead
+    // mean threatening-lane direction) instead
     // of bolting straight out OR cutting straight in — radial is bad both ways —
     // never selects a step shorter-lived than standing still, and will not settle
     // for a sub-kSolveFallbackMinMoveTiles jitter when a longer-lived candidate

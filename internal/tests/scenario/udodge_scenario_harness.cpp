@@ -2001,7 +2001,7 @@ void ScenarioWalkPastBomber(const char* name)
 
 // p_walk_through_pack: the straight line from start to goal runs through the middle
 // of a static shooter pack. Open ground all round, so a detour always exists.
-void ScenarioStandoffPack(const char* name, bool crossfire = false)
+void ScenarioStandoffPack(const char* name, bool crossfire = false, double shotDelayMs = 0.0)
 {
     World w; Floor(w);
     w.px = 0.5f; w.py = 0.5f;
@@ -2026,7 +2026,12 @@ void ScenarioStandoffPack(const char* name, bool crossfire = false)
             if (Len(Sub({ ww.px, ww.py }, { e.x, e.y })) > 9.f) continue;
             next = g_nowMs + 700.0;
             const float a = std::atan2(ww.py - e.y, ww.px - e.x);
-            for (int k = -1; k <= 1; ++k) ww.Fire(e.x, e.y, a + k * 0.12f, 8.f, 1400.f, 0.4f, e.id);
+            for (int k = -1; k <= 1; ++k) {
+                ww.Fire(e.x, e.y, a + k * 0.12f, 8.f, 1400.f, 0.4f, e.id);
+                // Same late-packet model as the shotgun fixture: a shot can
+                // already have travelled a server tick before becoming visible.
+                ww.bullets.back().t0 -= shotDelayMs;
+            }
             if (!crossfire) return;
         }
     };
@@ -2373,6 +2378,7 @@ int main(int argc, char** argv)
     if (want("k_mixed_water_land")) H::ScenarioMixedWaterLand("k_mixed_water_land");
     if (want("p_walk_through_pack")) H::ScenarioStandoffPack("p_walk_through_pack");
     if (want("p_walk_pack_crossfire")) H::ScenarioStandoffPack("p_walk_pack_crossfire", true);
+    if (want("p_walk_pack_late_crossfire")) H::ScenarioStandoffPack("p_walk_pack_late_crossfire", true, 200.0);
     if (want("p_lock_boss_standoff"))H::ScenarioStandoffFight("p_lock_boss_standoff");
     if (want("l_walk_past_shotgun"))H::ScenarioWalkPastShotgun("l_walk_past_shotgun");
     if (want("l_walk_past_bomber")) H::ScenarioWalkPastBomber("l_walk_past_bomber");

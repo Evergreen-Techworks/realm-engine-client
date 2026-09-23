@@ -1,0 +1,6 @@
+FAIL combat [legacy] hits: off=0 on=2
+FAIL combat [legacy] in_range_frames: off=279 on=566
+FAIL combat [legacy] path_tiles: off=206.0 on=177.8
+FAIL combat [game] hits: off=0 on=5
+FAIL combat [game] in_range_frames: off=243 on=354
+FAIL combat [game] path_tiles: off=168.7 on=173.3
