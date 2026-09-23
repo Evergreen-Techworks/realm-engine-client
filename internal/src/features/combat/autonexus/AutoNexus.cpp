@@ -1,5 +1,6 @@
 #include "pch-il2cpp.h"
 #include "AutoNexus.h"
+#include "AutoNexusDodgePolicy.h"
 #include "ProjectileTracking.h"
 #include "AoeTracking.h"
 #include "DodgeHit.h"
@@ -35,12 +36,7 @@ static bool  g_debugDraw     = false;
 static ULONGLONG s_lastAutoNexusTick = 0;
 
 static constexpr ULONGLONG kAutoNexusPollMs = 16ULL;
-
-// Staleness budget for udodge's last-resort signal (plan 77). AutoNexus polls
-// every ~16 ms; if udodge's SafetyState.tickId has not advanced within this
-// window the game thread has stalled/hitched, so we stop trusting udodge to be
-// handling the shots and let the predictive nexus run as the backstop.
-static constexpr ULONGLONG kUdStaleBudgetMs = 100ULL;
+static AutoNexusDodgePolicy::Tracker s_udodgeTracker;
 
 // ── Scan geometry ────────────────────────────────────────────────────────
 static constexpr float kBroadStepMs = 50.f;
@@ -507,6 +503,22 @@ static void RunAutoNexus()
 
     PlayerMotion pm = ReadPlayerMotion(lp, cFull);
     const UDodge::SafetyState udSafety = UDodge::GetSafetyState();
+    const ULONGLONG nowMs = GetTickCount64();
+    const AutoNexusDodgePolicy::SafetySample udSample{
+        udSafety.enabled, udSafety.exposed, udSafety.tickId,
+        udSafety.moveVx, udSafety.moveVy
+    };
+    const auto dodgeDecision = s_udodgeTracker.Evaluate(udSample, nowMs);
+    const auto selected = AutoNexusDodgePolicy::SelectVelocities(
+        dodgeDecision, pm.vx, pm.vy);
+
+    PlayerMotion projectilePm = pm;
+    projectilePm.vx = selected.localVx;
+    projectilePm.vy = selected.localVy;
+
+    // Ground prediction deliberately keeps the old conservative motion. It is
+    // a separate hazard from projectile lanes and must not inherit UDodge's
+    // projectile deferral policy.
     PlayerMotion serverPm = pm;
     const bool hasServerAnchor = udSafety.enabled && udSafety.serverAnchorValid &&
         std::isfinite(udSafety.serverX) && std::isfinite(udSafety.serverY);
@@ -519,24 +531,22 @@ static void RunAutoNexus()
         serverPm.vx = 0.f;
         serverPm.vy = 0.f;
     }
+    PlayerMotion projectileServerPm = serverPm;
+    projectileServerPm.vx = selected.anchorVx;
+    projectileServerPm.vy = selected.anchorVy;
     const float horizon = std::max(0.f, std::min(kMaxHorizonMs, g_predTimeMs));
 
     const float fieldVx = pm.vx, fieldVy = pm.vy;
     ObserveVelocity(pm.x, pm.y, pm.vx, pm.vy);
 
-    // AutoNexus is a NEVER-DIE backstop — it must catch every lethal shot on track
-    // to where the player ACTUALLY is. Do NOT bias the prediction by udodge's
-    // INTENDED dodge: if udodge is told to move out of the way but FAILS to, a shot
-    // aimed at the player's real position would be predicted to "miss" and never
-    // published as a threat → the client never nexuses → death. The prediction stays
-    // on the player's own observed motion (the working FourOfSpades behavior); the
-    // client only fires when the summed threat damage would actually be lethal, so
-    // this over-reports threats but never under-reports the one that kills you.
+    // A fresh non-exposed solve is the movement UDodge has committed to send, so
+    // projectile prediction follows it. If the solver is disabled, exposed, or
+    // stale, SelectVelocities restores the observed/stationary NEVER-DIE backstop.
 
     g_gvNowX = pm.x;  g_gvNowY = pm.y;
-    g_gvVx   = pm.vx; g_gvVy   = pm.vy;
-    g_gvEndX = pm.x + pm.vx * horizon;
-    g_gvEndY = pm.y + pm.vy * horizon;
+    g_gvVx   = projectilePm.vx; g_gvVy   = projectilePm.vy;
+    g_gvEndX = projectilePm.x + projectilePm.vx * horizon;
+    g_gvEndY = projectilePm.y + projectilePm.vy * horizon;
     g_gvFieldVx   = fieldVx;
     g_gvFieldVy   = fieldVy;
     g_gvFieldEndX = pm.x + fieldVx * horizon;
@@ -550,7 +560,6 @@ static void RunAutoNexus()
         std::vector<WorldProjectile> projs;
         ProjectileTracking::CopyActiveForDraw(projs);
 
-        const ULONGLONG nowMs   = GetTickCount64();
         const int32_t   localId = ProjectileTracking::GetLocalPlayerObjectId();
 
         float retroMs = 0.f;
@@ -587,8 +596,8 @@ static void RunAutoNexus()
                 const float spd = (proj.speed / 10000.f) * (proj.speedMul > 0.f ? proj.speedMul : 1.f);
                 if (std::isfinite(spd) && spd > 1e-5f) {
                     const float maxReach = spd * horizon + 4.0f + (proj.laser ? proj.laserDistance : 0.f);
-                    const float pdx = proj.x - pm.x, pdy = proj.y - pm.y;
-                    const float sdx = proj.x - serverPm.x, sdy = proj.y - serverPm.y;
+                    const float pdx = proj.x - projectilePm.x, pdy = proj.y - projectilePm.y;
+                    const float sdx = proj.x - projectileServerPm.x, sdy = proj.y - projectileServerPm.y;
                     if (pdx * pdx + pdy * pdy > maxReach * maxReach &&
                         (!hasServerAnchor || sdx * sdx + sdy * sdy > maxReach * maxReach))
                         continue;
@@ -601,9 +610,9 @@ static void RunAutoNexus()
                 continue;
             }
 
-            float tHit = FindHitMsUntil(proj, alreadyElapsed, pm, horizon);
+            float tHit = FindHitMsUntil(proj, alreadyElapsed, projectilePm, horizon);
             if (hasServerAnchor) {
-                const float serverHit = FindHitMsUntil(proj, alreadyElapsed, serverPm, horizon);
+                const float serverHit = FindHitMsUntil(proj, alreadyElapsed, projectileServerPm, horizon);
                 if (serverHit >= 0.f && (tHit < 0.f || serverHit < tHit)) tHit = serverHit;
             }
             if (g_debugDraw) CaptureVizPath(proj, alreadyElapsed, tHit >= 0.f);
@@ -871,7 +880,7 @@ bool OverlayEnabled()
 }
 
 // ── Public setters (called from FeatureCommandRegistry) ─────────────────
-void SetAutoNexusEnabled(bool on)            { g_autoNexus = on; }
+void SetAutoNexusEnabled(bool on)            { if (!on) s_udodgeTracker.Reset(); g_autoNexus = on; }
 void SetAutoNexusProjPredictEnabled(bool on) { g_nexusProjDmg = on; }
 void SetAutoNexusTilePredictEnabled(bool on) { g_nexusTileDmg = on; }
 void SetAutoNexusPredictedTimeMs(float ms)   { g_predTimeMs = std::max(0.f, std::min(kMaxHorizonMs, ms)); }
