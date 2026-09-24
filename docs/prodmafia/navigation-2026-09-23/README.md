@@ -166,6 +166,18 @@ combat cases or claim real-game survival, AutoNexus tuning, or FPS gains.
 ## Private build
 
 Private 1.0.40 (`9e2c244`) was superseded during regression testing and was never
-installed in the rig. Private 1.0.41 (`ad65161`) is building with the tested scoped
-source. Build verification and delivery will be recorded when it finishes.
+installed in the rig. Private 1.0.41 (`ad65161`) passed the private build gates and is installed only in
+`C:\realm-engine-testlab\rig\Realm Engine 1.0.41 Private (RotMG 86ad651b).exe`.
+Its SHA256 is `c34786e75a039357ce1f9a29eec5da99e5bede47895ef058621d509a4401962c`.
+
+The rig contains one executable, its installed bytes match the cached build,
+and all six changed native source files in the build snapshot match the tested
+commit. The live game pin was rechecked and still matches. Build status is
+`private_build_not_publishable`, publish=false, diagnostics off, bindings
+143 fields / 41 methods / 17 omitted / 133 proven, and antivirus detections
+unchanged (7 → 7). See `build-verification.json` and `built-source-hashes.json`.
+The incremental mirror changed only the checked native files; seven protected
+owner paths were left intact. The normal portable was not replaced.
+
+This executable has not had a live-game validation session.
 No upload, push, deployment or live account session is part of this run.

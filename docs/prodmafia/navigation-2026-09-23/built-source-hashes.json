@@ -1,0 +1,12 @@
+{
+  "commit": "ad65161",
+  "version": "1.0.41",
+  "files": {
+    "internal/src/features/movement/udodge/UDodge.cpp": "f7b9486afc548b3606487f662a2967f0bd47783a4ee3b7610979b272d225d196",
+    "internal/src/features/movement/udodge/UDodgeNavigation.h": "eda90d89252835b5d5ff8bbae859363ab7876e310d70f85da29304f16d5ad899",
+    "internal/src/features/movement/udodge/UDodgeSolver.cpp": "609ec48056362c512af96416f75c8bc3367c4a4ea15f8bbdbdf91a067da04503",
+    "internal/src/features/movement/udodge/UDodgeSolver.h": "b395c8ec4b7488d6423b08e43403583272e8bf6481232ce8a63d85cf8e362299",
+    "internal/src/features/movement/udodge/UDodgePathfinder.h": "0532405dc7ef3586664ac21a9afbab16d6e57765fc1205c8af407a3fcc449a77",
+    "internal/src/features/movement/udodge/UDodgeWorkerCycle.h": "278620b6b46110f385d943bd6d5bb108fea6f05cd874305ed07d60e3badd8b14"
+  }
+}

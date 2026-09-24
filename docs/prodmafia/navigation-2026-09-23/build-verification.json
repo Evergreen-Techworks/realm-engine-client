@@ -1,0 +1,66 @@
+{
+  "version": "1.0.41",
+  "commit": "ad65161be6cf96e4c0cfcd811ea4b71969320e8d",
+  "installed_exe": "/mnt/c/realm-engine-testlab/rig/Realm Engine 1.0.41 Private (RotMG 86ad651b).exe",
+  "sha256": "c34786e75a039357ce1f9a29eec5da99e5bede47895ef058621d509a4401962c",
+  "verifications": {
+    "status": {
+      "passed": true,
+      "seen": "private_build_not_publishable",
+      "expected": "private_build_not_publishable"
+    },
+    "publish": {
+      "passed": true,
+      "seen": false
+    },
+    "private_features_mode": {
+      "passed": true,
+      "seen": "included",
+      "expected": "included"
+    },
+    "exe_sha256": {
+      "passed": true,
+      "seen": "c34786e75a039357ce1f9a29eec5da99e5bede47895ef058621d509a4401962c",
+      "expected": "c34786e75a039357ce1f9a29eec5da99e5bede47895ef058621d509a4401962c"
+    },
+    "run_log_markers": {
+      "passed": true,
+      "bindings_surface_ported": true,
+      "bake_current_absent": true
+    },
+    "bindings_receipt": {
+      "fields": 143,
+      "methods": 41,
+      "omitted": 17,
+      "field_offsets_code_proven": 133,
+      "unproven_keys": [
+        "field.AbilityReady",
+        "field.CH_OffsetX",
+        "field.CH_OffsetY",
+        "field.OP_ConnectT",
+        "field.OP_InvincibleElem",
+        "field.OP_NoHealthBar",
+        "field.PP_UseAccel",
+        "field.PP_VelocityChangeRate",
+        "field.PP_VelocityChangeRateInv",
+        "field.VH_DestroyEntity"
+      ]
+    },
+    "diagnostics": {
+      "passed": true,
+      "diag_timing_off": true,
+      "forbidden_tokens_absent": true
+    },
+    "malwarebytes": {
+      "passed": true,
+      "before": 7,
+      "after": 7
+    },
+    "pipeline": {
+      "commit": "bb5b5b2da2ac944af4e539d351e2d668d6f5d91d",
+      "clean": true
+    }
+  },
+  "live_game_pin_rechecked": true,
+  "live_gameplay_tested": false
+}
