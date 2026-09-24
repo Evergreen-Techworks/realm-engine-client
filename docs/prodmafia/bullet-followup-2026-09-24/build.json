@@ -1,0 +1,84 @@
+{
+  "commit": "b72f2a2216eec98a13b05b6f6f9e4c128b02e2ed",
+  "version": "1.0.44",
+  "exe_name": "Realm Engine Test 1.0.44 portable.exe",
+  "exe_sha256": "d9b2444d856be2409db4cb2e02247bc85a71597cc0a75fc80cf51091d368ca12",
+  "bindings_receipt": {
+    "fields": 143,
+    "methods": 41,
+    "omitted": 17,
+    "field_offsets_code_proven": 133,
+    "unproven_keys": [
+      "field.AbilityReady",
+      "field.CH_OffsetX",
+      "field.CH_OffsetY",
+      "field.OP_ConnectT",
+      "field.OP_InvincibleElem",
+      "field.OP_NoHealthBar",
+      "field.PP_UseAccel",
+      "field.PP_VelocityChangeRate",
+      "field.PP_VelocityChangeRateInv",
+      "field.VH_DestroyEntity"
+    ]
+  },
+  "timings": {},
+  "verifications": {
+    "status": {
+      "passed": true,
+      "seen": "private_build_not_publishable",
+      "expected": "private_build_not_publishable"
+    },
+    "publish": {
+      "passed": true,
+      "seen": false
+    },
+    "private_features_mode": {
+      "passed": true,
+      "seen": "included",
+      "expected": "included"
+    },
+    "exe_sha256": {
+      "passed": true,
+      "seen": "d9b2444d856be2409db4cb2e02247bc85a71597cc0a75fc80cf51091d368ca12",
+      "expected": "d9b2444d856be2409db4cb2e02247bc85a71597cc0a75fc80cf51091d368ca12"
+    },
+    "run_log_markers": {
+      "passed": true,
+      "bindings_surface_ported": true,
+      "bake_current_absent": true
+    },
+    "bindings_receipt": {
+      "fields": 143,
+      "methods": 41,
+      "omitted": 17,
+      "field_offsets_code_proven": 133,
+      "unproven_keys": [
+        "field.AbilityReady",
+        "field.CH_OffsetX",
+        "field.CH_OffsetY",
+        "field.OP_ConnectT",
+        "field.OP_InvincibleElem",
+        "field.OP_NoHealthBar",
+        "field.PP_UseAccel",
+        "field.PP_VelocityChangeRate",
+        "field.PP_VelocityChangeRateInv",
+        "field.VH_DestroyEntity"
+      ]
+    },
+    "diagnostics": {
+      "passed": true,
+      "diag_timing_off": true,
+      "forbidden_tokens_absent": true
+    },
+    "malwarebytes": {
+      "passed": true,
+      "before": 7,
+      "after": 7
+    },
+    "pipeline": {
+      "commit": "bb5b5b2da2ac944af4e539d351e2d668d6f5d91d",
+      "clean": true
+    }
+  },
+  "cached_at": "2026-09-24T17:13:51.227302+00:00"
+}

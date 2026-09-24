@@ -1,0 +1,30 @@
+DRY RUN -- would build b72f2a2 as 1.0.44. Nothing was changed.
+  7 file(s) to mirror into the source root:
+    internal/src/features/movement/udodge/UDodge.cpp
+    internal/src/features/movement/udodge/UDodgeCore.cpp
+    internal/src/features/movement/udodge/UDodgeCore.h
+    internal/src/features/movement/udodge/UDodgeEnemyHazards.h
+    internal/src/features/movement/udodge/UDodgeNavigation.h
+    internal/src/features/movement/udodge/UDodgeSensors.cpp
+    internal/src/features/movement/udodge/UDodgeSolver.cpp
+  7 test-only path(s) excluded:
+    internal/tests/scenario/benchmark_navigation.py
+    internal/tests/scenario/run_scenarios.py
+    internal/tests/scenario/test_bullet_scorecard.py
+    internal/tests/scenario/udodge_scenario_harness.cpp
+    internal/tests/udodge_navigation_tests.cpp
+    internal/tests/udodge_pathing_rules_tests.cpp
+    internal/tests/udodge_temporal_tests.cpp
+  typecheck: npx tsc --noEmit -p tsconfig.json
+  protected paths (7), not touched by this delta:
+    client/build-tools/sync-local.bat
+    client/scripts/build-prod.mjs
+    client/src/dashboard/public/app.js
+    client/src/dashboard/public/index.html
+    client/src/dashboard/public/js/translations.js
+    client/src/dashboard/public/style.css
+    internal/.gitignore
+  would launch build-update.ps1 -Output C:\realm-engine-builds\testlab-1.0.44-20260924-170406\run
+    args: -SourceRoot C:\realm-engine -GameDirectory C:\realm-engine-pinned\game-86ad651b -BaselineCollection C:\realm-engine-pinned\static-all-4a8beb50\collection.json -CurrentCollection C:\realm-engine-pinned\static-all-86ad651b\collection.json -Version 1.0.44 -Output C:\realm-engine-builds\testlab-1.0.44-20260924-170406\run -PrivateBuild
+  exact command line that would be launched (review before dropping --dry-run):
+    powershell.exe -NoProfile -Command $p = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','\\wsl.localhost\Debian\home\jesse\realm-engine\.worktrees\private-only-strip\infra\build-vm\portable-baseline\build-update.ps1','-SourceRoot','C:\realm-engine','-GameDirectory','C:\realm-engine-pinned\game-86ad651b','-BaselineCollection','C:\realm-engine-pinned\static-all-4a8beb50\collection.json','-CurrentCollection','C:\realm-engine-pinned\static-all-86ad651b\collection.json','-Version','1.0.44','-Output','C:\realm-engine-builds\testlab-1.0.44-20260924-170406\run','-PrivateBuild' -RedirectStandardOutput 'C:\realm-engine-builds\testlab-1.0.44-20260924-170406\build-stdout.log' -RedirectStandardError 'C:\realm-engine-builds\testlab-1.0.44-20260924-170406\build-stderr.log' -WindowStyle Hidden -PassThru; Write-Output ('PID=' + $p.Id)

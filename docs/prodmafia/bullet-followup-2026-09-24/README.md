@@ -39,7 +39,7 @@ The bullet scorecard now scores actual zero-damage arrivals independently of the
 
 ## Alternatives retained as evidence
 
-`exploratory/` retains intermediate raw outcomes, not separately reproducible production releases. Broad continuity alone produced 20 primary hits; immediate frame/tick guards produced 31/40; enabling timed advice for travel lost arrivals (48/72). The 400 ms shooter budget alone produced four hits; adding temporal refinement reduced it to two; zero-time escape continuity reduced it to zero. The swept follower fix removed the primary timing failure. Hold-wakeup probing and removing stand bias did not fix it and were discarded.
+`exploratory/` retains intermediate raw outcomes, not separately reproducible production releases. The first immediate-guard run had an untracked header omitted from its recorded diff hash; treat it as exploratory only. Final retained candidate provenance includes every production file. Broad continuity alone produced 20 primary hits; immediate frame/tick guards produced 31/40; enabling timed advice for travel lost arrivals (48/72). The 400 ms shooter budget alone produced four hits; adding temporal refinement reduced it to two; zero-time escape continuity reduced it to zero. The swept follower fix removed the primary timing failure. Hold-wakeup probing and removing stand bias did not fix it and were discarded.
 
 The final ablation removing shooter envelopes but retaining local timing/continuity/shortcut changes produced 19 primary hits and only 48/64 holdout arrivals (753 hits), with regression gates failing. Retain the better combined candidate for private evaluation, while explicitly carrying the seven detour failures forward. Further work should focus on navigating overlapping shooter envelopes without oscillating or over-detouring; it must not erase the new holdout failures from the scorecard.
 
@@ -65,4 +65,14 @@ Serial pinned-CPU frame-cost comparison exits 0: 140 measured runs plus warmups,
 python3 internal/tests/scenario/benchmark_frame_cost.py --baseline /tmp/bullet-navigation-1044/baseline-harness --candidate /tmp/bullet-navigation-1044/candidate-harness --repeats 5 --allow-movement-change --output /tmp/bullet-1044-frame-cost
 ```
 
-Private build receipt follows after verification. This candidate is not certified for live FPS or death prevention.
+## Private delivery
+
+Built and installed only in the isolated rig from `b72f2a2216eec98a13b05b6f6f9e4c128b02e2ed`:
+
+`C:\realm-engine-testlab\rig\Realm Engine 1.0.44 Private (RotMG 86ad651b).exe`
+
+SHA256: `d9b2444d856be2409db4cb2e02247bc85a71597cc0a75fc80cf51091d368ca12`.
+
+Independent installed-file hash matches; exactly one rig EXE. All seven changed source files matched the commit in both Windows source and build snapshot before transient cleanup (`source-verification.json`). Private/non-publishable, publish=false, diagnostics off, bindings143/41/17 with133 proven, antivirus7→7. Live game hashes still match the pin. The build wrapper exited0 and cleaned its transient run. The owner's portable was not replaced and no process was closed. No live test/account attempt, push, or deployment occurred.
+
+The seven holdout time failures remain unresolved: this is a private experimental update with measured damage improvements, not full benchmark acceptance or live FPS/death-prevention certification.

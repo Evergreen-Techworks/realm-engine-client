@@ -1,0 +1,163 @@
+{
+    "schema":  2,
+    "private_features":  {
+                             "mode":  "included",
+                             "manifest_paths":  16,
+                             "marker":  "TESTLAB_PRIVATE_ONLY",
+                             "client_build_env":  "private"
+                         },
+    "baseline_collection_sha256":  "0b7c97a5159bcbca2a465980eaa39cdebed0787af3ba4694f739d3a0e4e92e49",
+    "header_sha256":  "6651f974fda9dd6a00f8c85de4903a978ded6690441cf0ab8f21a3a95acf39c8",
+    "identity":  {
+                     "gameassembly_sha256":  "86ad651b675dd677718b3bbd111f6a75fb80d7d167f233c2b170085ab977d788",
+                     "metadata_sha256":  "82d6cf0adc3b0da40795d3ea9b5fe4501cf66d061f2db6b39b5780382afa04e2"
+                 },
+    "run_id":  "local-20260924T170428Z-b339ed8ab400",
+    "provenance":  {
+                       "baseline":  "static_binary",
+                       "current":  "static_binary"
+                   },
+    "dependencies_sha256":  "cfd39f0da7c7b367ecb959fdcb9be97fb7f3e79b30cfd6a43b4d78264d5d81df",
+    "pipeline_at_end":  {
+                            "clean":  true,
+                            "commit":  "bb5b5b2da2ac944af4e539d351e2d668d6f5d91d",
+                            "dirty":  [
+
+                                      ],
+                            "dirty_count":  0,
+                            "path":  "\\\\wsl.localhost\\Debian\\home\\jesse\\realm-engine\\.worktrees\\private-only-strip\\infra\\build-vm"
+                        },
+    "version":  "1.0.44",
+    "bindings":  {
+                     "omitted":  17,
+                     "methods":  41,
+                     "source_sha256":  "fd0cdd5501148d608d16dc92ad4817b333eea55dfc0595081d481f3508431624",
+                     "fields":  143
+                 },
+    "automatic_validation":  false,
+    "game_directory":  "C:\\realm-engine-pinned\\game-86ad651b",
+    "baseline_collection":  {
+                                "classes":  13685,
+                                "identity":  {
+                                                 "gameassembly_sha256":  "4a8beb505c26374c43603b2087a6a51e4b4b8f2da778b748fe9720a7f36d8c3e",
+                                                 "metadata_sha256":  "07521b048e3636cbfc6e4d2f6bd0ba032f5efe7a0b6db30ed95cc1091a657b4a"
+                                             },
+                                "image_scope":  {
+                                                    "images":  90,
+                                                    "images_sha256":  "5121d6d20e1dbb83b9d468f5af9d1dbc5afd7d7c2869e6aed3569f28e08bac21",
+                                                    "mode":  "all",
+                                                    "source":  ""
+                                                },
+                                "metadata_version":  31,
+                                "path":  "C:\\realm-engine-pinned\\static-all-4a8beb50\\collection.json",
+                                "pipeline_run_id":  "pinned-baseline-all-4a8beb50",
+                                "provenance_kind":  "static_binary",
+                                "schema":  2,
+                                "sha256":  "0b7c97a5159bcbca2a465980eaa39cdebed0787af3ba4694f739d3a0e4e92e49",
+                                "tool_sha256":  "c6043cab11f62fd3560a892272aa1bf547b86176684ca0506ef7df958518a463"
+                            },
+    "current_collection":  {
+                               "classes":  13685,
+                               "identity":  {
+                                                "gameassembly_sha256":  "86ad651b675dd677718b3bbd111f6a75fb80d7d167f233c2b170085ab977d788",
+                                                "metadata_sha256":  "82d6cf0adc3b0da40795d3ea9b5fe4501cf66d061f2db6b39b5780382afa04e2"
+                                            },
+                               "image_scope":  {
+                                                   "images":  90,
+                                                   "images_sha256":  "5121d6d20e1dbb83b9d468f5af9d1dbc5afd7d7c2869e6aed3569f28e08bac21",
+                                                   "mode":  "all",
+                                                   "source":  ""
+                                               },
+                               "metadata_version":  31,
+                               "path":  "C:\\realm-engine-pinned\\static-all-86ad651b\\collection.json",
+                               "pipeline_run_id":  "pinned-current-all-86ad651b",
+                               "provenance_kind":  "static_binary",
+                               "schema":  2,
+                               "sha256":  "170bc78170dc0782f42c8e07c0906b23213933aff1568e925f12a1c8c0248169",
+                               "tool_sha256":  "c6043cab11f62fd3560a892272aa1bf547b86176684ca0506ef7df958518a463"
+                           },
+    "plugin_defaults":  {
+                            "path":  "C:\\realm-engine-pinned\\portable-defaults\\default.json",
+                            "sha256":  "6b1138c9396b5999b0fa88e82b28f275cfdcfd919e3d1cc17558abea5d6fb497",
+                            "sums_file":  "C:\\realm-engine-pinned\\portable-defaults\\SHA256SUMS",
+                            "plugins":  27,
+                            "enabled":  10
+                        },
+    "collection_sha256":  "170bc78170dc0782f42c8e07c0906b23213933aff1568e925f12a1c8c0248169",
+    "allow_provenance_change":  false,
+    "image_scope":  {
+                        "baseline":  {
+                                         "images":  90,
+                                         "images_sha256":  "5121d6d20e1dbb83b9d468f5af9d1dbc5afd7d7c2869e6aed3569f28e08bac21",
+                                         "mode":  "all",
+                                         "source":  ""
+                                     },
+                        "current":  {
+                                        "images":  90,
+                                        "images_sha256":  "5121d6d20e1dbb83b9d468f5af9d1dbc5afd7d7c2869e6aed3569f28e08bac21",
+                                        "mode":  "all",
+                                        "source":  ""
+                                    }
+                    },
+    "artifacts":  [
+                      {
+                          "sha256":  "d9b2444d856be2409db4cb2e02247bc85a71597cc0a75fc80cf51091d368ca12",
+                          "path":  "C:\\realm-engine-builds\\testlab-1.0.44-20260924-170418\\run\\build\\source\\client\\release\\Realm Engine Test 1.0.44 portable.exe"
+                      }
+                  ],
+    "approvals":  null,
+    "build_map":  {
+                      "path":  "C:\\realm-engine-builds\\testlab-1.0.44-20260924-170418\\run\\build\\source\\build-map.json",
+                      "sha256":  "d1e3dbeb913029d42abb23da22deeff425def52325a1bf1c00dc6993e85118d8"
+                  },
+    "client_source":  {
+                          "matches":  false,
+                          "commit":  null,
+                          "reason":  "the build source is not a git repository and no -ClientRepo/-ClientCommit named the commit it was mirrored from"
+                      },
+    "status":  "private_build_not_publishable",
+    "field_offset_code_evidence":  {
+                                       "proven":  133,
+                                       "unproven":  10,
+                                       "unproven_keys":  [
+                                                             "field.AbilityReady",
+                                                             "field.CH_OffsetX",
+                                                             "field.CH_OffsetY",
+                                                             "field.OP_ConnectT",
+                                                             "field.OP_InvincibleElem",
+                                                             "field.OP_NoHealthBar",
+                                                             "field.PP_UseAccel",
+                                                             "field.PP_VelocityChangeRate",
+                                                             "field.PP_VelocityChangeRateInv",
+                                                             "field.VH_DestroyEntity"
+                                                         ]
+                                   },
+    "launcher":  {
+                     "template":  "C:\\realm-engine-builds\\testlab-1.0.44-20260924-170418\\run\\build\\source\\client\\node_modules\\app-builder-lib\\templates\\nsis\\portable.nsi",
+                     "app_builder_lib":  "26.8.1",
+                     "upstream_sha256":  "80fa75cf8cb68f4999eb92afc9f37f8e5b605cb1c3a077821bbc350a9b907a48",
+                     "launcher_sha256":  "d1bd934c214239b4daebebf38a81c06e084ed67abda11e8de28d7a6d2df1e2ef",
+                     "replaced":  true
+                 },
+    "source_sha256":  "fd0cdd5501148d608d16dc92ad4817b333eea55dfc0595081d481f3508431624",
+    "baseline_identity":  {
+                              "gameassembly_sha256":  "4a8beb505c26374c43603b2087a6a51e4b4b8f2da778b748fe9720a7f36d8c3e",
+                              "metadata_sha256":  "07521b048e3636cbfc6e4d2f6bd0ba032f5efe7a0b6db30ed95cc1091a657b4a"
+                          },
+    "started_utc":  "2026-09-24T17:04:28.5360838Z",
+    "version_source":  "explicit",
+    "registry_sha256":  "42fbf272f6b1352bba9c227b17b4cde02fc82cb0c5efb060a50eb2a9fab6c85b",
+    "pipeline":  {
+                     "clean":  true,
+                     "commit":  "bb5b5b2da2ac944af4e539d351e2d668d6f5d91d",
+                     "dirty":  [
+
+                               ],
+                     "dirty_count":  0,
+                     "path":  "\\\\wsl.localhost\\Debian\\home\\jesse\\realm-engine\\.worktrees\\private-only-strip\\infra\\build-vm"
+                 },
+    "pins":  {
+                 "resources_assets_sha256":  "78c1a9ffde9776c2bd5db7f19a1857c44ed16e5dfd986848c24a921dc4933328"
+             },
+    "publish":  false
+}

@@ -1,8 +1,7 @@
 udodge_temporal_tests mutation exit 0 Temporal regression tests: 44 checks, 0 failures
- 
+
 udodge_navigation_tests mutation exit 0 Navigation regressions passed (real A*, corner compression, swept steering, completion).
 Locked fight route passed (time-checked round the shot arm).
 Ring ladder tests passed (ring goal outranks out-of-range ground, start rule, unlocked unchanged).
- 
+
 udodge_pathing_rules_tests mutation exit 0 Pathing rules tests: 56 checks, 0 failures
- 

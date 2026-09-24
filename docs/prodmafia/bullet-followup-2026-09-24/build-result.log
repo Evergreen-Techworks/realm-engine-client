@@ -1,0 +1,10 @@
+Built b72f2a2: /mnt/c/realm-engine-testlab/builds/b72f2a2216eec98a13b05b6f6f9e4c128b02e2ed
+  status: private_build_not_publishable (expected private_build_not_publishable) -- PASS
+  publish: False -- PASS
+  private_features.mode: included (expected included) -- PASS
+  exe sha256: matches -- PASS
+  run log: BuildBindings surface: ported=True, bake-current absent=True -- PASS
+  bindings receipt: fields=143 methods=41 omitted=17 proven=133 unproven=10
+  diagnostics: diag_timing_off=True forbidden_tokens_absent=True -- PASS
+  malwarebytes: 7 before -> 7 after -- PASS
+  pipeline: commit=bb5b5b2da2ac clean=True

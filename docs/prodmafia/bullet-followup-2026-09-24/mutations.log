@@ -6,4 +6,3 @@ FAIL: refined fallback query does not inspect past its requested window
 udodge_navigation_tests mutation exit 1  FAIL: shortcut cannot cross a keepout with clear endpoints
 
 udodge_pathing_rules_tests mutation exit 1  FAIL: long reach does not remove the near-source reaction distance
-

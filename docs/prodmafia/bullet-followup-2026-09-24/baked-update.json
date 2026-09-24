@@ -1,0 +1,5927 @@
+{
+  "allow_provenance_change": false,
+  "approvals_sha256": null,
+  "automatic_validation": false,
+  "baseline_identity": {
+    "gameassembly_sha256": "4a8beb505c26374c43603b2087a6a51e4b4b8f2da778b748fe9720a7f36d8c3e",
+    "metadata_sha256": "07521b048e3636cbfc6e4d2f6bd0ba032f5efe7a0b6db30ed95cc1091a657b4a"
+  },
+  "build_map_sha256": "d1e3dbeb913029d42abb23da22deeff425def52325a1bf1c00dc6993e85118d8",
+  "classes": {},
+  "dependencies_sha256": "cfd39f0da7c7b367ecb959fdcb9be97fb7f3e79b30cfd6a43b4d78264d5d81df",
+  "dynamic_method_lookups": [
+    {
+      "arguments": [
+        "sceneClass",
+        "\"get_name\"",
+        "0"
+      ],
+      "consumer": "core/runtime/Il2CppResolver.cpp:466"
+    },
+    {
+      "arguments": [
+        "klass",
+        "getterName.c_str()",
+        "0"
+      ],
+      "consumer": "core/runtime/Il2CppResolver.h:70"
+    },
+    {
+      "arguments": [
+        "klass",
+        "setterName.c_str()",
+        "1"
+      ],
+      "consumer": "core/runtime/Il2CppResolver.h:95"
+    },
+    {
+      "arguments": [
+        "klass",
+        "c->row->source",
+        "c->row->args"
+      ],
+      "consumer": "core/runtime/RuntimeOffsets.cpp:791"
+    },
+    {
+      "arguments": [
+        "entry.second",
+        "row.source",
+        "row.args"
+      ],
+      "consumer": "core/runtime/RuntimeOffsets.cpp:956"
+    },
+    {
+      "arguments": [
+        "klass->name",
+        "kSpawnMethodName",
+        "kSpawnParamCount"
+      ],
+      "consumer": "features/movement/dodge/ProjectileTracking.cpp:396"
+    },
+    {
+      "arguments": [
+        "klass->name",
+        "name",
+        "argc"
+      ],
+      "consumer": "features/movement/speedhack/SpeedHack.cpp:197"
+    },
+    {
+      "arguments": [
+        "klass",
+        "methodName",
+        "argc"
+      ],
+      "consumer": "platform/hooks/Il2CppHook.cpp:23"
+    },
+    {
+      "arguments": [
+        "klass",
+        "methodName",
+        "argCount"
+      ],
+      "consumer": "platform/hooks/Il2CppHook.cpp:121"
+    }
+  ],
+  "field_offset_code_evidence": {
+    "proven": 133,
+    "unproven": 10,
+    "unproven_keys": [
+      "field.AbilityReady",
+      "field.CH_OffsetX",
+      "field.CH_OffsetY",
+      "field.OP_ConnectT",
+      "field.OP_InvincibleElem",
+      "field.OP_NoHealthBar",
+      "field.PP_UseAccel",
+      "field.PP_VelocityChangeRate",
+      "field.PP_VelocityChangeRateInv",
+      "field.VH_DestroyEntity"
+    ]
+  },
+  "fields": [
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::KJMONHENJEN",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PosX",
+      "name": "CLFEOFKBNEJ",
+      "offset": 60,
+      "offset_code_evidence": {
+        "offset": 60,
+        "searched": [
+          "EEGJPHBMENN",
+          "FHOHCELBPDO",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "HBEAKBIHANL",
+          "KJMONHENJEN",
+          "LKFFPGONEOB",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.CIJMIKDLLIG@0x3E2FA0+0x5A",
+          "LKHPPBEGNOM.CIJMIKDLLIG@0x3E2FA0+0xAB",
+          "LKHPPBEGNOM.DFNIBOPMMDL@0x3E3510+0x20D"
+        ],
+        "status": "proven",
+        "uses": 211
+      },
+      "owner": "KJMONHENJEN",
+      "source": "CLFEOFKBNEJ",
+      "source_owner": "KJMONHENJEN",
+      "storage": "PosX",
+      "target": "CLFEOFKBNEJ",
+      "target_owner": "KJMONHENJEN",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::KJMONHENJEN",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PosY",
+      "name": "PKEECFNFEIO",
+      "offset": 64,
+      "offset_code_evidence": {
+        "offset": 64,
+        "searched": [
+          "EEGJPHBMENN",
+          "FHOHCELBPDO",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "HBEAKBIHANL",
+          "KJMONHENJEN",
+          "LKFFPGONEOB",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.CIJMIKDLLIG@0x3E2FA0+0x55",
+          "LKHPPBEGNOM.CIJMIKDLLIG@0x3E2FA0+0xBA",
+          "LKHPPBEGNOM.DFNIBOPMMDL@0x3E3510+0x208"
+        ],
+        "status": "proven",
+        "uses": 214
+      },
+      "owner": "KJMONHENJEN",
+      "source": "PKEECFNFEIO",
+      "source_owner": "KJMONHENJEN",
+      "storage": "PosY",
+      "target": "PKEECFNFEIO",
+      "target_owner": "KJMONHENJEN",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::KJMONHENJEN",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.ObjType",
+      "name": "HFDNHJFNEKA",
+      "offset": 48,
+      "offset_code_evidence": {
+        "offset": 48,
+        "searched": [
+          "EEGJPHBMENN",
+          "FHOHCELBPDO",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "HBEAKBIHANL",
+          "KJMONHENJEN",
+          "LKFFPGONEOB",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.DKPMEAGNDNP@0x3E3D60+0xE1",
+          "LKHPPBEGNOM.IGKBNIBHJAC@0x3E76C0+0x1B5",
+          "LKHPPBEGNOM.NOOBNCEEOLL@0x3EB7B0+0xBB"
+        ],
+        "status": "proven",
+        "uses": 9
+      },
+      "owner": "KJMONHENJEN",
+      "source": "HFDNHJFNEKA",
+      "source_owner": "KJMONHENJEN",
+      "storage": "ObjType",
+      "target": "HFDNHJFNEKA",
+      "target_owner": "KJMONHENJEN",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::KJMONHENJEN",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.ObjProps",
+      "name": "OBAKMCCDBJA",
+      "offset": 24,
+      "offset_code_evidence": {
+        "offset": 24,
+        "searched": [
+          "EEGJPHBMENN",
+          "FHOHCELBPDO",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "HBEAKBIHANL",
+          "KJMONHENJEN",
+          "LKFFPGONEOB",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.BFJJFFFBGEJ@0x3E24E0+0x1C",
+          "LKHPPBEGNOM.BJCALADGJAG@0x3E2780+0x38",
+          "LKHPPBEGNOM.BJCALADGJAG@0x3E2780+0x74"
+        ],
+        "status": "proven",
+        "uses": 199
+      },
+      "owner": "KJMONHENJEN",
+      "source": "OBAKMCCDBJA",
+      "source_owner": "KJMONHENJEN",
+      "storage": "ObjProps",
+      "target": "OBAKMCCDBJA",
+      "target_owner": "KJMONHENJEN",
+      "type": "DecaGames.RotMG.Objects.Map.Data.ObjectProperties"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::KJMONHENJEN",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.KJ_ViewHandler",
+      "name": "MPGOFIHIDML",
+      "offset": 16,
+      "offset_code_evidence": {
+        "offset": 16,
+        "searched": [
+          "EEGJPHBMENN",
+          "FHOHCELBPDO",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "HBEAKBIHANL",
+          "KJMONHENJEN",
+          "LKFFPGONEOB",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "KJMONHENJEN.DOLEAIMBMBJ@0x305ED0+0x0",
+          "KJMONHENJEN.NDFDKDIICOL@0x305ED0+0x0",
+          "LKHPPBEGNOM.ABJKOLGHOBD@0x3E1CC0+0x3F"
+        ],
+        "status": "proven",
+        "uses": 154
+      },
+      "owner": "KJMONHENJEN",
+      "source": "MPGOFIHIDML",
+      "source_owner": "KJMONHENJEN",
+      "storage": "KJ_ViewHandler",
+      "target": "MPGOFIHIDML",
+      "target_owner": "KJMONHENJEN",
+      "type": "DecaGames.RotMG.Objects.Map.Data.ViewHandler"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::KJMONHENJEN",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.KJ_SkinWidthObj",
+      "name": "LGDCEJKHGFJ",
+      "offset": 40,
+      "offset_code_evidence": {
+        "offset": 40,
+        "searched": [
+          "EEGJPHBMENN",
+          "FHOHCELBPDO",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "HBEAKBIHANL",
+          "KJMONHENJEN",
+          "LKFFPGONEOB",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.DFNIBOPMMDL@0x3E3510+0x2A3",
+          "LKHPPBEGNOM.LJJIPBHBKBB@0x3E9130+0x92",
+          "LKHPPBEGNOM.LPGNNFPFAGD@0x3E9680+0x8D4"
+        ],
+        "status": "proven",
+        "uses": 23
+      },
+      "owner": "KJMONHENJEN",
+      "source": "LGDCEJKHGFJ",
+      "source_owner": "KJMONHENJEN",
+      "storage": "KJ_SkinWidthObj",
+      "target": "LGDCEJKHGFJ",
+      "target_owner": "KJMONHENJEN",
+      "type": "IPKAMAAPAGA"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::KJMONHENJEN",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.ObjId",
+      "name": "HHPOJBFICAH",
+      "offset": 52,
+      "offset_code_evidence": {
+        "offset": 52,
+        "searched": [
+          "EEGJPHBMENN",
+          "FHOHCELBPDO",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "HBEAKBIHANL",
+          "KJMONHENJEN",
+          "LKFFPGONEOB",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.IGKBNIBHJAC@0x3E76C0+0x6F",
+          "KJMONHENJEN.BAKHENHMICI@0x48AF00+0x1E",
+          "KJMONHENJEN.EFAILBAHGJC@0x48C6E0+0x1C"
+        ],
+        "status": "proven",
+        "uses": 24
+      },
+      "owner": "KJMONHENJEN",
+      "source": "HHPOJBFICAH",
+      "source_owner": "KJMONHENJEN",
+      "storage": "ObjId",
+      "target": "HHPOJBFICAH",
+      "target_owner": "KJMONHENJEN",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::KJMONHENJEN",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.KJ_BaseRadius",
+      "name": "IOKKOCEAJNA",
+      "offset": 68,
+      "offset_code_evidence": {
+        "offset": 68,
+        "searched": [
+          "EEGJPHBMENN",
+          "FHOHCELBPDO",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "HBEAKBIHANL",
+          "KJMONHENJEN",
+          "LKFFPGONEOB",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.DGLCONCOIBO@0x3E3960+0x113",
+          "LKHPPBEGNOM.ENHBFPFHJKK@0x3E54A0+0x2C",
+          "LKHPPBEGNOM.ENHBFPFHJKK@0x3E54A0+0x57"
+        ],
+        "status": "proven",
+        "uses": 25
+      },
+      "owner": "KJMONHENJEN",
+      "source": "IOKKOCEAJNA",
+      "source_owner": "KJMONHENJEN",
+      "storage": "KJ_BaseRadius",
+      "target": "IOKKOCEAJNA",
+      "target_owner": "KJMONHENJEN",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::KJMONHENJEN",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.KJ_Scale",
+      "name": "KEDBLBJIKCB",
+      "offset": 116,
+      "offset_code_evidence": {
+        "offset": 116,
+        "searched": [
+          "EEGJPHBMENN",
+          "FHOHCELBPDO",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "HBEAKBIHANL",
+          "KJMONHENJEN",
+          "LKFFPGONEOB",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.GGNOJMFNMCO@0x3E6B20+0xF",
+          "LKHPPBEGNOM.HIEJMACLAPA@0x3E7190+0xF",
+          "LKHPPBEGNOM.LGDDMINHOKB@0x3E9080+0x3A"
+        ],
+        "status": "proven",
+        "uses": 7
+      },
+      "owner": "KJMONHENJEN",
+      "source": "KEDBLBJIKCB",
+      "source_owner": "KJMONHENJEN",
+      "storage": "KJ_Scale",
+      "target": "KEDBLBJIKCB",
+      "target_owner": "KJMONHENJEN",
+      "type": "Unity.Mathematics.float3"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::KJMONHENJEN",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.KJ_Float3Pos",
+      "name": "DGNPJNFGFPE",
+      "offset": 104,
+      "offset_code_evidence": {
+        "offset": 104,
+        "searched": [
+          "EEGJPHBMENN",
+          "FHOHCELBPDO",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "HBEAKBIHANL",
+          "KJMONHENJEN",
+          "LKFFPGONEOB",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "KJMONHENJEN.AIHGIIAAAON@0x48AC00+0x2B",
+          "KJMONHENJEN.CEAEDDHJONI@0x48B570+0x89",
+          "KJMONHENJEN.DNIHPEKACMA@0x48C010+0x89"
+        ],
+        "status": "proven",
+        "uses": 5
+      },
+      "owner": "KJMONHENJEN",
+      "source": "DGNPJNFGFPE",
+      "source_owner": "KJMONHENJEN",
+      "storage": "KJ_Float3Pos",
+      "target": "DGNPJNFGFPE",
+      "target_owner": "KJMONHENJEN",
+      "type": "Unity.Mathematics.float3"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::KJMONHENJEN",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.KJ_TileRef",
+      "name": "EOKJOGFPLOA",
+      "offset": 88,
+      "offset_code_evidence": {
+        "offset": 88,
+        "searched": [
+          "EEGJPHBMENN",
+          "FHOHCELBPDO",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "HBEAKBIHANL",
+          "KJMONHENJEN",
+          "LKFFPGONEOB",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.CIJMIKDLLIG@0x3E2FA0+0x9F",
+          "LKHPPBEGNOM.CIJMIKDLLIG@0x3E2FA0+0xAE",
+          "LKHPPBEGNOM.DGLCONCOIBO@0x3E3960+0xBB"
+        ],
+        "status": "proven",
+        "uses": 110
+      },
+      "owner": "KJMONHENJEN",
+      "source": "EOKJOGFPLOA",
+      "source_owner": "KJMONHENJEN",
+      "storage": "KJ_TileRef",
+      "target": "EOKJOGFPLOA",
+      "target_owner": "KJMONHENJEN",
+      "type": "BGAIOPJMHLO"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::KJMONHENJEN",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.KJ_DictObjectId",
+      "name": "FDNHINDAEHK",
+      "offset": 192,
+      "offset_code_evidence": {
+        "offset": 192,
+        "searched": [
+          "EEGJPHBMENN",
+          "FHOHCELBPDO",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "HBEAKBIHANL",
+          "KJMONHENJEN",
+          "LKFFPGONEOB",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.CBLKMABJBPO@0x3E2B50+0x95",
+          "LKHPPBEGNOM.CBLKMABJBPO@0x3E2B50+0xAF",
+          "LKHPPBEGNOM.DPAHEBBDMJF@0x3E4240+0x265"
+        ],
+        "status": "proven",
+        "uses": 36
+      },
+      "owner": "KJMONHENJEN",
+      "source": "FDNHINDAEHK",
+      "source_owner": "KJMONHENJEN",
+      "storage": "KJ_DictObjectId",
+      "target": "FDNHINDAEHK",
+      "target_owner": "KJMONHENJEN",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::LKHPPBEGNOM",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.HP",
+      "name": "ABCPKBGJPEP",
+      "offset": 524,
+      "offset_code_evidence": {
+        "offset": 524,
+        "searched": [
+          "EEGJPHBMENN",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.BMBDOANHGGK@0x3E2A00+0x0",
+          "LKHPPBEGNOM.DFGNOEFGKKD@0x3E3410+0x0",
+          "LKHPPBEGNOM.NIDPCHCNDLJ@0x3E3410+0x0"
+        ],
+        "status": "proven",
+        "uses": 16
+      },
+      "owner": "LKHPPBEGNOM",
+      "source": "ABCPKBGJPEP",
+      "source_owner": "LKHPPBEGNOM",
+      "storage": "HP",
+      "target": "ABCPKBGJPEP",
+      "target_owner": "LKHPPBEGNOM",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::LKHPPBEGNOM",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.MaxHP",
+      "name": "OADOHPKBPJB",
+      "offset": 520,
+      "offset_code_evidence": {
+        "offset": 520,
+        "searched": [
+          "EEGJPHBMENN",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.NDMHLNPAOMH@0x3EAF40+0x32",
+          "LKHPPBEGNOM.NHGKFKKNFJD@0x3EB180+0x0",
+          "LKHPPBEGNOM.NOOBNCEEOLL@0x3EB7B0+0x2BD"
+        ],
+        "status": "proven",
+        "uses": 14
+      },
+      "owner": "LKHPPBEGNOM",
+      "source": "OADOHPKBPJB",
+      "source_owner": "LKHPPBEGNOM",
+      "storage": "MaxHP",
+      "target": "OADOHPKBPJB",
+      "target_owner": "LKHPPBEGNOM",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::LKHPPBEGNOM",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Defense",
+      "name": "NCBIICBDGAG",
+      "offset": 440,
+      "offset_code_evidence": {
+        "offset": 440,
+        "searched": [
+          "EEGJPHBMENN",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.FHLICCHIDLD@0x3E5C00+0x0",
+          "LKHPPBEGNOM.PKHMDBEFJAB@0x3E5C00+0x0",
+          "LKHPPBEGNOM.NIGGNKPCDDK@0x3EB320+0x0"
+        ],
+        "status": "proven",
+        "uses": 13
+      },
+      "owner": "LKHPPBEGNOM",
+      "source": "NCBIICBDGAG",
+      "source_owner": "LKHPPBEGNOM",
+      "storage": "Defense",
+      "target": "NCBIICBDGAG",
+      "target_owner": "LKHPPBEGNOM",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::LKHPPBEGNOM",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Player_Stat25",
+      "name": "KJNHLADHEMH",
+      "offset": 444,
+      "offset_code_evidence": {
+        "offset": 444,
+        "searched": [
+          "EEGJPHBMENN",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "FKALGHJIADI.MNLLEDFGLMG@0x3E2480+0x0",
+          "LKHPPBEGNOM.BBMPBIGAHLO@0x3E2480+0x0",
+          "LKHPPBEGNOM.MNLLEDFGLMG@0x3E2480+0x0"
+        ],
+        "status": "proven",
+        "uses": 16
+      },
+      "owner": "LKHPPBEGNOM",
+      "source": "KJNHLADHEMH",
+      "source_owner": "LKHPPBEGNOM",
+      "storage": "Player_Stat25",
+      "target": "KJNHLADHEMH",
+      "target_owner": "LKHPPBEGNOM",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::LKHPPBEGNOM",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PlayerIGN",
+      "name": "DPGEBOCBKEF",
+      "offset": 376,
+      "offset_code_evidence": {
+        "offset": 376,
+        "searched": [
+          "EEGJPHBMENN",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.BFJJFFFBGEJ@0x3E24E0+0x9",
+          "LKHPPBEGNOM.BFJJFFFBGEJ@0x3E24E0+0x34",
+          "LKHPPBEGNOM.BFJJFFFBGEJ@0x3E24E0+0x5E"
+        ],
+        "status": "proven",
+        "uses": 27
+      },
+      "owner": "LKHPPBEGNOM",
+      "source": "DPGEBOCBKEF",
+      "source_owner": "LKHPPBEGNOM",
+      "storage": "PlayerIGN",
+      "target": "DPGEBOCBKEF",
+      "target_owner": "LKHPPBEGNOM",
+      "type": "System.String"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::LKHPPBEGNOM",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.MoConditions",
+      "name": "COHCKAPOLCA",
+      "offset": 592,
+      "offset_code_evidence": {
+        "offset": 592,
+        "searched": [
+          "EEGJPHBMENN",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.AGGMJPGGIOD@0x3E1F40+0x25",
+          "LKHPPBEGNOM.BGKCCEMJLML@0x3E2640+0x36",
+          "LKHPPBEGNOM.BIJCCIJIAJF@0x3E2700+0x25"
+        ],
+        "status": "proven",
+        "uses": 73
+      },
+      "owner": "LKHPPBEGNOM",
+      "source": "COHCKAPOLCA",
+      "source_owner": "LKHPPBEGNOM",
+      "storage": "MoConditions",
+      "target": "COHCKAPOLCA",
+      "target_owner": "LKHPPBEGNOM",
+      "type": "System.Int32[]"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::LKHPPBEGNOM",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.MoVelocity",
+      "name": "ECGPFJKCCAN",
+      "offset": 632,
+      "offset_code_evidence": {
+        "offset": 632,
+        "searched": [
+          "EEGJPHBMENN",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.DKJJECHHGLJ@0x3E3BD0+0x8",
+          "LKHPPBEGNOM.GJFKGLJEGKO@0x3E6D30+0xA",
+          "LKHPPBEGNOM.GJFKGLJEGKO@0x3E6D30+0x97"
+        ],
+        "status": "proven",
+        "uses": 43
+      },
+      "owner": "LKHPPBEGNOM",
+      "source": "ECGPFJKCCAN",
+      "source_owner": "LKHPPBEGNOM",
+      "storage": "MoVelocity",
+      "target": "ECGPFJKCCAN",
+      "target_owner": "LKHPPBEGNOM",
+      "type": "UnityEngine.Vector2"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::LKHPPBEGNOM",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Player_MoveDirX",
+      "name": "ECGPFJKCCAN",
+      "offset": 632,
+      "offset_code_evidence": {
+        "offset": 632,
+        "searched": [
+          "EEGJPHBMENN",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.DKJJECHHGLJ@0x3E3BD0+0x8",
+          "LKHPPBEGNOM.GJFKGLJEGKO@0x3E6D30+0xA",
+          "LKHPPBEGNOM.GJFKGLJEGKO@0x3E6D30+0x97"
+        ],
+        "status": "proven",
+        "uses": 43
+      },
+      "owner": "LKHPPBEGNOM",
+      "source": "ECGPFJKCCAN",
+      "source_owner": "LKHPPBEGNOM",
+      "storage": "Player_MoveDirX",
+      "target": "ECGPFJKCCAN",
+      "target_owner": "LKHPPBEGNOM",
+      "type": "UnityEngine.Vector2"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::LKHPPBEGNOM",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Tex1",
+      "name": "BAEKCAIIKNO",
+      "offset": 604,
+      "offset_code_evidence": {
+        "offset": 604,
+        "searched": [
+          "EEGJPHBMENN",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.DFNIBOPMMDL@0x3E3510+0x2CA",
+          "LKHPPBEGNOM.KFLNKFBAKJD@0x3E83C0+0x0",
+          "LKHPPBEGNOM.LJJIPBHBKBB@0x3E9130+0x8B"
+        ],
+        "status": "proven",
+        "uses": 15
+      },
+      "owner": "LKHPPBEGNOM",
+      "source": "BAEKCAIIKNO",
+      "source_owner": "LKHPPBEGNOM",
+      "storage": "Tex1",
+      "target": "BAEKCAIIKNO",
+      "target_owner": "LKHPPBEGNOM",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::LKHPPBEGNOM",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Tex2",
+      "name": "PLABGIEFNBH",
+      "offset": 608,
+      "offset_code_evidence": {
+        "offset": 608,
+        "searched": [
+          "EEGJPHBMENN",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.BHCOFEAHCMJ@0x3E26E0+0x0",
+          "LKHPPBEGNOM.DFNIBOPMMDL@0x3E3510+0x2C0",
+          "LKHPPBEGNOM.DGHDBLKKEOB@0x3E38D0+0x50"
+        ],
+        "status": "proven",
+        "uses": 14
+      },
+      "owner": "LKHPPBEGNOM",
+      "source": "PLABGIEFNBH",
+      "source_owner": "LKHPPBEGNOM",
+      "storage": "Tex2",
+      "target": "PLABGIEFNBH",
+      "target_owner": "LKHPPBEGNOM",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::LKHPPBEGNOM",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.MoObjectProps",
+      "name": "KKENJFFDMPO",
+      "offset": 456,
+      "offset_code_evidence": {
+        "offset": 456,
+        "searched": [
+          "EEGJPHBMENN",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.LPGNNFPFAGD@0x3E9680+0x702",
+          "LKHPPBEGNOM.LPGNNFPFAGD@0x3E9680+0x740",
+          "LKHPPBEGNOM.LPGNNFPFAGD@0x3E9680+0x779"
+        ],
+        "status": "proven",
+        "uses": 33
+      },
+      "owner": "LKHPPBEGNOM",
+      "source": "KKENJFFDMPO",
+      "source_owner": "LKHPPBEGNOM",
+      "storage": "MoObjectProps",
+      "target": "KKENJFFDMPO",
+      "target_owner": "LKHPPBEGNOM",
+      "type": "DecaGames.RotMG.Objects.Map.Data.ObjectProperties"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::LKHPPBEGNOM",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PlayerCollisionProps",
+      "name": "GGBCADDBAPN",
+      "offset": 760,
+      "offset_code_evidence": {
+        "offset": 760,
+        "searched": [
+          "EEGJPHBMENN",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.DFNIBOPMMDL@0x3E3510+0x25C",
+          "LKHPPBEGNOM.EHJCCKCAPNO@0x3E4A70+0x9",
+          "LKHPPBEGNOM.EHJCCKCAPNO@0x3E4A70+0x1C"
+        ],
+        "status": "proven",
+        "uses": 17
+      },
+      "owner": "LKHPPBEGNOM",
+      "source": "GGBCADDBAPN",
+      "source_owner": "LKHPPBEGNOM",
+      "storage": "PlayerCollisionProps",
+      "target": "GGBCADDBAPN",
+      "target_owner": "LKHPPBEGNOM",
+      "type": "DecaGames.RotMG.Objects.Map.Data.ObjectProperties"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.CurMP",
+      "name": "FMHMGKEPIDN",
+      "offset": 1380,
+      "offset_code_evidence": {
+        "offset": 1380,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.CGBOEDEIPBO@0x1231D40+0x0",
+          "FKALGHJIADI.CJJOFOEBHFI@0x12324B0+0x5E",
+          "FKALGHJIADI.ENBFEBPFAEN@0x12355A0+0x4"
+        ],
+        "status": "proven",
+        "uses": 13
+      },
+      "owner": "FKALGHJIADI",
+      "source": "FMHMGKEPIDN",
+      "source_owner": "FKALGHJIADI",
+      "storage": "CurMP",
+      "target": "FMHMGKEPIDN",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.MaxMP",
+      "name": "NEDCKPIIIPN",
+      "offset": 1376,
+      "offset_code_evidence": {
+        "offset": 1376,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.AODCMKKBIAL@0x122E600+0x39",
+          "FKALGHJIADI.BBLMICPGNKF@0x122E8C0+0x0",
+          "FKALGHJIADI.IODAPDCIDGJ@0x122E8C0+0x0"
+        ],
+        "status": "proven",
+        "uses": 15
+      },
+      "owner": "FKALGHJIADI",
+      "source": "NEDCKPIIIPN",
+      "source_owner": "FKALGHJIADI",
+      "storage": "MaxMP",
+      "target": "NEDCKPIIIPN",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.GroundDmgImmune",
+      "name": "DAGEMHFLJLK",
+      "offset": 1120,
+      "offset_code_evidence": {
+        "offset": 1120,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.HNMOMKMLJII@0x1239960+0x0",
+          "FKALGHJIADI.PMEHAFOPLBB@0x1239960+0x0",
+          "FKALGHJIADI.LGJPEFJKHHP@0x123E6B0+0x4A2"
+        ],
+        "status": "proven",
+        "uses": 6
+      },
+      "owner": "FKALGHJIADI",
+      "source": "DAGEMHFLJLK",
+      "source_owner": "FKALGHJIADI",
+      "storage": "GroundDmgImmune",
+      "target": "DAGEMHFLJLK",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.LocalInvincible",
+      "name": "BINDBHJLPMG",
+      "offset": 1121,
+      "offset_code_evidence": {
+        "offset": 1121,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.CCFCADFHLON@0x12304C0+0x1A",
+          "FKALGHJIADI.CDJLLHJOCNM@0x12307B0+0x28F",
+          "FKALGHJIADI.FHGFBHACCFM@0x1236550+0x10"
+        ],
+        "status": "proven",
+        "uses": 7
+      },
+      "owner": "FKALGHJIADI",
+      "source": "BINDBHJLPMG",
+      "source_owner": "FKALGHJIADI",
+      "storage": "LocalInvincible",
+      "target": "BINDBHJLPMG",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.AbilityReady",
+      "name": "PPBLNMIMIFP",
+      "offset": 1325,
+      "offset_code_evidence": {
+        "offset": 1325,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [],
+        "status": "unproven",
+        "uses": 0
+      },
+      "owner": "FKALGHJIADI",
+      "source": "PPBLNMIMIFP",
+      "source_owner": "FKALGHJIADI",
+      "storage": "AbilityReady",
+      "target": "PPBLNMIMIFP",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Player_Moving",
+      "name": "CGCMALPMMJL",
+      "offset": 1104,
+      "offset_code_evidence": {
+        "offset": 1104,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.CDEDNEFDCJL@0x1230510+0x69",
+          "FKALGHJIADI.FBOHMAKNFPE@0x12357B0+0x31",
+          "FKALGHJIADI.FBOHMAKNFPE@0x12357B0+0x48"
+        ],
+        "status": "proven",
+        "uses": 10
+      },
+      "owner": "FKALGHJIADI",
+      "source": "CGCMALPMMJL",
+      "source_owner": "FKALGHJIADI",
+      "storage": "Player_Moving",
+      "target": "CGCMALPMMJL",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Player_Spd",
+      "name": "BHJFNEAHAOE",
+      "offset": 1152,
+      "offset_code_evidence": {
+        "offset": 1152,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.AGFOIEOGMGK@0x122C960+0x31",
+          "FKALGHJIADI.AIPBJPFGMGI@0x122CD90+0x0",
+          "FKALGHJIADI.FJGEKJGIFKG@0x12366B0+0x11"
+        ],
+        "status": "proven",
+        "uses": 6
+      },
+      "owner": "FKALGHJIADI",
+      "source": "BHJFNEAHAOE",
+      "source_owner": "FKALGHJIADI",
+      "storage": "Player_Spd",
+      "target": "BHJFNEAHAOE",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PlayerGuildName",
+      "name": "NFJGJKLPLBA",
+      "offset": 1136,
+      "offset_code_evidence": {
+        "offset": 1136,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.DGDIHHFBDJN@0x1233530+0xBC",
+          "FKALGHJIADI.DGDIHHFBDJN@0x1233530+0xC3",
+          "FKALGHJIADI.OOLKNOMMCHC@0x12436D0+0xEE"
+        ],
+        "status": "proven",
+        "uses": 6
+      },
+      "owner": "FKALGHJIADI",
+      "source": "NFJGJKLPLBA",
+      "source_owner": "FKALGHJIADI",
+      "storage": "PlayerGuildName",
+      "target": "NFJGJKLPLBA",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.String"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PlayerClassNum",
+      "name": "KABPJBJPGCM",
+      "offset": 1128,
+      "offset_code_evidence": {
+        "offset": 1128,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.OOLKNOMMCHC@0x12436D0+0xFF",
+          "FKALGHJIADI..ctor@0x1247B20+0x1CE"
+        ],
+        "status": "proven",
+        "uses": 2
+      },
+      "owner": "FKALGHJIADI",
+      "source": "KABPJBJPGCM",
+      "source_owner": "FKALGHJIADI",
+      "storage": "PlayerClassNum",
+      "target": "KABPJBJPGCM",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PlayerGuildRank",
+      "name": "MPEPBMGKGHL",
+      "offset": 1328,
+      "offset_code_evidence": {
+        "offset": 1328,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.AMNKMFENCBA@0x122D3D0+0x4",
+          "FKALGHJIADI.GAPJDOHEIIJ@0x1236C40+0x0",
+          "FKALGHJIADI.OOLKNOMMCHC@0x12436D0+0x1C0"
+        ],
+        "status": "proven",
+        "uses": 4
+      },
+      "owner": "FKALGHJIADI",
+      "source": "MPEPBMGKGHL",
+      "source_owner": "FKALGHJIADI",
+      "storage": "PlayerGuildRank",
+      "target": "MPEPBMGKGHL",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PlayerAtk",
+      "name": "HCMECDPHEMC",
+      "offset": 1148,
+      "offset_code_evidence": {
+        "offset": 1148,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.CBJFAPMPGCL@0x1230050+0x0",
+          "FKALGHJIADI.GGNFAIKKIEO@0x1237850+0x71",
+          "FKALGHJIADI.IHEOCAIMGJE@0x123A800+0x39"
+        ],
+        "status": "proven",
+        "uses": 9
+      },
+      "owner": "FKALGHJIADI",
+      "source": "HCMECDPHEMC",
+      "source_owner": "FKALGHJIADI",
+      "storage": "PlayerAtk",
+      "target": "HCMECDPHEMC",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PlayerDex",
+      "name": "GDNEBFDDDKM",
+      "offset": 1156,
+      "offset_code_evidence": {
+        "offset": 1156,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.CCCECPKKCBP@0x1230360+0x31",
+          "FKALGHJIADI.IBBECDPCBMD@0x1239E90+0x95",
+          "FKALGHJIADI.KMMCCIOIIBM@0x123D6C0+0x61"
+        ],
+        "status": "proven",
+        "uses": 9
+      },
+      "owner": "FKALGHJIADI",
+      "source": "GDNEBFDDDKM",
+      "source_owner": "FKALGHJIADI",
+      "storage": "PlayerDex",
+      "target": "GDNEBFDDDKM",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PlayerVit",
+      "name": "CGFPEPCKKOK",
+      "offset": 1160,
+      "offset_code_evidence": {
+        "offset": 1160,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.AMOALECAJCP@0x122D400+0x3B",
+          "FKALGHJIADI.GIDMPGKPPIB@0x1237C30+0x0",
+          "FKALGHJIADI.JNHBKHFPABI@0x1237C30+0x0"
+        ],
+        "status": "proven",
+        "uses": 8
+      },
+      "owner": "FKALGHJIADI",
+      "source": "CGFPEPCKKOK",
+      "source_owner": "FKALGHJIADI",
+      "storage": "PlayerVit",
+      "target": "CGFPEPCKKOK",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PlayerWis",
+      "name": "HDCDGHKGLDI",
+      "offset": 1164,
+      "offset_code_evidence": {
+        "offset": 1164,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.AJGOIMKIBLP@0x122CF90+0x3B",
+          "FKALGHJIADI.AKMOOPMLDOH@0x122D030+0x39",
+          "FKALGHJIADI.COLFGGFCDLC@0x1232A70+0xB"
+        ],
+        "status": "proven",
+        "uses": 9
+      },
+      "owner": "FKALGHJIADI",
+      "source": "HDCDGHKGLDI",
+      "source_owner": "FKALGHJIADI",
+      "storage": "PlayerWis",
+      "target": "HDCDGHKGLDI",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PlayerCondInt",
+      "name": "MPJGAPJBBBF",
+      "offset": 1236,
+      "offset_code_evidence": {
+        "offset": 1236,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.LLHIHMPCDBI@0x123F5C0+0x38",
+          "FKALGHJIADI.PGOOMHNFNOI@0x123F5C0+0x38",
+          "FKALGHJIADI.OOLKNOMMCHC@0x12436D0+0x182"
+        ],
+        "status": "proven",
+        "uses": 4
+      },
+      "owner": "FKALGHJIADI",
+      "source": "MPJGAPJBBBF",
+      "source_owner": "FKALGHJIADI",
+      "storage": "PlayerCondInt",
+      "target": "MPJGAPJBBBF",
+      "target_owner": "FKALGHJIADI",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FKALGHJIADI",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PlayerEquipMgr",
+      "name": "AJJJBDBNBLM",
+      "offset": 1584,
+      "offset_code_evidence": {
+        "offset": 1584,
+        "searched": [
+          "FKALGHJIADI"
+        ],
+        "sites": [
+          "FKALGHJIADI.EALDNALMLHO@0x1234410+0x9F",
+          "FKALGHJIADI.OGEGLADMCLC@0x1242600+0x73E",
+          "FKALGHJIADI.PGHAGLDAKMH@0x1245F40+0x208"
+        ],
+        "status": "proven",
+        "uses": 4
+      },
+      "owner": "FKALGHJIADI",
+      "source": "AJJJBDBNBLM",
+      "source_owner": "FKALGHJIADI",
+      "storage": "PlayerEquipMgr",
+      "target": "AJJJBDBNBLM",
+      "target_owner": "FKALGHJIADI",
+      "type": "DecaGames.RotMG.Managers.Equipment.EquipmentManager"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Managers.CameraManager",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.CM_Transform",
+      "name": "mainCameraContainer",
+      "offset": 40,
+      "offset_code_evidence": {
+        "offset": 40,
+        "searched": [
+          "CameraManager"
+        ],
+        "sites": [
+          "CameraManager.ABHEFDHGLKB@0x1482CC0+0x74",
+          "CameraManager.BAOKPMBFDDB@0x1483080+0x74",
+          "CameraManager.BHAJIOIHBJM@0x14833C0+0x37"
+        ],
+        "status": "proven",
+        "uses": 19
+      },
+      "owner": "CameraManager",
+      "source": "mainCameraContainer",
+      "source_owner": "CameraManager",
+      "storage": "CM_Transform",
+      "target": "mainCameraContainer",
+      "target_owner": "CameraManager",
+      "type": "UnityEngine.Transform"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Managers.CameraManager",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.CM_UnityCam",
+      "name": "KNAIAEFDCLM",
+      "offset": 80,
+      "offset_code_evidence": {
+        "offset": 80,
+        "searched": [
+          "CameraManager"
+        ],
+        "sites": [
+          "CameraManager.BKDPEOOODDE@0x36DB80+0x0",
+          "CameraManager.get_MainCamera@0x36DB80+0x0",
+          "CameraManager.AdjustViewPort@0x1482DC0+0x38"
+        ],
+        "status": "proven",
+        "uses": 26
+      },
+      "owner": "CameraManager",
+      "source": "KNAIAEFDCLM",
+      "source_owner": "CameraManager",
+      "storage": "CM_UnityCam",
+      "target": "KNAIAEFDCLM",
+      "target_owner": "CameraManager",
+      "type": "UnityEngine.Camera"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Managers.Equipment.EquipmentManager",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.EM_EquipSlots",
+      "name": "equipmentSlots",
+      "offset": 80,
+      "offset_code_evidence": {
+        "offset": 80,
+        "searched": [
+          "EquipmentManager"
+        ],
+        "sites": [
+          "EquipmentManager.BHBJGHHIIBJ@0x3F0D40+0x2C8",
+          "EquipmentManager.CleanPlayer@0x3F2550+0x2C8",
+          "EquipmentManager.FIOLHEHFIPA@0x3F44E0+0xEB"
+        ],
+        "status": "proven",
+        "uses": 13
+      },
+      "owner": "EquipmentManager",
+      "source": "equipmentSlots",
+      "source_owner": "EquipmentManager",
+      "storage": "EM_EquipSlots",
+      "target": "equipmentSlots",
+      "target_owner": "EquipmentManager",
+      "type": "DecaGames.RotMG.UI.Slots.EquipmentSlot[]"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.UI.Slots.ItemSlot",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Item_ObjProps",
+      "name": "HLJFBHLMANJ",
+      "offset": 88,
+      "offset_code_evidence": {
+        "offset": 88,
+        "searched": [
+          "ItemSlot"
+        ],
+        "sites": [
+          "ItemSlot.get_ObjectProperties@0x30A110+0x0",
+          "ItemSlot.AEPDNNABNFJ@0x1D546D0+0x17D",
+          "ItemSlot.AEPDNNABNFJ@0x1D546D0+0x191"
+        ],
+        "status": "proven",
+        "uses": 40
+      },
+      "owner": "ItemSlot",
+      "source": "HLJFBHLMANJ",
+      "source_owner": "ItemSlot",
+      "storage": "Item_ObjProps",
+      "target": "HLJFBHLMANJ",
+      "target_owner": "ItemSlot",
+      "type": "DecaGames.RotMG.Objects.Map.Data.ObjectProperties"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.UI.Slots.ItemSlot",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Item_ObjType",
+      "name": "INAAIAHOEFE",
+      "offset": 96,
+      "offset_code_evidence": {
+        "offset": 96,
+        "searched": [
+          "ItemSlot"
+        ],
+        "sites": [
+          "ItemSlot.GPMOBPONIMK@0x523440+0x0",
+          "ItemSlot.IsEmpty@0x523440+0x0",
+          "ItemSlot.BOMDIBMGEAF@0x9CB980+0x0"
+        ],
+        "status": "proven",
+        "uses": 20
+      },
+      "owner": "ItemSlot",
+      "source": "INAAIAHOEFE",
+      "source_owner": "ItemSlot",
+      "storage": "Item_ObjType",
+      "target": "INAAIAHOEFE",
+      "target_owner": "ItemSlot",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HJMBOMEHGDJ",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.WM_Local",
+      "name": "OCLNLBHDEFK",
+      "offset": 72,
+      "offset_code_evidence": {
+        "offset": 72,
+        "searched": [
+          "HJMBOMEHGDJ"
+        ],
+        "sites": [
+          "HJMBOMEHGDJ.ACILHLICBAK@0x1F5C990+0xC1",
+          "HJMBOMEHGDJ.CICNGACDFEB@0x1F5F7F0+0x11",
+          "HJMBOMEHGDJ.CKLKJLJDKCK@0x1F5F9D0+0x96"
+        ],
+        "status": "proven",
+        "uses": 80
+      },
+      "owner": "HJMBOMEHGDJ",
+      "source": "OCLNLBHDEFK",
+      "source_owner": "HJMBOMEHGDJ",
+      "storage": "WM_Local",
+      "target": "OCLNLBHDEFK",
+      "target_owner": "HJMBOMEHGDJ",
+      "type": "FKALGHJIADI"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HJMBOMEHGDJ",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.WM_AllDict",
+      "name": "DFALIKKKGLI",
+      "offset": 192,
+      "offset_code_evidence": {
+        "offset": 192,
+        "searched": [
+          "HJMBOMEHGDJ"
+        ],
+        "sites": [
+          "HJMBOMEHGDJ.AACNHDBPAKD@0x1F5C2E0+0x12F",
+          "HJMBOMEHGDJ.CHNNFALPKKA@0x1F5E160+0x78C",
+          "HJMBOMEHGDJ.DBCEHNAEDCH@0x1F60530+0xD0"
+        ],
+        "status": "proven",
+        "uses": 44
+      },
+      "owner": "HJMBOMEHGDJ",
+      "source": "DFALIKKKGLI",
+      "source_owner": "HJMBOMEHGDJ",
+      "storage": "WM_AllDict",
+      "target": "DFALIKKKGLI",
+      "target_owner": "HJMBOMEHGDJ",
+      "type": "System.Collections.Generic.Dictionary<System.Int32,LKHPPBEGNOM>"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HJMBOMEHGDJ",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.WM_MapDictA",
+      "name": "KHIHFNACEKJ",
+      "offset": 200,
+      "offset_code_evidence": {
+        "offset": 200,
+        "searched": [
+          "HJMBOMEHGDJ"
+        ],
+        "sites": [
+          "HJMBOMEHGDJ.CHNNFALPKKA@0x1F5E160+0x7A8",
+          "HJMBOMEHGDJ.DDLLLAMNOFG@0x1F60CC0+0xD54",
+          "HJMBOMEHGDJ.DDLLLAMNOFG@0x1F60CC0+0xE4E"
+        ],
+        "status": "proven",
+        "uses": 17
+      },
+      "owner": "HJMBOMEHGDJ",
+      "source": "KHIHFNACEKJ",
+      "source_owner": "HJMBOMEHGDJ",
+      "storage": "WM_MapDictA",
+      "target": "KHIHFNACEKJ",
+      "target_owner": "HJMBOMEHGDJ",
+      "type": "System.Collections.Generic.Dictionary<System.Int32,KJMONHENJEN>"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HJMBOMEHGDJ",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.WM_MapDictB",
+      "name": "CIOIHEOEAEB",
+      "offset": 208,
+      "offset_code_evidence": {
+        "offset": 208,
+        "searched": [
+          "HJMBOMEHGDJ"
+        ],
+        "sites": [
+          "HJMBOMEHGDJ.CHNNFALPKKA@0x1F5E160+0x7C4",
+          "HJMBOMEHGDJ.CPMOGJPDNKJ@0x1F604D0+0x2B",
+          "HJMBOMEHGDJ.DDLLLAMNOFG@0x1F60CC0+0xDCD"
+        ],
+        "status": "proven",
+        "uses": 14
+      },
+      "owner": "HJMBOMEHGDJ",
+      "source": "CIOIHEOEAEB",
+      "source_owner": "HJMBOMEHGDJ",
+      "storage": "WM_MapDictB",
+      "target": "CIOIHEOEAEB",
+      "target_owner": "HJMBOMEHGDJ",
+      "type": "System.Collections.Generic.Dictionary<System.Int32,KJMONHENJEN>"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HJMBOMEHGDJ",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.WM_KjmonList",
+      "name": "ONABHKFOJNE",
+      "offset": 248,
+      "offset_code_evidence": {
+        "offset": 248,
+        "searched": [
+          "HJMBOMEHGDJ"
+        ],
+        "sites": [
+          "HJMBOMEHGDJ.AODEIADKBCC@0x1F5CEA0+0x210",
+          "HJMBOMEHGDJ.AODEIADKBCC@0x1F5D140+0x7C",
+          "HJMBOMEHGDJ.CEEEOLINMGG@0x1F5DF40+0x5E"
+        ],
+        "status": "proven",
+        "uses": 7
+      },
+      "owner": "HJMBOMEHGDJ",
+      "source": "ONABHKFOJNE",
+      "source_owner": "HJMBOMEHGDJ",
+      "storage": "WM_KjmonList",
+      "target": "ONABHKFOJNE",
+      "target_owner": "HJMBOMEHGDJ",
+      "type": "System.Collections.Generic.List<KJMONHENJEN>"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HJMBOMEHGDJ",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.WM_TileArr",
+      "name": "NOJEHIAOAJM",
+      "offset": 104,
+      "offset_code_evidence": {
+        "offset": 104,
+        "searched": [
+          "HJMBOMEHGDJ"
+        ],
+        "sites": [
+          "HJMBOMEHGDJ.CMKDLFEBNKD@0x1F5FD90+0x510",
+          "HJMBOMEHGDJ.EHOKMCEKPOI@0x1F639C0+0xB0",
+          "HJMBOMEHGDJ.ILFLECHGEBE@0x1F69100+0x20"
+        ],
+        "status": "proven",
+        "uses": 11
+      },
+      "owner": "HJMBOMEHGDJ",
+      "source": "NOJEHIAOAJM",
+      "source_owner": "HJMBOMEHGDJ",
+      "storage": "WM_TileArr",
+      "target": "NOJEHIAOAJM",
+      "target_owner": "HJMBOMEHGDJ",
+      "type": "BGAIOPJMHLO[]"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HJMBOMEHGDJ",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.WM_TileList",
+      "name": "IMAOBDCMPHC",
+      "offset": 112,
+      "offset_code_evidence": {
+        "offset": 112,
+        "searched": [
+          "HJMBOMEHGDJ"
+        ],
+        "sites": [
+          "HJMBOMEHGDJ.MPIIFPBDACN@0x1F6F7D0+0x18D",
+          "HJMBOMEHGDJ.NIFNLJDJGOC@0x1F73720+0x759",
+          "HJMBOMEHGDJ.OGOLDFOICLL@0x1F787F0+0x5E"
+        ],
+        "status": "proven",
+        "uses": 6
+      },
+      "owner": "HJMBOMEHGDJ",
+      "source": "IMAOBDCMPHC",
+      "source_owner": "HJMBOMEHGDJ",
+      "storage": "WM_TileList",
+      "target": "IMAOBDCMPHC",
+      "target_owner": "HJMBOMEHGDJ",
+      "type": "System.Collections.Generic.List<BGAIOPJMHLO>"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HJMBOMEHGDJ",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.WM_TickId",
+      "name": "FIAJOKGHGGK",
+      "offset": 232,
+      "offset_code_evidence": {
+        "offset": 232,
+        "searched": [
+          "HJMBOMEHGDJ"
+        ],
+        "sites": [
+          "HJMBOMEHGDJ.CHNNFALPKKA@0x1F5E160+0x292",
+          "HJMBOMEHGDJ.GBDKIAAENPB@0x1F64C70+0x0",
+          "HJMBOMEHGDJ.IAHHFOPIKMD@0x1F67F10+0x0"
+        ],
+        "status": "proven",
+        "uses": 9
+      },
+      "owner": "HJMBOMEHGDJ",
+      "source": "FIAJOKGHGGK",
+      "source_owner": "HJMBOMEHGDJ",
+      "storage": "WM_TickId",
+      "target": "FIAJOKGHGGK",
+      "target_owner": "HJMBOMEHGDJ",
+      "type": "System.UInt32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HJMBOMEHGDJ",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.WM_TickId2",
+      "name": "HOMNPDGNOMO",
+      "offset": 236,
+      "offset_code_evidence": {
+        "offset": 236,
+        "searched": [
+          "HJMBOMEHGDJ"
+        ],
+        "sites": [
+          "HJMBOMEHGDJ.LDKKFMBNOCN@0x1F6D2D0+0xDF",
+          "HJMBOMEHGDJ.LDKKFMBNOCN@0x1F6D2D0+0x2F2"
+        ],
+        "status": "proven",
+        "uses": 2
+      },
+      "owner": "HJMBOMEHGDJ",
+      "source": "HOMNPDGNOMO",
+      "source_owner": "HJMBOMEHGDJ",
+      "storage": "WM_TickId2",
+      "target": "HOMNPDGNOMO",
+      "target_owner": "HJMBOMEHGDJ",
+      "type": "System.UInt32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::BGAIOPJMHLO",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.TileX",
+      "name": "CLFEOFKBNEJ",
+      "offset": 56,
+      "offset_code_evidence": {
+        "offset": 56,
+        "searched": [
+          "BGAIOPJMHLO"
+        ],
+        "sites": [
+          "BGAIOPJMHLO.AIKOGKIGMPP@0x1468240+0x165",
+          "BGAIOPJMHLO.AJKHIDIFBKC@0x1468470+0x179",
+          "BGAIOPJMHLO.ANPGEKGICLH@0x14692C0+0x84"
+        ],
+        "status": "proven",
+        "uses": 39
+      },
+      "owner": "BGAIOPJMHLO",
+      "source": "CLFEOFKBNEJ",
+      "source_owner": "BGAIOPJMHLO",
+      "storage": "TileX",
+      "target": "CLFEOFKBNEJ",
+      "target_owner": "BGAIOPJMHLO",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::BGAIOPJMHLO",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.TileY",
+      "name": "PKEECFNFEIO",
+      "offset": 60,
+      "offset_code_evidence": {
+        "offset": 60,
+        "searched": [
+          "BGAIOPJMHLO"
+        ],
+        "sites": [
+          "BGAIOPJMHLO.ANPGEKGICLH@0x14692C0+0x87",
+          "BGAIOPJMHLO.AOANOEDBDCA@0x14693F0+0x38F",
+          "BGAIOPJMHLO.BGMOOAHCKFM@0x1469A30+0x32E"
+        ],
+        "status": "proven",
+        "uses": 36
+      },
+      "owner": "BGAIOPJMHLO",
+      "source": "PKEECFNFEIO",
+      "source_owner": "BGAIOPJMHLO",
+      "storage": "TileY",
+      "target": "PKEECFNFEIO",
+      "target_owner": "BGAIOPJMHLO",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::BGAIOPJMHLO",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.TileType",
+      "name": "JOFEAFJPJEM",
+      "offset": 64,
+      "offset_code_evidence": {
+        "offset": 64,
+        "searched": [
+          "BGAIOPJMHLO"
+        ],
+        "sites": [
+          "BGAIOPJMHLO.AFGLGONPILP@0x1467A90+0x273",
+          "BGAIOPJMHLO.AIKOGKIGMPP@0x1468240+0x169",
+          "BGAIOPJMHLO.AJKHIDIFBKC@0x1468470+0x17D"
+        ],
+        "status": "proven",
+        "uses": 33
+      },
+      "owner": "BGAIOPJMHLO",
+      "source": "JOFEAFJPJEM",
+      "source_owner": "BGAIOPJMHLO",
+      "storage": "TileType",
+      "target": "JOFEAFJPJEM",
+      "target_owner": "BGAIOPJMHLO",
+      "type": "System.UInt16"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::BGAIOPJMHLO",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.TileProps",
+      "name": "KEOKJCIJIAD",
+      "offset": 80,
+      "offset_code_evidence": {
+        "offset": 80,
+        "searched": [
+          "BGAIOPJMHLO"
+        ],
+        "sites": [
+          "BGAIOPJMHLO.AIKOGKIGMPP@0x1468240+0x11A",
+          "BGAIOPJMHLO.AIKOGKIGMPP@0x1468240+0x11E",
+          "BGAIOPJMHLO.AJKHIDIFBKC@0x1468470+0x11A"
+        ],
+        "status": "proven",
+        "uses": 141
+      },
+      "owner": "BGAIOPJMHLO",
+      "source": "KEOKJCIJIAD",
+      "source_owner": "BGAIOPJMHLO",
+      "storage": "TileProps",
+      "target": "KEOKJCIJIAD",
+      "target_owner": "BGAIOPJMHLO",
+      "type": "CMFPKCJHKKB"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::BGAIOPJMHLO",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Sq_Layer",
+      "name": "EBCLNFDKKEH",
+      "offset": 68,
+      "offset_code_evidence": {
+        "offset": 68,
+        "searched": [
+          "BGAIOPJMHLO"
+        ],
+        "sites": [
+          "BGAIOPJMHLO.AIKOGKIGMPP@0x1468240+0x74",
+          "BGAIOPJMHLO.AJKHIDIFBKC@0x1468470+0x74",
+          "BGAIOPJMHLO.EPJHJHBKCKO@0x1473A60+0x4"
+        ],
+        "status": "proven",
+        "uses": 14
+      },
+      "owner": "BGAIOPJMHLO",
+      "source": "EBCLNFDKKEH",
+      "source_owner": "BGAIOPJMHLO",
+      "storage": "Sq_Layer",
+      "target": "EBCLNFDKKEH",
+      "target_owner": "BGAIOPJMHLO",
+      "type": "FDCIMDHOOCB"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::BGAIOPJMHLO",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Sq_DamageCached",
+      "name": "EAPMKCKMNDI",
+      "offset": 16,
+      "offset_code_evidence": {
+        "offset": 16,
+        "searched": [
+          "BGAIOPJMHLO"
+        ],
+        "sites": [
+          "BGAIOPJMHLO.AIKOGKIGMPP@0x1468240+0x153",
+          "BGAIOPJMHLO.AJKHIDIFBKC@0x1468470+0x153",
+          "BGAIOPJMHLO.BKPIJFAEOOP@0x146B070+0x48"
+        ],
+        "status": "proven",
+        "uses": 45
+      },
+      "owner": "BGAIOPJMHLO",
+      "source": "EAPMKCKMNDI",
+      "source_owner": "BGAIOPJMHLO",
+      "storage": "Sq_DamageCached",
+      "target": "EAPMKCKMNDI",
+      "target_owner": "BGAIOPJMHLO",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::BGAIOPJMHLO",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Sq_Cover",
+      "name": "JGMBPFJEGAH",
+      "offset": 72,
+      "offset_code_evidence": {
+        "offset": 72,
+        "searched": [
+          "BGAIOPJMHLO"
+        ],
+        "sites": [
+          "BGAIOPJMHLO.AIKOGKIGMPP@0x1468240+0x65",
+          "BGAIOPJMHLO.AIKOGKIGMPP@0x1468240+0x6B",
+          "BGAIOPJMHLO.AJKHIDIFBKC@0x1468470+0x65"
+        ],
+        "status": "proven",
+        "uses": 15
+      },
+      "owner": "BGAIOPJMHLO",
+      "source": "JGMBPFJEGAH",
+      "source_owner": "BGAIOPJMHLO",
+      "storage": "Sq_Cover",
+      "target": "JGMBPFJEGAH",
+      "target_owner": "BGAIOPJMHLO",
+      "type": "LKHPPBEGNOM"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::CMFPKCJHKKB",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.TP_Speed",
+      "name": "MFEJMAABLIL",
+      "offset": 80,
+      "offset_code_evidence": {
+        "offset": 80,
+        "searched": [
+          "CMFPKCJHKKB"
+        ],
+        "sites": [
+          "CMFPKCJHKKB.CDGHEHECNPP@0x9D7340+0x168",
+          "CMFPKCJHKKB.CDGHEHECNPP@0x9D7340+0x186",
+          "CMFPKCJHKKB.CHPILNGHKPC@0x9D77D0+0x168"
+        ],
+        "status": "proven",
+        "uses": 40
+      },
+      "owner": "CMFPKCJHKKB",
+      "source": "MFEJMAABLIL",
+      "source_owner": "CMFPKCJHKKB",
+      "storage": "TP_Speed",
+      "target": "MFEJMAABLIL",
+      "target_owner": "CMFPKCJHKKB",
+      "type": "System.String"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::CMFPKCJHKKB",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.TP_Sink",
+      "name": "BMGKCKHOIOH",
+      "offset": 88,
+      "offset_code_evidence": {
+        "offset": 88,
+        "searched": [
+          "CMFPKCJHKKB"
+        ],
+        "sites": [
+          "CMFPKCJHKKB.CDGHEHECNPP@0x9D7340+0x2DB",
+          "CMFPKCJHKKB.CHPILNGHKPC@0x9D77D0+0x2DB",
+          "CMFPKCJHKKB.DEKLKKMGDDI@0x9D80F0+0x2DB"
+        ],
+        "status": "proven",
+        "uses": 20
+      },
+      "owner": "CMFPKCJHKKB",
+      "source": "BMGKCKHOIOH",
+      "source_owner": "CMFPKCJHKKB",
+      "storage": "TP_Sink",
+      "target": "BMGKCKHOIOH",
+      "target_owner": "CMFPKCJHKKB",
+      "type": "System.String"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::CMFPKCJHKKB",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.TP_NoWalk",
+      "name": "LFKLKFIEMAH",
+      "offset": 120,
+      "offset_code_evidence": {
+        "offset": 120,
+        "searched": [
+          "CMFPKCJHKKB"
+        ],
+        "sites": [
+          "CMFPKCJHKKB.CDGHEHECNPP@0x9D7340+0x2BC",
+          "CMFPKCJHKKB.CHPILNGHKPC@0x9D77D0+0x2BC",
+          "CMFPKCJHKKB.DEKLKKMGDDI@0x9D80F0+0x2BC"
+        ],
+        "status": "proven",
+        "uses": 20
+      },
+      "owner": "CMFPKCJHKKB",
+      "source": "LFKLKFIEMAH",
+      "source_owner": "CMFPKCJHKKB",
+      "storage": "TP_NoWalk",
+      "target": "LFKLKFIEMAH",
+      "target_owner": "CMFPKCJHKKB",
+      "type": "System.String"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::CMFPKCJHKKB",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.TP_MinDmg",
+      "name": "MCMDAGNIGEB",
+      "offset": 176,
+      "offset_code_evidence": {
+        "offset": 176,
+        "searched": [
+          "CMFPKCJHKKB"
+        ],
+        "sites": [
+          "CMFPKCJHKKB.CDGHEHECNPP@0x9D7340+0xBE",
+          "CMFPKCJHKKB.CDGHEHECNPP@0x9D7340+0xD6",
+          "CMFPKCJHKKB.CHPILNGHKPC@0x9D77D0+0xBE"
+        ],
+        "status": "proven",
+        "uses": 40
+      },
+      "owner": "CMFPKCJHKKB",
+      "source": "MCMDAGNIGEB",
+      "source_owner": "CMFPKCJHKKB",
+      "storage": "TP_MinDmg",
+      "target": "MCMDAGNIGEB",
+      "target_owner": "CMFPKCJHKKB",
+      "type": "System.String"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::CMFPKCJHKKB",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.TP_MaxDmg",
+      "name": "KHMCMAHEBNG",
+      "offset": 184,
+      "offset_code_evidence": {
+        "offset": 184,
+        "searched": [
+          "CMFPKCJHKKB"
+        ],
+        "sites": [
+          "CMFPKCJHKKB.CDGHEHECNPP@0x9D7340+0xEC",
+          "CMFPKCJHKKB.CDGHEHECNPP@0x9D7340+0xFC",
+          "CMFPKCJHKKB.CHPILNGHKPC@0x9D77D0+0xEA"
+        ],
+        "status": "proven",
+        "uses": 40
+      },
+      "owner": "CMFPKCJHKKB",
+      "source": "KHMCMAHEBNG",
+      "source_owner": "CMFPKCJHKKB",
+      "storage": "TP_MaxDmg",
+      "target": "KHMCMAHEBNG",
+      "target_owner": "CMFPKCJHKKB",
+      "type": "System.String"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::CMFPKCJHKKB",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.TP_Push",
+      "name": "FNCCEGBHNKG",
+      "offset": 200,
+      "offset_code_evidence": {
+        "offset": 200,
+        "searched": [
+          "CMFPKCJHKKB"
+        ],
+        "sites": [
+          "CMFPKCJHKKB.CDGHEHECNPP@0x9D7340+0x2CA",
+          "CMFPKCJHKKB.CHPILNGHKPC@0x9D77D0+0x2CA",
+          "CMFPKCJHKKB.DEKLKKMGDDI@0x9D80F0+0x2CA"
+        ],
+        "status": "proven",
+        "uses": 20
+      },
+      "owner": "CMFPKCJHKKB",
+      "source": "FNCCEGBHNKG",
+      "source_owner": "CMFPKCJHKKB",
+      "storage": "TP_Push",
+      "target": "FNCCEGBHNKG",
+      "target_owner": "CMFPKCJHKKB",
+      "type": "System.String"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::CMFPKCJHKKB",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.TP_Alpha",
+      "name": "LCHPDCNHJCA",
+      "offset": 208,
+      "offset_code_evidence": {
+        "offset": 208,
+        "searched": [
+          "CMFPKCJHKKB"
+        ],
+        "sites": [
+          "CMFPKCJHKKB.CDGHEHECNPP@0x9D7340+0x6A",
+          "CMFPKCJHKKB.CHPILNGHKPC@0x9D77D0+0x6A",
+          "CMFPKCJHKKB.DEKLKKMGDDI@0x9D80F0+0x6A"
+        ],
+        "status": "proven",
+        "uses": 20
+      },
+      "owner": "CMFPKCJHKKB",
+      "source": "LCHPDCNHJCA",
+      "source_owner": "CMFPKCJHKKB",
+      "storage": "TP_Alpha",
+      "target": "LCHPDCNHJCA",
+      "target_owner": "CMFPKCJHKKB",
+      "type": "System.String"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::CMFPKCJHKKB",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.TP_Sinking",
+      "name": "JKIDGAADOLC",
+      "offset": 216,
+      "offset_code_evidence": {
+        "offset": 216,
+        "searched": [
+          "CMFPKCJHKKB"
+        ],
+        "sites": [
+          "CMFPKCJHKKB.CDGHEHECNPP@0x9D7340+0x2E9",
+          "CMFPKCJHKKB.CHPILNGHKPC@0x9D77D0+0x2E9",
+          "CMFPKCJHKKB.DEKLKKMGDDI@0x9D80F0+0x2E9"
+        ],
+        "status": "proven",
+        "uses": 20
+      },
+      "owner": "CMFPKCJHKKB",
+      "source": "JKIDGAADOLC",
+      "source_owner": "CMFPKCJHKKB",
+      "storage": "TP_Sinking",
+      "target": "JKIDGAADOLC",
+      "target_owner": "CMFPKCJHKKB",
+      "type": "System.String"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_IdStr",
+      "name": "id",
+      "offset": 56,
+      "offset_code_evidence": {
+        "offset": 56,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [
+          "ObjectProperties.CBPDBPKDFEC@0xD71D60+0x777",
+          "ObjectProperties.CBPDBPKDFEC@0xD71D60+0xE32",
+          "ObjectProperties.IAKMBIAJFDM@0xD75850+0x793"
+        ],
+        "status": "proven",
+        "uses": 6
+      },
+      "owner": "ObjectProperties",
+      "source": "id",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_IdStr",
+      "target": "id",
+      "target_owner": "ObjectProperties",
+      "type": "System.String"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_NoCover",
+      "name": "NoCoverElement",
+      "offset": 152,
+      "offset_code_evidence": {
+        "offset": 152,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [
+          "ObjectProperties.CBPDBPKDFEC@0xD71D60+0x4BB",
+          "ObjectProperties.IAKMBIAJFDM@0xD75850+0x4DF",
+          "ObjectProperties.PGHAGLDAKMH@0xD79420+0x4DA"
+        ],
+        "status": "proven",
+        "uses": 3
+      },
+      "owner": "ObjectProperties",
+      "source": "NoCoverElement",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_NoCover",
+      "target": "NoCoverElement",
+      "target_owner": "ObjectProperties",
+      "type": "System.String"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_InvincibleElem",
+      "name": "InvincibleElement",
+      "offset": 1128,
+      "offset_code_evidence": {
+        "offset": 1128,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [],
+        "status": "unproven",
+        "uses": 0
+      },
+      "owner": "ObjectProperties",
+      "source": "InvincibleElement",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_InvincibleElem",
+      "target": "InvincibleElement",
+      "target_owner": "ObjectProperties",
+      "type": "System.String"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_NoWallRpt",
+      "name": "NoWallTextureRepeatElement",
+      "offset": 528,
+      "offset_code_evidence": {
+        "offset": 528,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [
+          "ObjectProperties.CBPDBPKDFEC@0xD71D60+0x466",
+          "ObjectProperties.IAKMBIAJFDM@0xD75850+0x48A",
+          "ObjectProperties.PGHAGLDAKMH@0xD79420+0x485"
+        ],
+        "status": "proven",
+        "uses": 3
+      },
+      "owner": "ObjectProperties",
+      "source": "NoWallTextureRepeatElement",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_NoWallRpt",
+      "target": "NoWallTextureRepeatElement",
+      "target_owner": "ObjectProperties",
+      "type": "System.String"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_OccupySq",
+      "name": "occupySquare",
+      "offset": 1714,
+      "offset_code_evidence": {
+        "offset": 1714,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [
+          "ObjectProperties.CBPDBPKDFEC@0xD71D60+0x4A1",
+          "ObjectProperties.IAKMBIAJFDM@0xD75850+0x4C5",
+          "ObjectProperties.PGHAGLDAKMH@0xD79420+0x4C0"
+        ],
+        "status": "proven",
+        "uses": 3
+      },
+      "owner": "ObjectProperties",
+      "source": "occupySquare",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_OccupySq",
+      "target": "occupySquare",
+      "target_owner": "ObjectProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_FullOcc",
+      "name": "fullOccupy",
+      "offset": 1769,
+      "offset_code_evidence": {
+        "offset": 1769,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [
+          "ObjectProperties.CBPDBPKDFEC@0xD71D60+0x4B2",
+          "ObjectProperties.IAKMBIAJFDM@0xD75850+0x4D6",
+          "ObjectProperties.PGHAGLDAKMH@0xD79420+0x4D1"
+        ],
+        "status": "proven",
+        "uses": 3
+      },
+      "owner": "ObjectProperties",
+      "source": "fullOccupy",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_FullOcc",
+      "target": "fullOccupy",
+      "target_owner": "ObjectProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_EnemyOcc",
+      "name": "enemyOccupySquare",
+      "offset": 1770,
+      "offset_code_evidence": {
+        "offset": 1770,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [
+          "ObjectProperties.CBPDBPKDFEC@0xD71D60+0x4C3",
+          "ObjectProperties.IAKMBIAJFDM@0xD75850+0x4E7",
+          "ObjectProperties.PGHAGLDAKMH@0xD79420+0x4E2"
+        ],
+        "status": "proven",
+        "uses": 3
+      },
+      "owner": "ObjectProperties",
+      "source": "enemyOccupySquare",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_EnemyOcc",
+      "target": "enemyOccupySquare",
+      "target_owner": "ObjectProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_IsEnemy",
+      "name": "isEnemy",
+      "offset": 1761,
+      "offset_code_evidence": {
+        "offset": 1761,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [
+          "ObjectProperties.CBPDBPKDFEC@0xD71D60+0x43D",
+          "ObjectProperties.IAKMBIAJFDM@0xD75850+0x461",
+          "ObjectProperties.PGHAGLDAKMH@0xD79420+0x45C"
+        ],
+        "status": "proven",
+        "uses": 3
+      },
+      "owner": "ObjectProperties",
+      "source": "isEnemy",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_IsEnemy",
+      "target": "isEnemy",
+      "target_owner": "ObjectProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_IsStatic",
+      "name": "isStatic",
+      "offset": 1771,
+      "offset_code_evidence": {
+        "offset": 1771,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [
+          "ObjectProperties.CBPDBPKDFEC@0xD71D60+0x40A",
+          "ObjectProperties.IAKMBIAJFDM@0xD75850+0x42E",
+          "ObjectProperties.PGHAGLDAKMH@0xD79420+0x429"
+        ],
+        "status": "proven",
+        "uses": 3
+      },
+      "owner": "ObjectProperties",
+      "source": "isStatic",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_IsStatic",
+      "target": "isStatic",
+      "target_owner": "ObjectProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_BlockProj",
+      "name": "blockProjectiles",
+      "offset": 1772,
+      "offset_code_evidence": {
+        "offset": 1772,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [
+          "ObjectProperties.CBPDBPKDFEC@0xD71D60+0x41B",
+          "ObjectProperties.IAKMBIAJFDM@0xD75850+0x43F",
+          "ObjectProperties.PGHAGLDAKMH@0xD79420+0x43A"
+        ],
+        "status": "proven",
+        "uses": 3
+      },
+      "owner": "ObjectProperties",
+      "source": "blockProjectiles",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_BlockProj",
+      "target": "blockProjectiles",
+      "target_owner": "ObjectProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_NoHealthBar",
+      "name": "noHealthBar",
+      "offset": 1774,
+      "offset_code_evidence": {
+        "offset": 1774,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [],
+        "status": "unproven",
+        "uses": 0
+      },
+      "owner": "ObjectProperties",
+      "source": "noHealthBar",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_NoHealthBar",
+      "target": "noHealthBar",
+      "target_owner": "ObjectProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_ProtGnd",
+      "name": "protectFromGroundDamage",
+      "offset": 1780,
+      "offset_code_evidence": {
+        "offset": 1780,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [
+          "ObjectProperties.CBPDBPKDFEC@0xD71D60+0x4E5",
+          "ObjectProperties.IAKMBIAJFDM@0xD75850+0x509",
+          "ObjectProperties.PGHAGLDAKMH@0xD79420+0x504"
+        ],
+        "status": "proven",
+        "uses": 3
+      },
+      "owner": "ObjectProperties",
+      "source": "protectFromGroundDamage",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_ProtGnd",
+      "target": "protectFromGroundDamage",
+      "target_owner": "ObjectProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_ProtSink",
+      "name": "protectFromSink",
+      "offset": 1781,
+      "offset_code_evidence": {
+        "offset": 1781,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [
+          "ObjectProperties.CBPDBPKDFEC@0xD71D60+0x4F6",
+          "ObjectProperties.IAKMBIAJFDM@0xD75850+0x51A",
+          "ObjectProperties.PGHAGLDAKMH@0xD79420+0x515"
+        ],
+        "status": "proven",
+        "uses": 3
+      },
+      "owner": "ObjectProperties",
+      "source": "protectFromSink",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_ProtSink",
+      "target": "protectFromSink",
+      "target_owner": "ObjectProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_Flying",
+      "name": "flying",
+      "offset": 1788,
+      "offset_code_evidence": {
+        "offset": 1788,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [
+          "ObjectProperties.CBPDBPKDFEC@0xD71D60+0x507",
+          "ObjectProperties.IAKMBIAJFDM@0xD75850+0x52B",
+          "ObjectProperties.PGHAGLDAKMH@0xD79420+0x526"
+        ],
+        "status": "proven",
+        "uses": 3
+      },
+      "owner": "ObjectProperties",
+      "source": "flying",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_Flying",
+      "target": "flying",
+      "target_owner": "ObjectProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_ConnectT",
+      "name": "connectType",
+      "offset": 1924,
+      "offset_code_evidence": {
+        "offset": 1924,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [],
+        "status": "unproven",
+        "uses": 0
+      },
+      "owner": "ObjectProperties",
+      "source": "connectType",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_ConnectT",
+      "target": "connectType",
+      "target_owner": "ObjectProperties",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_Projectiles",
+      "name": "Projectiles",
+      "offset": 448,
+      "offset_code_evidence": {
+        "offset": 448,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [
+          "ObjectProperties.AHIIHOHPPEA@0xD71800+0x2B",
+          "ObjectProperties.BEKMBGELDAK@0xD71960+0x2B",
+          "ObjectProperties.CAIKBPIKGKJ@0xD71960+0x2B"
+        ],
+        "status": "proven",
+        "uses": 25
+      },
+      "owner": "ObjectProperties",
+      "source": "Projectiles",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_Projectiles",
+      "target": "Projectiles",
+      "target_owner": "ObjectProperties",
+      "type": "DecaGames.RotMG.Objects.Map.Data.ProjectileProperties[]"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ObjectProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.OP_CollRadiusMult",
+      "name": "collisionRadiusMultiplier",
+      "offset": 1944,
+      "offset_code_evidence": {
+        "offset": 1944,
+        "searched": [
+          "ObjectProperties"
+        ],
+        "sites": [
+          "ObjectProperties.CBPDBPKDFEC@0xD71D60+0x2132",
+          "ObjectProperties.IAKMBIAJFDM@0xD75850+0x2171",
+          "ObjectProperties.PGHAGLDAKMH@0xD79420+0x2142"
+        ],
+        "status": "proven",
+        "uses": 4
+      },
+      "owner": "ObjectProperties",
+      "source": "collisionRadiusMultiplier",
+      "source_owner": "ObjectProperties",
+      "storage": "OP_CollRadiusMult",
+      "target": "collisionRadiusMultiplier",
+      "target_owner": "ObjectProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_Lifetime",
+      "name": "Lifetime",
+      "offset": 352,
+      "offset_code_evidence": {
+        "offset": 352,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x394",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x3AB",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x3AB"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "Lifetime",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_Lifetime",
+      "target": "Lifetime",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_Speed",
+      "name": "ProjectileSpeed",
+      "offset": 360,
+      "offset_code_evidence": {
+        "offset": 360,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x408",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x41D",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x41F"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "ProjectileSpeed",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_Speed",
+      "target": "ProjectileSpeed",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_IsWavy",
+      "name": "IsWavy",
+      "offset": 364,
+      "offset_code_evidence": {
+        "offset": 364,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x41B",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x42E",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x430"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "IsWavy",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_IsWavy",
+      "target": "IsWavy",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_IsBoomerang",
+      "name": "IsBoomerang",
+      "offset": 365,
+      "offset_code_evidence": {
+        "offset": 365,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x42C",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x437",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x439"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "IsBoomerang",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_IsBoomerang",
+      "target": "IsBoomerang",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_IsParametric",
+      "name": "IsParametric",
+      "offset": 368,
+      "offset_code_evidence": {
+        "offset": 368,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x4AD",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x4BB",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x4BD"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "IsParametric",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_IsParametric",
+      "target": "IsParametric",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_HasCustomHitbox",
+      "name": "HasCustomHitbox",
+      "offset": 373,
+      "offset_code_evidence": {
+        "offset": 373,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x7E6",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x7F3",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x7F3"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "HasCustomHitbox",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_HasCustomHitbox",
+      "target": "HasCustomHitbox",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_LaserDist",
+      "name": "LaserDistance",
+      "offset": 376,
+      "offset_code_evidence": {
+        "offset": 376,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x46F",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x481",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x483"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "LaserDistance",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_LaserDist",
+      "target": "LaserDistance",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_SpeedClamp",
+      "name": "SpeedClampValue",
+      "offset": 380,
+      "offset_code_evidence": {
+        "offset": 380,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x21C",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x2CE",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x30D"
+        ],
+        "status": "proven",
+        "uses": 102
+      },
+      "owner": "ProjectileProperties",
+      "source": "SpeedClampValue",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_SpeedClamp",
+      "target": "SpeedClampValue",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_AccelDelay",
+      "name": "AccelerationDelayValue",
+      "offset": 384,
+      "offset_code_evidence": {
+        "offset": 384,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x269",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x2BE",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x2D6"
+        ],
+        "status": "proven",
+        "uses": 102
+      },
+      "owner": "ProjectileProperties",
+      "source": "AccelerationDelayValue",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_AccelDelay",
+      "target": "AccelerationDelayValue",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_Acceleration",
+      "name": "AccelerationValue",
+      "offset": 388,
+      "offset_code_evidence": {
+        "offset": 388,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x2B6",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x2EE",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x315"
+        ],
+        "status": "proven",
+        "uses": 102
+      },
+      "owner": "ProjectileProperties",
+      "source": "AccelerationValue",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_Acceleration",
+      "target": "AccelerationValue",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_IsAccel",
+      "name": "IsAccelerating",
+      "offset": 396,
+      "offset_code_evidence": {
+        "offset": 396,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x329",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x332",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x338"
+        ],
+        "status": "proven",
+        "uses": 68
+      },
+      "owner": "ProjectileProperties",
+      "source": "IsAccelerating",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_IsAccel",
+      "target": "IsAccelerating",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_UseAccel",
+      "name": "UseAcceleration",
+      "offset": 408,
+      "offset_code_evidence": {
+        "offset": 408,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [],
+        "status": "unproven",
+        "uses": 0
+      },
+      "owner": "ProjectileProperties",
+      "source": "UseAcceleration",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_UseAccel",
+      "target": "UseAcceleration",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_AccelerationInv",
+      "name": "AccelerationInv",
+      "offset": 392,
+      "offset_code_evidence": {
+        "offset": 392,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x345",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x35C",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x35C"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "AccelerationInv",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_AccelerationInv",
+      "target": "AccelerationInv",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_VelocityChangeRate",
+      "name": "VelocityChangeRate",
+      "offset": 400,
+      "offset_code_evidence": {
+        "offset": 400,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [],
+        "status": "unproven",
+        "uses": 0
+      },
+      "owner": "ProjectileProperties",
+      "source": "VelocityChangeRate",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_VelocityChangeRate",
+      "target": "VelocityChangeRate",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_VelocityChangeRateInv",
+      "name": "VelocityChangeRateInv",
+      "offset": 404,
+      "offset_code_evidence": {
+        "offset": 404,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [],
+        "status": "unproven",
+        "uses": 0
+      },
+      "owner": "ProjectileProperties",
+      "source": "VelocityChangeRateInv",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_VelocityChangeRateInv",
+      "target": "VelocityChangeRateInv",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_Magnitude",
+      "name": "ProjectileMagnitude",
+      "offset": 412,
+      "offset_code_evidence": {
+        "offset": 412,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x532",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x53D",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x53F"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "ProjectileMagnitude",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_Magnitude",
+      "target": "ProjectileMagnitude",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_Frequency",
+      "name": "ProjectileFrequency",
+      "offset": 416,
+      "offset_code_evidence": {
+        "offset": 416,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x581",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x58C",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x58E"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "ProjectileFrequency",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_Frequency",
+      "target": "ProjectileFrequency",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_Amplitude",
+      "name": "ProjectileAmplitude",
+      "offset": 420,
+      "offset_code_evidence": {
+        "offset": 420,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x5D7",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x5E2",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x5E4"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "ProjectileAmplitude",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_Amplitude",
+      "target": "ProjectileAmplitude",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_HasCustomAmplitude",
+      "name": "IsAmplitudeApplied",
+      "offset": 424,
+      "offset_code_evidence": {
+        "offset": 424,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x5F3",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x5FD",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x600"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "IsAmplitudeApplied",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_HasCustomAmplitude",
+      "target": "IsAmplitudeApplied",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_CollMult",
+      "name": "CollisionMult",
+      "offset": 192,
+      "offset_code_evidence": {
+        "offset": 192,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties..ctor@0x18CE720+0x35"
+        ],
+        "status": "proven",
+        "uses": 1
+      },
+      "owner": "ProjectileProperties",
+      "source": "CollisionMult",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_CollMult",
+      "target": "CollisionMult",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_TurnRate",
+      "name": "ProjectileTurnRate",
+      "offset": 212,
+      "offset_code_evidence": {
+        "offset": 212,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x642",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x661",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x64F"
+        ],
+        "status": "proven",
+        "uses": 68
+      },
+      "owner": "ProjectileProperties",
+      "source": "ProjectileTurnRate",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_TurnRate",
+      "target": "ProjectileTurnRate",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_TurnRateDelay",
+      "name": "ProjectileTurnRateDelay",
+      "offset": 216,
+      "offset_code_evidence": {
+        "offset": 216,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x673",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x690",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x680"
+        ],
+        "status": "proven",
+        "uses": 68
+      },
+      "owner": "ProjectileProperties",
+      "source": "ProjectileTurnRateDelay",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_TurnRateDelay",
+      "target": "ProjectileTurnRateDelay",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_TurnStopTime",
+      "name": "ProjectileTurnStopTime",
+      "offset": 232,
+      "offset_code_evidence": {
+        "offset": 232,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x78D",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x7B2",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x7BD"
+        ],
+        "status": "proven",
+        "uses": 102
+      },
+      "owner": "ProjectileProperties",
+      "source": "ProjectileTurnStopTime",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_TurnStopTime",
+      "target": "ProjectileTurnStopTime",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_CircleTurnAngle",
+      "name": "ProjectileCircleTurnAngle",
+      "offset": 236,
+      "offset_code_evidence": {
+        "offset": 236,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x6CF",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x6E7",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x6DC"
+        ],
+        "status": "proven",
+        "uses": 68
+      },
+      "owner": "ProjectileProperties",
+      "source": "ProjectileCircleTurnAngle",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_CircleTurnAngle",
+      "target": "ProjectileCircleTurnAngle",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_CircleTurnDelay",
+      "name": "ProjectileCircleTurnDelay",
+      "offset": 240,
+      "offset_code_evidence": {
+        "offset": 240,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x6A2",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x6AF",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x6AF"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "ProjectileCircleTurnDelay",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_CircleTurnDelay",
+      "target": "ProjectileCircleTurnDelay",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_TurnAcceleration",
+      "name": "ProjectileTurnAcceleration",
+      "offset": 220,
+      "offset_code_evidence": {
+        "offset": 220,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x707",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x729",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x714"
+        ],
+        "status": "proven",
+        "uses": 68
+      },
+      "owner": "ProjectileProperties",
+      "source": "ProjectileTurnAcceleration",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_TurnAcceleration",
+      "target": "ProjectileTurnAcceleration",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_TurnAccelDelay",
+      "name": "ProjectileTurnAccelerationDelay",
+      "offset": 224,
+      "offset_code_evidence": {
+        "offset": 224,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x6EF",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x6FF",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x6FC"
+        ],
+        "status": "proven",
+        "uses": 68
+      },
+      "owner": "ProjectileProperties",
+      "source": "ProjectileTurnAccelerationDelay",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_TurnAccelDelay",
+      "target": "ProjectileTurnAccelerationDelay",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_TurnClamp",
+      "name": "ProjectileTurnClamp",
+      "offset": 228,
+      "offset_code_evidence": {
+        "offset": 228,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x74A",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x769",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x757"
+        ],
+        "status": "proven",
+        "uses": 68
+      },
+      "owner": "ProjectileProperties",
+      "source": "TurnClamp",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_TurnClamp",
+      "target": "ProjectileTurnClamp",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_TurnAccelInv",
+      "name": "TurnAccelerationInv",
+      "offset": 436,
+      "offset_code_evidence": {
+        "offset": 436,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x742",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x74F",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x74F"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "TurnAccelerationInv",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_TurnAccelInv",
+      "target": "TurnAccelerationInv",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_IsTurning",
+      "name": "IsTurning",
+      "offset": 440,
+      "offset_code_evidence": {
+        "offset": 440,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x683",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x690",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x690"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "IsTurning",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_IsTurning",
+      "target": "IsTurning",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_IsTurningDelayed",
+      "name": "IsTurningDelayed",
+      "offset": 442,
+      "offset_code_evidence": {
+        "offset": 442,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x6B1",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x6BE",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x6BE"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "IsTurningDelayed",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_IsTurningDelayed",
+      "target": "IsTurningDelayed",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HBEAKBIHANL",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Hbeak_ProjRadius",
+      "name": "HHFDCMIIIHF",
+      "offset": 468,
+      "offset_code_evidence": {
+        "offset": 468,
+        "searched": [
+          "HBEAKBIHANL"
+        ],
+        "sites": [
+          "HBEAKBIHANL.BNDBACKLNFL@0x1699830+0x45A",
+          "HBEAKBIHANL.DFAIIDDKKHD@0x169A280+0xEB",
+          "HBEAKBIHANL.EBNMKJINLOD@0x169A550+0xFA"
+        ],
+        "status": "proven",
+        "uses": 10
+      },
+      "owner": "HBEAKBIHANL",
+      "source": "HHFDCMIIIHF",
+      "source_owner": "HBEAKBIHANL",
+      "storage": "Hbeak_ProjRadius",
+      "target": "HHFDCMIIIHF",
+      "target_owner": "HBEAKBIHANL",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HBEAKBIHANL",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Hbeak_ProjPropsPtr",
+      "name": "FOMOIBCKIFP",
+      "offset": 280,
+      "offset_code_evidence": {
+        "offset": 280,
+        "searched": [
+          "HBEAKBIHANL"
+        ],
+        "sites": [
+          "HBEAKBIHANL.BNDBACKLNFL@0x1699830+0xA3",
+          "HBEAKBIHANL.BNDBACKLNFL@0x1699830+0xD6",
+          "HBEAKBIHANL.BNDBACKLNFL@0x1699830+0xE2"
+        ],
+        "status": "proven",
+        "uses": 73
+      },
+      "owner": "HBEAKBIHANL",
+      "source": "FOMOIBCKIFP",
+      "source_owner": "HBEAKBIHANL",
+      "storage": "Hbeak_ProjPropsPtr",
+      "target": "FOMOIBCKIFP",
+      "target_owner": "HBEAKBIHANL",
+      "type": "DecaGames.RotMG.Objects.Map.Data.ProjectileProperties"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HBEAKBIHANL",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Hbeak_Angle",
+      "name": "FFFFKPDHEFP",
+      "offset": 328,
+      "offset_code_evidence": {
+        "offset": 328,
+        "searched": [
+          "HBEAKBIHANL"
+        ],
+        "sites": [
+          "HBEAKBIHANL.BNDBACKLNFL@0x1699830+0x209",
+          "HBEAKBIHANL.EOCIIIEJLJL@0x169A790+0x13C",
+          "HBEAKBIHANL.EOCIIIEJLJL@0x169A790+0x175"
+        ],
+        "status": "proven",
+        "uses": 19
+      },
+      "owner": "HBEAKBIHANL",
+      "source": "FFFFKPDHEFP",
+      "source_owner": "HBEAKBIHANL",
+      "storage": "Hbeak_Angle",
+      "target": "FFFFKPDHEFP",
+      "target_owner": "HBEAKBIHANL",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HBEAKBIHANL",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Hbeak_InstanceDamage",
+      "name": "DBNNDLKNECM",
+      "offset": 372,
+      "offset_code_evidence": {
+        "offset": 372,
+        "searched": [
+          "HBEAKBIHANL"
+        ],
+        "sites": [
+          "HBEAKBIHANL.BNDBACKLNFL@0x1699830+0x2D2",
+          "HBEAKBIHANL.GJFKGLJEGKO@0x169B500+0x54F",
+          "HBEAKBIHANL.KOBMINBDOBD@0x169D1E0+0x2C3"
+        ],
+        "status": "proven",
+        "uses": 3
+      },
+      "owner": "HBEAKBIHANL",
+      "source": "DBNNDLKNECM",
+      "source_owner": "HBEAKBIHANL",
+      "storage": "Hbeak_InstanceDamage",
+      "target": "DBNNDLKNECM",
+      "target_owner": "HBEAKBIHANL",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HBEAKBIHANL",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Hbeak_SpawnAgeMs",
+      "name": "GLEGBLDBOJF",
+      "offset": 364,
+      "offset_code_evidence": {
+        "offset": 364,
+        "searched": [
+          "HBEAKBIHANL"
+        ],
+        "sites": [
+          "HBEAKBIHANL.BNDBACKLNFL@0x1699830+0x1DA",
+          "HBEAKBIHANL.GJFKGLJEGKO@0x169B500+0xC8",
+          "HBEAKBIHANL.KOBMINBDOBD@0x169D1E0+0x1DF"
+        ],
+        "status": "proven",
+        "uses": 3
+      },
+      "owner": "HBEAKBIHANL",
+      "source": "GLEGBLDBOJF",
+      "source_owner": "HBEAKBIHANL",
+      "storage": "Hbeak_SpawnAgeMs",
+      "target": "GLEGBLDBOJF",
+      "target_owner": "HBEAKBIHANL",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HBEAKBIHANL",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Hbeak_SpeedMul",
+      "name": "KDAJOMOFMJB",
+      "offset": 388,
+      "offset_code_evidence": {
+        "offset": 388,
+        "searched": [
+          "HBEAKBIHANL"
+        ],
+        "sites": [
+          "HBEAKBIHANL.BNDBACKLNFL@0x1699830+0x1AE",
+          "HBEAKBIHANL.GIBLKPDHLBG@0x169AE10+0x159",
+          "HBEAKBIHANL.KOBMINBDOBD@0x169D1E0+0x1B3"
+        ],
+        "status": "proven",
+        "uses": 13
+      },
+      "owner": "HBEAKBIHANL",
+      "source": "KDAJOMOFMJB",
+      "source_owner": "HBEAKBIHANL",
+      "storage": "Hbeak_SpeedMul",
+      "target": "KDAJOMOFMJB",
+      "target_owner": "HBEAKBIHANL",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::HBEAKBIHANL",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Hbeak_NoclipGuard",
+      "name": "NPMECLDKGEF",
+      "offset": 381,
+      "offset_code_evidence": {
+        "offset": 381,
+        "searched": [
+          "HBEAKBIHANL"
+        ],
+        "sites": [
+          "HBEAKBIHANL.ALFMOHLCNHN@0x1699720+0x40",
+          "HBEAKBIHANL.BNDBACKLNFL@0x1699830+0x27F",
+          "HBEAKBIHANL.DBNILCJMEFP@0x169A1E0+0x40"
+        ],
+        "status": "proven",
+        "uses": 8
+      },
+      "owner": "HBEAKBIHANL",
+      "source": "NPMECLDKGEF",
+      "source_owner": "HBEAKBIHANL",
+      "storage": "Hbeak_NoclipGuard",
+      "target": "NPMECLDKGEF",
+      "target_owner": "HBEAKBIHANL",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_CustomHitbox",
+      "name": "CustomHitbox",
+      "offset": 328,
+      "offset_code_evidence": {
+        "offset": 328,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x7CF",
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x7DF",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x7DC"
+        ],
+        "status": "proven",
+        "uses": 68
+      },
+      "owner": "ProjectileProperties",
+      "source": "CustomHitbox",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_CustomHitbox",
+      "target": "CustomHitbox",
+      "target_owner": "ProjectileProperties",
+      "type": "DecaGames.RotMG.Objects.Map.Data.ProjectileProperties.ProjectileCustomHitbox"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.PP_IsArmorPiercing",
+      "name": "IsArmorPiercing",
+      "offset": 372,
+      "offset_code_evidence": {
+        "offset": 372,
+        "searched": [
+          "ProjectileProperties"
+        ],
+        "sites": [
+          "ProjectileProperties.BDACEKCBHME@0x18BC530+0x4EB",
+          "ProjectileProperties.CBPDBPKDFEC@0x18BCDB0+0x4F6",
+          "ProjectileProperties.CEHOCGBMDCC@0x18BD650+0x4F8"
+        ],
+        "status": "proven",
+        "uses": 34
+      },
+      "owner": "ProjectileProperties",
+      "source": "IsArmorPiercing",
+      "source_owner": "ProjectileProperties",
+      "storage": "PP_IsArmorPiercing",
+      "target": "IsArmorPiercing",
+      "target_owner": "ProjectileProperties",
+      "type": "System.Boolean"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties.ProjectileCustomHitbox",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.CH_OffsetX",
+      "name": "offsetX",
+      "offset": 16,
+      "offset_code_evidence": {
+        "offset": 16,
+        "searched": [
+          "ProjectileCustomHitbox"
+        ],
+        "sites": [],
+        "status": "unproven",
+        "uses": 0
+      },
+      "owner": "ProjectileCustomHitbox",
+      "source": "offsetX",
+      "source_owner": "ProjectileCustomHitbox",
+      "storage": "CH_OffsetX",
+      "target": "offsetX",
+      "target_owner": "ProjectileCustomHitbox",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ProjectileProperties.ProjectileCustomHitbox",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.CH_OffsetY",
+      "name": "offsetY",
+      "offset": 20,
+      "offset_code_evidence": {
+        "offset": 20,
+        "searched": [
+          "ProjectileCustomHitbox"
+        ],
+        "sites": [],
+        "status": "unproven",
+        "uses": 0
+      },
+      "owner": "ProjectileCustomHitbox",
+      "source": "offsetY",
+      "source_owner": "ProjectileCustomHitbox",
+      "storage": "CH_OffsetY",
+      "target": "offsetY",
+      "target_owner": "ProjectileCustomHitbox",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ViewHandler",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.VH_SpriteShader",
+      "name": "spriteShader",
+      "offset": 96,
+      "offset_code_evidence": {
+        "offset": 96,
+        "searched": [
+          "ViewHandler"
+        ],
+        "sites": [
+          "ViewHandler.EEOEMEKCJKF@0xF24E40+0xB0",
+          "ViewHandler.FHKEGJHBPCM@0xF25230+0xB0",
+          "ViewHandler.IAKMBIAJFDM@0xF255D0+0xB0"
+        ],
+        "status": "proven",
+        "uses": 7
+      },
+      "owner": "ViewHandler",
+      "source": "spriteShader",
+      "source_owner": "ViewHandler",
+      "storage": "VH_SpriteShader",
+      "target": "spriteShader",
+      "target_owner": "ViewHandler",
+      "type": "DecaGames.RotMG.Shaders.SpriteShader"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.ViewHandler",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.VH_DestroyEntity",
+      "name": "destroyEntity",
+      "offset": 136,
+      "offset_code_evidence": {
+        "offset": 136,
+        "searched": [
+          "ViewHandler"
+        ],
+        "sites": [],
+        "status": "unproven",
+        "uses": 0
+      },
+      "owner": "ViewHandler",
+      "source": "destroyEntity",
+      "source_owner": "ViewHandler",
+      "storage": "VH_DestroyEntity",
+      "target": "destroyEntity",
+      "target_owner": "ViewHandler",
+      "type": "AHOGLGEEHHC"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::LKHPPBEGNOM",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Player_FacingAngle",
+      "name": "IHEFJFFIJOL",
+      "offset": 388,
+      "offset_code_evidence": {
+        "offset": 388,
+        "searched": [
+          "EEGJPHBMENN",
+          "FKALGHJIADI",
+          "GJJCEFJMNMK",
+          "LKHPPBEGNOM",
+          "PMMFLLAIPGN"
+        ],
+        "sites": [
+          "LKHPPBEGNOM.LPGNNFPFAGD@0x3E9680+0x4A7",
+          "LKHPPBEGNOM.PCDLMEKLGEF@0x3ED420+0x2F",
+          "FKALGHJIADI.BLLOEABIBDG@0x122F4B0+0x190"
+        ],
+        "status": "proven",
+        "uses": 8
+      },
+      "owner": "LKHPPBEGNOM",
+      "source": "IHEFJFFIJOL",
+      "source_owner": "LKHPPBEGNOM",
+      "storage": "Player_FacingAngle",
+      "target": "IHEFJFFIJOL",
+      "target_owner": "LKHPPBEGNOM",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::GJJCEFJMNMK",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Gjj_OriginX",
+      "name": "ICODPOCLEEL",
+      "offset": 880,
+      "offset_code_evidence": {
+        "offset": 880,
+        "searched": [
+          "GJJCEFJMNMK"
+        ],
+        "sites": [
+          "GJJCEFJMNMK.AALBDNFEINO@0x13E9C30+0x11",
+          "GJJCEFJMNMK.AFOCEHLNEAH@0x13E9C30+0x11",
+          "GJJCEFJMNMK.AIJJJAHGMLG@0x13E9C30+0x11"
+        ],
+        "status": "proven",
+        "uses": 130
+      },
+      "owner": "GJJCEFJMNMK",
+      "source": "ICODPOCLEEL",
+      "source_owner": "GJJCEFJMNMK",
+      "storage": "Gjj_OriginX",
+      "target": "ICODPOCLEEL",
+      "target_owner": "GJJCEFJMNMK",
+      "type": "UnityEngine.Vector2"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::GJJCEFJMNMK",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Gjj_DestX",
+      "name": "IAJJLFBDJGE",
+      "offset": 888,
+      "offset_code_evidence": {
+        "offset": 888,
+        "searched": [
+          "GJJCEFJMNMK"
+        ],
+        "sites": [
+          "GJJCEFJMNMK.AALBDNFEINO@0x13E9C30+0x1F",
+          "GJJCEFJMNMK.AFOCEHLNEAH@0x13E9C30+0x1F",
+          "GJJCEFJMNMK.AIJJJAHGMLG@0x13E9C30+0x1F"
+        ],
+        "status": "proven",
+        "uses": 88
+      },
+      "owner": "GJJCEFJMNMK",
+      "source": "IAJJLFBDJGE",
+      "source_owner": "GJJCEFJMNMK",
+      "storage": "Gjj_DestX",
+      "target": "IAJJLFBDJGE",
+      "target_owner": "GJJCEFJMNMK",
+      "type": "UnityEngine.Vector2"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::GJJCEFJMNMK",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Gjj_DurationMs",
+      "name": "EAICINLCCJK",
+      "offset": 912,
+      "offset_code_evidence": {
+        "offset": 912,
+        "searched": [
+          "GJJCEFJMNMK"
+        ],
+        "sites": [
+          "GJJCEFJMNMK.AALBDNFEINO@0x13E9C30+0x8",
+          "GJJCEFJMNMK.AFOCEHLNEAH@0x13E9C30+0x8",
+          "GJJCEFJMNMK.AIJJJAHGMLG@0x13E9C30+0x8"
+        ],
+        "status": "proven",
+        "uses": 88
+      },
+      "owner": "GJJCEFJMNMK",
+      "source": "EAICINLCCJK",
+      "source_owner": "GJJCEFJMNMK",
+      "storage": "Gjj_DurationMs",
+      "target": "EAICINLCCJK",
+      "target_owner": "GJJCEFJMNMK",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FHOHCELBPDO",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Fhoh_DurationMs",
+      "name": "IEJNJENOCFP",
+      "offset": 320,
+      "offset_code_evidence": {
+        "offset": 320,
+        "searched": [
+          "FHOHCELBPDO"
+        ],
+        "sites": [
+          "FHOHCELBPDO.AIJJJAHGMLG@0x1E19C40+0x6E",
+          "FHOHCELBPDO.ALKMANPGIIL@0x1E19D40+0x6E",
+          "FHOHCELBPDO.APLCLHCKOAC@0x1E19E40+0x6E"
+        ],
+        "status": "proven",
+        "uses": 33
+      },
+      "owner": "FHOHCELBPDO",
+      "source": "IEJNJENOCFP",
+      "source_owner": "FHOHCELBPDO",
+      "storage": "Fhoh_DurationMs",
+      "target": "IEJNJENOCFP",
+      "target_owner": "FHOHCELBPDO",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::FHOHCELBPDO",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Fhoh_DestX",
+      "name": "PBHMINMBFOM",
+      "offset": 340,
+      "offset_code_evidence": {
+        "offset": 340,
+        "searched": [
+          "FHOHCELBPDO"
+        ],
+        "sites": [
+          "FHOHCELBPDO.AIJJJAHGMLG@0x1E19C40+0x77",
+          "FHOHCELBPDO.ALKMANPGIIL@0x1E19D40+0x77",
+          "FHOHCELBPDO.APLCLHCKOAC@0x1E19E40+0x77"
+        ],
+        "status": "proven",
+        "uses": 32
+      },
+      "owner": "FHOHCELBPDO",
+      "source": "PBHMINMBFOM",
+      "source_owner": "FHOHCELBPDO",
+      "storage": "Fhoh_DestX",
+      "target": "PBHMINMBFOM",
+      "target_owner": "FHOHCELBPDO",
+      "type": "UnityEngine.Vector2"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::COEFCBBIBMC",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Sfx_EffectType",
+      "name": "MIDADCIKEBD",
+      "offset": 16,
+      "offset_code_evidence": {
+        "offset": 16,
+        "searched": [
+          "COEFCBBIBMC"
+        ],
+        "sites": [
+          "COEFCBBIBMC.CPFGCOMJJOC@0x5BA030+0x35",
+          "COEFCBBIBMC.JEFJDICFNBA@0x5BA0C0+0x77"
+        ],
+        "status": "proven",
+        "uses": 2
+      },
+      "owner": "COEFCBBIBMC",
+      "source": "MIDADCIKEBD",
+      "source_owner": "COEFCBBIBMC",
+      "storage": "Sfx_EffectType",
+      "target": "MIDADCIKEBD",
+      "target_owner": "COEFCBBIBMC",
+      "type": "PEHBMICMEDO"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::COEFCBBIBMC",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Sfx_TargetObjId",
+      "name": "HNOKKCFIJHJ",
+      "offset": 20,
+      "offset_code_evidence": {
+        "offset": 20,
+        "searched": [
+          "COEFCBBIBMC"
+        ],
+        "sites": [
+          "COEFCBBIBMC.CPFGCOMJJOC@0x5BA030+0x4D",
+          "COEFCBBIBMC.JEFJDICFNBA@0x5BA0C0+0x9E"
+        ],
+        "status": "proven",
+        "uses": 2
+      },
+      "owner": "COEFCBBIBMC",
+      "source": "HNOKKCFIJHJ",
+      "source_owner": "COEFCBBIBMC",
+      "storage": "Sfx_TargetObjId",
+      "target": "HNOKKCFIJHJ",
+      "target_owner": "COEFCBBIBMC",
+      "type": "System.Int32"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::COEFCBBIBMC",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Sfx_Pos1Ptr",
+      "name": "KMAIENKMNFA",
+      "offset": 24,
+      "offset_code_evidence": {
+        "offset": 24,
+        "searched": [
+          "COEFCBBIBMC"
+        ],
+        "sites": [
+          "COEFCBBIBMC.JEFJDICFNBA@0x5BA0C0+0xEA",
+          "COEFCBBIBMC.JEFJDICFNBA@0x5BA0C0+0xEE",
+          "COEFCBBIBMC.JEFJDICFNBA@0x5BA0C0+0xFA"
+        ],
+        "status": "proven",
+        "uses": 5
+      },
+      "owner": "COEFCBBIBMC",
+      "source": "KMAIENKMNFA",
+      "source_owner": "COEFCBBIBMC",
+      "storage": "Sfx_Pos1Ptr",
+      "target": "KMAIENKMNFA",
+      "target_owner": "COEFCBBIBMC",
+      "type": "FFLIAABAAFP"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::COEFCBBIBMC",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Sfx_Pos2Ptr",
+      "name": "AEPOCACMOHI",
+      "offset": 32,
+      "offset_code_evidence": {
+        "offset": 32,
+        "searched": [
+          "COEFCBBIBMC"
+        ],
+        "sites": [
+          "COEFCBBIBMC.JEFJDICFNBA@0x5BA0C0+0x198",
+          "COEFCBBIBMC.JEFJDICFNBA@0x5BA0C0+0x19C",
+          "COEFCBBIBMC.JEFJDICFNBA@0x5BA0C0+0x1A8"
+        ],
+        "status": "proven",
+        "uses": 5
+      },
+      "owner": "COEFCBBIBMC",
+      "source": "AEPOCACMOHI",
+      "source_owner": "COEFCBBIBMC",
+      "storage": "Sfx_Pos2Ptr",
+      "target": "AEPOCACMOHI",
+      "target_owner": "COEFCBBIBMC",
+      "type": "FFLIAABAAFP"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::COEFCBBIBMC",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Sfx_Duration",
+      "name": "KPKIICOBBIM",
+      "offset": 44,
+      "offset_code_evidence": {
+        "offset": 44,
+        "searched": [
+          "COEFCBBIBMC"
+        ],
+        "sites": [
+          "COEFCBBIBMC.JEFJDICFNBA@0x5BA0C0+0x244"
+        ],
+        "status": "proven",
+        "uses": 1
+      },
+      "owner": "COEFCBBIBMC",
+      "source": "KPKIICOBBIM",
+      "source_owner": "COEFCBBIBMC",
+      "storage": "Sfx_Duration",
+      "target": "KPKIICOBBIM",
+      "target_owner": "COEFCBBIBMC",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.CustomExplosionEntrance",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Cee_Distance",
+      "name": "distance",
+      "offset": 56,
+      "offset_code_evidence": {
+        "offset": 56,
+        "searched": [
+          "CustomExplosionEntrance"
+        ],
+        "sites": [
+          "CustomExplosionEntrance..ctor@0x5FC010+0x2"
+        ],
+        "status": "proven",
+        "uses": 1
+      },
+      "owner": "CustomExplosionEntrance",
+      "source": "distance",
+      "source_owner": "CustomExplosionEntrance",
+      "storage": "Cee_Distance",
+      "target": "distance",
+      "target_owner": "CustomExplosionEntrance",
+      "type": "System.Single"
+    },
+    {
+      "adjustment": 0,
+      "declaring_owner": "Assembly-CSharp.dll::DecaGames.RotMG.Objects.Map.Data.CustomExplosionEntrance",
+      "evidence": [
+        "identical_chain"
+      ],
+      "key": "field.Cee_Speed",
+      "name": "speed",
+      "offset": 60,
+      "offset_code_evidence": {
+        "offset": 60,
+        "searched": [
+          "CustomExplosionEntrance"
+        ],
+        "sites": [
+          "CustomExplosionEntrance..ctor@0x5FC010+0x9"
+        ],
+        "status": "proven",
+        "uses": 1
+      },
+      "owner": "CustomExplosionEntrance",
+      "source": "speed",
+      "source_owner": "CustomExplosionEntrance",
+      "storage": "Cee_Speed",
+      "target": "speed",
+      "target_owner": "CustomExplosionEntrance",
+      "type": "System.Single"
+    }
+  ],
+  "generated_sha256": "6651f974fda9dd6a00f8c85de4903a978ded6690441cf0ab8f21a3a95acf39c8",
+  "identity": {
+    "gameassembly_sha256": "86ad651b675dd677718b3bbd111f6a75fb80d7d167f233c2b170085ab977d788",
+    "metadata_sha256": "82d6cf0adc3b0da40795d3ea9b5fe4501cf66d061f2db6b39b5780382afa04e2"
+  },
+  "il2cpp_metadata_version": {
+    "declared": 31,
+    "reported": 31
+  },
+  "image_scope": {
+    "baseline": {
+      "images": 90,
+      "images_sha256": "5121d6d20e1dbb83b9d468f5af9d1dbc5afd7d7c2869e6aed3569f28e08bac21",
+      "mode": "all",
+      "source": ""
+    },
+    "current": {
+      "images": 90,
+      "images_sha256": "5121d6d20e1dbb83b9d468f5af9d1dbc5afd7d7c2869e6aed3569f28e08bac21",
+      "mode": "all",
+      "source": ""
+    }
+  },
+  "methods": [
+    {
+      "argc": 1,
+      "consumers": [
+        "features/visuals/CosmeticOverrides.cpp:165"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.AAGOIIEJOMO.HDKBNHKLEAO/1",
+      "keys": [
+        "method.AAGOIIEJOMO.HDKBNHKLEAO/1"
+      ],
+      "lookups": [
+        {
+          "key": "method.AAGOIIEJOMO.HDKBNHKLEAO/1",
+          "loose": true,
+          "source_owner": "AAGOIIEJOMO"
+        }
+      ],
+      "name": "HDKBNHKLEAO",
+      "owner": "AAGOIIEJOMO",
+      "parameters": [
+        "System.Int32"
+      ],
+      "return_type": "System.Void",
+      "rva": 31421648,
+      "source": "HDKBNHKLEAO",
+      "source_owner": "AAGOIIEJOMO",
+      "target": "HDKBNHKLEAO",
+      "target_owner": "AAGOIIEJOMO"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "features/movement/dodge/DangerPlanner.cpp:915"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.AppEngineManager.Update/0",
+      "keys": [
+        "method.AppEngineManager.Update/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.AppEngineManager.Update/0",
+          "loose": true,
+          "source_owner": "AppEngineManager"
+        }
+      ],
+      "name": "Update",
+      "owner": "AppEngineManager",
+      "parameters": [],
+      "return_type": "System.Void",
+      "rva": 26509600,
+      "source": "Update",
+      "source_owner": "AppEngineManager",
+      "target": "Update",
+      "target_owner": "AppEngineManager"
+    },
+    {
+      "argc": 1,
+      "consumers": [
+        "features/movement/dodge/AoeTracking.cpp:683"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.COEFCBBIBMC.JEFJDICFNBA/1",
+      "keys": [
+        "method.COEFCBBIBMC.JEFJDICFNBA/1"
+      ],
+      "lookups": [
+        {
+          "key": "method.COEFCBBIBMC.JEFJDICFNBA/1",
+          "loose": true,
+          "source_owner": "COEFCBBIBMC"
+        }
+      ],
+      "name": "JEFJDICFNBA",
+      "owner": "COEFCBBIBMC",
+      "parameters": [
+        "BHFDLBOGHIB"
+      ],
+      "return_type": "System.Void",
+      "rva": 6004928,
+      "source": "JEFJDICFNBA",
+      "source_owner": "COEFCBBIBMC",
+      "target": "JEFJDICFNBA",
+      "target_owner": "COEFCBBIBMC"
+    },
+    {
+      "argc": 1,
+      "consumers": [
+        "gui/tabs/CameraTAB.cpp:718"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.Camera.WorldToScreenPoint/1",
+      "keys": [
+        "method.Camera.WorldToScreenPoint/1"
+      ],
+      "lookups": [
+        {
+          "key": "method.Camera.WorldToScreenPoint/1",
+          "loose": true,
+          "source_owner": "Camera"
+        }
+      ],
+      "name": "WorldToScreenPoint",
+      "owner": "Camera",
+      "parameters": [
+        "UnityEngine.Vector3"
+      ],
+      "return_type": "UnityEngine.Vector3",
+      "rva": 55717504,
+      "source": "WorldToScreenPoint",
+      "source_owner": "Camera",
+      "target": "WorldToScreenPoint",
+      "target_owner": "Camera"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "gui/tabs/CameraTAB.cpp:150"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.Camera.get_pixelRect/0",
+      "keys": [
+        "method.Camera.get_pixelRect/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.Camera.get_pixelRect/0",
+          "loose": true,
+          "source_owner": "Camera"
+        }
+      ],
+      "name": "get_pixelRect",
+      "owner": "Camera",
+      "parameters": [],
+      "return_type": "UnityEngine.Rect",
+      "rva": 55721936,
+      "source": "get_pixelRect",
+      "source_owner": "Camera",
+      "target": "get_pixelRect",
+      "target_owner": "Camera"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "gui/tabs/CameraTAB.cpp:119"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.CameraManager.ChangeOffsetMode/0",
+      "keys": [
+        "method.CameraManager.ChangeOffsetMode/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.CameraManager.ChangeOffsetMode/0",
+          "loose": true,
+          "source_owner": "CameraManager"
+        }
+      ],
+      "name": "ChangeOffsetMode",
+      "owner": "CameraManager",
+      "parameters": [],
+      "return_type": "System.Void",
+      "rva": 21510784,
+      "source": "ChangeOffsetMode",
+      "source_owner": "CameraManager",
+      "target": "ChangeOffsetMode",
+      "target_owner": "CameraManager"
+    },
+    {
+      "argc": 1,
+      "consumers": [
+        "gui/tabs/CameraTAB.cpp:117"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.CameraManager.SetCameraAngle/1",
+      "keys": [
+        "method.CameraManager.SetCameraAngle/1"
+      ],
+      "lookups": [
+        {
+          "key": "method.CameraManager.SetCameraAngle/1",
+          "loose": true,
+          "source_owner": "CameraManager"
+        }
+      ],
+      "name": "SetCameraAngle",
+      "owner": "CameraManager",
+      "parameters": [
+        "System.Int32"
+      ],
+      "return_type": "System.Void",
+      "rva": 21529232,
+      "source": "SetCameraAngle",
+      "source_owner": "CameraManager",
+      "target": "SetCameraAngle",
+      "target_owner": "CameraManager"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "gui/MinimapNav.cpp:254"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.UnityEngine::Component.get_transform/0",
+      "keys": [
+        "method.UnityEngine::Component.get_transform/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.UnityEngine::Component.get_transform/0",
+          "loose": false,
+          "source_owner": "Component"
+        }
+      ],
+      "name": "get_transform",
+      "owner": "Component",
+      "parameters": [],
+      "return_type": "UnityEngine.Transform",
+      "rva": 55966240,
+      "source": "get_transform",
+      "source_owner": "Component",
+      "target": "get_transform",
+      "target_owner": "Component"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "platform/hooks/DirectX.cpp:370"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.UnityEngine::Cursor.get_lockState/0",
+      "keys": [
+        "method.UnityEngine::Cursor.get_lockState/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.UnityEngine::Cursor.get_lockState/0",
+          "loose": false,
+          "source_owner": "Cursor"
+        }
+      ],
+      "name": "get_lockState",
+      "owner": "Cursor",
+      "parameters": [],
+      "return_type": "UnityEngine.CursorLockMode",
+      "rva": 55860768,
+      "source": "get_lockState",
+      "source_owner": "Cursor",
+      "target": "get_lockState",
+      "target_owner": "Cursor"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "features/account/HwidCapture.cpp:98"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.DeviceIdHolder.GetDeviceId/0",
+      "keys": [
+        "method.DeviceIdHolder.GetDeviceId/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.DeviceIdHolder.GetDeviceId/0",
+          "loose": true,
+          "source_owner": "DeviceIdHolder"
+        }
+      ],
+      "name": "GetDeviceId",
+      "owner": "DeviceIdHolder",
+      "parameters": [],
+      "return_type": "System.String",
+      "rva": 3018032,
+      "source": "GetDeviceId",
+      "source_owner": "DeviceIdHolder",
+      "target": "GetDeviceId",
+      "target_owner": "DeviceIdHolder"
+    },
+    {
+      "argc": 6,
+      "consumers": [
+        "game/actions/ItemUse.cpp:40"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.DecaGames.RotMG.Managers.Equipment::EquipmentManager.UseInventoryItem/6",
+      "keys": [
+        "method.DecaGames.RotMG.Managers.Equipment::EquipmentManager.UseInventoryItem/6"
+      ],
+      "lookups": [
+        {
+          "key": "method.DecaGames.RotMG.Managers.Equipment::EquipmentManager.UseInventoryItem/6",
+          "loose": false,
+          "source_owner": "EquipmentManager"
+        }
+      ],
+      "name": "UseInventoryItem",
+      "owner": "EquipmentManager",
+      "parameters": [
+        "LKHPPBEGNOM",
+        "System.Int32",
+        "System.Int32",
+        "UnityEngine.Vector2",
+        "System.Boolean",
+        "System.Boolean"
+      ],
+      "return_type": "System.Boolean",
+      "rva": 4203120,
+      "source": "UseInventoryItem",
+      "source_owner": "EquipmentManager",
+      "target": "UseInventoryItem",
+      "target_owner": "EquipmentManager"
+    },
+    {
+      "argc": 1,
+      "consumers": [
+        "game/actions/ItemUse.cpp:32"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.DecaGames.RotMG.Managers.Equipment::EquipmentManager.UseInventoryItemByHotkey/1",
+      "keys": [
+        "method.DecaGames.RotMG.Managers.Equipment::EquipmentManager.UseInventoryItemByHotkey/1"
+      ],
+      "lookups": [
+        {
+          "key": "method.DecaGames.RotMG.Managers.Equipment::EquipmentManager.UseInventoryItemByHotkey/1",
+          "loose": false,
+          "source_owner": "EquipmentManager"
+        }
+      ],
+      "name": "UseInventoryItemByHotkey",
+      "owner": "EquipmentManager",
+      "parameters": [
+        "System.Int32"
+      ],
+      "return_type": "System.Void",
+      "rva": 4202160,
+      "source": "UseInventoryItemByHotkey",
+      "source_owner": "EquipmentManager",
+      "target": "UseInventoryItemByHotkey",
+      "target_owner": "EquipmentManager"
+    },
+    {
+      "argc": 3,
+      "consumers": [
+        "features/movement/dodge/AoeTracking.cpp:780"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.::FGOFPGIIEPC.KOBMINBDOBD/3",
+      "keys": [
+        "method.::FGOFPGIIEPC.KOBMINBDOBD/3"
+      ],
+      "lookups": [
+        {
+          "key": "method.::FGOFPGIIEPC.KOBMINBDOBD/3",
+          "loose": false,
+          "source_owner": "FGOFPGIIEPC"
+        }
+      ],
+      "name": "KOBMINBDOBD",
+      "owner": "FGOFPGIIEPC",
+      "parameters": [
+        "LKHPPBEGNOM",
+        "DecaGames.RotMG.Objects.Map.Data.CustomExplosionEntrance",
+        "System.Single"
+      ],
+      "return_type": "System.Void",
+      "rva": 26926096,
+      "source": "KOBMINBDOBD",
+      "source_owner": "FGOFPGIIEPC",
+      "target": "KOBMINBDOBD",
+      "target_owner": "FGOFPGIIEPC"
+    },
+    {
+      "argc": 5,
+      "consumers": [
+        "features/movement/dodge/AoeTracking.cpp:760"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.::FHOHCELBPDO.KOBMINBDOBD/5",
+      "keys": [
+        "method.::FHOHCELBPDO.KOBMINBDOBD/5"
+      ],
+      "lookups": [
+        {
+          "key": "method.::FHOHCELBPDO.KOBMINBDOBD/5",
+          "loose": false,
+          "source_owner": "FHOHCELBPDO"
+        }
+      ],
+      "name": "KOBMINBDOBD",
+      "owner": "FHOHCELBPDO",
+      "parameters": [
+        "System.Int32",
+        "UnityEngine.Color",
+        "System.Int32",
+        "UnityEngine.Vector2",
+        "UnityEngine.Vector2"
+      ],
+      "return_type": "System.Void",
+      "rva": 31568304,
+      "source": "KOBMINBDOBD",
+      "source_owner": "FHOHCELBPDO",
+      "target": "KOBMINBDOBD",
+      "target_owner": "FHOHCELBPDO"
+    },
+    {
+      "argc": 4,
+      "consumers": [
+        "features/visuals/CosmeticOverrides.cpp:157"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.FKALGHJIADI.BFAGHBNLKEP/4",
+      "keys": [
+        "method.FKALGHJIADI.BFAGHBNLKEP/4"
+      ],
+      "lookups": [
+        {
+          "key": "method.FKALGHJIADI.BFAGHBNLKEP/4",
+          "loose": true,
+          "source_owner": "FKALGHJIADI"
+        }
+      ],
+      "name": "BFAGHBNLKEP",
+      "owner": "FKALGHJIADI",
+      "parameters": [
+        "System.String",
+        "System.Int32",
+        "System.Int32",
+        "JGPFJPNAEKA"
+      ],
+      "return_type": "System.Void",
+      "rva": 19066720,
+      "source": "BFAGHBNLKEP",
+      "source_owner": "FKALGHJIADI",
+      "target": "BFAGHBNLKEP",
+      "target_owner": "FKALGHJIADI"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "core/runtime/LocalPlayer.cpp:190"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.FKALGHJIADI.DANCJNLCOFK/0",
+      "keys": [
+        "method.FKALGHJIADI.DANCJNLCOFK/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.FKALGHJIADI.DANCJNLCOFK/0",
+          "loose": true,
+          "source_owner": "FKALGHJIADI"
+        }
+      ],
+      "name": "DANCJNLCOFK",
+      "owner": "FKALGHJIADI",
+      "parameters": [],
+      "return_type": "System.Single",
+      "rva": 19082752,
+      "source": "DANCJNLCOFK",
+      "source_owner": "FKALGHJIADI",
+      "target": "DANCJNLCOFK",
+      "target_owner": "FKALGHJIADI"
+    },
+    {
+      "argc": 2,
+      "consumers": [
+        "features/movement/dodge/DangerPlanner.cpp:109",
+        "features/movement/dodge/MovementRuntime.cpp:59"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.FKALGHJIADI.DGLCONCOIBO/2",
+      "keys": [
+        "method.FKALGHJIADI.DGLCONCOIBO/2"
+      ],
+      "lookups": [
+        {
+          "key": "method.FKALGHJIADI.DGLCONCOIBO/2",
+          "loose": true,
+          "source_owner": "FKALGHJIADI"
+        }
+      ],
+      "name": "DGLCONCOIBO",
+      "owner": "FKALGHJIADI",
+      "parameters": [
+        "System.Single",
+        "System.Single"
+      ],
+      "return_type": "System.Boolean",
+      "rva": 19085744,
+      "source": "DGLCONCOIBO",
+      "source_owner": "FKALGHJIADI",
+      "target": "DGLCONCOIBO",
+      "target_owner": "FKALGHJIADI"
+    },
+    {
+      "argc": 1,
+      "consumers": [
+        "features/combat/autoaim/shoot/AimHooks.cpp:194",
+        "features/combat/autoaim/shoot/ShootRuntime.cpp:29"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.::FKALGHJIADI.EHGHCACPAGH/1",
+      "keys": [
+        "method.::FKALGHJIADI.EHGHCACPAGH/1"
+      ],
+      "lookups": [
+        {
+          "key": "method.::FKALGHJIADI.EHGHCACPAGH/1",
+          "loose": false,
+          "source_owner": "FKALGHJIADI"
+        }
+      ],
+      "name": "EHGHCACPAGH",
+      "owner": "FKALGHJIADI",
+      "parameters": [
+        "System.Single"
+      ],
+      "return_type": "System.Void",
+      "rva": 19089280,
+      "source": "EHGHCACPAGH",
+      "source_owner": "FKALGHJIADI",
+      "target": "EHGHCACPAGH",
+      "target_owner": "FKALGHJIADI"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "features/movement/dodge/MovementRuntime.cpp:135"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.FKALGHJIADI.GAFGPNKFMOJ/0",
+      "keys": [
+        "method.FKALGHJIADI.GAFGPNKFMOJ/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.FKALGHJIADI.GAFGPNKFMOJ/0",
+          "loose": true,
+          "source_owner": "FKALGHJIADI"
+        }
+      ],
+      "name": "GAFGPNKFMOJ",
+      "owner": "FKALGHJIADI",
+      "parameters": [],
+      "return_type": "System.Single",
+      "rva": 19098352,
+      "source": "GAFGPNKFMOJ",
+      "source_owner": "FKALGHJIADI",
+      "target": "GAFGPNKFMOJ",
+      "target_owner": "FKALGHJIADI"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "features/movement/dodge/DangerPlanner.cpp:117",
+        "features/movement/dodge/MovementRuntime.cpp:113",
+        "gui/tabs/PlayerTAB.cpp:184"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.FKALGHJIADI.GCFKGLKAPND/0",
+      "keys": [
+        "method.FKALGHJIADI.GCFKGLKAPND/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.FKALGHJIADI.GCFKGLKAPND/0",
+          "loose": true,
+          "source_owner": "FKALGHJIADI"
+        }
+      ],
+      "name": "GCFKGLKAPND",
+      "owner": "FKALGHJIADI",
+      "parameters": [],
+      "return_type": "System.Single",
+      "rva": 19100496,
+      "source": "GCFKGLKAPND",
+      "source_owner": "FKALGHJIADI",
+      "target": "GCFKGLKAPND",
+      "target_owner": "FKALGHJIADI"
+    },
+    {
+      "argc": 2,
+      "consumers": [
+        "features/combat/autoaim/shoot/AimHooks.cpp:195"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.::FKALGHJIADI.PMIANFBMMNN/2",
+      "keys": [
+        "method.::FKALGHJIADI.PMIANFBMMNN/2"
+      ],
+      "lookups": [
+        {
+          "key": "method.::FKALGHJIADI.PMIANFBMMNN/2",
+          "loose": false,
+          "source_owner": "FKALGHJIADI"
+        }
+      ],
+      "name": "PMIANFBMMNN",
+      "owner": "FKALGHJIADI",
+      "parameters": [
+        "NKMHEINLOCD",
+        "System.Int32"
+      ],
+      "return_type": "System.Void",
+      "rva": 19165040,
+      "source": "PMIANFBMMNN",
+      "source_owner": "FKALGHJIADI",
+      "target": "PMIANFBMMNN",
+      "target_owner": "FKALGHJIADI"
+    },
+    {
+      "argc": 4,
+      "consumers": [
+        "features/movement/dodge/AoeTracking.cpp:728"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.::GJJCEFJMNMK.KOBMINBDOBD/4",
+      "keys": [
+        "method.::GJJCEFJMNMK.KOBMINBDOBD/4"
+      ],
+      "lookups": [
+        {
+          "key": "method.::GJJCEFJMNMK.KOBMINBDOBD/4",
+          "loose": false,
+          "source_owner": "GJJCEFJMNMK"
+        }
+      ],
+      "name": "KOBMINBDOBD",
+      "owner": "GJJCEFJMNMK",
+      "parameters": [
+        "UnityEngine.Vector2",
+        "UnityEngine.Vector2",
+        "UnityEngine.Color",
+        "System.Int32"
+      ],
+      "return_type": "GJJCEFJMNMK",
+      "rva": 20880432,
+      "source": "KOBMINBDOBD",
+      "source_owner": "GJJCEFJMNMK",
+      "target": "KOBMINBDOBD",
+      "target_owner": "GJJCEFJMNMK"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "core/runtime/Il2CppResolver.cpp:454"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.UnityEngine::GameObject.get_scene/0",
+      "keys": [
+        "method.UnityEngine::GameObject.get_scene/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.UnityEngine::GameObject.get_scene/0",
+          "loose": false,
+          "source_owner": "GameObject"
+        }
+      ],
+      "name": "get_scene",
+      "owner": "GameObject",
+      "parameters": [],
+      "return_type": "UnityEngine.SceneManagement.Scene",
+      "rva": 55987632,
+      "source": "get_scene",
+      "source_owner": "GameObject",
+      "target": "get_scene",
+      "target_owner": "GameObject"
+    },
+    {
+      "argc": 2,
+      "consumers": [
+        "features/combat/autoaim/shoot/ProjNoclip.cpp:123"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.::HBEAKBIHANL.GJFKGLJEGKO/2",
+      "keys": [
+        "method.::HBEAKBIHANL.GJFKGLJEGKO/2"
+      ],
+      "lookups": [
+        {
+          "key": "method.::HBEAKBIHANL.GJFKGLJEGKO/2",
+          "loose": false,
+          "source_owner": "HBEAKBIHANL"
+        }
+      ],
+      "name": "GJFKGLJEGKO",
+      "owner": "HBEAKBIHANL",
+      "parameters": [
+        "System.Int32",
+        "System.Int32"
+      ],
+      "return_type": "System.Boolean",
+      "rva": 23704832,
+      "source": "GJFKGLJEGKO",
+      "source_owner": "HBEAKBIHANL",
+      "target": "GJFKGLJEGKO",
+      "target_owner": "HBEAKBIHANL"
+    },
+    {
+      "argc": 2,
+      "consumers": [
+        "features/combat/autoaim/shoot/ProjNoclip.cpp:127"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.::HBEAKBIHANL.IACODGNOFMH/2",
+      "keys": [
+        "method.::HBEAKBIHANL.IACODGNOFMH/2"
+      ],
+      "lookups": [
+        {
+          "key": "method.::HBEAKBIHANL.IACODGNOFMH/2",
+          "loose": false,
+          "source_owner": "HBEAKBIHANL"
+        }
+      ],
+      "name": "IACODGNOFMH",
+      "owner": "HBEAKBIHANL",
+      "parameters": [
+        "System.Int32",
+        "System.Int32"
+      ],
+      "return_type": "System.Boolean",
+      "rva": 23709408,
+      "source": "IACODGNOFMH",
+      "source_owner": "HBEAKBIHANL",
+      "target": "IACODGNOFMH",
+      "target_owner": "HBEAKBIHANL"
+    },
+    {
+      "argc": 2,
+      "consumers": [
+        "features/movement/noclip/NoclipHook.cpp:95"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.HJMBOMEHGDJ.FNFKBDOLKDF/2",
+      "keys": [
+        "method.HJMBOMEHGDJ.FNFKBDOLKDF/2"
+      ],
+      "lookups": [
+        {
+          "key": "method.HJMBOMEHGDJ.FNFKBDOLKDF/2",
+          "loose": true,
+          "source_owner": "HJMBOMEHGDJ"
+        }
+      ],
+      "name": "FNFKBDOLKDF",
+      "owner": "HJMBOMEHGDJ",
+      "parameters": [
+        "System.Single",
+        "System.Single"
+      ],
+      "return_type": "System.Boolean",
+      "rva": 32917232,
+      "source": "FNFKBDOLKDF",
+      "source_owner": "HJMBOMEHGDJ",
+      "target": "FNFKBDOLKDF",
+      "target_owner": "HJMBOMEHGDJ"
+    },
+    {
+      "argc": 2,
+      "consumers": [
+        "features/movement/noclip/NoclipHook.cpp:95"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.HJMBOMEHGDJ.HKELLOCLLCG/2",
+      "keys": [
+        "method.HJMBOMEHGDJ.HKELLOCLLCG/2"
+      ],
+      "lookups": [
+        {
+          "key": "method.HJMBOMEHGDJ.HKELLOCLLCG/2",
+          "loose": true,
+          "source_owner": "HJMBOMEHGDJ"
+        }
+      ],
+      "name": "HKELLOCLLCG",
+      "owner": "HJMBOMEHGDJ",
+      "parameters": [
+        "System.Single",
+        "System.Single"
+      ],
+      "return_type": "System.Boolean",
+      "rva": 32929936,
+      "source": "HKELLOCLLCG",
+      "source_owner": "HJMBOMEHGDJ",
+      "target": "HKELLOCLLCG",
+      "target_owner": "HJMBOMEHGDJ"
+    },
+    {
+      "argc": 2,
+      "consumers": [
+        "features/movement/noclip/NoclipHook.cpp:95"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.HJMBOMEHGDJ.LHGGJIAKLMJ/2",
+      "keys": [
+        "method.HJMBOMEHGDJ.LHGGJIAKLMJ/2"
+      ],
+      "lookups": [
+        {
+          "key": "method.HJMBOMEHGDJ.LHGGJIAKLMJ/2",
+          "loose": true,
+          "source_owner": "HJMBOMEHGDJ"
+        }
+      ],
+      "name": "LHGGJIAKLMJ",
+      "owner": "HJMBOMEHGDJ",
+      "parameters": [
+        "System.Single",
+        "System.Single"
+      ],
+      "return_type": "System.Boolean",
+      "rva": 32955488,
+      "source": "LHGGJIAKLMJ",
+      "source_owner": "HJMBOMEHGDJ",
+      "target": "LHGGJIAKLMJ",
+      "target_owner": "HJMBOMEHGDJ"
+    },
+    {
+      "argc": 2,
+      "consumers": [
+        "features/movement/noclip/NoclipHook.cpp:95"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.HJMBOMEHGDJ.OKFBFBNJEBH/2",
+      "keys": [
+        "method.HJMBOMEHGDJ.OKFBFBNJEBH/2"
+      ],
+      "lookups": [
+        {
+          "key": "method.HJMBOMEHGDJ.OKFBFBNJEBH/2",
+          "loose": true,
+          "source_owner": "HJMBOMEHGDJ"
+        }
+      ],
+      "name": "OKFBFBNJEBH",
+      "owner": "HJMBOMEHGDJ",
+      "parameters": [
+        "System.Single",
+        "System.Single"
+      ],
+      "return_type": "System.Boolean",
+      "rva": 33002176,
+      "source": "OKFBFBNJEBH",
+      "source_owner": "HJMBOMEHGDJ",
+      "target": "OKFBFBNJEBH",
+      "target_owner": "HJMBOMEHGDJ"
+    },
+    {
+      "argc": 2,
+      "consumers": [
+        "features/movement/noclip/NoclipHook.cpp:95"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.HJMBOMEHGDJ.PEGDEDNHEHD/2",
+      "keys": [
+        "method.HJMBOMEHGDJ.PEGDEDNHEHD/2"
+      ],
+      "lookups": [
+        {
+          "key": "method.HJMBOMEHGDJ.PEGDEDNHEHD/2",
+          "loose": true,
+          "source_owner": "HJMBOMEHGDJ"
+        }
+      ],
+      "name": "PEGDEDNHEHD",
+      "owner": "HJMBOMEHGDJ",
+      "parameters": [
+        "System.Single",
+        "System.Single"
+      ],
+      "return_type": "System.Boolean",
+      "rva": 33008432,
+      "source": "PEGDEDNHEHD",
+      "source_owner": "HJMBOMEHGDJ",
+      "target": "PEGDEDNHEHD",
+      "target_owner": "HJMBOMEHGDJ"
+    },
+    {
+      "argc": 6,
+      "consumers": [
+        "features/visuals/FloatingTextService.cpp:63"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.MapObjectUIManager.ShowFloatingText/6",
+      "keys": [
+        "method.MapObjectUIManager.ShowFloatingText/6"
+      ],
+      "lookups": [
+        {
+          "key": "method.MapObjectUIManager.ShowFloatingText/6",
+          "loose": true,
+          "source_owner": "MapObjectUIManager"
+        }
+      ],
+      "name": "ShowFloatingText",
+      "owner": "MapObjectUIManager",
+      "parameters": [
+        "DGKAANOAENH",
+        "System.String",
+        "System.Nullable<UnityEngine.Color32>",
+        "System.Single",
+        "System.Single",
+        "System.Single"
+      ],
+      "return_type": "System.Void",
+      "rva": 6291840,
+      "source": "ShowFloatingText",
+      "source_owner": "MapObjectUIManager",
+      "target": "ShowFloatingText",
+      "target_owner": "MapObjectUIManager"
+    },
+    {
+      "argc": 1,
+      "consumers": [
+        "core/runtime/Il2CppResolver.cpp:361"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.UnityEngine::Object.FindObjectsOfType/1",
+      "keys": [
+        "method.UnityEngine::Object.FindObjectsOfType/1"
+      ],
+      "lookups": [
+        {
+          "key": "method.UnityEngine::Object.FindObjectsOfType/1",
+          "loose": false,
+          "source_owner": "Object"
+        }
+      ],
+      "name": "FindObjectsOfType",
+      "owner": "Object",
+      "parameters": [
+        "System.Type"
+      ],
+      "return_type": "UnityEngine.Object[]",
+      "rva": 56004016,
+      "source": "FindObjectsOfType",
+      "source_owner": "Object",
+      "target": "FindObjectsOfType",
+      "target_owner": "Object"
+    },
+    {
+      "argc": 1,
+      "consumers": [
+        "core/runtime/Il2CppResolver.cpp:312"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.UnityEngine::Object.op_Implicit/1",
+      "keys": [
+        "method.UnityEngine::Object.op_Implicit/1"
+      ],
+      "lookups": [
+        {
+          "key": "method.UnityEngine::Object.op_Implicit/1",
+          "loose": false,
+          "source_owner": "Object"
+        }
+      ],
+      "name": "op_Implicit",
+      "owner": "Object",
+      "parameters": [
+        "UnityEngine.Object"
+      ],
+      "return_type": "System.Boolean",
+      "rva": 56010000,
+      "source": "op_Implicit",
+      "source_owner": "Object",
+      "target": "op_Implicit",
+      "target_owner": "Object"
+    },
+    {
+      "argc": 1,
+      "consumers": [
+        "gui/MinimapNav.cpp:257"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.UnityEngine::RectTransform.GetWorldCorners/1",
+      "keys": [
+        "method.UnityEngine::RectTransform.GetWorldCorners/1"
+      ],
+      "lookups": [
+        {
+          "key": "method.UnityEngine::RectTransform.GetWorldCorners/1",
+          "loose": false,
+          "source_owner": "RectTransform"
+        }
+      ],
+      "name": "GetWorldCorners",
+      "owner": "RectTransform",
+      "parameters": [
+        "UnityEngine.Vector3[]"
+      ],
+      "return_type": "System.Void",
+      "rva": 56023712,
+      "source": "GetWorldCorners",
+      "source_owner": "RectTransform",
+      "target": "GetWorldCorners",
+      "target_owner": "RectTransform"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "gui/tabs/CameraTAB.cpp:177"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.UnityEngine::Screen.get_height/0",
+      "keys": [
+        "method.UnityEngine::Screen.get_height/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.UnityEngine::Screen.get_height/0",
+          "loose": false,
+          "source_owner": "Screen"
+        }
+      ],
+      "name": "get_height",
+      "owner": "Screen",
+      "parameters": [],
+      "return_type": "System.Int32",
+      "rva": 55829792,
+      "source": "get_height",
+      "source_owner": "Screen",
+      "target": "get_height",
+      "target_owner": "Screen"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "gui/tabs/CameraTAB.cpp:176"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.UnityEngine::Screen.get_width/0",
+      "keys": [
+        "method.UnityEngine::Screen.get_width/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.UnityEngine::Screen.get_width/0",
+          "loose": false,
+          "source_owner": "Screen"
+        }
+      ],
+      "name": "get_width",
+      "owner": "Screen",
+      "parameters": [],
+      "return_type": "System.Int32",
+      "rva": 55830096,
+      "source": "get_width",
+      "source_owner": "Screen",
+      "target": "get_width",
+      "target_owner": "Screen"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "features/movement/dodge/DangerPlanner.cpp:125",
+        "features/movement/dodge/MovementRuntime.cpp:144"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.UnityEngine::Time.get_deltaTime/0",
+      "keys": [
+        "method.UnityEngine::Time.get_deltaTime/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.UnityEngine::Time.get_deltaTime/0",
+          "loose": false,
+          "source_owner": "Time"
+        }
+      ],
+      "name": "get_deltaTime",
+      "owner": "Time",
+      "parameters": [],
+      "return_type": "System.Single",
+      "rva": 56048080,
+      "source": "get_deltaTime",
+      "source_owner": "Time",
+      "target": "get_deltaTime",
+      "target_owner": "Time"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "gui/tabs/CameraTAB.cpp:136"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.Transform.get_eulerAngles/0",
+      "keys": [
+        "method.Transform.get_eulerAngles/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.Transform.get_eulerAngles/0",
+          "loose": true,
+          "source_owner": "Transform"
+        }
+      ],
+      "name": "get_eulerAngles",
+      "owner": "Transform",
+      "parameters": [],
+      "return_type": "UnityEngine.Vector3",
+      "rva": 56063216,
+      "source": "get_eulerAngles",
+      "source_owner": "Transform",
+      "target": "get_eulerAngles",
+      "target_owner": "Transform"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "gui/MinimapNav.cpp:260",
+        "gui/tabs/CameraTAB.cpp:138"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.Transform.get_position/0",
+      "keys": [
+        "method.Transform.get_position/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.Transform.get_position/0",
+          "loose": true,
+          "source_owner": "Transform"
+        }
+      ],
+      "name": "get_position",
+      "owner": "Transform",
+      "parameters": [],
+      "return_type": "UnityEngine.Vector3",
+      "rva": 56065328,
+      "source": "get_position",
+      "source_owner": "Transform",
+      "target": "get_position",
+      "target_owner": "Transform"
+    },
+    {
+      "argc": 1,
+      "consumers": [
+        "features/visuals/CosmeticOverrides.cpp:178"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.DecaGames.RotMG.UI.Helpers::UIIconLoader.LoadCharacterIcon/1",
+      "keys": [
+        "method.DecaGames.RotMG.UI.Helpers::UIIconLoader.LoadCharacterIcon/1"
+      ],
+      "lookups": [
+        {
+          "key": "method.DecaGames.RotMG.UI.Helpers::UIIconLoader.LoadCharacterIcon/1",
+          "loose": false,
+          "source_owner": "UIIconLoader"
+        }
+      ],
+      "name": "LoadCharacterIcon",
+      "owner": "UIIconLoader",
+      "parameters": [
+        "FKALGHJIADI"
+      ],
+      "return_type": "DecaGames.RotMG.Graphics.Atlas.MaskableSpriteData",
+      "rva": 8260112,
+      "source": "LoadCharacterIcon",
+      "source_owner": "UIIconLoader",
+      "target": "LoadCharacterIcon",
+      "target_owner": "UIIconLoader"
+    },
+    {
+      "argc": 0,
+      "consumers": [
+        "features/account/HwidCapture.cpp:103"
+      ],
+      "evidence": [
+        "same_signature"
+      ],
+      "key": "method.UnityApiResultsHolder.GetDeviceUniqueIdentifier/0",
+      "keys": [
+        "method.UnityApiResultsHolder.GetDeviceUniqueIdentifier/0"
+      ],
+      "lookups": [
+        {
+          "key": "method.UnityApiResultsHolder.GetDeviceUniqueIdentifier/0",
+          "loose": true,
+          "source_owner": "UnityApiResultsHolder"
+        }
+      ],
+      "name": "GetDeviceUniqueIdentifier",
+      "owner": "UnityApiResultsHolder",
+      "parameters": [],
+      "return_type": "System.String",
+      "rva": 3298000,
+      "source": "GetDeviceUniqueIdentifier",
+      "source_owner": "UnityApiResultsHolder",
+      "target": "GetDeviceUniqueIdentifier",
+      "target_owner": "UnityApiResultsHolder"
+    }
+  ],
+  "omitted": [
+    {
+      "consumers": [
+        "features/account/CredentialCapture.cpp:164"
+      ],
+      "key": "method.::AppEngineManager.Connect/3",
+      "reason": "owner-absent in the baseline, owner-absent in this build"
+    },
+    {
+      "consumers": [
+        "features/account/CredentialCapture.cpp:165"
+      ],
+      "key": "method.::AppEngineManager.SetSteamId/1",
+      "reason": "owner-absent in the baseline, owner-absent in this build"
+    },
+    {
+      "consumers": [
+        "features/account/CharSelect.cpp:46"
+      ],
+      "key": "method.BHDDFAELFIL..ctor/0",
+      "reason": "owner-absent in the baseline, owner-absent in this build"
+    },
+    {
+      "consumers": [
+        "features/account/CharSelect.cpp:56"
+      ],
+      "key": "method.BHDDFAELFIL.Hide/0",
+      "reason": "owner-absent in the baseline, owner-absent in this build"
+    },
+    {
+      "consumers": [
+        "gui/tabs/CameraTAB.cpp:121"
+      ],
+      "key": "method.CameraManager.ANBDPNHJBHG/0",
+      "reason": "not-declared in the baseline, not-declared in this build"
+    },
+    {
+      "consumers": [
+        "gui/tabs/CameraTAB.cpp:125"
+      ],
+      "key": "method.CameraManager.IOABMGFJLLP/0",
+      "reason": "not-declared in the baseline, not-declared in this build"
+    },
+    {
+      "consumers": [
+        "gui/tabs/CameraTAB.cpp:123"
+      ],
+      "key": "method.CameraManager.get_IOABMGFJLLP/0",
+      "reason": "not-declared in the baseline, not-declared in this build"
+    },
+    {
+      "consumers": [
+        "platform/hooks/DirectX.cpp:369"
+      ],
+      "key": "method.UnityEngine::Cursor.get_visible/0",
+      "reason": "not-declared in the baseline, not-declared in this build"
+    },
+    {
+      "consumers": [
+        "platform/hooks/DirectX.cpp:392"
+      ],
+      "key": "method.UnityEngine::Cursor.set_lockState/1",
+      "reason": "not-declared in the baseline, not-declared in this build"
+    },
+    {
+      "consumers": [
+        "platform/hooks/DirectX.cpp:390"
+      ],
+      "key": "method.UnityEngine::Cursor.set_visible/1",
+      "reason": "not-declared in the baseline, not-declared in this build"
+    },
+    {
+      "consumers": [
+        "features/visuals/CosmeticOverrides.cpp:159"
+      ],
+      "key": "method.FKALGHJIADI.get_Name/0",
+      "reason": "not-declared in the baseline, not-declared in this build"
+    },
+    {
+      "consumers": [
+        "features/visuals/CosmeticOverrides.cpp:161"
+      ],
+      "key": "method.GFHKBNHBPLE.AFCFJHAMLPE/2",
+      "reason": "not-declared in the baseline, not-declared in this build"
+    },
+    {
+      "consumers": [
+        "features/movement/noclip/NoclipHook.cpp:95"
+      ],
+      "key": "method.HJMBOMEHGDJ.GIACHFPEJOC/2",
+      "reason": "not-declared in the baseline, not-declared in this build"
+    },
+    {
+      "consumers": [
+        "features/movement/noclip/NoclipHook.cpp:95"
+      ],
+      "key": "method.HJMBOMEHGDJ.IGINLFBOICF/2",
+      "reason": "not-declared in the baseline, not-declared in this build"
+    },
+    {
+      "consumers": [
+        "game/actions/ItemUse.cpp:43"
+      ],
+      "key": "method.PNBNDBIPENP.UseInventoryItem/6",
+      "reason": "owner-absent in the baseline, owner-absent in this build"
+    },
+    {
+      "consumers": [
+        "game/actions/ItemUse.cpp:35"
+      ],
+      "key": "method.PNBNDBIPENP.UseInventoryItemByHotkey/1",
+      "reason": "owner-absent in the baseline, owner-absent in this build"
+    },
+    {
+      "consumers": [
+        "features/visuals/CosmeticOverrides.cpp:167"
+      ],
+      "key": "method.Pet.HDKBNHKLEAO/1",
+      "reason": "owner-absent in the baseline, owner-absent in this build"
+    }
+  ],
+  "pins": {
+    "resources_assets_sha256": "78c1a9ffde9776c2bd5db7f19a1857c44ed16e5dfd986848c24a921dc4933328"
+  },
+  "provenance": {
+    "baseline": "static_binary",
+    "current": "static_binary"
+  },
+  "registry_sha256": "42fbf272f6b1352bba9c227b17b4cde02fc82cb0c5efb060a50eb2a9fab6c85b",
+  "schema": 3,
+  "source_sha256": "fd0cdd5501148d608d16dc92ad4817b333eea55dfc0595081d481f3508431624",
+  "status": "private_candidate_requires_gameplay_test",
+  "world_position": [
+    32,
+    36
+  ]
+}
