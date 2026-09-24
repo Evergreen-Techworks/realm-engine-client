@@ -1,0 +1,62 @@
+{
+  "generated_utc": "2026-09-24T22:37:00.857783+00:00",
+  "measurement": "Unity Player.log lines matching Total: <ms> (FindLiveObjects...) and Loaded Objects now",
+  "limits": "The active row is a read-only snapshot of an unfinished run. Unity log pauses are not attributed to Realm Engine without causal evidence.",
+  "runs": [
+    {
+      "source": "player-log.20260924T181708Z-4e46.log",
+      "run_id": "20260924T181708Z-4e46",
+      "cleanup_pause_count": 10,
+      "cleanup_pause_mean_ms": 663.3312,
+      "cleanup_pause_max_ms": 857.5318,
+      "loaded_objects_max": 731312,
+      "loaded_objects_last": 731312,
+      "sha256": "fc0cd9d4dd2f8f6b0ff6da6681a7d1ff65dfec2829bdd5f8e4dd6bc688fe89f4",
+      "bytes": 17924
+    },
+    {
+      "source": "player-log.20260924T195618Z-a710.log",
+      "run_id": "20260924T195618Z-a710",
+      "cleanup_pause_count": 14,
+      "cleanup_pause_mean_ms": 515.3452,
+      "cleanup_pause_max_ms": 623.708,
+      "loaded_objects_max": 631843,
+      "loaded_objects_last": 631843,
+      "sha256": "ca6727ae74bbdfda8a5bf7b6735cc1a338998965219fc4b3b32c9581ed8dc09e",
+      "bytes": 21495
+    },
+    {
+      "source": "player-log.20260924T201659Z-6fff.log",
+      "run_id": "20260924T201659Z-6fff",
+      "cleanup_pause_count": 8,
+      "cleanup_pause_mean_ms": 483.5019,
+      "cleanup_pause_max_ms": 541.3814,
+      "loaded_objects_max": 650640,
+      "loaded_objects_last": 650640,
+      "sha256": "80c635649b850f8c5c8af59ba2e9869584a815232aa8a5d817b66361f9d98012",
+      "bytes": 16136
+    },
+    {
+      "source": "player-log.20260924T214423Z-bc6e.log",
+      "run_id": "20260924T214423Z-bc6e",
+      "cleanup_pause_count": 12,
+      "cleanup_pause_mean_ms": 746.1902,
+      "cleanup_pause_max_ms": 1010.4859,
+      "loaded_objects_max": 659379,
+      "loaded_objects_last": 659379,
+      "sha256": "65b4cf8fc9c3313753fd1aa529a0f55a52601635377cc3bbf5a8dbf319d5fb25",
+      "bytes": 19748
+    },
+    {
+      "source": "Player.log",
+      "run_id": "20260924T222204Z-ff21-active-snapshot",
+      "cleanup_pause_count": 23,
+      "cleanup_pause_mean_ms": 530.5132,
+      "cleanup_pause_max_ms": 643.2855,
+      "loaded_objects_max": 643959,
+      "loaded_objects_last": 643954,
+      "sha256": "946849244730379bcef599bfe40f052a23debac50562900dcfd79a12d36cfca1",
+      "bytes": 95421
+    }
+  ]
+}
