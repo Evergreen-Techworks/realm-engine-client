@@ -1,0 +1,1642 @@
+{
+  "rows": [
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 17734,
+      "enemy_name": "Sprite Forest Fire God",
+      "bt": 0,
+      "near_passes": 0,
+      "near_passes_approx": 1,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 17734,
+      "enemy_name": "Sprite Forest Fire God",
+      "bt": 2,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 17734,
+      "enemy_name": "Sprite Forest Fire God",
+      "bt": 3,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 17736,
+      "enemy_name": "Sprite Forest Electric God",
+      "bt": 0,
+      "near_passes": 4,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 17737,
+      "enemy_name": "Sprite Forest Dark God",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 9,
+      "hits": 1,
+      "damage": 90.0,
+      "hits_by_distance": {
+        "<3": 1,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 17737,
+      "enemy_name": "Sprite Forest Dark God",
+      "bt": 1,
+      "near_passes": 0,
+      "near_passes_approx": 1,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 17898,
+      "enemy_name": "Hallows Banshee",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 90.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 1,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 17901,
+      "enemy_name": "Hallows Werewolf",
+      "bt": 1,
+      "near_passes": 4,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 21893,
+      "enemy_name": "City Ent God",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 22003,
+      "enemy_name": "New Skull Shrine",
+      "bt": 0,
+      "near_passes": 3,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 22005,
+      "enemy_name": "New Blue Flaming Skull",
+      "bt": 0,
+      "near_passes": 3,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 0,
+      "near_passes": 13,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 1,
+      "near_passes": 12,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 70.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 1,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 2,
+      "near_passes": 0,
+      "near_passes_approx": 4,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 3,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 130.0,
+      "hits_by_distance": {
+        "<3": 1,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 4,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 5,
+      "near_passes": 3,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 6,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 8,
+      "near_passes": 19,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 44153,
+      "enemy_name": "Cosmic Sprite",
+      "bt": 3,
+      "near_passes": 9,
+      "near_passes_approx": 0,
+      "hits": 2,
+      "damage": 90.0,
+      "hits_by_distance": {
+        "<3": 1,
+        "3-6": 1,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 44153,
+      "enemy_name": "Cosmic Sprite",
+      "bt": 4,
+      "near_passes": 14,
+      "near_passes_approx": 0,
+      "hits": 2,
+      "damage": 90.0,
+      "hits_by_distance": {
+        "<3": 1,
+        "3-6": 0,
+        ">6": 1,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 47973,
+      "enemy_name": "Artificial Slop",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 2,
+      "hits": 1,
+      "damage": 110.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 1,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 47973,
+      "enemy_name": "Artificial Slop",
+      "bt": 1,
+      "near_passes": 0,
+      "near_passes_approx": 2,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 47973,
+      "enemy_name": "Artificial Slop",
+      "bt": 3,
+      "near_passes": 5,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 60.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 1,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 47973,
+      "enemy_name": "Artificial Slop",
+      "bt": 4,
+      "near_passes": 14,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 100.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 1,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 47973,
+      "enemy_name": "Artificial Slop",
+      "bt": 5,
+      "near_passes": 0,
+      "near_passes_approx": 1,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 47973,
+      "enemy_name": "Artificial Slop",
+      "bt": 10,
+      "near_passes": 0,
+      "near_passes_approx": 1,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 47973,
+      "enemy_name": "Artificial Slop",
+      "bt": 12,
+      "near_passes": 0,
+      "near_passes_approx": 1,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 47973,
+      "enemy_name": "Artificial Slop",
+      "bt": 20,
+      "near_passes": 0,
+      "near_passes_approx": 2,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 49414,
+      "enemy_name": "Dead Church Cleric",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 5,
+      "hits": 1,
+      "damage": 45.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 1,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 49628,
+      "enemy_name": "Dead Church Vampire",
+      "bt": 0,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 90.0,
+      "hits_by_distance": {
+        "<3": 1,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "fighting",
+      "otype": 49629,
+      "enemy_name": "Dead Church Bat",
+      "bt": 0,
+      "near_passes": 22,
+      "near_passes_approx": 0,
+      "hits": 3,
+      "damage": 195.0,
+      "hits_by_distance": {
+        "<3": 3,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 17734,
+      "enemy_name": "Sprite Forest Fire God",
+      "bt": 3,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 17736,
+      "enemy_name": "Sprite Forest Electric God",
+      "bt": 0,
+      "near_passes": 3,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 17737,
+      "enemy_name": "Sprite Forest Dark God",
+      "bt": 0,
+      "near_passes": 0,
+      "near_passes_approx": 3,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 21893,
+      "enemy_name": "City Ent God",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 22003,
+      "enemy_name": "New Skull Shrine",
+      "bt": 0,
+      "near_passes": 5,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 22005,
+      "enemy_name": "New Blue Flaming Skull",
+      "bt": 0,
+      "near_passes": 16,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 34521,
+      "enemy_name": "Flesh Golem Boulder",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 2,
+      "near_passes": 1,
+      "near_passes_approx": 1,
+      "hits": 1,
+      "damage": 100.0,
+      "hits_by_distance": {
+        "<3": 1,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 3,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 4,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 5,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 8,
+      "near_passes": 3,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 44153,
+      "enemy_name": "Cosmic Sprite",
+      "bt": 3,
+      "near_passes": 3,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 47909,
+      "enemy_name": "Towering Perfection",
+      "bt": 4,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 47909,
+      "enemy_name": "Towering Perfection",
+      "bt": 5,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 47909,
+      "enemy_name": "Towering Perfection",
+      "bt": 6,
+      "near_passes": 0,
+      "near_passes_approx": 1,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 47916,
+      "enemy_name": "Tower Bottom",
+      "bt": 4,
+      "near_passes": 7,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 47916,
+      "enemy_name": "Tower Bottom",
+      "bt": 5,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 47916,
+      "enemy_name": "Tower Bottom",
+      "bt": 6,
+      "near_passes": 0,
+      "near_passes_approx": 9,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 47917,
+      "enemy_name": "Tower Top",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 47917,
+      "enemy_name": "Tower Top",
+      "bt": 1,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 47917,
+      "enemy_name": "Tower Top",
+      "bt": 3,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 47923,
+      "enemy_name": "Tower Pattern",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 47923,
+      "enemy_name": "Tower Pattern",
+      "bt": 3,
+      "near_passes": 8,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 47973,
+      "enemy_name": "Artificial Slop",
+      "bt": 3,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 47973,
+      "enemy_name": "Artificial Slop",
+      "bt": 4,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 49629,
+      "enemy_name": "Dead Church Bat",
+      "bt": 0,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 49896,
+      "enemy_name": "Hell Skeleton",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 17732,
+      "enemy_name": "Sprite Forest God",
+      "bt": 0,
+      "near_passes": 4,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 17732,
+      "enemy_name": "Sprite Forest God",
+      "bt": 1,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 17735,
+      "enemy_name": "Sprite Forest Poison God",
+      "bt": 1,
+      "near_passes": 0,
+      "near_passes_approx": 2,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 17736,
+      "enemy_name": "Sprite Forest Electric God",
+      "bt": 0,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 17737,
+      "enemy_name": "Sprite Forest Dark God",
+      "bt": 0,
+      "near_passes": 0,
+      "near_passes_approx": 6,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 17737,
+      "enemy_name": "Sprite Forest Dark God",
+      "bt": 1,
+      "near_passes": 0,
+      "near_passes_approx": 1,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 17901,
+      "enemy_name": "Hallows Werewolf",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21799,
+      "enemy_name": "New Fire Golem",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21800,
+      "enemy_name": "New Darkness Golem",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21804,
+      "enemy_name": "New Gray Satellite 1",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 24.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 1,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21805,
+      "enemy_name": "New Gray Satellite 2",
+      "bt": 0,
+      "near_passes": 5,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21806,
+      "enemy_name": "New Gray Satellite 3",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21809,
+      "enemy_name": "New Nomadic Shaman",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21839,
+      "enemy_name": "New Weretiger",
+      "bt": 0,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 17.0,
+      "hits_by_distance": {
+        "<3": 1,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21840,
+      "enemy_name": "New Wereleopard",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21842,
+      "enemy_name": "New Werelion",
+      "bt": 0,
+      "near_passes": 3,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21889,
+      "enemy_name": "City Medusa",
+      "bt": 0,
+      "near_passes": 4,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21890,
+      "enemy_name": "City Beholder",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21890,
+      "enemy_name": "City Beholder",
+      "bt": 1,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21893,
+      "enemy_name": "City Ent God",
+      "bt": 0,
+      "near_passes": 9,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21895,
+      "enemy_name": "City Djinn",
+      "bt": 0,
+      "near_passes": 13,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 22005,
+      "enemy_name": "New Blue Flaming Skull",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 24015,
+      "enemy_name": "Shady Sect Leader",
+      "bt": 0,
+      "near_passes": 3,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 24022,
+      "enemy_name": "Shady Sect Follower",
+      "bt": 0,
+      "near_passes": 0,
+      "near_passes_approx": 5,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 24022,
+      "enemy_name": "Shady Sect Follower",
+      "bt": 1,
+      "near_passes": 3,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 34515,
+      "enemy_name": "Flesh Golem",
+      "bt": 0,
+      "near_passes": 0,
+      "near_passes_approx": 1,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 34515,
+      "enemy_name": "Flesh Golem",
+      "bt": 1,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 34565,
+      "enemy_name": "Maze Minotaur",
+      "bt": 2,
+      "near_passes": 0,
+      "near_passes_approx": 2,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 44153,
+      "enemy_name": "Cosmic Sprite",
+      "bt": 3,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 47973,
+      "enemy_name": "Artificial Slop",
+      "bt": 4,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 47973,
+      "enemy_name": "Artificial Slop",
+      "bt": 5,
+      "near_passes": 0,
+      "near_passes_approx": 1,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 49414,
+      "enemy_name": "Dead Church Cleric",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 7,
+      "hits": 1,
+      "damage": 45.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 1,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 49416,
+      "enemy_name": "Dead Church Revenant",
+      "bt": 0,
+      "near_passes": 6,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 49416,
+      "enemy_name": "Dead Church Revenant",
+      "bt": 1,
+      "near_passes": 0,
+      "near_passes_approx": 3,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 49629,
+      "enemy_name": "Dead Church Bat",
+      "bt": 0,
+      "near_passes": 5,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    }
+  ],
+  "distance_bucket_note": "distance bucketing applies to hits only (hit.edist, the game's own ground truth); near passes have no enemy-position tracking in the recording to bucket by distance",
+  "_recording": {
+    "name": "packets-20260924T181751Z.jsonl",
+    "size": 907743,
+    "mtime_ns": 1790274294051830900
+  }
+}

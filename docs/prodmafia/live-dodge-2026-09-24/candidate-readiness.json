@@ -1,0 +1,14 @@
+{
+  "runId": "20260924T182633Z-d573",
+  "source": "live dashboard playerData; hp and maxHp positive",
+  "player": {
+    "level": 20,
+    "hp": 675,
+    "maxHp": 675,
+    "gameId": -2,
+    "server": "USWest"
+  },
+  "replacementRequired": false,
+  "minimumLevel": 2,
+  "farmerSha256": "5fe644f2445ff693e090cf4b9b2ae72d2f78a22ccb134811207ba3b35de624ab"
+}

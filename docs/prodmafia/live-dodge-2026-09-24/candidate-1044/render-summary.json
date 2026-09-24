@@ -1,0 +1,14 @@
+{
+  "source": "native Diag/Render; approximate presents per second over logged intervals, not individual frame-time percentiles",
+  "windowLocal": [
+    "12:28:20",
+    "12:34:08"
+  ],
+  "sampleCount": 173,
+  "presentRateMedian": 46.69647292600408,
+  "presentRateP10": 35.482258870496594,
+  "bodyAverageMsMedian": 13.69,
+  "bodyMaxMs": 101.47,
+  "entityCountMedian": 179,
+  "comparisonLimitation": "Different maps, entity counts, and character progression; not matched FPS acceptance evidence."
+}

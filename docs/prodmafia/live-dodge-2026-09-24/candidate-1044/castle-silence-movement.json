@@ -1,0 +1,18 @@
+{
+  "intervalUtc": [
+    "2026-09-24T18:32:20.707Z",
+    "2026-09-24T18:33:17.634Z"
+  ],
+  "movementPackets": 282,
+  "firstPosition": [
+    107.292,
+    159.167
+  ],
+  "lastPosition": [
+    131.5,
+    58.5
+  ],
+  "netDisplacementTiles": 103.53681544745328,
+  "maxDisplacementFromFirstTiles": 103.53681544745328,
+  "interpretation": "The 56.9s silence flag is not continuous immobility; movement packets demonstrate displacement. Do not score it as 56.9 seconds trapped."
+}

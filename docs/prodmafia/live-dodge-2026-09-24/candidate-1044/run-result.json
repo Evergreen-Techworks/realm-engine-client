@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "runId": "20260924T182633Z-d573",
+  "startedUtc": "2026-09-24T18:27:15.746Z",
+  "inWorldUtc": "2026-09-24T18:28:08.277Z",
+  "endedUtc": "2026-09-24T18:34:15.889Z",
+  "reason": "completed",
+  "detail": "6 minute(s) elapsed",
+  "build": {
+    "version": "1.0.44",
+    "commit": "b72f2a2"
+  },
+  "logFile": "C:\\realm-engine-testlab\\rig\\RE_ASSETS\\realm-engine-proxy.log",
+  "recording": "C:\\realm-engine-testlab\\rig\\RE_ASSETS\\testlab\\packets-20260924T182715Z.jsonl",
+  "gamePid": 25780,
+  "gameTerminated": true
+}
