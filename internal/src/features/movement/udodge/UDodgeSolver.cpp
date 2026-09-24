@@ -981,7 +981,8 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         if (travelPrediction && candidate.timeToDanger >= 0.f)
             return candidate.timeToDanger < fallbackHorizon
                 ? candidate.timeToDanger : Core::Temporal::kNoDanger;
-        return Core::Temporal::TimeToDanger(ctx, in.player, in.speed, candidate.pos, fallbackHorizon);
+        return Core::Temporal::TimeToDanger(ctx, in.player, in.speed, candidate.pos, fallbackHorizon,
+            goal.walkTo && !goal.fromLock && !in.map->hasLock);
     };
     const float standTime = fallbackTime(cands[0]);
     // A lateral fallback helps point travel escape crossing fire. Applying
@@ -1008,6 +1009,11 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             !Core::ZoneEscapePathClear(in, in.player, cands[i].pos)) continue;
         const float safeTime = fallbackTime(cands[i]);
         float val = cands[i].clr;
+        // If contact already exists, time cannot distinguish the exits. Break
+        // near-clearance ties toward the ongoing escape instead of reversing
+        // into a passing shot. A later contact time always outranks this bias.
+        if (safeTime == 0.f && goal.walkTo && !goal.fromLock && !in.map->hasLock)
+            val += kSolveReflexHystEps * Dot(cands[i].dir, prevDir);
         if (pocketFound) {
             const float prog = playerToPocket - Len(Sub(cands[i].pos, pocketPos));
             val += kSolveFallbackPocketW * prog;

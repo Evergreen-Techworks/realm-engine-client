@@ -113,6 +113,43 @@ void LadderTests()
 } // namespace Ring
 
 int main() {
+    {
+        static DangerMap danger{};
+        danger.zoneCount = 1;
+        danger.zones[0].pos = {2.f, 0.f};
+        danger.zones[0].radius = 1.2f;
+        danger.zones[0].active = danger.zones[0].enemyKeepout = true;
+        MapInput in{}; in.map = &danger;
+        const auto clear = [&](Vec2 from, Vec2 to) {
+            return Navigation::EnemyKeepoutPathClear(in, from, to);
+        };
+        Check(!clear({0,0}, {4,0}), "shortcut cannot cross a keepout with clear endpoints");
+        Check(clear({0,3}, {4,3}), "shortcut outside a keepout remains available");
+        Check(clear({1,0}, {0,0}) && !clear({1,0}, {2,0}),
+              "keepout overlap permits outward escape but not deeper entry");
+        Vec2 route[] = {{0,0}, {0,3}, {4,3}, {4,0}};
+        Vec2 player{};
+        bool connected = false, ended = false;
+        float deviation = 0.f;
+        const Vec2 shortcut = Navigation::Follow(route, 4, player, 8.f,
+            deviation, ended, connected, [](Vec2, Vec2) { return true; });
+        Check(!clear(player, shortcut), "walls-only follower reproduces the unsafe shortcut");
+        for (int frame = 0; frame < 180 && Len(Sub(player, route[3])) > 0.1f; ++frame) {
+            const Vec2 target = Navigation::Follow(route, 4, player, 8.f,
+                deviation, ended, connected, clear);
+            Check(connected && clear(player, target), "follower retains a safe connected detour");
+            const Vec2 delta = Sub(target, player);
+            const float distance = Len(delta);
+            Check(distance > 1e-5f, "keepout detour makes progress without a replan pause");
+            player = Add(player, Mul(delta, std::min(distance, 0.1f) / distance));
+        }
+        Check(Len(Sub(player, route[3])) <= 0.1f, "keepout detour reaches the destination");
+        danger.zones[0].active = false;
+        Check(clear({0,0}, {4,0}), "inactive keepout does not block a shortcut");
+        danger.zones[0].active = true;
+        danger.zones[0].enemyKeepout = false;
+        Check(clear({0,0}, {4,0}), "ordinary timed hazards remain the temporal solver's responsibility");
+    }
     Check(Navigation::SameRouteRequest(true, 7, 42, 7, 42), "same global request retains local route across corridor refresh");
     Check(!Navigation::SameRouteRequest(true, 8, 42, 7, 42), "scene changes invalidate the old local route");
     Check(!Navigation::SameRouteRequest(true, 7, 43, 7, 42), "new goals invalidate the old local route");

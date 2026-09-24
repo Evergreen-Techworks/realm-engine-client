@@ -532,7 +532,10 @@ void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s,
         }
 #endif
         // RebuildZones: enemy-centred keep-outs (hard-coded Brawler, plus learned ones where the tree has them).
-#ifdef HARNESS_TREE_BURST
+#ifdef HARNESS_TREE_SHOT_REACTION
+        EnemyHazards::Append(out, e.type, (e.hp > 0 || e.invuln) ? 1 : 0, { e.x, e.y }, { playerX, playerY },
+                             (lock != 0 && e.id == lock) ? 0.f : e.shotRange, e.shotSpeed);
+#elif defined(HARNESS_TREE_BURST)
         EnemyHazards::Append(out, e.type, (e.hp > 0 || e.invuln) ? 1 : 0, { e.x, e.y }, { playerX, playerY },
                              (lock != 0 && e.id == lock) ? 0.f : e.shotRange);
 #elif defined(HARNESS_TREE_POST70)
@@ -2026,24 +2029,33 @@ void ScenarioStandoffPack(const char* name, bool crossfire = false, double shotD
     // Independent stress variants share the same world and truth collision model.
     // Mirror the entire encounter, not just the player's initial position.
     const float direction = std::getenv("HARNESS_PACK_MIRROR") ? -1.f : 1.f;
+    const bool rotate = std::getenv("HARNESS_PACK_ROTATE") != nullptr;
+    const float shotSpeed = std::getenv("HARNESS_PACK_SHOT_SPEED")
+        ? static_cast<float>(std::atof(std::getenv("HARNESS_PACK_SHOT_SPEED"))) : 8.f;
+    const auto transform = [=](Vec2 p) {
+        p.x *= direction;
+        return rotate ? Vec2{-p.y, p.x} : p;
+    };
     if (const char* delay = std::getenv("HARNESS_PACK_DELAY_MS"))
         shotDelayMs = std::atof(delay);
     const double phaseMs = std::getenv("HARNESS_PACK_PHASE_MS")
         ? std::atof(std::getenv("HARNESS_PACK_PHASE_MS")) : 0.0;
-    w.px = direction * 0.5f; w.py = 0.5f;
+    const Vec2 start = transform({0.5f, 0.5f});
+    w.px = start.x; w.py = start.y;
     // Six long-range shooters (reach 9 > kBurstRangeMaxTiles, so the existing
     // point-blank keep-out does NOT apply — the band is what has to do the work).
     // 8 tiles/s x 0.45 s + 0.8 body = 4.4-tile band, 2.0-tile core.
     std::vector<int> ids;
     for (int i = 0; i < 6; ++i) {
         Enemy mob; mob.id = 980 + i; mob.type = 0x0f10 + i;
-        mob.x = direction * (14.5f + (i % 2) * 2.f); mob.y = 0.5f + static_cast<float>(i / 2 - 1) * 2.f;
+        const Vec2 position = transform({14.5f + (i % 2) * 2.f, 0.5f + static_cast<float>(i / 2 - 1) * 2.f});
+        mob.x = position.x; mob.y = position.y;
         mob.hp = mob.maxHp = 3000;
-        mob.shotRange = 9.f; mob.shotSpeed = 8.f; mob.hasShots = true;
+        mob.shotRange = 9.f; mob.shotSpeed = shotSpeed; mob.hasShots = true;
         w.enemies.push_back(mob);
         ids.push_back(mob.id);
     }
-    w.bandRadius = Standoff::BandRadius(8.f, 0.8f, true, 0.f);
+    w.bandRadius = Standoff::BandRadius(shotSpeed, 0.8f, true, 0.f);
     double next = 0.0;
     bool firstVolley = true;
     w.script = [=](World& ww) mutable {
@@ -2058,7 +2070,7 @@ void ScenarioStandoffPack(const char* name, bool crossfire = false, double shotD
             next = g_nowMs + 700.0;
             const float a = std::atan2(ww.py - e.y, ww.px - e.x);
             for (int k = -1; k <= 1; ++k) {
-                ww.Fire(e.x, e.y, a + k * 0.12f, 8.f, 1400.f, 0.4f, e.id);
+                ww.Fire(e.x, e.y, a + k * 0.12f, shotSpeed, 1400.f, 0.4f, e.id);
                 // Same late-packet model as the shotgun fixture: a shot can
                 // already have travelled a server tick before becoming visible.
                 ww.bullets.back().t0 -= shotDelayMs;
@@ -2066,7 +2078,7 @@ void ScenarioStandoffPack(const char* name, bool crossfire = false, double shotD
             if (!crossfire) return;
         }
     };
-    Result r = Run(name, w, Goal::WalkTo, { direction * 30.5f, 0.5f }, 60);
+    Result r = Run(name, w, Goal::WalkTo, transform({30.5f, 0.5f}), 60);
     const double bandSeconds = w.bandFrames / 60.0;
     // Arrives, never enters a core, and spends essentially no time in a band.
     r.success = r.success && r.hits == 0 &&

@@ -1,0 +1,18 @@
+{
+  "baseline": {
+    "root": "/home/jesse/rec-worktrees/navigation-baseline-1043",
+    "head": "befb15ebf14fbe3b08c38235a16336ea995d44e6",
+    "dirty": "",
+    "production_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "candidate": {
+    "root": "/home/jesse/rec-worktrees/predictive-nexus-testlab",
+    "head": "cb543364f930127c927cf755994b782decb5b41c",
+    "dirty": "M docs/prodmafia/bullet-avoidance-2026-09-24/experiment-harness-adapter.patch.gz\n M internal/src/features/movement/udodge/UDodge.cpp\n M internal/src/features/movement/udodge/UDodgeCore.cpp\n M internal/src/features/movement/udodge/UDodgeCore.h\n M internal/src/features/movement/udodge/UDodgeEnemyHazards.h\n M internal/src/features/movement/udodge/UDodgeNavigation.h\n M internal/src/features/movement/udodge/UDodgeSensors.cpp\n M internal/src/features/movement/udodge/UDodgeSolver.cpp\n M internal/tests/scenario/benchmark_navigation.py\n M internal/tests/scenario/run_scenarios.py\n M internal/tests/scenario/udodge_scenario_harness.cpp\n M internal/tests/udodge_navigation_tests.cpp\n M internal/tests/udodge_pathing_rules_tests.cpp\n M internal/tests/udodge_temporal_tests.cpp\n?? internal/tests/scenario/__pycache__/",
+    "production_diff_sha256": "219c1528aa56a8e07f5bd262831c9d76b44f5d3d8fd947f646a2c05c818273c7"
+  },
+  "harness_sha256": "4b03ca19a7c800616e808dfd5ce2339d98083abf491c850dbc80f958c96ec10e",
+  "policy": "tactician",
+  "scan_mode": 3,
+  "suite": "navigation"
+}

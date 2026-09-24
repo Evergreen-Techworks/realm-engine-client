@@ -1,0 +1,118 @@
+{
+  "cases_per_revision": 72,
+  "regressions": [
+    {
+      "case": 44,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 150,
+      "mirror": false,
+      "reasons": [
+        "hits increased"
+      ]
+    },
+    {
+      "case": 46,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 350,
+      "mirror": false,
+      "reasons": [
+        "hits increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 49,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 0,
+      "mirror": true,
+      "reasons": [
+        "hits increased"
+      ]
+    },
+    {
+      "case": 52,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 350,
+      "mirror": false,
+      "reasons": [
+        "hits increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 60,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 0,
+      "mirror": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 71,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 350,
+      "mirror": true,
+      "reasons": [
+        "arrival lost",
+        "hits increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "reasons": [
+        "no reduction in projectile hits"
+      ]
+    }
+  ],
+  "baseline": {
+    "passed": 36,
+    "hits": 30,
+    "completed": 71,
+    "hit_free_completions": 59,
+    "worst_case_hits": 6
+  },
+  "candidate": {
+    "passed": 36,
+    "hits": 31,
+    "completed": 71,
+    "hit_free_completions": 60,
+    "worst_case_hits": 9
+  }
+}

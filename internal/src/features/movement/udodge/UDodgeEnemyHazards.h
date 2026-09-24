@@ -87,8 +87,8 @@ inline float KeepoutRadius(int objectType)
 // react. Whatever reaches no further than kBurstRangeMaxTiles is that kind of
 // attacker, so its whole reach (plus a margin) is kept out of, like a self blast.
 // The reach is the type's longest projectile, read once per type from its
-// ObjectProperties (EnemyTracker::Entry::shotRangeTiles). Long-range shooters are
-// left to the bullet dodge, which has time to see their shots coming.
+// ObjectProperties (EnemyTracker::Entry::shotRangeTiles). Longer reach uses the
+// near-source reaction budget below instead of excluding the entire reach.
 constexpr float kBurstRangeMaxTiles = 5.0f;
 constexpr float kBurstMarginTiles   = 0.5f;
 
@@ -99,13 +99,31 @@ inline float BurstKeepoutRadius(float shotRangeTiles)
     return std::min(shotRangeTiles + kBurstMarginTiles, kLearnedMaxRadiusTiles);
 }
 
+// Long reach does not make firing point-blank safe. Before a shot is visible,
+// it can already have travelled one server tick. Reserve that delay plus one
+// movement commitment to escape, with the existing contact margin. Beyond it,
+// ordinary bullets are still handled by the temporal dodge. This is separate from the optional
+// navigation standoff band and never walls off the shooter's entire long reach.
+inline float ShotReactionKeepoutRadius(float shotRangeTiles, float shotSpeedTilesPerSec)
+{
+    const float burst = BurstKeepoutRadius(shotRangeTiles);
+    if (!std::isfinite(shotRangeTiles) || shotRangeTiles <= 0.f ||
+        !std::isfinite(shotSpeedTilesPerSec) || shotSpeedTilesPerSec <= 0.f) return burst;
+    constexpr float kReactionBudgetSeconds = 2.f * kServerTickSec;
+    const float reaction = std::min({shotRangeTiles + kBurstMarginTiles,
+        shotSpeedTilesPerSec * kReactionBudgetSeconds + kBurstMarginTiles,
+        kLearnedMaxRadiusTiles});
+    return std::max(burst, reaction);
+}
+
 // `hp` > 0 means "alive". Invulnerable scenery that reports no HP passes 1.
 // `shotRangeTiles` is the type's longest projectile reach (0 = none / unknown, or
 // deliberately 0 for the locked target, whose distance the engagement logic owns).
 inline bool Append(DangerMap& map, int objectType, int hp, Vec2 position, Vec2 player,
-                   float shotRangeTiles = 0.f)
+                   float shotRangeTiles = 0.f, float shotSpeedTilesPerSec = 0.f)
 {
-    const float radius = std::max(KeepoutRadius(objectType), BurstKeepoutRadius(shotRangeTiles));
+    const float radius = std::max(KeepoutRadius(objectType),
+                                 ShotReactionKeepoutRadius(shotRangeTiles, shotSpeedTilesPerSec));
     if (hp <= 0 || radius <= 0.f || !std::isfinite(position.x) || !std::isfinite(position.y)
         || LenSq(Sub(position, player)) > (16.f + radius) * (16.f + radius)) return false;
     if (map.zoneCount >= kMaxAoes) { map.limited = true; return false; }

@@ -1,0 +1,18 @@
+{
+  "baseline": {
+    "root": "/home/jesse/rec-worktrees/navigation-baseline-1043",
+    "head": "befb15ebf14fbe3b08c38235a16336ea995d44e6",
+    "dirty": "",
+    "production_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "candidate": {
+    "root": "/tmp/realm-bullet-local-only",
+    "head": "cb543364f930127c927cf755994b782decb5b41c",
+    "dirty": "M internal/src/features/movement/udodge/UDodge.cpp\n M internal/src/features/movement/udodge/UDodgeCore.cpp\n M internal/src/features/movement/udodge/UDodgeCore.h\n M internal/src/features/movement/udodge/UDodgeNavigation.h\n M internal/src/features/movement/udodge/UDodgeSolver.cpp",
+    "production_diff_sha256": "693826a57f786d86143d0dde8d95c225997dffe9ae5edc5534167a54160a4aa1"
+  },
+  "harness_sha256": "4b03ca19a7c800616e808dfd5ce2339d98083abf491c850dbc80f958c96ec10e",
+  "policy": "tactician",
+  "scan_mode": 3,
+  "suite": "bullets"
+}

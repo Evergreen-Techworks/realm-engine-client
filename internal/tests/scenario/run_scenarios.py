@@ -365,6 +365,8 @@ def main():
         defines.append("-DHARNESS_TREE_POST70=1")
     if "BurstKeepoutRadius" in hazards:
         defines.append("-DHARNESS_TREE_BURST=1")
+    if "ShotReactionKeepoutRadius" in hazards:
+        defines.append("-DHARNESS_TREE_SHOT_REACTION=1")
     with tempfile.TemporaryDirectory(prefix="udodge-scenarios-") as tmp:
         tmp = Path(tmp)
         stubs = tmp / "stubs"

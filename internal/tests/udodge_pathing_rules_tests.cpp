@@ -2,6 +2,7 @@
 // scenario harness (tests/scenario); these pin the pieces it depends on.
 #include "UDodgePathfinder.h"
 #include "UDodgeNavigation.h"
+#include "UDodgeCore.h"
 #include "UDodgeEnemyHazards.h"
 #include "features/movement/sensors/TileOccupancy.h"
 
@@ -180,6 +181,20 @@ int main()
           "keep-outs are hard zones for the dodge");
     Check(EnemyHazards::BurstKeepoutRadius(4.5f) == 5.f, "a point-blank shooter keeps out its reach plus margin");
     Check(EnemyHazards::BurstKeepoutRadius(8.f) == 0.f, "a long-range shooter is left to the bullet dodge");
+    Check(std::fabs(EnemyHazards::ShotReactionKeepoutRadius(9.f, 8.f) - 3.7f) < 1e-5f,
+          "long reach does not remove the near-source reaction distance");
+    Check(EnemyHazards::ShotReactionKeepoutRadius(4.5f, 8.f) == 5.f,
+          "existing short-range shotgun protection remains stronger");
+    Check(EnemyHazards::ShotReactionKeepoutRadius(9.f, 0.f) == 0.f &&
+          EnemyHazards::ShotReactionKeepoutRadius(9.f, -8.f) == 0.f,
+          "unknown or invalid shot speed does not invent a keepout");
+    Check(EnemyHazards::ShotReactionKeepoutRadius(0.f, 8.f) == 0.f,
+          "locked target exemption remains owned by engagement geometry");
+    Check(EnemyHazards::ShotReactionKeepoutRadius(9.f, INFINITY) == 0.f &&
+          EnemyHazards::ShotReactionKeepoutRadius(NAN, 8.f) == 0.f,
+          "non-finite shooter metadata cannot wall off a room");
+    Check(EnemyHazards::ShotReactionKeepoutRadius(9.f, 1000.f) == EnemyHazards::kLearnedMaxRadiusTiles,
+          "extreme speed keeps the existing maximum hazard radius");
     Check(EnemyHazards::BurstKeepoutRadius(0.f) == 0.f && EnemyHazards::BurstKeepoutRadius(-1.f) == 0.f,
           "no projectiles, no keep-out");
     DangerMap burst{};
@@ -188,6 +203,29 @@ int main()
     Check(!EnemyHazards::Append(burst, 0x1234, 100, { 3, 0 }, { 0, 0 }, 0.f),
           "the locked target passes no reach and gets no burst keep-out");
     Check(!EnemyHazards::Append(burst, 0x1234, 0, { 3, 0 }, { 0, 0 }, 4.5f), "a dead enemy keeps nothing out");
+    DangerMap reaction{};
+    DangerMap observed{};
+    observed.zoneCount = kMaxAoes;
+    for (auto& zone : observed.zones) { zone.radius = 2.f; zone.active = true; }
+    Check(!EnemyHazards::Append(observed, 0x1234, 100, {3, 0}, {0, 0}, 9.f, 8.f) && observed.limited,
+          "a map full of observed blasts refuses inferred shooter envelopes");
+    Check(observed.zoneCount == kMaxAoes && std::all_of(std::begin(observed.zones), std::end(observed.zones),
+          [](const auto& zone) { return zone.radius == 2.f && zone.active && !zone.enemyKeepout; }),
+          "capacity refusal preserves every observed blast");
+    Check(EnemyHazards::Append(reaction, 0x1234, 100, {3, 0}, {0, 0}, 9.f, 8.f),
+          "live long-range shooter contributes its near-source hazard");
+    MapInput reactionInput{};
+    reactionInput.map = &reaction;
+    Check(!Core::ZonePathClear(reactionInput, {0, 0}, {3, 0}),
+          "commanded step cannot enter a shooter's late-shot contact area");
+    Check(Core::ZoneEscapePathClear(reactionInput, {2, 0}, {1, 0}) &&
+          !Core::ZoneEscapePathClear(reactionInput, {2, 0}, {3, 0}),
+          "overlapping shooter permits escape but not deeper entry");
+    Check(Core::ZonePathClear(reactionInput, {0, 4}, {6, 4}),
+          "ordinary travel outside reaction distance is still allowed");
+    Check(!EnemyHazards::Append(reaction, 0x1234, 100, {3, 0}, {0, 0}, 0.f, 8.f) &&
+          !EnemyHazards::Append(reaction, 0x1234, 0, {3, 0}, {0, 0}, 9.f, 8.f),
+          "lock exemption and dead shooter do not append reaction hazards");
 
     // Nav A*: a keep-out across the straight line is routed round, never through.
     reset();

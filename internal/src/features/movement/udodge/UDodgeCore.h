@@ -225,11 +225,15 @@ constexpr float kNoDanger = kHugeClearance;
 // window pays only for that window. TRANSIT is always inside it — the caller
 // derives the window from the walk (see DwellClear).
 //
-// CONSERVATIVE BY CONSTRUCTION: the value returned is the START of the march step
+// By default the value returned is the START of the march step
 // (or the lane's trusted end) that contains the violation, i.e. a LOWER BOUND on
 // the real time-to-danger. It can under-state durability, never over-state it.
+// refineContactTime is only for least-bad fallback ranking: interpolate contact
+// within the same padded chords and take the earliest lane, rather than tying
+// every collision in a 100 ms bin. These interpolated model times are not safety
+// certificates; admission and dwell checks must retain the default lower bound.
 float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P,
-                   float scanUntilMs = kHorizonMs);
+                   float scanUntilMs = kHorizonMs, bool refineContactTime = false);
 
 // The dwell-window end for the same walk: transit (always checked) plus `dwellMs`
 // past arrival, clamped to the horizon. This is the window PathClear tests.

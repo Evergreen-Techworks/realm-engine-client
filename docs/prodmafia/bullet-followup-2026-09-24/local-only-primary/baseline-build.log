@@ -1,0 +1,2 @@
+Pathing scenarios passed under navCollisionRule=legacy (51 asserted, 8 known limitations reported only)
+Pathing scenarios passed under navCollisionRule=game (53 asserted, 6 known limitations reported only)

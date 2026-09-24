@@ -13,6 +13,35 @@ static void Check(bool ok, const char* name)
 
 int main()
 {
+    {
+        static Core::Temporal::Ctx ranking{};
+        ranking.count = 2;
+        for (int lane = 0; lane < 2; ++lane) {
+            ranking.half[lane] = 0.1f;
+            ranking.trust[lane] = kUTemporalSteps;
+            ranking.expiresMs[lane] = 800.f;
+            ranking.reach[lane] = {-100.f, -100.f, 100.f, 100.f};
+            for (int step = 0; step <= kUTemporalSteps; ++step)
+                ranking.pos[lane][step] = {(lane == 0 ? 0.9f : 0.3f) - step, 0.f};
+        }
+        Check(Core::Temporal::TimeToDanger(ranking, {}, 0.f, {}, 200.f) == 0.f,
+              "normal safety admission retains the conservative 100ms bin");
+        Check(std::fabs(Core::Temporal::TimeToDanger(ranking, {}, 0.f, {}, 200.f, true) - 20.f) < 1e-3f,
+              "fallback ranking takes the earlier lane even when it appears second");
+        for (int step = 0; step <= kUTemporalSteps; ++step)
+            std::swap(ranking.pos[0][step], ranking.pos[1][step]);
+        Check(std::fabs(Core::Temporal::TimeToDanger(ranking, {}, 0.f, {}, 200.f, true) - 20.f) < 1e-3f,
+              "fallback contact ranking is independent of lane order");
+        Check(Core::Temporal::TimeToDanger(ranking, {}, 0.f, {}, 10.f, true) == Core::Temporal::kNoDanger,
+              "refined fallback query does not inspect past its requested window");
+        ranking.count = 1;
+        ranking.pos[0][0] = {};
+        Check(Core::Temporal::TimeToDanger(ranking, {}, 0.f, {}, 200.f, true) == 0.f,
+              "existing overlap cannot gain artificial escape time");
+        ranking.beam[0] = true;
+        Check(Core::Temporal::TimeToDanger(ranking, {}, 0.f, {}, 200.f, true) == 0.f,
+              "beam contact keeps its conservative time floor");
+    }
     static DangerMap oversized{};
     oversized.laneCount = 1;
     auto& oversizedLane = oversized.lanes[0];

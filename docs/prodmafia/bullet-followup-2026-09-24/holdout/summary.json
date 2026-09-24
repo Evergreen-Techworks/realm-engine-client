@@ -1,0 +1,140 @@
+{
+  "cases_per_revision": 64,
+  "regressions": [
+    {
+      "case": 10,
+      "profile": "fixture",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 250,
+      "phase": 225,
+      "mirror": false,
+      "shot_speed": 6,
+      "rotate": true,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 11,
+      "profile": "fixture",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 250,
+      "phase": 225,
+      "mirror": true,
+      "shot_speed": 6,
+      "rotate": true,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 20,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 150,
+      "phase": 225,
+      "mirror": false,
+      "shot_speed": 12,
+      "rotate": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 22,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 150,
+      "phase": 225,
+      "mirror": false,
+      "shot_speed": 12,
+      "rotate": true,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 25,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 250,
+      "phase": 225,
+      "mirror": true,
+      "shot_speed": 6,
+      "rotate": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 29,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 250,
+      "phase": 225,
+      "mirror": true,
+      "shot_speed": 12,
+      "rotate": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 43,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 250,
+      "phase": 225,
+      "mirror": true,
+      "shot_speed": 6,
+      "rotate": true,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    }
+  ],
+  "baseline": {
+    "passed": 26,
+    "hits": 2038,
+    "proximity_passed": 14,
+    "completed": 51,
+    "hit_free_completions": 26,
+    "worst_case_hits": 209
+  },
+  "candidate": {
+    "passed": 32,
+    "hits": 153,
+    "proximity_passed": 32,
+    "completed": 64,
+    "hit_free_completions": 32,
+    "worst_case_hits": 13
+  }
+}

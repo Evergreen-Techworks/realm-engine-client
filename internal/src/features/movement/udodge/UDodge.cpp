@@ -737,6 +737,7 @@ Vec2 NavStepFromCache(const NavCache& c, Vec2 player, float lookahead,
     return Navigation::Follow(c.wpts, c.n, player, lookahead, outDev, outNearEnd, outConnected,
         [&](Vec2 from, Vec2 to) {
             return Navigation::PaddedPathClear(in, from, to) &&
+                   Navigation::EnemyKeepoutPathClear(in, from, to) &&
                    Navigation::AvoidClear(avoid, avoidCount, from, to);
         }, !(in.map && in.map->hasLock) && NearNarrowFullOccupy(player));
 }
@@ -1311,21 +1312,9 @@ void Tick(void* player, float px, float py, float dt)
         // A keep-out that moved onto the route (its enemy walked there) blocks it as
         // surely as a wall: the solver will not step in, so re-plan now rather than
         // waiting for the stall timer.
-        const auto keepoutOnRoute = [&]() {
-            for (int i = 0; i < g_map.zoneCount; ++i) {
-                const ZoneThreat& z = g_map.zones[i];
-                if (!z.enemyKeepout || !z.active) continue;
-                const float r = z.radius + kUPlayerHalf;
-                if (Len(Sub(in.player, z.pos)) < r) continue;   // standing in it: leaving is allowed
-                const Vec2 ab = Sub(navStep, in.player);
-                const float l2 = LenSq(ab);
-                const float s = l2 > 1e-12f ? std::clamp(Dot(Sub(z.pos, in.player), ab) / l2, 0.f, 1.f) : 0.f;
-                if (Len(Sub(z.pos, Add(in.player, Mul(ab, s)))) < r) return true;
-            }
-            return false;
-        };
         const bool blocked = g_navCache.valid &&
-            (!Navigation::PaddedPathClear(in, in.player, navStep) || keepoutOnRoute());
+            (!Navigation::PaddedPathClear(in, in.player, navStep) ||
+             !Navigation::EnemyKeepoutPathClear(in, in.player, navStep));
         // Item 1 S2: "no progress along the route for 1.5 s" under route
         // commitment (a detour needs time to rejoin before the follower gives up
         // on the route); the pre-existing 500 ms timer otherwise.

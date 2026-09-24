@@ -1,0 +1,860 @@
+{
+  "cases_per_revision": 72,
+  "regressions": [
+    {
+      "case": 6,
+      "profile": "fixture",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 0,
+      "mirror": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 7,
+      "profile": "fixture",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 0,
+      "mirror": true,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 10,
+      "profile": "fixture",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 350,
+      "mirror": false,
+      "reasons": [
+        "pass lost",
+        "hits increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 12,
+      "profile": "fixture",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 0,
+      "mirror": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 13,
+      "profile": "fixture",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 0,
+      "mirror": true,
+      "reasons": [
+        "pass lost",
+        "hits increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 14,
+      "profile": "fixture",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 150,
+      "mirror": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 15,
+      "profile": "fixture",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 150,
+      "mirror": true,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 16,
+      "profile": "fixture",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 350,
+      "mirror": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 17,
+      "profile": "fixture",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 350,
+      "mirror": true,
+      "reasons": [
+        "pass lost",
+        "hits increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 24,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 0,
+      "mirror": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 25,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 0,
+      "mirror": true,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 28,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 350,
+      "mirror": false,
+      "reasons": [
+        "pass lost",
+        "hits increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 30,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 0,
+      "mirror": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 31,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 0,
+      "mirror": true,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 32,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 150,
+      "mirror": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 33,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 150,
+      "mirror": true,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 34,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 350,
+      "mirror": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 35,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 350,
+      "mirror": true,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 36,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 0,
+      "phase": 0,
+      "mirror": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 37,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 0,
+      "phase": 0,
+      "mirror": true,
+      "reasons": [
+        "hits increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 38,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 0,
+      "phase": 150,
+      "mirror": false,
+      "reasons": [
+        "hits increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 39,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 0,
+      "phase": 150,
+      "mirror": true,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 40,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 0,
+      "phase": 350,
+      "mirror": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 41,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 0,
+      "phase": 350,
+      "mirror": true,
+      "reasons": [
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 42,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 0,
+      "mirror": false,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 43,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 0,
+      "mirror": true,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 44,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 150,
+      "mirror": false,
+      "reasons": [
+        "arrival lost",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 46,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 350,
+      "mirror": false,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 47,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 350,
+      "mirror": true,
+      "reasons": [
+        "arrival lost",
+        "hits increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 48,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 0,
+      "mirror": false,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 49,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 0,
+      "mirror": true,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 50,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 150,
+      "mirror": false,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 51,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 150,
+      "mirror": true,
+      "reasons": [
+        "pass lost",
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 52,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 350,
+      "mirror": false,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 53,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 350,
+      "mirror": true,
+      "reasons": [
+        "arrival lost",
+        "hits increased",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 54,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 0,
+      "phase": 0,
+      "mirror": false,
+      "reasons": [
+        "hits increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 55,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 0,
+      "phase": 0,
+      "mirror": true,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 56,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 0,
+      "phase": 150,
+      "mirror": false,
+      "reasons": [
+        "arrival lost",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 57,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 0,
+      "phase": 150,
+      "mirror": true,
+      "reasons": [
+        "arrival lost",
+        "hits increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 58,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 0,
+      "phase": 350,
+      "mirror": false,
+      "reasons": [
+        "hits increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 60,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 0,
+      "mirror": false,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 61,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 0,
+      "mirror": true,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 62,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 150,
+      "mirror": false,
+      "reasons": [
+        "pass lost",
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 63,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 150,
+      "mirror": true,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 64,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 350,
+      "mirror": false,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 65,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 350,
+      "mirror": true,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 66,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 0,
+      "mirror": false,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 67,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 0,
+      "mirror": true,
+      "reasons": [
+        "arrival lost",
+        "hits increased",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 68,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 150,
+      "mirror": false,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 69,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 150,
+      "mirror": true,
+      "reasons": [
+        "stuck time increased"
+      ]
+    },
+    {
+      "case": 70,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 350,
+      "mirror": false,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 71,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 350,
+      "mirror": true,
+      "reasons": [
+        "arrival lost",
+        "stuck time increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    }
+  ],
+  "baseline": {
+    "passed": 36,
+    "hits": 30,
+    "completed": 71,
+    "hit_free_completions": 59,
+    "worst_case_hits": 6
+  },
+  "candidate": {
+    "passed": 32,
+    "hits": 21,
+    "completed": 48,
+    "hit_free_completions": 40,
+    "worst_case_hits": 5
+  }
+}

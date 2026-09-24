@@ -58,6 +58,28 @@ inline bool PaddingPathClear(const MapInput& in, Vec2 from, Vec2 to)
     return true;
 }
 
+// Route shortcuts and route invalidation must agree about enemy keepouts.
+inline bool EnemyKeepoutPathClear(const MapInput& in, Vec2 from, Vec2 to)
+{
+    if (!in.map) return true;
+    const Vec2 step = Sub(to, from);
+    const float length2 = LenSq(step);
+    for (int i = 0; i < in.map->zoneCount; ++i) {
+        const auto& zone = in.map->zones[i];
+        if (!zone.enemyKeepout || !zone.active) continue;
+        const float radius = zone.radius + kUPlayerHalf;
+        const Vec2 start = Sub(from, zone.pos);
+        if (LenSq(start) < radius * radius) {
+            if (Dot(start, step) < 0.f) return false;
+            continue; // permit outward escape if an enemy moved onto us
+        }
+        const float t = length2 > 1e-12f
+            ? std::clamp(Dot(Sub(zone.pos, from), step) / length2, 0.f, 1.f) : 0.f;
+        if (LenSq(Sub(zone.pos, Add(from, Mul(step, t)))) < radius * radius) return false;
+    }
+    return true;
+}
+
 // Only navigation asks for extra clearance. Collision/dodge escape keeps the
 // real player footprint, including when the player starts inside the padding.
 // The centre sweep applies the full occupancy rule; the padded corner sweeps keep

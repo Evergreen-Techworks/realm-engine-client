@@ -59,6 +59,25 @@ def bullet_cases():
                                    speed='', start_shift='', delay=delay, phase=phase, mirror=mirror)
 
 
+def bullet_holdout_cases():
+    for profile in ('fixture', 'shipped'):
+        for rule in ('legacy', 'game'):
+            for delay in (150, 250):
+                for shot_speed in (6, 12):
+                    for rotate in (False, True):
+                        for mirror in (False, True):
+                            yield dict(profile=profile, rule=rule,
+                                       scenario='p_walk_pack_late_crossfire', navigator='legacy',
+                                       speed='', start_shift='', delay=delay, phase=225, mirror=mirror,
+                                       shot_speed=shot_speed, rotate=rotate)
+
+
+def bullet_outcome_passed(metrics):
+    """Actual damage and completion, independent of the optional standoff-band score."""
+    return metrics['final_dist'] < 0.6 and all(metrics[k] == 0 for k in
+        ('hits', 'stuck_s', 'refused_moves', 'overspeed_moves', 'damaging_ground_frames'))
+
+
 def remote_travel_acceptance(rows, revision="candidate"):
     """Quiet long-distance travel gets the same one-second pause limit under both rules."""
     remote = [r for r in rows if r["revision"] == revision
@@ -88,6 +107,10 @@ def environment(case):
         env['HARNESS_PACK_PHASE_MS'] = str(case['phase'])
         if case['mirror']:
             env['HARNESS_PACK_MIRROR'] = '1'
+    if 'shot_speed' in case:
+        env['HARNESS_PACK_SHOT_SPEED'] = str(case['shot_speed'])
+        if case['rotate']:
+            env['HARNESS_PACK_ROTATE'] = '1'
     return env
 
 
@@ -130,7 +153,7 @@ def main():
     ap.add_argument('--candidate-internal', type=Path, default=HERE.parents[1])
     ap.add_argument('--output', required=True, type=Path)
     ap.add_argument('--jobs', type=int, choices=range(1, 5), default=4)
-    ap.add_argument('--suite', choices=('navigation', 'bullets'), default='navigation')
+    ap.add_argument('--suite', choices=('navigation', 'bullets', 'bullets-holdout'), default='navigation')
     args = ap.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
@@ -148,10 +171,12 @@ def main():
     with (out / 'results.csv').open('w', newline='') as csvfile, (out / 'raw.jsonl').open('w') as raw, ThreadPoolExecutor(max_workers=args.jobs) as pool:
         writer = csv.DictWriter(csvfile, fieldnames=['case', 'profile', 'rule', 'scenario',
                                'navigator', 'speed', 'start_shift',
-                               *(['delay', 'phase', 'mirror'] if args.suite == 'bullets' else []),
+                               *(['delay', 'phase', 'mirror'] if args.suite != 'navigation' else []),
+                               *(['shot_speed', 'rotate'] if args.suite == 'bullets-holdout' else []),
                                'revision', *METRICS], lineterminator='\n')
         writer.writeheader()
-        selected_cases = bullet_cases() if args.suite == 'bullets' else cases()
+        selected_cases = (bullet_holdout_cases() if args.suite == 'bullets-holdout'
+                          else bullet_cases() if args.suite == 'bullets' else cases())
         for index, case, pair in pool.map(lambda item: run_pair(item, binaries), enumerate(selected_cases)):
             for revision, metrics in pair.items():
                 raw.write(json.dumps(dict(case=index, **case, revision=revision, metrics=metrics)) + '\n')
@@ -161,7 +186,9 @@ def main():
                 rows.append(row)
             old, new = pair['baseline'], pair['candidate']
             reasons = []
-            if old['success'] and not new['success']:
+            old_pass = old['success'] if args.suite == 'navigation' else bullet_outcome_passed(old)
+            new_pass = new['success'] if args.suite == 'navigation' else bullet_outcome_passed(new)
+            if old_pass and not new_pass:
                 reasons.append('pass lost')
             if old['final_dist'] < 0.6 and new['final_dist'] >= 0.6:
                 reasons.append('arrival lost')
@@ -170,7 +197,7 @@ def main():
                     reasons.append(metric + ' increased')
             if new['stuck_s'] > old['stuck_s']:
                 reasons.append('stuck time increased')
-            completed = old['success'] or (args.suite == 'bullets' and old['final_dist'] < 0.6)
+            completed = old['success'] or (args.suite != 'navigation' and old['final_dist'] < 0.6)
             if completed and new['time_s'] > old['time_s'] + max(0.25, old['time_s'] * 0.05):
                 reasons.append('arrival slower by >5% and >0.25s')
             if old['lock'] and new['in_range_frac'] < old['in_range_frac'] - 0.02:
@@ -186,12 +213,14 @@ def main():
         subset = [r for r in rows if r['revision'] == revision]
         summary[revision] = {'passed': sum(r['success'] for r in subset),
                              'hits': sum(r['hits'] for r in subset)}
-        if args.suite == 'bullets':
+        if args.suite != 'navigation':
             summary[revision].update(
+                proximity_passed=summary[revision]['passed'],
+                passed=sum(bullet_outcome_passed(r) for r in subset),
                 completed=sum(r['final_dist'] < 0.6 for r in subset),
                 hit_free_completions=sum(r['final_dist'] < 0.6 and r['hits'] == 0 for r in subset),
                 worst_case_hits=max(r['hits'] for r in subset))
-    if args.suite == 'bullets' and summary['baseline']['hits'] > 0:
+    if args.suite != 'navigation' and summary['baseline']['hits'] > 0:
         if summary['candidate']['hits'] >= summary['baseline']['hits']:
             regressions.append(dict(reasons=['no reduction in projectile hits']))
     (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')

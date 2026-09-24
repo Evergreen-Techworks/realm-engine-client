@@ -955,7 +955,7 @@ static float ExpiryMs(const Ctx& c, int li)
     return c.expiresMs[li] > 0.f ? c.expiresMs[li] : kHugeClearance;
 }
 
-float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P, float scanUntilMs)
+float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P, float scanUntilMs, bool refineContactTime)
 {
     const Vec2  to = Sub(P, player);
     const float dist = Len(to);
@@ -1020,6 +1020,7 @@ float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P, float scanUnt
             ps[i] = playerAt(ts[i]);
         }
 
+        float firstContact = kNoDanger;
         for (int ai = 0; ai < activeCount; ++ai) {
             const int  li  = active[ai] & (kOutOfReachBit - 1);
             const bool outOfReach = (active[ai] & kOutOfReachBit) != 0;
@@ -1056,16 +1057,32 @@ float TimeToDanger(const Ctx& c, Vec2 player, float speed, Vec2 P, float scanUnt
             float tPrev = ts[0];
             for (int i = 1; i < n; ++i) {
                 if (isMid[i] && !useMid) continue;   // slow lane: one chord across the step
-                const float curTime = std::min(ts[i], expiry);
+                const float curTime = std::min(ts[i], refineContactTime ? std::min(expiry, tEnd) : expiry);
                 const Vec2 pCur = curTime == ts[i] ? ps[i] : playerAt(curTime);
                 const Vec2 bCur = BulletInStep(c, li, k, (curTime - t0) / kUTemporalStepMs);
                 const Vec2 e = AlongPad(c, bPrev, bCur, curTime - tPrev);
-                if (MinChebOnSegment(bPrev.x - pPrev.x - e.x, bPrev.y - pPrev.y - e.y,
-                                     bCur.x  - pCur.x  + e.x, bCur.y  - pCur.y  + e.y) <= half) return t0;
+                const Vec2 r0{bPrev.x - pPrev.x - e.x, bPrev.y - pPrev.y - e.y};
+                const Vec2 r1{bCur.x - pCur.x + e.x, bCur.y - pCur.y + e.y};
+                if (MinChebOnSegment(r0.x, r0.y, r1.x, r1.y) <= half) {
+                    if (!refineContactTime) return t0;
+                    float enter = 0.f, leave = 1.f;
+                    const auto slab = [&](float a, float b) {
+                        const float delta = b - a;
+                        if (std::fabs(delta) < 1e-9f) return;
+                        float lo = (-half - a) / delta, hi = (half - a) / delta;
+                        if (lo > hi) std::swap(lo, hi);
+                        enter = std::max(enter, lo);
+                        leave = std::min(leave, hi);
+                    };
+                    slab(r0.x, r1.x); slab(r0.y, r1.y);
+                    firstContact = std::min(firstContact,
+                        tPrev + std::max(0.f, std::min(enter, leave)) * (curTime - tPrev));
+                }
                 pPrev = pCur; bPrev = bCur; tPrev = curTime;
-                if (curTime >= expiry) break;
+                if (curTime >= expiry || (refineContactTime && curTime >= tEnd)) break;
             }
         }
+        if (firstContact != kNoDanger) return firstContact;
     }
     // NOTE (removed, not lost): the old shape also endpoint-tested the final sample
     // (t = horizon) for fully-trusted lanes when the window reached the horizon.

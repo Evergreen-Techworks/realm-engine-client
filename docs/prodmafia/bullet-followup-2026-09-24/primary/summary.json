@@ -1,0 +1,20 @@
+{
+  "cases_per_revision": 72,
+  "regressions": [],
+  "baseline": {
+    "passed": 59,
+    "hits": 30,
+    "proximity_passed": 36,
+    "completed": 71,
+    "hit_free_completions": 59,
+    "worst_case_hits": 6
+  },
+  "candidate": {
+    "passed": 72,
+    "hits": 0,
+    "proximity_passed": 40,
+    "completed": 72,
+    "hit_free_completions": 72,
+    "worst_case_hits": 0
+  }
+}
