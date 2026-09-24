@@ -130,6 +130,17 @@ int main() {
           "paralysis cannot trigger travel continuation");
     Check(!Navigation::TravelStepConsumed(true, true, false, true, {1,0}, {1.05f,0}, {4,0}, 0.1f),
           "short corner steps finish before choosing another step");
+    Check(!Navigation::TravelStepConsumed(true, true, false, true,
+              {35.500656128f,32.500568390f}, {35.5f,32.5f}, {35.5f,27.1f}, 0.15f),
+          "sub-millimetre corner remainder is not consumed before a FullOccupy turn");
+    {
+        const Vec2 bends[] = {{20.f,18.f}, {23.5f,21.5f}, {35.5f,21.5f}};
+        float deviation = 0.f; bool nearEnd = false, connected = false;
+        const Vec2 step = Navigation::Follow(bends, 3, {23.49543f,21.49535f}, 3.f,
+            deviation, nearEnd, connected, [](Vec2, Vec2) { return true; });
+        Check(connected && step.x == 23.5f && step.y == 21.5f,
+              "finish a forward corner despite tolerant clearance of the outgoing leg");
+    }
     static DangerMap emptyMap{};
     MapInput cornerInput{}; cornerInput.map = &emptyMap; cornerInput.speed = 5.f;
     Solver::Goal cornerGoal{}; cornerGoal.active = true; cornerGoal.walkTo = true;
@@ -139,6 +150,10 @@ int main() {
     Solver::Solve(cornerInput, 0.2f, cornerGoal, emptyRoute, cornerState, cornerResult);
     Check(cornerResult.shouldMove && cornerResult.target.x > 0.f,
           "intermediate bend within half a tile still advances");
+    cornerGoal.pos = {0.00005f, 0.f};
+    Solver::Solve(cornerInput, 0.2f, cornerGoal, emptyRoute, cornerState, cornerResult);
+    Check(cornerResult.shouldMove && cornerResult.target.x == cornerGoal.pos.x,
+          "tiny safe corner remainder reaches its exact validated endpoint");
     const Vec2 corridorStep{2.f, 0.f};
     auto waiting=Navigation::FinishRefresh(true,false,true,false,{},corridorStep,true,false,false);
     Check(waiting.solve && LenSq(waiting.step)==0.f, "first blocked-route wait requests one hold solve");

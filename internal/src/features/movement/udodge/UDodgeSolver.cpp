@@ -601,13 +601,16 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     //
     // This remains fail-closed: the exact step must pass every hard floor used
     // by movement below. Only an unsafe corridor step yields to dodge routing.
+    // Navigation owns arrival. Even a tiny remaining bend step can be required
+    // before its next leg is geometrically traversable.
+    const bool exactTravel = !(in.map && in.map->hasLock);
     if (goal.walkTo && goal.active &&
-        Len(Sub(in.player, goal.pos)) > kUNavAnchorArriveTiles) {
+        (exactTravel || Len(Sub(in.player, goal.pos)) > kUNavAnchorArriveTiles)) {
         const Vec2  to = Sub(goal.pos, in.player);
         const float d  = Len(to);
-        if (d > 1e-4f) {
+        if (d > (exactTravel ? 0.f : 1e-4f)) {
             const Vec2 dir    = Mul(to, 1.f / d);
-            const Vec2 target = Add(in.player, Mul(dir, std::min(d, b)));
+            const Vec2 target = exactTravel && d <= b ? goal.pos : Add(in.player, Mul(dir, std::min(d, b)));
             if (CanOccupyAt(in, target) &&
                 OccupancyPathClear(in, in.player, target) &&
                 !Core::EnemyPathBlocked(in, in.player, target) &&

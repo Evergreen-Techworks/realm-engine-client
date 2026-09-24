@@ -14,10 +14,11 @@ inline bool SameRouteRequest(bool assisting, uint64_t epoch, uint64_t goalId,
 }
 
 inline bool TravelStepConsumed(bool walkTo, bool cacheValid, bool awaiting, bool safeMove,
-                               Vec2 player, Vec2 target, Vec2 corridorStep, float frameTiles)
+                               Vec2 player, Vec2 target, Vec2 corridorStep, float frameTiles, bool exact = true)
 {
     return walkTo && cacheValid && !awaiting && safeMove && frameTiles > 0.f &&
-        LenSq(Sub(target, player)) <= 1e-6f &&
+        // A tiny remainder can be the entire clearance of a FullOccupy turn.
+        (exact ? (target.x == player.x && target.y == player.y) : LenSq(Sub(target, player)) <= 1e-6f) &&
         LenSq(Sub(corridorStep, player)) > frameTiles * frameTiles;
 }
 
@@ -136,10 +137,25 @@ inline Handoff FinishRefresh(bool walkTo, bool wasWaiting, bool awaiting,
 // line is blocked): that is the one case genuinely worth a fresh search.
 template<class Clear>
 Vec2 Follow(const Vec2* points, int count, Vec2 player, float lookahead,
-            float& outDev, bool& outNearEnd, bool& outConnected, Clear clear)
+            float& outDev, bool& outNearEnd, bool& outConnected, Clear clear, bool finishBends = true)
 {
     outDev = 0.f; outNearEnd = false; outConnected = false;
     if (count < 2) return player;
+    // Collision's centreline tolerance is useful for sensing, but it must not
+    // let the follower turn just short of a bend. Finish a nearby forward bend
+    // exactly before projecting onto its outgoing leg (one-tile FullOccupy halls
+    // have no lateral room for that shortcut). The solver still validates it.
+    for (int i = 1; finishBends && i < count; ++i) {
+        const Vec2 remainder = Sub(points[i], player);
+        const float d2 = LenSq(remainder);
+        if (d2 > 0.f && d2 <= 2.f * Movement::TileOccupancy::kCentreLineTolerance *
+                                      Movement::TileOccupancy::kCentreLineTolerance &&
+            Dot(remainder, Sub(points[i], points[i - 1])) > 0.f && clear(player, points[i])) {
+            outDev = std::sqrt(d2);
+            outConnected = true;
+            return points[i];
+        }
+    }
     // Nearest point on the polyline + which segment it's on.
     float bestD2 = 1e18f; int bestSeg = -1; Vec2 bestProj = points[0];
     for (int i = 0; i + 1 < count; ++i) {

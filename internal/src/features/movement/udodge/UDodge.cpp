@@ -717,7 +717,7 @@ Vec2 NavStepFromCache(const NavCache& c, Vec2 player, float lookahead,
         [&](Vec2 from, Vec2 to) {
             return Navigation::PaddedPathClear(in, from, to) &&
                    Navigation::AvoidClear(avoid, avoidCount, from, to);
-        });
+        }, !(in.map && in.map->hasLock));
 }
 
 // ── Autopilot auto-lock ──────────────────────────────────────────────────────
@@ -1537,7 +1537,12 @@ void Tick(void* player, float px, float py, float dt)
         // commit before it (isolated by archiving both trees and diffing
         // run_scenarios.py --metrics). Classic keeps the pre-Item-1 grid
         // centring unconditionally; only Tactician gets the lattice snap.
-        if (settings.planner == Contact::Policy::Tactician) {
+        // Strategic travel already has a stable navigation corridor. Snapping
+        // its local collision grid can miss the only clear centreline through
+        // a one-tile FullOccupy hall, forcing repeated stuck-timer replans.
+        // Keep combat/ring-approach hysteresis on the shared lattice; sample
+        // ordinary travel around the actual player so the corridor stays usable.
+        if (settings.planner == Contact::Policy::Tactician && (!goal.walkTo || lockApproach)) {
             constexpr float kHalfCell = kUPathCellTiles * 0.5f;
             gridCenter.x = std::round((gridCenter.x - kHalfCell) / kUPathCellTiles) * kUPathCellTiles + kHalfCell;
             gridCenter.y = std::round((gridCenter.y - kHalfCell) / kUPathCellTiles) * kUPathCellTiles + kHalfCell;
@@ -1750,7 +1755,7 @@ void Tick(void* player, float px, float py, float dt)
             > kUNavAnchorArriveTiles * kUNavAnchorArriveTiles)
         || (!UsesGameRule(in) && Navigation::TravelStepConsumed(goal.walkTo, g_navCache.valid, navWaiting,
             g_solve.shouldMove && g_solve.kind == Solver::SolveKind::Safe,
-            in.player, g_solve.target, steerStep, in.speed * Clamp(dt * 1000.f, 1.f, 250.f))));
+            in.player, g_solve.target, steerStep, in.speed * Clamp(dt * 1000.f, 1.f, 250.f), !lockApproach)));
     if (goal.walkTo) {
         navStep = navHandoff.step;
         goal.pos = ringRoute ? steerStep : navStep;
@@ -1876,7 +1881,8 @@ void Tick(void* player, float px, float py, float dt)
     if (g_solve.shouldMove && enemyDriveClear && drivePathClear) {
         const Vec2 to = Sub(g_solve.target, in.player);
         const float d = Len(to);
-        const Vec2 dir = d > 1e-4f ? Mul(to, 1.f / d) : Vec2{};
+        const bool exactTravel = goal.walkTo && !lockApproach;
+        const Vec2 dir = d > (exactTravel ? 0.f : 1e-4f) ? Mul(to, 1.f / d) : Vec2{};
         // Per-frame step, clamped to the player's speed. The game's MoveTo does
         // NOT clamp again (LKHPPBEGNOM::DGLCONCOIBO sets the position outright), so
         // in.speed must be the speed the game allows — Slowed and the square's
@@ -1884,11 +1890,13 @@ void Tick(void* player, float px, float py, float dt)
         // by the tick boundary without ever exceeding the per-tick budget.
         float reach = std::min(d, in.speed * frameMs);
         if (frameMove.budgeted) reach = std::min(reach, frameMove.tiles);
-        moveTarget = Add(in.player, Mul(dir, reach));
+        // Finish the validated segment exactly. A tiny remainder at a narrow
+        // bend still matters: turning early can put the next leg into a wall.
+        moveTarget = exactTravel && reach >= d ? g_solve.target : Add(in.player, Mul(dir, reach));
         // A fully consumed allowance means the game already moved the player a
         // frame's worth this update; issuing a zero-length MoveTo would only
         // re-assert the position, so skip the call and keep the commitment.
-        const bool ok = reach > 1e-4f
+        const bool ok = reach > (exactTravel ? 0.f : 1e-4f)
             ? DodgeRuntime::CallMoveTo(player, moveTarget.x, moveTarget.y) : true;
         if (reach > 1e-4f) { g_lastCmdFrom = in.player; g_lastCmdTo = moveTarget; g_lastCmdValid = true; }
         if (!ok) moveFailed = true;

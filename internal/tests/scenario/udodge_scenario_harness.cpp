@@ -370,9 +370,16 @@ Vec2 TruthMove(const World& w, Vec2 from, Vec2 to)
     const int steps = std::max(1, static_cast<int>(std::ceil(len / 0.05f)));
     Vec2 cur = from;
     const Vec2 step = Mul(d, 1.f / static_cast<float>(steps));
+    bool unobstructed = true;
     for (int i = 0; i < steps; ++i) {
-        const Vec2 full = Add(cur, step);
+        // Sample the commanded segment, rather than accumulate rounded substeps.
+        // An unobstructed MoveTo sets the exact endpoint in the game. Losing one
+        // ULP here falsely strands the next turn in a FullOccupy centreline.
+        const Vec2 full = unobstructed
+            ? (i + 1 == steps ? to : Add(from, Mul(d, static_cast<float>(i + 1) / steps)))
+            : Add(cur, step);
         if (TruthValid(w, full.x, full.y)) { cur = full; continue; }
+        unobstructed = false;
         const bool xFirst = std::fabs(step.x) >= std::fabs(step.y);
         bool moved = false;
         for (int pass = 0; pass < 2 && !moved; ++pass) {
@@ -901,7 +908,7 @@ namespace UDodge { namespace Debug {
 void Render(const DebugSnapshot& d, float, float, float, float, float, float)
 {
     if (!std::getenv("HARNESS_TRACE_FRAMES")) return;
-    std::fprintf(stderr, "  [frame t=%.3f] player=(%.3f,%.3f) kind=%d move=%d target=(%.3f,%.3f) navStep=(%.3f,%.3f) "
+    std::fprintf(stderr, "  [frame t=%.3f] player=(%.9f,%.9f) kind=%d move=%d target=(%.9f,%.9f) navStep=(%.9f,%.9f) "
         "navWpts=%d lockTarget=(%.2f,%.2f) route=%d\n",
         (H::g_nowMs - 100000.0) / 1000.0, d.player.x, d.player.y, d.solveKind, d.overrideActive,
         d.moveTarget.x, d.moveTarget.y, d.navStepTarget.x, d.navStepTarget.y, d.navWptCount,
@@ -1660,6 +1667,15 @@ void ScenarioConnectedRooms(const char* name, int width, bool fullOccupyWalls, b
     const Vec2 goal = reverse ? first : second;
     world.px = start.x;
     world.py = start.y;
+    // Navigation efficiency sweep: perturb speed/start alignment without
+    // changing the map, collision truth, destination or acceptance thresholds.
+    if (const char* speed = std::getenv("HARNESS_ROOM_SPEED"))
+        world.tps = std::clamp(static_cast<float>(std::atof(speed)), 4.f, 9.6f);
+    if (const char* shift = std::getenv("HARNESS_ROOM_START_SHIFT")) {
+        const float delta = std::clamp(static_cast<float>(std::atof(shift)), -0.2f, 0.2f);
+        world.px += delta;
+        world.py += delta;
+    }
     if (progressive) {
         world.streamOrder.clear();
         world.script = [seen = std::unordered_set<uint32_t>{}](World& current) mutable {
@@ -1675,8 +1691,11 @@ void ScenarioConnectedRooms(const char* name, int width, bool fullOccupyWalls, b
         world.script(world);
     }
     Result result = Run(name, world, Goal::WalkTo, goal, 40);
+    // These rooms contain no timed threat: a clear corridor must not repeatedly
+    // wait out the 1.5-second stuck timer. Permit one second total for startup
+    // and newly revealed route handoffs, without relaxing collision or hit gates.
     result.success = result.success && result.hits == 0 && result.stuckS == 0 &&
-                     g_move.refused == 0 && g_move.overspeed == 0;
+                     g_move.refused == 0 && g_move.overspeed == 0 && result.pausedTravelFrames <= 60;
     Emit(result);
 }
 
@@ -2166,6 +2185,12 @@ void ScenarioMoveToNoClamp(const char* name)
     const bool ok = DodgeRuntime::CallMoveTo(&w, 5.5f, 0.5f);
     Result r; r.name = name;
     r.success = ok && std::fabs(w.px - 5.5f) < 1e-3f && std::fabs(w.py - 0.5f) < 1e-3f && g_move.overspeed == 1;
+    // The unblocked final substep must land exactly on a requested centreline.
+    // Repeated float addition previously stopped one ULP short at this speed;
+    // the next axis then falsely collided with the FullOccupy corner.
+    w.Fill(34, 20, 36, 23, kFloor);
+    const Vec2 end = TruthMove(w, {35.353431702f, 21.5f}, {35.5f, 21.5f});
+    r.success = r.success && end.x == 35.5f && end.y == 21.5f;
     g_move = MoveStats{};   // the deliberate overspeed step is this check's input, not a planner step
     Emit(r);
 }
