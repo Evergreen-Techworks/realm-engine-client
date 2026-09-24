@@ -6,6 +6,10 @@ process and uses simulated time; host CPU timings are retained but not scored.
 
 python3 internal/tests/scenario/benchmark_navigation.py \
   --baseline-internal /path/to/pinned-base/internal --output /tmp/navigation-ab
+
+--suite bullets runs 72 matched crossfire encounters with mirrored layouts,
+three first-volley phases and three visibility delays. Acceptance requires an
+actual hit reduction as well as the per-case safety and completion gates.
 """
 from pathlib import Path
 import argparse
@@ -43,6 +47,18 @@ def cases():
                            navigator='dstar', speed='', start_shift='')
 
 
+def bullet_cases():
+    """Vary shot visibility and encounter orientation without tuning production settings."""
+    for profile in ('fixture', 'shipped'):
+        for rule in ('legacy', 'game'):
+            for delay in (0, 100, 200):
+                for phase in (0, 150, 350):
+                    for mirror in (False, True):
+                        yield dict(profile=profile, rule=rule,
+                                   scenario='p_walk_pack_late_crossfire', navigator='legacy',
+                                   speed='', start_shift='', delay=delay, phase=phase, mirror=mirror)
+
+
 def remote_travel_acceptance(rows, revision="candidate"):
     """Quiet long-distance travel gets the same one-second pause limit under both rules."""
     remote = [r for r in rows if r["revision"] == revision
@@ -67,6 +83,11 @@ def environment(case):
     if case['speed'] != '':
         env['HARNESS_ROOM_SPEED'] = str(case['speed'])
         env['HARNESS_ROOM_START_SHIFT'] = str(case['start_shift'])
+    if 'delay' in case:
+        env['HARNESS_PACK_DELAY_MS'] = str(case['delay'])
+        env['HARNESS_PACK_PHASE_MS'] = str(case['phase'])
+        if case['mirror']:
+            env['HARNESS_PACK_MIRROR'] = '1'
     return env
 
 
@@ -109,13 +130,14 @@ def main():
     ap.add_argument('--candidate-internal', type=Path, default=HERE.parents[1])
     ap.add_argument('--output', required=True, type=Path)
     ap.add_argument('--jobs', type=int, choices=range(1, 5), default=4)
+    ap.add_argument('--suite', choices=('navigation', 'bullets'), default='navigation')
     args = ap.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
     metadata = {'baseline': provenance(args.baseline_internal.resolve()),
                 'candidate': provenance(args.candidate_internal.resolve()),
                 'harness_sha256': hashlib.sha256((HERE / 'udodge_scenario_harness.cpp').read_bytes()).hexdigest(),
-                'policy': 'tactician', 'scan_mode': 3}
+                'policy': 'tactician', 'scan_mode': 3, 'suite': args.suite}
     (out / 'metadata.json').write_text(json.dumps(metadata, indent=2) + '\n')
     binaries = {}
     for label, internal in [('baseline', args.baseline_internal), ('candidate', args.candidate_internal)]:
@@ -125,9 +147,12 @@ def main():
     regressions = []
     with (out / 'results.csv').open('w', newline='') as csvfile, (out / 'raw.jsonl').open('w') as raw, ThreadPoolExecutor(max_workers=args.jobs) as pool:
         writer = csv.DictWriter(csvfile, fieldnames=['case', 'profile', 'rule', 'scenario',
-                               'navigator', 'speed', 'start_shift', 'revision', *METRICS], lineterminator='\n')
+                               'navigator', 'speed', 'start_shift',
+                               *(['delay', 'phase', 'mirror'] if args.suite == 'bullets' else []),
+                               'revision', *METRICS], lineterminator='\n')
         writer.writeheader()
-        for index, case, pair in pool.map(lambda item: run_pair(item, binaries), enumerate(cases())):
+        selected_cases = bullet_cases() if args.suite == 'bullets' else cases()
+        for index, case, pair in pool.map(lambda item: run_pair(item, binaries), enumerate(selected_cases)):
             for revision, metrics in pair.items():
                 raw.write(json.dumps(dict(case=index, **case, revision=revision, metrics=metrics)) + '\n')
                 row = dict(case=index, **case, revision=revision,
@@ -145,7 +170,8 @@ def main():
                     reasons.append(metric + ' increased')
             if new['stuck_s'] > old['stuck_s']:
                 reasons.append('stuck time increased')
-            if old['success'] and new['time_s'] > old['time_s'] + max(0.25, old['time_s'] * 0.05):
+            completed = old['success'] or (args.suite == 'bullets' and old['final_dist'] < 0.6)
+            if completed and new['time_s'] > old['time_s'] + max(0.25, old['time_s'] * 0.05):
                 reasons.append('arrival slower by >5% and >0.25s')
             if old['lock'] and new['in_range_frac'] < old['in_range_frac'] - 0.02:
                 reasons.append('boss engagement fraction decreased by >0.02')
@@ -153,12 +179,21 @@ def main():
                 regressions.append(dict(case=index, **case, reasons=reasons))
             csvfile.flush()
             raw.flush()
-    regressions.extend(remote_travel_acceptance(rows))
+    if args.suite == 'navigation':
+        regressions.extend(remote_travel_acceptance(rows))
     summary = {'cases_per_revision': len(rows) // 2, 'regressions': regressions}
     for revision in binaries:
         subset = [r for r in rows if r['revision'] == revision]
         summary[revision] = {'passed': sum(r['success'] for r in subset),
                              'hits': sum(r['hits'] for r in subset)}
+        if args.suite == 'bullets':
+            summary[revision].update(
+                completed=sum(r['final_dist'] < 0.6 for r in subset),
+                hit_free_completions=sum(r['final_dist'] < 0.6 and r['hits'] == 0 for r in subset),
+                worst_case_hits=max(r['hits'] for r in subset))
+    if args.suite == 'bullets' and summary['baseline']['hits'] > 0:
+        if summary['candidate']['hits'] >= summary['baseline']['hits']:
+            regressions.append(dict(reasons=['no reduction in projectile hits']))
     (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary, indent=2))
     return bool(regressions)

@@ -1,0 +1,16 @@
+internal/tests/udodge_pathing_rules_tests.cpp: In function ‘int main()’:
+internal/tests/udodge_pathing_rules_tests.cpp:183:35: error: ‘ShotReactionKeepoutRadius’ is not a member of ‘UDodge::EnemyHazards’
+  183 |     Check(std::fabs(EnemyHazards::ShotReactionKeepoutRadius(9.f, 8.f) - 2.1f) < 1e-5f,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~~
+internal/tests/udodge_pathing_rules_tests.cpp:185:25: error: ‘ShotReactionKeepoutRadius’ is not a member of ‘UDodge::EnemyHazards’
+  185 |     Check(EnemyHazards::ShotReactionKeepoutRadius(4.5f, 8.f) == 5.f,
+      |                         ^~~~~~~~~~~~~~~~~~~~~~~~~
+internal/tests/udodge_pathing_rules_tests.cpp:187:25: error: ‘ShotReactionKeepoutRadius’ is not a member of ‘UDodge::EnemyHazards’
+  187 |     Check(EnemyHazards::ShotReactionKeepoutRadius(9.f, 0.f) == 0.f &&
+      |                         ^~~~~~~~~~~~~~~~~~~~~~~~~
+internal/tests/udodge_pathing_rules_tests.cpp:188:25: error: ‘ShotReactionKeepoutRadius’ is not a member of ‘UDodge::EnemyHazards’
+  188 |           EnemyHazards::ShotReactionKeepoutRadius(9.f, -8.f) == 0.f,
+      |                         ^~~~~~~~~~~~~~~~~~~~~~~~~
+internal/tests/udodge_pathing_rules_tests.cpp:190:25: error: ‘ShotReactionKeepoutRadius’ is not a member of ‘UDodge::EnemyHazards’
+  190 |     Check(EnemyHazards::ShotReactionKeepoutRadius(0.f, 8.f) == 0.f,
+      |                         ^~~~~~~~~~~~~~~~~~~~~~~~~

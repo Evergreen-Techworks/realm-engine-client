@@ -1,0 +1,163 @@
+{
+  "cases_per_revision": 316,
+  "regressions": [
+    {
+      "case": 12,
+      "profile": "fixture",
+      "rule": "legacy",
+      "scenario": "d_boss_wall_dense",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "stuck time increased",
+        "boss engagement fraction decreased by >0.02"
+      ]
+    },
+    {
+      "case": 14,
+      "profile": "fixture",
+      "rule": "legacy",
+      "scenario": "d_boss_wall_dense_x100",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "stuck time increased",
+        "boss engagement fraction decreased by >0.02"
+      ]
+    },
+    {
+      "case": 15,
+      "profile": "fixture",
+      "rule": "legacy",
+      "scenario": "d_boss_open_dense_x065",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "stuck time increased",
+        "boss engagement fraction decreased by >0.02"
+      ]
+    },
+    {
+      "case": 91,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "d_boss_wall_dense",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "boss engagement fraction decreased by >0.02"
+      ]
+    },
+    {
+      "case": 93,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "d_boss_wall_dense_x100",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "boss engagement fraction decreased by >0.02"
+      ]
+    },
+    {
+      "case": 95,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "d_boss_wall_dense_x065",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "boss engagement fraction decreased by >0.02"
+      ]
+    },
+    {
+      "case": 170,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "d_boss_wall_dense",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "stuck time increased",
+        "boss engagement fraction decreased by >0.02"
+      ]
+    },
+    {
+      "case": 172,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "d_boss_wall_dense_x100",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "stuck time increased",
+        "boss engagement fraction decreased by >0.02"
+      ]
+    },
+    {
+      "case": 173,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "d_boss_open_dense_x065",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "stuck time increased",
+        "boss engagement fraction decreased by >0.02"
+      ]
+    },
+    {
+      "case": 249,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "d_boss_wall_dense",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "boss engagement fraction decreased by >0.02"
+      ]
+    },
+    {
+      "case": 251,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "d_boss_wall_dense_x100",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "boss engagement fraction decreased by >0.02"
+      ]
+    },
+    {
+      "case": 253,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "d_boss_wall_dense_x065",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "boss engagement fraction decreased by >0.02"
+      ]
+    }
+  ],
+  "baseline": {
+    "passed": 282,
+    "hits": 6
+  },
+  "candidate": {
+    "passed": 287,
+    "hits": 4
+  }
+}

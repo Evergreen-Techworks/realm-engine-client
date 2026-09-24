@@ -2023,14 +2023,21 @@ void ScenarioWalkPastBomber(const char* name)
 void ScenarioStandoffPack(const char* name, bool crossfire = false, double shotDelayMs = 0.0)
 {
     World w; Floor(w);
-    w.px = 0.5f; w.py = 0.5f;
+    // Independent stress variants share the same world and truth collision model.
+    // Mirror the entire encounter, not just the player's initial position.
+    const float direction = std::getenv("HARNESS_PACK_MIRROR") ? -1.f : 1.f;
+    if (const char* delay = std::getenv("HARNESS_PACK_DELAY_MS"))
+        shotDelayMs = std::atof(delay);
+    const double phaseMs = std::getenv("HARNESS_PACK_PHASE_MS")
+        ? std::atof(std::getenv("HARNESS_PACK_PHASE_MS")) : 0.0;
+    w.px = direction * 0.5f; w.py = 0.5f;
     // Six long-range shooters (reach 9 > kBurstRangeMaxTiles, so the existing
     // point-blank keep-out does NOT apply — the band is what has to do the work).
     // 8 tiles/s x 0.45 s + 0.8 body = 4.4-tile band, 2.0-tile core.
     std::vector<int> ids;
     for (int i = 0; i < 6; ++i) {
         Enemy mob; mob.id = 980 + i; mob.type = 0x0f10 + i;
-        mob.x = 14.5f + (i % 2) * 2.f; mob.y = 0.5f + static_cast<float>(i / 2 - 1) * 2.f;
+        mob.x = direction * (14.5f + (i % 2) * 2.f); mob.y = 0.5f + static_cast<float>(i / 2 - 1) * 2.f;
         mob.hp = mob.maxHp = 3000;
         mob.shotRange = 9.f; mob.shotSpeed = 8.f; mob.hasShots = true;
         w.enemies.push_back(mob);
@@ -2038,11 +2045,16 @@ void ScenarioStandoffPack(const char* name, bool crossfire = false, double shotD
     }
     w.bandRadius = Standoff::BandRadius(8.f, 0.8f, true, 0.f);
     double next = 0.0;
+    bool firstVolley = true;
     w.script = [=](World& ww) mutable {
         if (g_nowMs < next) return;
         for (const Enemy& e : ww.enemies) {
             if (e.hp <= 0) continue;
             if (Len(Sub({ ww.px, ww.py }, { e.x, e.y })) > 9.f) continue;
+            if (firstVolley) {
+                firstVolley = false;
+                if (phaseMs > 0.0) { next = g_nowMs + phaseMs; return; }
+            }
             next = g_nowMs + 700.0;
             const float a = std::atan2(ww.py - e.y, ww.px - e.x);
             for (int k = -1; k <= 1; ++k) {
@@ -2054,7 +2066,7 @@ void ScenarioStandoffPack(const char* name, bool crossfire = false, double shotD
             if (!crossfire) return;
         }
     };
-    Result r = Run(name, w, Goal::WalkTo, { 30.5f, 0.5f }, 60);
+    Result r = Run(name, w, Goal::WalkTo, { direction * 30.5f, 0.5f }, 60);
     const double bandSeconds = w.bandFrames / 60.0;
     // Arrives, never enters a core, and spends essentially no time in a band.
     r.success = r.success && r.hits == 0 &&

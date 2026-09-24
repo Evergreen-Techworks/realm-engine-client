@@ -1,0 +1,30 @@
+{
+  "bullet-precise-transit-ab": {
+    "baseline": "ba9d9635b32a256fadf92fb94d301247e57087004151f5684c044df30273bcea",
+    "candidate": "7a779e8e6e49f05dfa35a4f6ddc49194040d0441de93d3e246dff9234bfdad60"
+  },
+  "bullet-precise-stress-ab": {
+    "baseline": "23537740ab64c1b539ca91aa7da13bbc5c24dca5cbdb82f0fad1cdbbb47fbd4f",
+    "candidate": "84293c39764d7a2db3ef63ed9f5d8d1da2c85ff60a77df1bb5daf716fc188547"
+  },
+  "bullet-reaction-stress-ab": {
+    "baseline": "23537740ab64c1b539ca91aa7da13bbc5c24dca5cbdb82f0fad1cdbbb47fbd4f",
+    "candidate": "909a88e8c3c04e84ae36ace10326754c51e2021c9ea505e551fa3aa7dec4b378"
+  },
+  "bullet-reaction-transit-stress-ab": {
+    "baseline": "23537740ab64c1b539ca91aa7da13bbc5c24dca5cbdb82f0fad1cdbbb47fbd4f",
+    "candidate": "c69449ba59542f1e968b09602622af7036dd2f58ea5418b6342ef570dd3f380c"
+  },
+  "bullet-reaction-refined-stress-ab": {
+    "baseline": "23537740ab64c1b539ca91aa7da13bbc5c24dca5cbdb82f0fad1cdbbb47fbd4f",
+    "candidate": "1f2f399e095ef0b60bc78613deb19c179ed895e982542133f2adc10852e3ba7e"
+  },
+  "bullet-reaction-short-refined-stress-ab": {
+    "baseline": "23537740ab64c1b539ca91aa7da13bbc5c24dca5cbdb82f0fad1cdbbb47fbd4f",
+    "candidate": "78cb879619470d2990301f3b3b09dc5f9be53ee538c761752a935fe2b8f540da"
+  },
+  "default-fixture-control": {
+    "previous_harness": "ba9d9635b32a256fadf92fb94d301247e57087004151f5684c044df30273bcea",
+    "new_harness": "23537740ab64c1b539ca91aa7da13bbc5c24dca5cbdb82f0fad1cdbbb47fbd4f"
+  }
+}

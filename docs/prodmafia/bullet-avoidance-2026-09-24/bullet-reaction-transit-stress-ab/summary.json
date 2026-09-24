@@ -1,0 +1,89 @@
+{
+  "cases_per_revision": 72,
+  "regressions": [
+    {
+      "case": 50,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 150,
+      "mirror": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 51,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 150,
+      "mirror": true,
+      "reasons": [
+        "pass lost",
+        "hits increased"
+      ]
+    },
+    {
+      "case": 52,
+      "profile": "shipped",
+      "rule": "legacy",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 350,
+      "mirror": false,
+      "reasons": [
+        "hits increased"
+      ]
+    },
+    {
+      "case": 62,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 100,
+      "phase": 150,
+      "mirror": false,
+      "reasons": [
+        "pass lost"
+      ]
+    },
+    {
+      "case": 70,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "delay": 200,
+      "phase": 350,
+      "mirror": false,
+      "reasons": [
+        "arrival slower by >5% and >0.25s"
+      ]
+    }
+  ],
+  "baseline": {
+    "passed": 36,
+    "hits": 30
+  },
+  "candidate": {
+    "passed": 34,
+    "hits": 15
+  }
+}

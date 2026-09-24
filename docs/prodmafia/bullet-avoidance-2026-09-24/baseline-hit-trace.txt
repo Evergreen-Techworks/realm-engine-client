@@ -1,0 +1,25 @@
+  [frame t=6.600] player=(12.078004837,-3.076859713) kind=2 move=1 target=(10.966392517,-2.616415262) navStep=(15.804892540,-3.500000000) navWpts=9 lockTarget=(15.80,-3.50) route=1
+  [frame t=6.617] player=(11.985370636,-3.038489342) kind=2 move=1 target=(10.984946251,-2.370027304) navStep=(15.712258339,-3.500000000) navWpts=9 lockTarget=(15.71,-3.50) route=0
+  [frame t=6.633] player=(11.902002335,-2.982784271) kind=2 move=1 target=(10.901577950,-2.314322233) navStep=(15.613918304,-3.500000000) navWpts=9 lockTarget=(15.61,-3.50) route=0
+  [frame t=6.650] player=(11.818634033,-2.927079201) kind=2 move=1 target=(10.818209648,-2.258617163) navStep=(15.515578270,-3.500000000) navWpts=9 lockTarget=(15.52,-3.50) route=0
+  [frame t=6.667] player=(11.735265732,-2.871374130) kind=2 move=1 target=(10.623653412,-2.410929680) navStep=(15.417239189,-3.500000000) navWpts=9 lockTarget=(15.42,-3.50) route=0
+  [hit t=6.667] player=(11.643,-2.833) moved_from=(11.735,-2.871) bullet=(12.028,-3.079) v=(-0.0067,-0.0043) half=0.40 age_ms=367 life_ms=1400
+  [frame t=6.683] player=(11.642631531,-2.833003759) kind=2 move=1 target=(10.623653412,-2.410929680) navStep=(15.324604988,-3.500000000) navWpts=9 lockTarget=(15.32,-3.50) route=0
+  [frame t=8.550] player=(12.546791077,-2.797848701) kind=1 move=1 target=(12.934954643,-2.898769379) navStep=(15.939083099,-3.500000000) navWpts=9 lockTarget=(15.94,-3.50) route=0
+  [frame t=8.567] player=(12.643831253,-2.823078871) kind=1 move=1 target=(12.934954643,-2.898769379) navStep=(16.025543213,-3.500000000) navWpts=9 lockTarget=(16.03,-3.50) route=0
+  [frame t=8.583] player=(12.740871429,-2.848308802) kind=1 move=1 target=(12.934954643,-2.898769379) navStep=(16.111999512,-3.500000000) navWpts=9 lockTarget=(16.11,-3.50) route=0
+  [frame t=8.600] player=(12.837911606,-2.873538733) kind=2 move=1 target=(13.506374359,-3.873962879) navStep=(16.198457718,-3.500000000) navWpts=9 lockTarget=(16.20,-3.50) route=0
+  [frame t=8.617] player=(12.893616676,-2.956907272) kind=2 move=1 target=(13.354061127,-4.068519115) navStep=(16.296798706,-3.500000000) navWpts=9 lockTarget=(16.30,-3.50) route=0
+  [hit t=8.617] player=(12.932,-3.050) moved_from=(12.894,-2.957) bullet=(13.306,-2.756) v=(-0.0055,-0.0058) half=0.40 age_ms=217 life_ms=1400
+  [frame t=8.633] player=(12.931986809,-3.049541712) kind=2 move=1 target=(13.166719437,-4.229622364) navStep=(16.389432907,-3.500000000) navWpts=9 lockTarget=(16.39,-3.50) route=0
+  [frame t=9.233] player=(15.664757729,-3.176733732) kind=1 move=1 target=(16.620275497,-2.625873566) navStep=(18.461767197,-1.538232803) navWpts=9 lockTarget=(18.46,-1.54) route=0
+  [frame t=9.250] player=(15.751623154,-3.126655579) kind=1 move=1 target=(16.620275497,-2.625873566) navStep=(18.532796860,-1.500000000) navWpts=9 lockTarget=(18.53,-1.50) route=0
+  [frame t=9.267] player=(15.838488579,-3.076577425) kind=1 move=1 target=(16.620275497,-2.625873566) navStep=(18.619661331,-1.500000000) navWpts=9 lockTarget=(18.62,-1.50) route=0
+  [frame t=9.283] player=(15.925354004,-3.026499271) kind=1 move=1 target=(16.620275497,-2.625873566) navStep=(18.706527710,-1.500000000) navWpts=9 lockTarget=(18.71,-1.50) route=0
+  [frame t=9.300] player=(16.012218475,-2.976421118) kind=2 move=1 target=(17.074953079,-2.412254810) navStep=(18.793392181,-1.500000000) navWpts=9 lockTarget=(18.79,-1.50) route=0
+  [hit t=9.300] player=(16.101,-2.929) moved_from=(16.012,-2.976) bullet=(15.820,-2.948) v=(-0.0034,-0.0072) half=0.40 age_ms=200 life_ms=1400
+  [hit t=9.300] player=(16.101,-2.929) moved_from=(16.012,-2.976) bullet=(15.998,-3.019) v=(-0.0025,-0.0076) half=0.40 age_ms=200 life_ms=1400
+  [hit t=9.300] player=(16.101,-2.929) moved_from=(16.012,-2.976) bullet=(16.184,-3.068) v=(-0.0016,-0.0078) half=0.40 age_ms=200 life_ms=1400
+  [frame t=9.317] player=(16.100780487,-2.929407120) kind=2 move=1 target=(17.170913696,-2.379403114) navStep=(18.881954193,-1.500000000) navWpts=9 lockTarget=(18.88,-1.50) route=0
+  [hit t=9.317] player=(16.190,-2.884) moved_from=(16.101,-2.929) bullet=(15.876,-2.554) v=(0.0064,-0.0049) half=0.40 age_ms=217 life_ms=1400
+  [frame t=9.333] player=(16.189958572,-2.883573532) kind=2 move=1 target=(17.370038986,-2.648840904) navStep=(18.971132278,-1.500000000) navWpts=9 lockTarget=(18.97,-1.50) route=0
