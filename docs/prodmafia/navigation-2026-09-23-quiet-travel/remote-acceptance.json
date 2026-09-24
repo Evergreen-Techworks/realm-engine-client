@@ -1,0 +1,41 @@
+{
+  "baseline": [
+    {
+      "case": 147,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "n_rooms_remote_forward",
+      "reasons": [
+        "quiet remote route paused for more than one second"
+      ]
+    },
+    {
+      "case": 157,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "n_rooms_remote_reverse",
+      "reasons": [
+        "quiet remote route paused for more than one second"
+      ]
+    },
+    {
+      "case": 305,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "n_rooms_remote_forward",
+      "reasons": [
+        "quiet remote route paused for more than one second"
+      ]
+    },
+    {
+      "case": 315,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "n_rooms_remote_reverse",
+      "reasons": [
+        "quiet remote route paused for more than one second"
+      ]
+    }
+  ],
+  "candidate": []
+}

@@ -1,0 +1,64 @@
+{
+  "cpu": 0,
+  "repeats": 11,
+  "profile": "shipped",
+  "allow_movement_change": true,
+  "binaries": {
+    "baseline": {
+      "path": "/tmp/nav-1043-swept-final/baseline-harness",
+      "sha256": "83e3b2a1ec997ba6b18a8358b4616f9ec362311c1677cc6fe054cae0e24f2261"
+    },
+    "candidate": {
+      "path": "/tmp/nav-1043-swept-final/candidate-harness",
+      "sha256": "ba9d9635b32a256fadf92fb94d301247e57087004151f5684c044df30273bcea"
+    }
+  },
+  "note": "Native simulation timing, worker executed inline; not live FPS.",
+  "comparisons": [
+    {
+      "scenario": "p_walk_pack_late_crossfire",
+      "rule": "legacy",
+      "baseline": {
+        "tick_ms_avg": 0.657,
+        "tick_ms_p95": 1.316,
+        "tick_ms_max": 40.387,
+        "dodge_ms_avg": 0.026,
+        "dodge_ms_p95": 0.112,
+        "cycle_ms_avg": 5.094,
+        "cycle_ms_p95": 25.971
+      },
+      "candidate": {
+        "tick_ms_avg": 0.651,
+        "tick_ms_p95": 1.301,
+        "tick_ms_max": 40.568,
+        "dodge_ms_avg": 0.026,
+        "dodge_ms_p95": 0.115,
+        "cycle_ms_avg": 5.059,
+        "cycle_ms_p95": 25.604
+      }
+    },
+    {
+      "scenario": "p_walk_pack_late_crossfire",
+      "rule": "game",
+      "baseline": {
+        "tick_ms_avg": 0.702,
+        "tick_ms_p95": 1.179,
+        "tick_ms_max": 38.683,
+        "dodge_ms_avg": 0.019,
+        "dodge_ms_p95": 0.094,
+        "cycle_ms_avg": 5.873,
+        "cycle_ms_p95": 27.354
+      },
+      "candidate": {
+        "tick_ms_avg": 0.696,
+        "tick_ms_p95": 1.0,
+        "tick_ms_max": 38.201,
+        "dodge_ms_avg": 0.019,
+        "dodge_ms_p95": 0.094,
+        "cycle_ms_avg": 5.823,
+        "cycle_ms_p95": 27.365
+      }
+    }
+  ],
+  "regressions": []
+}

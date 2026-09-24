@@ -1,0 +1,53 @@
+{
+  "commit": "a52ea768bb8710fa3804f587b4bffa38f5f06204",
+  "sources": [
+    {
+      "file": "internal/src/features/movement/udodge/UDodge.cpp",
+      "expected_sha256": "d5c579eef73583f6534d56384d34169efb8937167a165b81fb3971fd07b15f87",
+      "files": [
+        {
+          "label": "windows source",
+          "sha256": "d5c579eef73583f6534d56384d34169efb8937167a165b81fb3971fd07b15f87",
+          "matches": true
+        },
+        {
+          "label": "build snapshot",
+          "sha256": "d5c579eef73583f6534d56384d34169efb8937167a165b81fb3971fd07b15f87",
+          "matches": true
+        }
+      ]
+    },
+    {
+      "file": "internal/src/features/movement/udodge/UDodgeNavigation.h",
+      "expected_sha256": "bac6784c9aed4f58351407d5a776426765c1327396e8df74281c2f18fa13cd66",
+      "files": [
+        {
+          "label": "windows source",
+          "sha256": "bac6784c9aed4f58351407d5a776426765c1327396e8df74281c2f18fa13cd66",
+          "matches": true
+        },
+        {
+          "label": "build snapshot",
+          "sha256": "bac6784c9aed4f58351407d5a776426765c1327396e8df74281c2f18fa13cd66",
+          "matches": true
+        }
+      ]
+    },
+    {
+      "file": "internal/src/features/movement/udodge/UDodgeSolver.cpp",
+      "expected_sha256": "2eb8efa725637b8eb521183ea3e42845f0c0775d5ebbcdc857689d0546b5aaaf",
+      "files": [
+        {
+          "label": "windows source",
+          "sha256": "2eb8efa725637b8eb521183ea3e42845f0c0775d5ebbcdc857689d0546b5aaaf",
+          "matches": true
+        },
+        {
+          "label": "build snapshot",
+          "sha256": "2eb8efa725637b8eb521183ea3e42845f0c0775d5ebbcdc857689d0546b5aaaf",
+          "matches": true
+        }
+      ]
+    }
+  ]
+}

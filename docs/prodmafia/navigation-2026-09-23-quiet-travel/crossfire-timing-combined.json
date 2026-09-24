@@ -1,0 +1,28 @@
+{
+  "runs_per_revision_and_rule": 16,
+  "comparisons": [
+    {
+      "rule": "legacy",
+      "baseline": {
+        "tick_ms_avg": 0.655,
+        "tick_ms_p95": 1.3079999999999998
+      },
+      "candidate": {
+        "tick_ms_avg": 0.653,
+        "tick_ms_p95": 1.3005
+      }
+    },
+    {
+      "rule": "game",
+      "baseline": {
+        "tick_ms_avg": 0.6944999999999999,
+        "tick_ms_p95": 1.107
+      },
+      "candidate": {
+        "tick_ms_avg": 0.6875,
+        "tick_ms_p95": 1.0274999999999999
+      }
+    }
+  ],
+  "regressions": []
+}

@@ -1,0 +1,12 @@
+{
+  "cases_per_revision": 316,
+  "regressions": [],
+  "baseline": {
+    "passed": 282,
+    "hits": 6
+  },
+  "candidate": {
+    "passed": 282,
+    "hits": 6
+  }
+}

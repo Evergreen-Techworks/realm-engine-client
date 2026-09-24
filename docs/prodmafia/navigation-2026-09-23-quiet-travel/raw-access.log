@@ -1,0 +1,7 @@
+FORBIDDEN [direct method resolution in features/]:
+/home/jesse/rec-worktrees/predictive-nexus-testlab/internal/src/features/visuals/CosmeticOverrides.cpp:178:            s_miLoadIcon = il2cpp_class_get_method_from_name(loaderClass, kLoadCharacterIcon, 1);
+FORBIDDEN [private field resolution]:
+/home/jesse/rec-worktrees/predictive-nexus-testlab/internal/src/features/combat/enemytracker/EnemyTracker.cpp:318:        FieldInfo* field = il2cpp_class_get_field_from_name(klass, fieldName);
+FORBIDDEN [private field-offset resolution]:
+/home/jesse/rec-worktrees/predictive-nexus-testlab/internal/src/features/visuals/CosmeticOverrides.cpp:138:        s_entranceMgrFieldOffset = static_cast<uint32_t>(il2cpp_field_get_offset(match));
+/home/jesse/rec-worktrees/predictive-nexus-testlab/internal/src/features/combat/enemytracker/EnemyTracker.cpp:319:        return field ? static_cast<uint32_t>(il2cpp_field_get_offset(field)) : 0;

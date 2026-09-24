@@ -1,0 +1,101 @@
+{
+  "cases_per_revision": 316,
+  "regressions": [
+    {
+      "case": 85,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "b_tree_cluster2",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "refused_moves increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 86,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "c_u_wall",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "refused_moves increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 119,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "m_pinch_fulloccupy",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "stuck time increased"
+      ]
+    },
+    {
+      "case": 243,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "b_tree_cluster2",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "refused_moves increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 244,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "c_u_wall",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "refused_moves increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 277,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "m_pinch_fulloccupy",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "stuck time increased"
+      ]
+    },
+    {
+      "case": 281,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "hits increased"
+      ]
+    }
+  ],
+  "baseline": {
+    "passed": 282,
+    "hits": 6
+  },
+  "candidate": {
+    "passed": 282,
+    "hits": 12
+  }
+}

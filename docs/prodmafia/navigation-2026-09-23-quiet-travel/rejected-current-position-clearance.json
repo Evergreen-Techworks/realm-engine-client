@@ -1,0 +1,74 @@
+{
+  "cases_per_revision": 316,
+  "regressions": [
+    {
+      "case": 85,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "b_tree_cluster2",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "refused_moves increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 86,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "c_u_wall",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "refused_moves increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 243,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "b_tree_cluster2",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "refused_moves increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 244,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "c_u_wall",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "refused_moves increased",
+        "arrival slower by >5% and >0.25s"
+      ]
+    },
+    {
+      "case": 157,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "n_rooms_remote_reverse",
+      "reasons": [
+        "quiet remote route paused for more than one second"
+      ]
+    }
+  ],
+  "baseline": {
+    "passed": 282,
+    "hits": 6
+  },
+  "candidate": {
+    "passed": 282,
+    "hits": 6
+  }
+}

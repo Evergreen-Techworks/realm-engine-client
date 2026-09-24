@@ -1,0 +1,6 @@
+control exit 0 Navigation regressions passed (real A*, corner compression, swept steering, completion).
+Locked fight route passed (time-checked round the shot arm).
+Ring ladder tests passed (ring goal outranks out-of-range ground, start rule, unlocked unchanged).
+old-game-cadence exit 1  FAIL: quiet game-rule travel can refresh a consumed safe step
+omit-enemy-gate exit 1  FAIL: enemy presence preserves combat cadence before it fires
+omit-clearance exit 1  FAIL: nearby terrain retains corner cadence
