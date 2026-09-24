@@ -62,4 +62,10 @@ The enlarged comparison has no flagged timing regression. Other cases passed the
 
 ## Delivery
 
-Private 1.0.43 is building after benchmark acceptance. The drift-checked preflight lists only the three changed production navigation files for mirroring; tests and protected owner files are excluded. Verification and installation will be recorded after completion. No live account/game session, push or deployment has been started.
+Private **1.0.43** from `a52ea76` is verified and installed at `C:\realm-engine-testlab\rig\Realm Engine 1.0.43 Private (RotMG 86ad651b).exe`.
+
+SHA256: `ba7d9d7051fa932c84383e237906866eeb336884ea8d3053bdab95ac9299b360`.
+
+The drift-checked build mirrored only the three changed production navigation files. Their Windows source and isolated build snapshot hashes match the tested commit. Tests and seven protected owner paths were excluded. Build status is private/non-publishable, `publish=false`, private features included, diagnostics off; bindings 143 fields / 41 methods / 17 omitted / 133 offsets proven. Antivirus detections remained 7→7. Installed hash independently matches the verified cache, the rig contains one executable, and the live game/metadata pin still matches. The normal owner portable was not replaced. No live account/game session, push or deployment occurred.
+
+Evidence is also available under `C:\realm-engine-testlab\comparisons\20260923-quiet-travel`.

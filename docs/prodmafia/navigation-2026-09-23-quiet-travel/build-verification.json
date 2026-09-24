@@ -1,0 +1,90 @@
+{
+  "commit": "a52ea768bb8710fa3804f587b4bffa38f5f06204",
+  "version": "1.0.43",
+  "exe_name": "Realm Engine Test 1.0.43 portable.exe",
+  "exe_sha256": "ba7d9d7051fa932c84383e237906866eeb336884ea8d3053bdab95ac9299b360",
+  "bindings_receipt": {
+    "fields": 143,
+    "methods": 41,
+    "omitted": 17,
+    "field_offsets_code_proven": 133,
+    "unproven_keys": [
+      "field.AbilityReady",
+      "field.CH_OffsetX",
+      "field.CH_OffsetY",
+      "field.OP_ConnectT",
+      "field.OP_InvincibleElem",
+      "field.OP_NoHealthBar",
+      "field.PP_UseAccel",
+      "field.PP_VelocityChangeRate",
+      "field.PP_VelocityChangeRateInv",
+      "field.VH_DestroyEntity"
+    ]
+  },
+  "timings": {},
+  "verifications": {
+    "status": {
+      "passed": true,
+      "seen": "private_build_not_publishable",
+      "expected": "private_build_not_publishable"
+    },
+    "publish": {
+      "passed": true,
+      "seen": false
+    },
+    "private_features_mode": {
+      "passed": true,
+      "seen": "included",
+      "expected": "included"
+    },
+    "exe_sha256": {
+      "passed": true,
+      "seen": "ba7d9d7051fa932c84383e237906866eeb336884ea8d3053bdab95ac9299b360",
+      "expected": "ba7d9d7051fa932c84383e237906866eeb336884ea8d3053bdab95ac9299b360"
+    },
+    "run_log_markers": {
+      "passed": true,
+      "bindings_surface_ported": true,
+      "bake_current_absent": true
+    },
+    "bindings_receipt": {
+      "fields": 143,
+      "methods": 41,
+      "omitted": 17,
+      "field_offsets_code_proven": 133,
+      "unproven_keys": [
+        "field.AbilityReady",
+        "field.CH_OffsetX",
+        "field.CH_OffsetY",
+        "field.OP_ConnectT",
+        "field.OP_InvincibleElem",
+        "field.OP_NoHealthBar",
+        "field.PP_UseAccel",
+        "field.PP_VelocityChangeRate",
+        "field.PP_VelocityChangeRateInv",
+        "field.VH_DestroyEntity"
+      ]
+    },
+    "diagnostics": {
+      "passed": true,
+      "diag_timing_off": true,
+      "forbidden_tokens_absent": true
+    },
+    "malwarebytes": {
+      "passed": true,
+      "before": 7,
+      "after": 7
+    },
+    "pipeline": {
+      "commit": "bb5b5b2da2ac944af4e539d351e2d668d6f5d91d",
+      "clean": true
+    }
+  },
+  "cached_at": "2026-09-24T05:45:07.197757+00:00",
+  "installation": {
+    "path": "/mnt/c/realm-engine-testlab/rig/Realm Engine 1.0.43 Private (RotMG 86ad651b).exe",
+    "sha256": "ba7d9d7051fa932c84383e237906866eeb336884ea8d3053bdab95ac9299b360",
+    "rig_exe_count": 1,
+    "live_game_pin_matches": true
+  }
+}
