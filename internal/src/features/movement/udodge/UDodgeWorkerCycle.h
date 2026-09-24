@@ -71,6 +71,7 @@ inline void RunCycle(const Path::PlannerSnapshot& local, Result& latest,
     goal.active = local.goalActive;
     goal.pos = local.goalPos;
     goal.walkTo = local.goalWalkTo;
+    goal.exactTravel = local.goalExactTravel;
     goal.groupActive = local.groupActive;
     goal.groupPos = local.groupPos;
     // Path::Compute may have produced a brand-new navigation corridor from

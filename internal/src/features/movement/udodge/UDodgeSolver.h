@@ -95,6 +95,7 @@ struct Goal {
     Vec2 groupPos{};
     bool  active = false;   // a soft target exists (lock standoff or WASD intent)
     Vec2  pos{};            // world target we would like to progress toward
+    bool  exactTravel = false; // finish narrow FullOccupy travel bends without arrival tolerance
     bool  fromLock = false; // true = boss-lock orbit (may actively reposition to
                             // stay in range); false = WASD/idle (game drives — the
                             // solver only overrides to dodge, never to walk a goal)

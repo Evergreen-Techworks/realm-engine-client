@@ -603,7 +603,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     // by movement below. Only an unsafe corridor step yields to dodge routing.
     // Navigation owns arrival. Even a tiny remaining bend step can be required
     // before its next leg is geometrically traversable.
-    const bool exactTravel = !(in.map && in.map->hasLock);
+    const bool exactTravel = goal.exactTravel;
     if (goal.walkTo && goal.active &&
         (exactTravel || Len(Sub(in.player, goal.pos)) > kUNavAnchorArriveTiles)) {
         const Vec2  to = Sub(goal.pos, in.player);

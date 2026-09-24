@@ -127,6 +127,7 @@ struct PlannerSnapshot {
     bool     goalActive = false;   // a soft goal exists (tie-break only)
     Vec2     goalPos{};
     bool     goalWalkTo = false;
+    bool     goalExactTravel = false;
     bool     groupActive = false;
     Vec2     groupPos{};
     int32_t  groupBossId = 0;

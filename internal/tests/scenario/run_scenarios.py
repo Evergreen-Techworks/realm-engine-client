@@ -234,13 +234,16 @@ def travel_commit_check(binary, scan):
     off = run("n_rooms1_fullocc_forward", "legacy", "off")
     on = run("n_rooms1_fullocc_forward", "legacy", "on")
     if not (on["success"] and on["hits"] <= off["hits"]
-            and on["replans_per_s"] < off["replans_per_s"]):
+            and (on["replans_per_s"] < off["replans_per_s"]
+                 or on["replans_per_s"] == off["replans_per_s"] == 0)
+            and on["paused_travel_frames"] <= off["paused_travel_frames"]
+            and on["time_s"] <= off["time_s"] + 0.25):
         failures.append(f"point travel must still commit: off={off['replans_per_s']} "
                         f"on={on['replans_per_s']}, success={on['success']}, hits={on['hits']}")
     for failure in failures:
         print("FAIL " + failure)
     if not failures:
-        print("Travel commitment scope passed: combat unchanged under both rules; point-route churn reduced")
+        print("Travel commitment scope passed: combat unchanged under both rules; point-route churn reduced or already zero; no extra pauses or slowdown")
     return failures
 
 

@@ -150,10 +150,14 @@ int main() {
     Solver::Solve(cornerInput, 0.2f, cornerGoal, emptyRoute, cornerState, cornerResult);
     Check(cornerResult.shouldMove && cornerResult.target.x > 0.f,
           "intermediate bend within half a tile still advances");
+    cornerGoal.exactTravel = true;
     cornerGoal.pos = {0.00005f, 0.f};
     Solver::Solve(cornerInput, 0.2f, cornerGoal, emptyRoute, cornerState, cornerResult);
     Check(cornerResult.shouldMove && cornerResult.target.x == cornerGoal.pos.x,
           "tiny safe corner remainder reaches its exact validated endpoint");
+    cornerGoal.exactTravel = false;
+    Solver::Solve(cornerInput, 0.2f, cornerGoal, emptyRoute, cornerState, cornerResult);
+    Check(!cornerResult.shouldMove, "ordinary travel retains its arrival tolerance");
     const Vec2 corridorStep{2.f, 0.f};
     auto waiting=Navigation::FinishRefresh(true,false,true,false,{},corridorStep,true,false,false);
     Check(waiting.solve && LenSq(waiting.step)==0.f, "first blocked-route wait requests one hold solve");

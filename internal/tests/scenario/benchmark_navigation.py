@@ -10,6 +10,7 @@ python3 internal/tests/scenario/benchmark_navigation.py \
 from pathlib import Path
 import argparse
 import csv
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -72,11 +73,26 @@ def provenance(internal):
                 ['git', '-C', str(root), 'diff', 'HEAD', '--', 'internal/src'])).hexdigest()}
 
 
+def run_pair(item, binaries):
+    index, case = item
+    pair = {}
+    for revision, binary in binaries.items():
+        result = subprocess.run([str(binary), case['scenario'], '3', case['rule'], 'tactician'],
+                                env=environment(case), capture_output=True, text=True,
+                                check=True, timeout=300)
+        metrics = json.loads(result.stdout.strip().splitlines()[-1])
+        if metrics['scenario'] != case['scenario']:
+            raise RuntimeError('Harness emitted a different scenario')
+        pair[revision] = metrics
+    return index, case, pair
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--baseline-internal', required=True, type=Path)
     ap.add_argument('--candidate-internal', type=Path, default=HERE.parents[1])
     ap.add_argument('--output', required=True, type=Path)
+    ap.add_argument('--jobs', type=int, choices=range(1, 5), default=4)
     args = ap.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
@@ -91,25 +107,17 @@ def main():
         build(internal.resolve(), binaries[label], out / (label + '-build.log'))
     rows = []
     regressions = []
-    with (out / 'results.csv').open('w', newline='') as csvfile, (out / 'raw.jsonl').open('w') as raw:
+    with (out / 'results.csv').open('w', newline='') as csvfile, (out / 'raw.jsonl').open('w') as raw, ThreadPoolExecutor(max_workers=args.jobs) as pool:
         writer = csv.DictWriter(csvfile, fieldnames=['case', 'profile', 'rule', 'scenario',
                                'navigator', 'speed', 'start_shift', 'revision', *METRICS])
         writer.writeheader()
-        for index, case in enumerate(cases()):
-            pair = {}
-            for revision, binary in binaries.items():
-                result = subprocess.run([str(binary), case['scenario'], '3', case['rule'], 'tactician'],
-                                        env=environment(case), capture_output=True, text=True,
-                                        check=True, timeout=180)
-                metrics = json.loads(result.stdout.strip().splitlines()[-1])
-                if metrics['scenario'] != case['scenario']:
-                    raise RuntimeError('Harness emitted a different scenario')
+        for index, case, pair in pool.map(lambda item: run_pair(item, binaries), enumerate(cases())):
+            for revision, metrics in pair.items():
                 raw.write(json.dumps(dict(case=index, **case, revision=revision, metrics=metrics)) + '\n')
                 row = dict(case=index, **case, revision=revision,
                            **{key: metrics[key] for key in METRICS})
                 writer.writerow(row)
                 rows.append(row)
-                pair[revision] = metrics
             old, new = pair['baseline'], pair['candidate']
             reasons = []
             if old['success'] and not new['success']:

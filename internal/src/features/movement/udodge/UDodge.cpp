@@ -705,6 +705,27 @@ void FillNavGrid(Path::NavGrid& grid, Vec2 player, bool safeWalk, Movement::Coll
 // `outConnected` (Item 1 S2): whether Follow found a clear rejoin point on the
 // cached polyline at all, however far off it the player has drifted. false only
 // when no cache exists or the whole route is disconnected.
+// Exact corner completion is needed near FullOccupy half-tile constraints, not
+// ordinary walls. Read the nine neighbouring squares in one tile-map snapshot.
+bool NearNarrowFullOccupy(Vec2 player)
+{
+    uint8_t squares[9]{};
+    WorldTAB::CopyBoxBlocked(std::floor(player.x) - 0.5f, std::floor(player.y) - 0.5f,
+                            3, 1.f, 0.f, false, squares);
+    const auto full = [&](int i) { return (squares[i] & Movement::TileOccupancy::kCellFullBody) != 0; };
+    const auto open = [&](int i) {
+        return (squares[i] & (Movement::TileOccupancy::kCellWall | Movement::TileOccupancy::kCellVoid)) == 0;
+    };
+    // Opposed FullOccupy walls leave only the centreline, including a hallway
+    // mouth one square ahead. A lone wall or an ordinary bend has usable width
+    // and keeps the previous arrival tolerance.
+    for (int i = 0; i < 3; ++i) {
+        if (full(i) && full(6 + i) && open(3 + i)) return true;
+        if (full(3 * i) && full(3 * i + 2) && open(3 * i + 1)) return true;
+    }
+    return false;
+}
+
 Vec2 NavStepFromCache(const NavCache& c, Vec2 player, float lookahead,
                       float& outDev, bool& outNearEnd, bool& outConnected, const MapInput& in)
 {
@@ -717,7 +738,7 @@ Vec2 NavStepFromCache(const NavCache& c, Vec2 player, float lookahead,
         [&](Vec2 from, Vec2 to) {
             return Navigation::PaddedPathClear(in, from, to) &&
                    Navigation::AvoidClear(avoid, avoidCount, from, to);
-        }, !(in.map && in.map->hasLock));
+        }, !(in.map && in.map->hasLock) && NearNarrowFullOccupy(player));
 }
 
 // ── Autopilot auto-lock ──────────────────────────────────────────────────────
@@ -1419,6 +1440,7 @@ void Tick(void* player, float px, float py, float dt)
         // A* every tick.
         goal.active = true;
         goal.walkTo = true;
+        goal.exactTravel = !lockApproach && NearNarrowFullOccupy(in.player);
         goal.pos = navStep;
     } else if (g_map.hasLock) {
         const LockGeometry lg = ComputeLockGeometry(settings, g_map.lockBand);
@@ -1540,9 +1562,9 @@ void Tick(void* player, float px, float py, float dt)
         // Strategic travel already has a stable navigation corridor. Snapping
         // its local collision grid can miss the only clear centreline through
         // a one-tile FullOccupy hall, forcing repeated stuck-timer replans.
-        // Keep combat/ring-approach hysteresis on the shared lattice; sample
-        // ordinary travel around the actual player so the corridor stays usable.
-        if (settings.planner == Contact::Policy::Tactician && (!goal.walkTo || lockApproach)) {
+        // Keep other travel and combat on the shared lattice; only a narrow
+        // FullOccupy passage needs player-centred samples to stay usable.
+        if (settings.planner == Contact::Policy::Tactician && !(goal.walkTo && goal.exactTravel)) {
             constexpr float kHalfCell = kUPathCellTiles * 0.5f;
             gridCenter.x = std::round((gridCenter.x - kHalfCell) / kUPathCellTiles) * kUPathCellTiles + kHalfCell;
             gridCenter.y = std::round((gridCenter.y - kHalfCell) / kUPathCellTiles) * kUPathCellTiles + kHalfCell;
@@ -1566,6 +1588,7 @@ void Tick(void* player, float px, float py, float dt)
         s_snap.goalActive       = goal.active;
         s_snap.goalPos          = goal.pos;
         s_snap.goalWalkTo       = goal.walkTo;
+        s_snap.goalExactTravel  = goal.exactTravel;
         s_snap.groupActive      = goal.groupActive;
         s_snap.groupPos         = goal.groupPos;
         s_snap.groupBossId      = groupBossId;
@@ -1755,7 +1778,7 @@ void Tick(void* player, float px, float py, float dt)
             > kUNavAnchorArriveTiles * kUNavAnchorArriveTiles)
         || (!UsesGameRule(in) && Navigation::TravelStepConsumed(goal.walkTo, g_navCache.valid, navWaiting,
             g_solve.shouldMove && g_solve.kind == Solver::SolveKind::Safe,
-            in.player, g_solve.target, steerStep, in.speed * Clamp(dt * 1000.f, 1.f, 250.f), !lockApproach)));
+            in.player, g_solve.target, steerStep, in.speed * Clamp(dt * 1000.f, 1.f, 250.f), goal.exactTravel)));
     if (goal.walkTo) {
         navStep = navHandoff.step;
         goal.pos = ringRoute ? steerStep : navStep;
@@ -1881,7 +1904,7 @@ void Tick(void* player, float px, float py, float dt)
     if (g_solve.shouldMove && enemyDriveClear && drivePathClear) {
         const Vec2 to = Sub(g_solve.target, in.player);
         const float d = Len(to);
-        const bool exactTravel = goal.walkTo && !lockApproach;
+        const bool exactTravel = goal.walkTo && goal.exactTravel;
         const Vec2 dir = d > (exactTravel ? 0.f : 1e-4f) ? Mul(to, 1.f / d) : Vec2{};
         // Per-frame step, clamped to the player's speed. The game's MoveTo does
         // NOT clamp again (LKHPPBEGNOM::DGLCONCOIBO sets the position outright), so

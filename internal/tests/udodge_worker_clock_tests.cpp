@@ -167,6 +167,20 @@ int main()
     Check(std::isfinite(a) && a > 0.0 && b >= a, "the production planning clock is the monotonic host clock");
 #endif
 
+    // A FullOccupy corner's small remainder must survive the worker snapshot.
+    snap = Path::PlannerSnapshot{};
+    snap.goalActive = snap.goalWalkTo = snap.goalExactTravel = true;
+    snap.goalPos = {0.00005f, 0.f};
+    snap.speed = kSpeed;
+    snap.moveBudget = 1.f;
+    Worker::Result corner{};
+    Cycle(snap, corner, DeterministicBudget());
+    Check(corner.solve.shouldMove && corner.solve.target.x == snap.goalPos.x,
+          "worker preserves exact FullOccupy corner completion");
+    snap.goalExactTravel = false;
+    Cycle(snap, corner, DeterministicBudget());
+    Check(!corner.solve.shouldMove, "worker retains ordinary travel arrival tolerance");
+
     std::printf("Worker clock tests: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }
