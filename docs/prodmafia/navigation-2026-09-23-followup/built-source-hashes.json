@@ -1,0 +1,17 @@
+{
+  "commit": "d136fd06e8050619ad324c6ee62f92e3ff79f6c8",
+  "file": "internal/src/features/movement/udodge/UDodgeSolver.cpp",
+  "expected_sha256": "5b2900ec0f8cb02bad2dfb907855a015ed19a557d182d5c4842bcdd563f20322",
+  "files": [
+    {
+      "label": "windows source",
+      "sha256": "5b2900ec0f8cb02bad2dfb907855a015ed19a557d182d5c4842bcdd563f20322",
+      "matches": true
+    },
+    {
+      "label": "build snapshot",
+      "sha256": "5b2900ec0f8cb02bad2dfb907855a015ed19a557d182d5c4842bcdd563f20322",
+      "matches": true
+    }
+  ]
+}

@@ -36,7 +36,7 @@ Combat and unbuffered movement preserve their earlier fallback ranking. Broader 
 - `git diff --check`: passes.
 - `bash internal/tools/check-raw-access.sh`: exits 1 identically in both revisions, reporting existing `EnemyTracker.cpp` and `CosmeticOverrides.cpp` findings. Normalized outputs match; those files were not changed.
 
-Performance is measured separately from the parallel gameplay A/B, using serial pinned-CPU runs with warmups and alternating revision order. Timing evidence is recorded below; private delivery is pending verification. No live game/account session was started, so these results do not establish live renderer FPS or survival against an actual boss.
+Performance is measured separately from the parallel gameplay A/B, using serial pinned-CPU runs with warmups and alternating revision order. Timing evidence is recorded below; private delivery is verified below. No live game/account session was started, so these results do not establish live renderer FPS or survival against an actual boss.
 
 ## Native frame-cost comparison
 
@@ -60,3 +60,13 @@ Shipped profile; seven scenarios × two collision rules × two revisions × five
 | p_walk_pack_late_crossfire | game | 0.695 | 0.692 | 1.066 | 1.039 |
 | f_lava_pressure | legacy | 0.036 | 0.029 | 0.132 | 0.088 |
 | f_lava_pressure | game | 0.043 | 0.035 | 0.148 | 0.108 |
+
+## Private delivery
+
+Private **1.0.42** from `d136fd0` is verified and installed at `C:\realm-engine-testlab\rig\Realm Engine 1.0.42 Private (RotMG 86ad651b).exe`.
+
+SHA256: `a7fb8c6dbdc0b8ff06ba5b8dc0791f2cc15949a156f542f2296ddbdf9dc34fb9`.
+
+The drift-checked build mirrored only `UDodgeSolver.cpp`; its Windows source and isolated build snapshot hashes match the tested commit. Build status is private/non-publishable, `publish=false`; private TestLab features included, diagnostics off, bindings 143 fields / 41 methods / 17 omitted / 133 offsets proven. Antivirus detections remained 7→7. Installed executable hash independently matches the cache receipt, and the rig contains exactly one executable. The live GameAssembly/metadata hashes still match the pinned game. The normal owner portable was not replaced; no live launch, new character, push or deployment was performed.
+
+The full evidence is also available under `C:\realm-engine-testlab\comparisons\20260923-navigation-followup`.
