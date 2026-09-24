@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "runId": "20260924T212450Z-001",
+  "startedUtc": "2026-09-24T21:25:10.272Z",
+  "inWorldUtc": "2026-09-24T21:26:04.624Z",
+  "endedUtc": "2026-09-24T21:32:34.043Z",
+  "reason": "death",
+  "detail": "DEATH packet observed",
+  "build": {
+    "version": "1.0.47",
+    "commit": "b4c3a58"
+  },
+  "logFile": "C:\\realm-engine-testlab\\rig\\RE_ASSETS\\realm-engine-proxy.log",
+  "recording": "C:\\realm-engine-testlab\\rig\\RE_ASSETS\\testlab\\packets-20260924T212510Z.jsonl",
+  "gamePid": 7896,
+  "gameTerminated": true
+}
