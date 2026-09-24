@@ -175,9 +175,15 @@ void BuildStandoffSet(const MapInput& in, const Goal& goal, float b, StandoffSet
     for (int i = 0; i < in.map->enemyCount; ++i) {
         const EnemyBlocker& e = in.map->enemies[i];
         const float noGo = e.radius + kUPlayerHalf + kUEnemyKeepoutGap;
+        // Auto mode can extend the scored reaction gap well beyond the legacy
+        // two-tile fade. Cull against that same physical extent; otherwise a
+        // shooter just outside the old radius disappears from the set even
+        // though this frame's candidates can step into its reaction band.
+        const float reactionGap = e.standoffBand > 0.f ? e.standoffBand - noGo : 0.f;
+        const float fade = std::max(kSolveStandoffBand, reactionGap);
         // Cull: a candidate is at most b from the player, so a body farther than
         // b + noGo + band away cannot reach any candidate's fade region.
-        const float cull = b + noGo + kSolveStandoffBand;
+        const float cull = b + noGo + fade;
         if (LenSq(Sub(e.pos, in.player)) > cull * cull) continue;
         if (skipLock && LenSq(Sub(e.pos, goal.lockPos)) < kSolveLockMatchEps2) {
             out.lockGap = std::min(out.lockGap, Len(Sub(e.pos, in.player)) - noGo);
@@ -191,8 +197,7 @@ void BuildStandoffSet(const MapInput& in, const Goal& goal, float b, StandoffSet
         // then choose its next local waypoint back inside the very band the route
         // had avoided. Scale the SOFT nearby score to the same per-enemy band.
         // Off mode has standoffBand=0 and remains byte-for-byte equivalent here.
-        const float reactionGap = e.standoffBand > 0.f ? e.standoffBand - noGo : 0.f;
-        out.fade[out.n] = std::max(kSolveStandoffBand, reactionGap);
+        out.fade[out.n] = fade;
         ++out.n;
     }
 }
