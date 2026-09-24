@@ -664,7 +664,35 @@ describe('Test Lab Runner plugin', () => {
     expect(existsSync(join(testlabDir, 'run-result.run-moving.json'))).toBe(false);
   });
 
-  it('ends a running session after the client socket stays disconnected for 30s', async () => {
+  it('pauses the movement watchdog during a recoverable disconnect and rearms it on reconnect', async () => {
+    const hostAccess = makeHostAccess();
+    writeRequest(testlabDir, { runId: 'run-reconnected', accountLabel: 'lab-1', scriptId: 'farmer' });
+    const { ctx, connectClient, clientDisconnectedCbs } = makeCtx(hostAccess);
+    register(ctx);
+    await connectAndSettle(connectClient, { x: 100, y: 100 });
+
+    await vi.advanceTimersByTimeAsync(80_000);
+    for (const cb of clientDisconnectedCbs) cb();
+    await vi.advanceTimersByTimeAsync(110_000);
+    await flushAsync();
+
+    // The disconnected interval exceeds the 90-second movement window, but
+    // must not consume the script restart budget or end the run.
+    expect(hostAccess.stopScript).not.toHaveBeenCalled();
+    expect(hostAccess.startScript).toHaveBeenCalledTimes(1);
+    expect(existsSync(join(testlabDir, 'run-result.run-reconnected.json'))).toBe(false);
+
+    connectClient('loaded', { x: 100, y: 100 });
+    await vi.advanceTimersByTimeAsync(20_000);
+    await flushAsync();
+
+    // The pre-disconnect 80 seconds must not carry across the reconnect.
+    expect(hostAccess.stopScript).not.toHaveBeenCalled();
+    expect(hostAccess.startScript).toHaveBeenCalledTimes(1);
+    expect(existsSync(join(testlabDir, 'run-result.run-reconnected.json'))).toBe(false);
+  });
+
+  it('ends a running session after the client socket stays disconnected for 120s', async () => {
     const hostAccess = makeHostAccess();
     writeRequest(testlabDir, { runId: 'run-connection-lost', accountLabel: 'lab-1', scriptId: 'farmer' });
     const { ctx, connectClient, clientDisconnectedCbs } = makeCtx(hostAccess);
@@ -677,7 +705,7 @@ describe('Test Lab Runner plugin', () => {
 
     const result = readResult(testlabDir, 'run-connection-lost');
     expect(result.reason).toBe('connection-lost');
-    expect(result.detail).toContain('30s');
+    expect(result.detail).toContain('120s');
   });
 
   it('a map change alone (identical x/y) counts as movement', async () => {

@@ -97,10 +97,10 @@ export const NATIVE_BRIDGE_TIMEOUT_MS = 120_000;
 export const NO_MOVEMENT_TIMEOUT_MS = 90_000;
 
 /** A live run with no client socket cannot make progress. Normal server-driven
- * map hops reconnect in well under this window; an empty FAILURE followed by a
- * permanently closed socket must end promptly instead of masquerading as a
- * three-minute movement stall. */
-export const CONNECTION_LOST_TIMEOUT_MS = 30_000;
+ * map hops reconnect quickly, but the 2026-09-24 empty-FAILURE incident took
+ * 102 seconds to recover without intervention. Keep enough grace for that
+ * recovery while still bounding a permanently closed socket. */
+export const CONNECTION_LOST_TIMEOUT_MS = 120_000;
 
 /** Movement watchdog: the minimum distance (in tiles) that counts as "moved". */
 export const NO_MOVEMENT_MIN_TILE_DELTA = 1;

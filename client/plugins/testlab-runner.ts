@@ -155,6 +155,12 @@ export function register(ctx: PluginContext) {
     seenFirstConnect = true;
     currentClient = client;
     disconnectedSinceMs = null;
+    // A disconnected client cannot supply movement. Start a fresh watchdog
+    // window after recovery instead of charging the socket outage against the
+    // script and falsely restarting/stopping it as `no-movement`.
+    if (machine?.getPhase() === 'running') {
+      machine.armMovementWatchdog(Date.now(), currentWorldPosition());
+    }
     if (isReconnect && machine && reconnectClassifier) {
       const abnormal = reconnectClassifier.classify(Date.now());
       if (abnormal && machine.onReconnect(Date.now())) {
@@ -492,7 +498,7 @@ export function register(ctx: PluginContext) {
         return;
       }
       const scriptId = machine.getRequest()?.scriptId;
-      if (scriptId) {
+      if (scriptId && disconnectedSinceMs == null) {
         const outcome = machine.checkMovement(Date.now(), currentWorldPosition(), NO_MOVEMENT_TIMEOUT_MS, NO_MOVEMENT_MIN_TILE_DELTA);
         if (outcome === 'restart') {
           log('no movement for 90 s — restarting script');
