@@ -29,6 +29,7 @@ const QUEST_VISIBLE_RANGE = 12;
 // wide lake, most often. Realms are dotted with teleport beacons, so when one is
 // much closer to the boss than we are, riding it beats the walk.
 const BEACON_MIN_SAVING  = 8;    // only teleport when it cuts at least this much off the trip
+const BEACON_ENEMY_CLEARANCE = 6; // never land inside a known hostile pack
 const BEACON_RETRY_MS    = 5000;  // never spam TELEPORT — one attempt per window
 const BEACON_VERIFY_MS   = 3000;  // settle time before judging whether an attempt worked
 const BEACON_MOVED_TILES = 8;     // moved at least this far ⇒ the teleport really happened
@@ -834,12 +835,18 @@ export default class Farmer {
   // Rank real destinations by distance to the travel goal, not to the player.
   chooseBeacon(questPosition) {
     const all = RealmEngine.world.objects.getBeacons();
+    const enemies = (RealmEngine.enemies?.getAll?.() ?? []).filter((enemy) =>
+      enemy?.hp > 0 && Number.isFinite(enemy.position?.x) && Number.isFinite(enemy.position?.y));
     const usable = all.filter((b) => {
       const name = String(b?.name ?? '');
+      if (!Number.isFinite(b.position?.x) || !Number.isFinite(b.position?.y)) return false;
+      const enemyClear = enemies.every((enemy) =>
+        Math.hypot(enemy.position.x - b.position.x, enemy.position.y - b.position.y)
+          >= BEACON_ENEMY_CLEARANCE);
       return (b.objectClass === 'Beacon' || (!b.objectClass && BEACON_NAME_OK.test(name)))
         && !BEACON_NAME_BAD.test(name)
         && (this.beaconRetryAfter.get(b.objectId) ?? 0) <= Date.now()
-        && Number.isFinite(b.position?.x) && Number.isFinite(b.position?.y);
+        && enemyClear;
     });
     if (this.beaconListedFor !== this.mapName) {
       this.beaconListedFor = this.mapName;

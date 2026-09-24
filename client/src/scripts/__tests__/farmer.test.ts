@@ -612,6 +612,16 @@ describe('farmer beacon selection and level 20 relocation', () => {
     expect(f.farmer.chooseBeacon({ x: 100, y: 0 }).objectId).toBe(1);
   });
 
+  it('rejects a beacon inside a known hostile pack', () => {
+    const f = fixture();
+    f.sdk.world.objects.getBeacons = () => [
+      { objectId: 1, name: 'Dead Church Beacon (Adept)', objectClass: 'Beacon', position: { x: 98, y: 0 } },
+      { objectId: 2, name: 'Forest Beacon (Rookie)', objectClass: 'Beacon', position: { x: 85, y: 0 } },
+    ];
+    f.setEnemies([{ objectId: 50, hp: 100, position: { x: 99, y: 0 } }]);
+    expect(f.farmer.chooseBeacon({ x: 100, y: 0 }).objectId).toBe(2);
+  });
+
   it('interrupts the leveling quest at 20, teleports inward, then resumes quests once', () => {
     vi.useFakeTimers(); vi.setSystemTime(10000);
     const f = fixture(); let level = 19; let position = { x: 0, y: 0 };
