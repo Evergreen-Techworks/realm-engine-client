@@ -147,6 +147,7 @@ Vec2 MeanThreatDir(const MapInput& in)
 struct StandoffSet {
     Vec2  pos[kMaxEnemies]{};
     float noGo[kMaxEnemies]{};   // radius + kUPlayerHalf — EnemyBlocked's hard circle
+    float fade[kMaxEnemies]{};   // physical gap where the soft penalty reaches zero
     int   n = 0;
     // Gap from the PLAYER to the LOCKED body, which is kept out of the scored set
     // above (its annulus already penalises it) but still has to be visible to the
@@ -184,6 +185,14 @@ void BuildStandoffSet(const MapInput& in, const Goal& goal, float b, StandoffSet
         }
         out.pos[out.n]  = e.pos;
         out.noGo[out.n] = noGo;
+        // Auto mode already gives navigation a reaction-time band, but the
+        // immediate safe-spot scorer historically ignored it and kept using the
+        // fixed two-tile body fade. That let a route bend around a shooter and
+        // then choose its next local waypoint back inside the very band the route
+        // had avoided. Scale the SOFT nearby score to the same per-enemy band.
+        // Off mode has standoffBand=0 and remains byte-for-byte equivalent here.
+        const float reactionGap = e.standoffBand > 0.f ? e.standoffBand - noGo : 0.f;
+        out.fade[out.n] = std::max(kSolveStandoffBand, reactionGap);
         ++out.n;
     }
 }
@@ -196,11 +205,16 @@ float StandoffGap(const StandoffSet& s, Vec2 p)
 {
     float best = kSolveStandoffBand;
     for (int i = 0; i < s.n; ++i) {
-        const float lim = s.noGo[i] + kSolveStandoffBand;
+        const float fade = std::max(kSolveStandoffBand, s.fade[i]);
+        const float lim = s.noGo[i] + fade;
         const float d2  = LenSq(Sub(p, s.pos[i]));
         if (d2 >= lim * lim) continue;                   // outside the fade — cannot score
         const float g = std::sqrt(d2) - s.noGo[i];
-        if (g < best) best = g;
+        // ScoreCand consumes the historical [0,kSolveStandoffBand] scale. Map
+        // the wider physical reaction gap onto it so weights and off-mode
+        // behaviour stay unchanged.
+        const float normalized = g * kSolveStandoffBand / fade;
+        if (normalized < best) best = normalized;
     }
     return best;
 }

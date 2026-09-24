@@ -63,7 +63,8 @@ const SHOT_PRUNE_INTERVAL_MS = 1000;
 const FORECAST_MAX_SCAN_AGE_MS = 100;
 const FORECAST_POLL_MS = 20;
 const DEFAULT_FORECAST_WINDOW_MS = 200;
-const DEFAULT_FORECAST_HEALTH_PCT = 10;
+const DEFAULT_FORECAST_HEALTH_PCT = 5;
+const DEFAULT_NEXUS_HEALTH_PCT = 10;
 /** Bullets listed per escape log line. */
 const MAX_LOGGED_BULLETS = 8;
 /**
@@ -181,11 +182,11 @@ const nexusSlowLineLimiter = new RateLimiter(5, 5000);
 export function register(ctx: PluginContext) {
   ctx.name = 'Auto Nexus';
   ctx.category = 'combat';
-  let thresholdPct = 25;
+  let thresholdPct = DEFAULT_NEXUS_HEALTH_PCT;
   let showNotification = true;
   let retryCount = 4;
   let retryMs = 400;
-  let burstGuard = true;
+  let burstGuard = false;
   let forecastEnabled = true;
   let forecastHealthPct = DEFAULT_FORECAST_HEALTH_PCT;
   let predictionMode: PredictionMode = 'active';
@@ -234,7 +235,7 @@ export function register(ctx: PluginContext) {
     thresholdPct = next;
   });
   ctx.registerSetting('BurstGuard', {
-    label: 'Burst guard (nexus earlier after big confirmed hits)', type: 'boolean', value: true,
+    label: 'Burst guard (nexus earlier after big confirmed hits)', type: 'boolean', value: false,
   }, (v: boolean) => { burstGuard = v === true; });
   // New keys on purpose: the pre-2026-09-06 prediction settings (PredictedAutoNexusHealth,
   // PredictedAutoNexusTime, IncludeGroundTicks, HoldLethalPlayerHit, ...) stay
@@ -982,7 +983,7 @@ export function register(ctx: PluginContext) {
   ctx.log(`Loaded — prediction ACTIVE by default; forecast threshold ${DEFAULT_FORECAST_HEALTH_PCT}% and horizon ${DEFAULT_FORECAST_WINDOW_MS}ms,`
     + ` unmatched bullets ignored unless enabled (fallback or assumed ${DEFAULT_ASSUMED_DAMAGE}),`
     + ` ground + AoE zones count, method_29 regen lifts predicted HP between server updates;`
-    + ` nexus at ${thresholdPct}% HP until the saved profile applies; burst guard default on`);
+    + ` nexus at ${thresholdPct}% HP until the saved profile applies; burst guard default off`);
   return {
     observation: (client: ClientConnection) => {
       const observation = observations.get(client);

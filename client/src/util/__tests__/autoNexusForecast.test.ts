@@ -6,31 +6,38 @@ vi.mock('../../../plugins/api.js', async (importOriginal) => ({
   getDllThreatsAgeMs: vi.fn(() => 0),
   getDllGround: vi.fn(() => ({ damage: 9999 })),
 }));
-import { sendDllFeature, getDllGround } from '../../../plugins/api.js';
+import { sendDllFeature } from '../../../plugins/api.js';
 import { fixture } from './helpers/autoNexusFixture.js';
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.clearAllMocks(); });
-it('ignores guessed client hits, ground/AoE warnings and damage-less forecasts, including legacy configuration', () => {
+it('defaults actual and predicted escape thresholds to 10% and 5%', () => {
+  const f = fixture();
+  expect(f.settingDefs.get('ForceAutoNexusHealth')?.value).toBe(10);
+  expect(f.settingDefs.get('PredictiveNexusHealth')?.value).toBe(5);
+  expect(f.settingDefs.get('BurstGuard')?.value).toBe(false);
+});
+it('does not escape from guessed client hits or damage-less warnings, including legacy configuration', () => {
   const f = fixture(); f.hp(800);
   for (const name of ['PLAYERHIT','GROUNDDAMAGE','AOE','AOEACK','MOVE'])
     expect(f.emit(name, { damage: 29000, objectId: 2, bulletId: 3 }).send).toBe(true);
   vi.advanceTimersByTime(10000);
   expect(f.client.sendToServer).not.toHaveBeenCalled();
-  expect(getDllGround).not.toHaveBeenCalled();
   for (const key of ['PredictedAutoNexusHealth','PredictedAutoNexusTime','PredictedUsesForceThreshold','IncludeGroundTicks',
     'UnattributedMargin','HoldLethalPlayerHit','LethalHoldTime','LethalCushionHealth','DrawOverlay'])
     expect(f.settings.has(key)).toBe(false);
-  for (const key of ['autoNexusTilePredict','autoNexusDebugDraw'])
-    expect(sendDllFeature).toHaveBeenCalledWith(key, false);
-  expect(sendDllFeature).not.toHaveBeenCalledWith('autoNexusTilePredict', true);
+  expect(sendDllFeature).toHaveBeenCalledWith('autoNexusTilePredict', true);
+  expect(sendDllFeature).toHaveBeenCalledWith('autoNexusDebugDraw', false);
 });
 it('uses the current server HP packet and preserves its delivery', () => {
-  const f = fixture(); f.hp(800);
+  const f = fixture(); f.settings.get('ForceAutoNexusHealth')!(25); f.hp(800);
   const packet = f.hp(250); // cached playerData still says 800
   expect(f.client.sendToServer).toHaveBeenCalledWith(expect.objectContaining({ name: 'ESCAPE' }));
   expect(packet.send).toBe(true);
 });
 it('counts confirmed damage once and does not reset it from delta ticks without HP', () => {
-  const f = fixture(); f.settings.get('BurstGuard')!(false); f.hp(800);
+  const f = fixture();
+  f.settings.get('ForceAutoNexusHealth')!(25);
+  f.settings.get('BurstGuard')!(false);
+  f.hp(800);
   f.emit('DAMAGE', { targetId: 1, damageAmount: 300 });
   f.emit('NEWTICK', { statuses: [] });
   f.emit('DAMAGE', { targetId: 1, damageAmount: 200 });
@@ -104,6 +111,7 @@ it('records burst-death evidence without claiming confirmed-health mode prevents
 // (75/775 @9%, 43/435 @9%, 21/147 @10%) and died before the next health update.
 it('escapes above the threshold when a recently confirmed burst could take the remaining HP', () => {
   const f = fixture(); f.client.playerData.effectiveMaxHealth = 147;
+  f.settings.get('BurstGuard')!(true);
   f.settings.get('ForceAutoNexusHealth')!(10);   // 14.7 HP
   f.hp(147);
   vi.advanceTimersByTime(200); f.hp(100);        // 47 HP lost within one reaction window
@@ -127,7 +135,7 @@ it('caps the raised escape point at half of max HP and forgets bursts after 6 s'
   f.hp(100); expect(f.client.sendToServer).toHaveBeenCalledTimes(1);
 });
 it('measures the net loss inside the window, so damage and heals do not add up', () => {
-  const f = fixture(); f.settings.get('ForceAutoNexusHealth')!(10);
+  const f = fixture(); f.settings.get('ForceAutoNexusHealth')!(10); f.settings.get('BurstGuard')!(true);
   for (const hp of [900, 700, 900, 700]) { f.hp(hp); vi.advanceTimersByTime(100); } // largest net loss 200 -> 250
   vi.advanceTimersByTime(1000);                                        // window empty; only the memory remains
   f.hp(300); expect(f.client.sendToServer).not.toHaveBeenCalled();    // summed losses (400 -> 500) would escape here
@@ -146,7 +154,7 @@ it('leaves a deliberate 0% threshold alone', () => {
   expect(f.client.sendToServer).not.toHaveBeenCalled();
 });
 it('reports the burst guard escape point in the death diagnostic', () => {
-  const f = fixture(); f.settings.get('ForceAutoNexusHealth')!(5);
+  const f = fixture(); f.settings.get('ForceAutoNexusHealth')!(5); f.settings.get('BurstGuard')!(true);
   f.hp(1000); vi.advanceTimersByTime(100); f.hp(700);                  // burst 300 -> 375; 700 is above it
   f.emit('DEATH', { killedBy: 'Bone Tower 1' });
   expect(f.ctx.log).toHaveBeenCalledWith(expect.stringContaining('burstGuard=on (escape point 375 HP, largest recent burst 300)'));

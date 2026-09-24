@@ -48,6 +48,7 @@ export function fixture(testHooks?: { allowActivePredictionForTests?: boolean })
   vi.useFakeTimers();
   const hooks = new Map<string, (...args: any[]) => void>();
   const settings = new Map<string, (...args: any[]) => void>();
+  const settingDefs = new Map<string, any>();
   const events = new Map<string, (...args: any[]) => void>();
   const cleanup: (() => void)[] = [];
   const commands = new Map<string, (...args: any[]) => void>();
@@ -64,7 +65,10 @@ export function fixture(testHooks?: { allowActivePredictionForTests?: boolean })
   });
   client.admission = { generation: client.recovery.beginGeneration(), phase: 'loaded' };
   const ctx = { enabled: true,
-    registerSetting: (name: string, _def: any, fn: any) => settings.set(name, fn),
+    registerSetting: (name: string, def: any, fn: any) => {
+      settingDefs.set(name, def);
+      settings.set(name, fn);
+    },
     onEnabledChange: (fn: any) => { onEnable = fn; },
     registerCleanup: (fn: any) => cleanup.push(fn), on: (name: string, fn: any) => events.set(name, fn),
     hookCommand: vi.fn((name: string, fn: any) => commands.set(name, fn)), updateSetting: vi.fn(), log: vi.fn(),
@@ -165,7 +169,7 @@ export function fixture(testHooks?: { allowActivePredictionForTests?: boolean })
   const escapeLog = () => (ctx.log.mock.calls as any[][]).map(([line]) => String(line)).filter(l => l.startsWith('AUTO NEXUS'));
 
   return {
-    client, ctx, settings, events, cleanup, commands, emit, hp, enemy, enemyShoot, serverPlayerShoot, playerHit, damage,
+    client, ctx, settings, settingDefs, events, cleanup, commands, emit, hp, enemy, enemyShoot, serverPlayerShoot, playerHit, damage,
     setCondition, escapes, escapeLog, entityTypes, observation: () => controls.observation(client),
     transitions: () => controls.transitions(client),
     disable: () => { ctx.enabled = false; onEnable(); },
