@@ -332,6 +332,22 @@ describe('Test Lab Runner plugin', () => {
     expect(hostAccess.writeAndLoadPluginConfig).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the requested test server when the saved plugin profile names another server', async () => {
+    const hostAccess = makeHostAccess({
+      buildPluginConfigSnapshot: vi.fn((name: string) => ({
+        id: 'default', name, createdAt: 1, updatedAt: 1,
+        plugins: [{ id: 'server-switch', enabled: true, hotkey: '', settings: { server: 'EUEast' } }],
+      })),
+    });
+    writeRequest(testlabDir, { runId: 'run-uswest', accountLabel: 'lab-1', serverName: 'USWest' });
+    const { ctx, connectClient } = makeCtx(hostAccess);
+    register(ctx);
+    await connectAndSettle(connectClient);
+
+    const snapshot = hostAccess.writeAndLoadPluginConfig.mock.calls[0][1] as any;
+    expect(snapshot.plugins.find((p: any) => p.id === 'server-switch').settings.server).toBe('USWest');
+  });
+
   it('an early-exit run (account-not-found) never applies or restores any plugin config', async () => {
     const hostAccess = makeHostAccess({ launchSavedAccountByLabel: vi.fn(async () => ({ ok: false, error: 'account-not-found' })) });
     writeRequest(testlabDir, { runId: 'run-noconfig', accountLabel: 'nobody' });

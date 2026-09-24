@@ -429,7 +429,19 @@ export function register(ctx: PluginContext) {
     }
     try {
       const base = access.buildPluginConfigSnapshot('testlab run') as PluginConfigSnapshot;
-      const snapshot = buildThrowawayConfigSnapshot(base, request.runId, request.plugins, Date.now());
+      // Loading the throwaway profile can itself make server-switch reconnect
+      // to the owner's saved server after the credential launch honored the
+      // request. Pin the plugin setting to the run's server as part of the same
+      // atomic profile load so a USWest benchmark cannot silently move regions.
+      const serverOverride = request.plugins?.['server-switch'];
+      const overrides = {
+        ...(request.plugins ?? {}),
+        'server-switch': {
+          ...(serverOverride ?? {}),
+          settings: { ...(serverOverride?.settings ?? {}), server: request.serverName },
+        },
+      };
+      const snapshot = buildThrowawayConfigSnapshot(base, request.runId, overrides, Date.now());
       const result = access.writeAndLoadPluginConfig(snapshot.id, snapshot);
       if (result.ok) {
         throwawayConfigApplied = true;
