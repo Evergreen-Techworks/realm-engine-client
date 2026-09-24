@@ -35,7 +35,7 @@ vi.mock('../../../electron/proxyExitCodes.cjs', () => ({
 
 const { register } = await import('../../../plugins/testlab-runner.js');
 import type { PluginContext } from '../../../plugins/api.js';
-import { NATIVE_BRIDGE_TIMEOUT_MS, NO_MOVEMENT_TIMEOUT_MS, playerLogEvidenceFileName, playerLogSourcePath } from '../../testlab/runnerCore.js';
+import { CONNECTION_LOST_TIMEOUT_MS, NATIVE_BRIDGE_TIMEOUT_MS, NO_MOVEMENT_TIMEOUT_MS, playerLogEvidenceFileName, playerLogSourcePath } from '../../testlab/runnerCore.js';
 
 const REQUEST_FILE_NAME = 'run-request.json';
 
@@ -662,6 +662,22 @@ describe('Test Lab Runner plugin', () => {
     expect(hostAccess.stopScript).not.toHaveBeenCalled();
     expect(hostAccess.startScript).toHaveBeenCalledTimes(1);
     expect(existsSync(join(testlabDir, 'run-result.run-moving.json'))).toBe(false);
+  });
+
+  it('ends a running session after the client socket stays disconnected for 30s', async () => {
+    const hostAccess = makeHostAccess();
+    writeRequest(testlabDir, { runId: 'run-connection-lost', accountLabel: 'lab-1', scriptId: 'farmer' });
+    const { ctx, connectClient, clientDisconnectedCbs } = makeCtx(hostAccess);
+    register(ctx);
+    await connectAndSettle(connectClient, { x: 100, y: 100 });
+
+    for (const cb of clientDisconnectedCbs) cb();
+    await vi.advanceTimersByTimeAsync(CONNECTION_LOST_TIMEOUT_MS);
+    await flushAsync();
+
+    const result = readResult(testlabDir, 'run-connection-lost');
+    expect(result.reason).toBe('connection-lost');
+    expect(result.detail).toContain('30s');
   });
 
   it('a map change alone (identical x/y) counts as movement', async () => {

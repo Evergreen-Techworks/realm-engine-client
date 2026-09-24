@@ -58,6 +58,7 @@ import {
   NATIVE_BRIDGE_TIMEOUT_MS,
   NO_MOVEMENT_TIMEOUT_MS,
   NO_MOVEMENT_MIN_TILE_DELTA,
+  CONNECTION_LOST_TIMEOUT_MS,
   type RunRequest,
   type RunResultFile,
   type PluginConfigSnapshot,
@@ -99,6 +100,7 @@ export function register(ctx: PluginContext) {
   let machine: RunnerStateMachine | null = null;
   let reconnectClassifier: ReconnectClassifier | null = null;
   let currentClient: ClientConnection | null = null;
+  let disconnectedSinceMs: number | null = null;
   let seenFirstConnect = false;
   let stopPolling: (() => void) | null = null;
   let finishing = false;
@@ -152,6 +154,7 @@ export function register(ctx: PluginContext) {
     const isReconnect = seenFirstConnect;
     seenFirstConnect = true;
     currentClient = client;
+    disconnectedSinceMs = null;
     if (isReconnect && machine && reconnectClassifier) {
       const abnormal = reconnectClassifier.classify(Date.now());
       if (abnormal && machine.onReconnect(Date.now())) {
@@ -162,6 +165,9 @@ export function register(ctx: PluginContext) {
 
   ctx.on('clientDisconnected', () => {
     currentClient = null;
+    if (machine?.getPhase() === 'running' && disconnectedSinceMs == null) {
+      disconnectedSinceMs = Date.now();
+    }
   });
 
   ctx.hookPacket('DEATH', () => {
@@ -475,6 +481,13 @@ export function register(ctx: PluginContext) {
       if (!machine) return;
       if (currentClient?.admission?.phase === 'loaded') reconnectClassifier?.onAdmissionLoaded();
       if (machine.checkMinutesElapsed(Date.now())) {
+        void finishRun();
+        return;
+      }
+      if (machine.getPhase() === 'running' && disconnectedSinceMs != null &&
+          Date.now() - disconnectedSinceMs >= CONNECTION_LOST_TIMEOUT_MS) {
+        machine.requestStop('connection-lost',
+          `client socket stayed disconnected for ${Math.round(CONNECTION_LOST_TIMEOUT_MS / 1000)}s`);
         void finishRun();
         return;
       }

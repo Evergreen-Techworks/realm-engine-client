@@ -27,6 +27,7 @@ export type RunPhase = 'idle' | 'launching' | 'waiting-world' | 'waiting-bridge'
 export type RunStopReason =
   | 'completed'
   | 'death'
+  | 'connection-lost'
   | 'reconnect-limit'
   | 'launch-failed'
   | 'never-in-world'
@@ -94,6 +95,12 @@ export const NATIVE_BRIDGE_TIMEOUT_MS = 120_000;
  *  observed movement/map-change before restarting it once, and again before
  *  ending the run with reason `no-movement`. */
 export const NO_MOVEMENT_TIMEOUT_MS = 90_000;
+
+/** A live run with no client socket cannot make progress. Normal server-driven
+ * map hops reconnect in well under this window; an empty FAILURE followed by a
+ * permanently closed socket must end promptly instead of masquerading as a
+ * three-minute movement stall. */
+export const CONNECTION_LOST_TIMEOUT_MS = 30_000;
 
 /** Movement watchdog: the minimum distance (in tiles) that counts as "moved". */
 export const NO_MOVEMENT_MIN_TILE_DELTA = 1;
