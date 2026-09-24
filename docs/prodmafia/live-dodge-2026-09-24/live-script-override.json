@@ -1,0 +1,8 @@
+{
+  "runId": "20260924T180854Z-ec4e",
+  "nativeBuild": "1.0.44",
+  "scriptChangedBeforeStart": true,
+  "oldSha256": "5fe644f2445ff693e090cf4b9b2ae72d2f78a22ccb134811207ba3b35de624ab",
+  "candidateSha256": "b99a1c2dcc21d0f62d324749b9f0c5c707ff4bd4097c7cbe8363d8400e4af7c6",
+  "path": "/mnt/c/realm-engine-testlab/rig/RE_ASSETS/scripts/farmer/index.mjs"
+}

@@ -1,0 +1,64 @@
+.........................................testlab ab-plan: baseline_rate must be between 0 and 1, got 1.5
+..................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................usage: testlab run ab [-h] --setting SETTING --a A --b B
+                      [--block-minutes BLOCK_MINUTES]
+                      [--max-minutes MAX_MINUTES] [--minutes MINUTES]
+                      [--until-conclusive] [--max-hours MAX_HOURS]
+                      [--no-catalog-check] [--account ACCOUNT]
+                      [--server SERVER] [--script SCRIPT]
+                      [--plugin ID.SETTING=VALUE] [--dry-run] [--force-window]
+                      [--config CONFIG] [--build-config BUILD_CONFIG]
+                      [--out OUT] [--dest DEST] [--version-map VERSION_MAP]
+                      [--issues ISSUES]
+testlab run ab: error: the following arguments are required: --setting
+..............................................................................................................................................................................................................testlab issue confirm refused: unknown issue id: ISS-doesnotexist
+..........session 0: no freeze with index 99 (3 freeze(s), 0-based)
+...........................
+----------------------------------------------------------------------
+Ran 1070 tests in 81.997s
+
+OK
+Ingested 1 session(s) from /tmp/testlab-ab-ingest-fjnt7eia/realm-engine-proxy.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-ab-ingest-fjnt7eia/out/runs.jsonl.
+Ingested 1 session(s) from /tmp/testlab-ab-ingest-2qsq7y7z/realm-engine-proxy.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-ab-ingest-2qsq7y7z/out/runs.jsonl.
+Wrote /tmp/testlab-ab-ingest-2qsq7y7z/out/scorecard.html (1 session(s) across 1 version(s)).
+/tmp/glm-review-secret-test-ftv3cbz5/review.md
+Critical: 0
+Important: 0
+Minor: 0
+Withheld files: 0
+/tmp/glm-review-secret-test-gh5bmasl/review.md
+Critical: 0
+Important: 0
+Minor: 0
+Withheld files: 0
+Ingested 1 session(s) from /tmp/testlab-dodge-detail-mwmlj3sq/realm-engine-proxy.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-dodge-detail-mwmlj3sq/out/runs.jsonl.
+Ingested 1 session(s) from /tmp/testlab-dodge-detail-9395ml88/realm-engine-proxy.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-dodge-detail-9395ml88/out/runs.jsonl.
+Ingested 1 session(s) from /tmp/testlab-dodge-detail-c_uckd16/realm-engine-proxy.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-dodge-detail-c_uckd16/out/runs.jsonl.
+Ingested 1 session(s) from /tmp/testlab-dodge-detail-c_uckd16/realm-engine-proxy.log: 0 new, 1 updated (idempotent). 1 total session(s) in /tmp/testlab-dodge-detail-c_uckd16/out/runs.jsonl.
+Ingested 1 session(s) from /tmp/testlab-fp-ingest-m46985or/realm-engine-proxy.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-fp-ingest-m46985or/out/runs.jsonl.
+Ingested 1 session(s) from /tmp/testlab-fp-ingest-1pgz5x7a/realm-engine-proxy.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-fp-ingest-1pgz5x7a/out/runs.jsonl.
+Ingested 1 session(s) from /tmp/testlab-fp-ingest-d5cu1ftt/realm-engine-proxy.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-fp-ingest-d5cu1ftt/out/runs.jsonl.
+Ingested 1 session(s) from /tmp/testlab-fp-ingest-d5cu1ftt/realm-engine-proxy.log: 0 new, 1 updated (idempotent). 1 total session(s) in /tmp/testlab-fp-ingest-d5cu1ftt/out/runs.jsonl.
+Ingested 1 session(s) from /tmp/testlab-fp-ingest-gwu0ib7r/realm-engine-proxy.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-fp-ingest-gwu0ib7r/out/runs.jsonl.
+Ingested 1 session(s) from /tmp/testlab-packets-cli-x0dizcob/realm-engine-proxy.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-packets-cli-x0dizcob/out/runs.jsonl.
+Ingested 1 session(s) from /tmp/testlab-packets-cli-rj35drjx/realm-engine-proxy.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-packets-cli-rj35drjx/out/runs.jsonl.
+Ingested 1 session(s) from /tmp/testlab-packets-cli-ruje7rc0/realm-engine-proxy.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-packets-cli-ruje7rc0/out/runs.jsonl.
+Ingested 1 session(s) from /tmp/testlab-packets-cli-yylgeu25/realm-engine-proxy.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-packets-cli-yylgeu25/out/runs.jsonl.
+Ingested 1 session(s) from /home/jesse/realm-engine/.worktrees/testlab/testlab/tests/fixtures/flip_flop_bandit_leader.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-publish-gsdt1klq/out/runs.jsonl.
+Wrote /tmp/testlab-publish-gsdt1klq/out/scorecard.html (1 session(s) across 1 version(s)).
+Ingested 1 session(s) from /home/jesse/realm-engine/.worktrees/testlab/testlab/tests/fixtures/flip_flop_bandit_leader.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-publish-8qabd5tu/out/runs.jsonl.
+Wrote /tmp/testlab-publish-8qabd5tu/out/scorecard.html (1 session(s) across 1 version(s)).
+Ingested 1 session(s) from /home/jesse/realm-engine/.worktrees/testlab/testlab/tests/fixtures/flip_flop_bandit_leader.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-publish-pii5smca/out/runs.jsonl.
+Wrote /tmp/testlab-publish-pii5smca/out/scorecard.html (1 session(s) across 1 version(s)).
+Ingested 1 session(s) from /home/jesse/realm-engine/.worktrees/testlab/testlab/tests/fixtures/flip_flop_bandit_leader.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-publish-cli-u2rxiuzv/out/runs.jsonl.
+Wrote /tmp/testlab-publish-cli-u2rxiuzv/out/scorecard.html (1 session(s) across 1 version(s)).
+Published 4 file(s) to /tmp/testlab-publish-cli-u2rxiuzv/dest.
+Ingested 1 session(s) from /home/jesse/realm-engine/.worktrees/testlab/testlab/tests/fixtures/flip_flop_bandit_leader.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-report-publish-p4mij4v2/out/runs.jsonl.
+Wrote /tmp/testlab-report-publish-p4mij4v2/out/scorecard.html (1 session(s) across 1 version(s)).
+Published 4 file(s) to /tmp/testlab-report-publish-p4mij4v2/dest.
+Ingested 1 session(s) from /home/jesse/realm-engine/.worktrees/testlab/testlab/tests/fixtures/flip_flop_bandit_leader.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-report-publish-lnwpqv1u/out/runs.jsonl.
+Ingested 1 session(s) from /home/jesse/realm-engine/.worktrees/testlab/testlab/tests/fixtures/flip_flop_bandit_leader.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-report-publish-cfe9pjky/out/runs.jsonl.
+Ingested 1 session(s) from /home/jesse/realm-engine/.worktrees/testlab/testlab/tests/fixtures/why_portal_stall_1021.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-why-cli-alfrm_k8/out/runs.jsonl.
+Ingested 1 session(s) from /home/jesse/realm-engine/.worktrees/testlab/testlab/tests/fixtures/why_portal_stall_1023.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-why-cli-n_qv6bfo/out/runs.jsonl.
+Ingested 1 session(s) from /home/jesse/realm-engine/.worktrees/testlab/testlab/tests/fixtures/why_portal_stall_1021.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-why-cli-uqbr5kif/out/runs.jsonl.
+Ingested 1 session(s) from /home/jesse/realm-engine/.worktrees/testlab/testlab/tests/fixtures/why_portal_stall_1021.log: 1 new, 0 updated (idempotent). 1 total session(s) in /tmp/testlab-why-cli-p7w7wv9e/out/runs.jsonl.
+Wrote /tmp/testlab-why-cli-p7w7wv9e/out/scorecard.html (1 session(s) across 1 version(s)).

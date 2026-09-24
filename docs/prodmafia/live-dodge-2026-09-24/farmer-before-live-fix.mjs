@@ -163,7 +163,6 @@ export default class Farmer {
     this.lootBagId = 0;
     this.lootArrivedAt = 0;
     this.lootRetryAfter = new Map();
-    this.lootApproach = null;
     this.addGoal = null;
     this.lastItemActionAt = 0;
     this.lastPortalUseAt = 0;
@@ -398,7 +397,6 @@ export default class Farmer {
     this.lootBagId = 0;
     this.lootArrivedAt = 0;
     this.lootRetryAfter.clear();
-    this.lootApproach = null;
     this.addGoal = null;
     this.lockId = 0;
     this.patrolStep = 0;
@@ -727,35 +725,15 @@ export default class Farmer {
       this.lootBagId = bag?.objectId ?? 0;
       this.lootArrivedAt = 0;
     }
-    if (!bag) { this.lootApproach = null; return false; }
+    if (!bag) return false;
 
     const distance = RealmEngine.self.distanceTo(bag.position);
     if (distance > BAG_ARRIVE) {
-      const hp = RealmEngine.self.getHP();
-      if (!this.lootApproach || this.lootApproach.id !== bag.objectId) {
-        this.lootApproach = { id: bag.objectId, distance, at: now, hp, hurt: false };
-      }
-      const approach = this.lootApproach;
-      if (distance <= approach.distance - 1) {
-        approach.distance = distance; approach.at = now; approach.hurt = false;
-      }
-      if (Number.isFinite(hp) && Number.isFinite(approach.hp) && hp < approach.hp) approach.hurt = true;
-      approach.hp = hp;
-      // A safe route may initially lead away from the bag. Keep that route,
-      // but do not surrender combat indefinitely while a stalled detour hurts us.
-      if (approach.hurt && now - approach.at >= 8000) {
-        this.lootRetryAfter.set(bag.objectId, now + 30000);
-        this.lootBagId = 0; this.lootArrivedAt = 0; this.lootApproach = null;
-        RealmEngine.dodge.clearWaypoint();
-        RealmEngine.log.info('Realm Farmer: deferring loot — taking damage without approach progress.');
-        return false;
-      }
       this.navigateToPosition(bag.position);
       this.setStatus(`Loot detour (${distance.toFixed(1)} tiles)`);
       return true;
     }
 
-    this.lootApproach = null;
     RealmEngine.dodge.clearWaypoint();
     if (!this.lootArrivedAt) this.lootArrivedAt = now;
     this.setStatus(bag.rarity === 'white' ? 'Collecting white bag' : 'Waiting for Auto Loot');

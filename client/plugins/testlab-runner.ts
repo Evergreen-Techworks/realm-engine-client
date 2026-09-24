@@ -110,6 +110,14 @@ export function register(ctx: PluginContext) {
   // of "restoring" a switch that never happened.
   let throwawayConfigApplied = false;
 
+  // A request launches before the saved profile is replayed. Keep its event
+  // subscriptions alive until the run finishes; otherwise a saved disabled
+  // flag leaves the timers running but hides every connection and death.
+  // With no accepted request, the user's enabled setting still applies.
+  ctx.onEnabledChange((enabled) => {
+    if (!enabled && machine && machine.getPhase() !== 'done') ctx.enabled = true;
+  });
+
   function log(message: string): void {
     ctx.log(`[TestLabRun] ${message}`);
   }

@@ -1,0 +1,25 @@
+
+ RUN  v2.1.9 /home/jesse/rec-worktrees/predictive-nexus-testlab/client
+
+ ❯ src/plugins/__tests__/testlabRunner.test.ts (31 tests | 1 failed) 155ms
+   × Test Lab Runner plugin > keeps an accepted live request observing connections across disabled profile replay 17ms
+     → expected "spy" to be called once, but got 0 times
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/plugins/__tests__/testlabRunner.test.ts > Test Lab Runner plugin > keeps an accepted live request observing connections across disabled profile replay
+AssertionError: expected "spy" to be called once, but got 0 times
+ ❯ src/plugins/__tests__/testlabRunner.test.ts:231:36
+    229|     ctx.enabled = false; // saved profile applies after unconditional …
+    230|     await connectAndSettle(connectClient);
+    231|     expect(hostAccess.startScript).toHaveBeenCalledOnce();
+       |                                    ^
+    232|     expect(ctx.enabled).toBe(true);
+    233|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 30 passed (31)
+   Start at  12:02:11
+   Duration  733ms (transform 231ms, setup 0ms, collect 276ms, tests 155ms, environment 0ms, prepare 84ms)

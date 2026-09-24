@@ -1,0 +1,132 @@
+
+ RUN  v2.1.9 /home/jesse/rec-worktrees/predictive-nexus-testlab/client
+
+ ✓ src/scripts/__tests__/deadChurchFarmer.test.ts (15 tests) 70ms
+ ✓ src/scripts/__tests__/farmer.test.ts (115 tests) 326ms
+ ✓ src/plugins/__tests__/testlabRunner.test.ts (31 tests) 225ms
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > a dark-blue potion bag (Loot Bag 5) yields only the potion the Archer needs, not the rest of the bag
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > a dark-blue potion bag (Loot Bag 5 Boost) yields only the potion the Archer needs, not the rest of the bag
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > a white bag (Loot Bag 6) still has every item collected
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Collecting white bag | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > a white bag (Loot Bag 6 Boost) still has every item collected
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Collecting white bag | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the gold bag (Loot Bag 7) holding only an item nothing wants is left alone
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Leveling: walking toward center for a new quest | ctx pos=1.5,1.5 goal=1.5,1.5 d=0.0 enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the gold bag (Loot Bag 7 Boost) holding only an item nothing wants is left alone
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Leveling: walking toward center for a new quest | ctx pos=1.5,1.5 goal=1.5,1.5 d=0.0 enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the orange bag (Loot Bag 8) holding only an item nothing wants is left alone
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Leveling: walking toward center for a new quest | ctx pos=1.5,1.5 goal=1.5,1.5 d=0.0 enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the orange bag (Loot Bag 8 Boost) holding only an item nothing wants is left alone
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Leveling: walking toward center for a new quest | ctx pos=1.5,1.5 goal=1.5,1.5 d=0.0 enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the red bag (Loot Bag 9) holding only an item nothing wants is left alone
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Leveling: walking toward center for a new quest | ctx pos=1.5,1.5 goal=1.5,1.5 d=0.0 enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the red bag (Loot Bag 9 Boost) holding only an item nothing wants is left alone
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Leveling: walking toward center for a new quest | ctx pos=1.5,1.5 goal=1.5,1.5 d=0.0 enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the gold bag (Loot Bag 7) gives up its UT item and keeps the unwanted one
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the gold bag (Loot Bag 7 Boost) gives up its UT item and keeps the unwanted one
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the orange bag (Loot Bag 8) gives up its UT item and keeps the unwanted one
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the orange bag (Loot Bag 8 Boost) gives up its UT item and keeps the unwanted one
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the red bag (Loot Bag 9) gives up its UT item and keeps the unwanted one
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the red bag (Loot Bag 9 Boost) gives up its UT item and keeps the unwanted one
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the gold bag (Loot Bag 7) still has its equip upgrade equipped
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the gold bag (Loot Bag 7 Boost) still has its equip upgrade equipped
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the orange bag (Loot Bag 8) still has its equip upgrade equipped
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the orange bag (Loot Bag 8 Boost) still has its equip upgrade equipped
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the red bag (Loot Bag 9) still has its equip upgrade equipped
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > the red bag (Loot Bag 9 Boost) still has its equip upgrade equipped
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > skips a Potion of Attack once Attack is capped, even while Defense is not
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Leveling: walking toward center for a new quest | ctx pos=1.5,1.5 goal=1.5,1.5 d=0.0 enemy=- quest=-
+
+stdout | src/scripts/__tests__/farmerBagLoot.test.ts > Realm Farmer bag loot on the real SDK > drinks a Potion of Speed while Speed is below cap, even with Attack capped
+[SCRIPT] state: Realm Farmer starting | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+[SCRIPT] Realm Farmer started with Unified Dodge, safe-walk, loot detours, ambient autofire, and target switching.
+[SCRIPT] state: Waiting for Auto Loot | ctx pos=1.5,1.5 goal=- d=- enemy=- quest=-
+
+ ✓ src/scripts/__tests__/farmerBagLoot.test.ts (24 tests) 151ms
+
+ Test Files  4 passed (4)
+      Tests  185 passed (185)
+   Start at  12:07:08
+   Duration  1.79s (transform 1.59s, setup 0ms, collect 2.43s, tests 772ms, environment 1ms, prepare 456ms)

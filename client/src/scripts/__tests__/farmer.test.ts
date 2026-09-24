@@ -87,6 +87,29 @@ it('does not repeatedly reacquire a bag whose item actions failed', () => {
   vi.setSystemTime(42000);
   expect(farmer.handleLoot(42000)).toBe(true);
 });
+it('defers a damaging loot approach that makes no progress, without immediately reacquiring it', () => {
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+  const { farmer, sdk } = fixture();
+  const bag = { objectId: 50, rarity: 'blue', position: { x: 10, y: 0 }, items: [{ objectType: 100, slotIndex: 2 }] };
+  sdk.loot.getNearbyBags.mockReturnValue([bag]); sdk.loot.getBags = () => [bag];
+  expect(farmer.handleLoot(10000)).toBe(true);
+  sdk.self.getHP = () => 70;
+  vi.setSystemTime(18000);
+  expect(farmer.handleLoot(18000)).toBe(false);
+  expect(farmer.lootBagId).toBe(0);
+  expect(sdk.dodge.clearWaypoint).toHaveBeenCalled();
+  expect(farmer.handleLoot(18200)).toBe(false);
+});
+
+it('keeps a safe detour committed even while its straight-line bag distance does not improve', () => {
+  const { farmer, sdk } = fixture();
+  const bag = { objectId: 50, rarity: 'blue', position: { x: 10, y: 0 }, items: [{ objectType: 100, slotIndex: 2 }] };
+  sdk.loot.getNearbyBags.mockReturnValue([bag]); sdk.loot.getBags = () => [bag];
+  expect(farmer.handleLoot(10000)).toBe(true);
+  expect(farmer.handleLoot(20000)).toBe(true);
+  expect(farmer.lootBagId).toBe(50);
+});
+
 it('keeps the selected add while approaching instead of switching to the nearest each loop', () => {
   const { farmer, sdk, quest } = fixture();
   quest.position.x = 0;

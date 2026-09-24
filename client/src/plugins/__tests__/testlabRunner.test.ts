@@ -113,17 +113,21 @@ function makeCtx(hostAccess: HostAccessFake | null) {
   const clientDisconnectedCbs: Array<() => void> = [];
   const createdPackets: string[] = [];
   const sentPackets: unknown[] = [];
+  let enabled = true;
+  const enabledCallbacks: Array<(value: boolean) => void> = [];
 
   const ctx = {
     name: '',
     category: 'utility',
-    enabled: true,
+    get enabled() { return enabled; },
+    set enabled(value: boolean) { enabled = value; for (const cb of enabledCallbacks) cb(value); },
+    onEnabledChange: (cb: (value: boolean) => void) => enabledCallbacks.push(cb),
     hostAccess,
     setData: vi.fn(),
     log: vi.fn((m: string) => logs.push(m)),
     dashboardLog: vi.fn(),
     on: vi.fn((event: string, cb: (arg?: unknown) => void) => {
-      if (event === 'clientConnected') clientConnectedCbs.push(cb);
+      if (event === 'clientConnected') clientConnectedCbs.push((client) => { if (ctx.enabled) cb(client); });
       if (event === 'clientDisconnected') clientDisconnectedCbs.push(cb);
     }),
     hookPacket: vi.fn((name: string, cb: (client: unknown, packet: unknown) => void) => packetHooks.set(name, cb)),
@@ -214,6 +218,29 @@ describe('Test Lab Runner plugin', () => {
     expect(hostAccess.launchSavedAccountByLabel).not.toHaveBeenCalled();
     expect(existsSync(testlabDir)).toBe(false);
     expect(logs.some((l) => l.includes('[TestLabRun]'))).toBe(false);
+  });
+
+  it('keeps an accepted live request observing connections across disabled profile replay', async () => {
+    writeRequest(testlabDir, { scriptId: 'farmer' });
+    const hostAccess = makeHostAccess();
+    const { ctx, connectClient, packetHooks } = makeCtx(hostAccess);
+    register(ctx);
+    await flushAsync();
+    ctx.enabled = false; // saved profile applies after unconditional request launch
+    const client = await connectAndSettle(connectClient);
+    expect(hostAccess.startScript).toHaveBeenCalledOnce();
+    expect(ctx.enabled).toBe(true);
+    packetHooks.get('DEATH')!(client, {});
+    await advancePastNexusWait();
+    ctx.enabled = false;
+    expect(ctx.enabled).toBe(false);
+  });
+
+  it('allows a disabled profile when no live request exists', () => {
+    const { ctx } = makeCtx(makeHostAccess());
+    register(ctx);
+    ctx.enabled = false;
+    expect(ctx.enabled).toBe(false);
   });
 
   it('renames the request file off its live name immediately, even before validating it', () => {

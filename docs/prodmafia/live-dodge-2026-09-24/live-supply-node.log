@@ -1,0 +1,55 @@
+TAP version 13
+# Subtest: marker carries the private-only marker string
+ok 1 - marker carries the private-only marker string
+  ---
+  duration_ms: 0.9513
+  ...
+# Subtest: wizard class type is the TutorialRunner-proven 782
+ok 2 - wizard class type is the TutorialRunner-proven 782
+  ---
+  duration_ms: 0.1898
+  ...
+# Subtest: supplyLocalDay formats local YYYY-MM-DD
+ok 3 - supplyLocalDay formats local YYYY-MM-DD
+  ---
+  duration_ms: 0.3331
+  ...
+# Subtest: decideCreate fires only after the grace window with no world entry
+ok 4 - decideCreate fires only after the grace window with no world entry
+  ---
+  duration_ms: 0.1845
+  ...
+# Subtest: createAllowed: empty ledger allows
+ok 5 - createAllowed: empty ledger allows
+  ---
+  duration_ms: 0.9949
+  ...
+# Subtest: createAllowed: only sent entries charge the cap
+ok 6 - createAllowed: only sent entries charge the cap
+  ---
+  duration_ms: 0.5056
+  ...
+# Subtest: createAllowed: skipped entries do not charge but do enforce the gap
+ok 7 - createAllowed: skipped entries do not charge but do enforce the gap
+  ---
+  duration_ms: 0.2434
+  ...
+# Subtest: createAllowed: cap 0 disables the entire path
+ok 8 - createAllowed: cap 0 disables the entire path
+  ---
+  duration_ms: 0.2092
+  ...
+# Subtest: createAllowed: other days do not count against today
+ok 9 - createAllowed: other days do not count against today
+  ---
+  duration_ms: 0.3837
+  ...
+1..9
+# tests 9
+# suites 0
+# pass 9
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 390.427797

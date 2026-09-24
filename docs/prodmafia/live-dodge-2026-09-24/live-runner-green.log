@@ -1,0 +1,9 @@
+
+ RUN  v2.1.9 /home/jesse/rec-worktrees/predictive-nexus-testlab/client
+
+ ✓ src/plugins/__tests__/testlabRunner.test.ts (31 tests) 145ms
+
+ Test Files  1 passed (1)
+      Tests  31 passed (31)
+   Start at  12:02:12
+   Duration  722ms (transform 246ms, setup 0ms, collect 290ms, tests 145ms, environment 0ms, prepare 77ms)
