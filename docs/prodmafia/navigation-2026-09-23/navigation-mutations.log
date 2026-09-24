@@ -1,6 +1,6 @@
 control exit 0 Navigation regressions passed (real A*, corner compression, swept steering, completion).
 Locked fight route passed (time-checked round the shot arm).
-Ring ladder tests passed (ring goal outranks out-of-range ground, start rule, unlocked unchanged). 
+Ring ladder tests passed (ring goal outranks out-of-range ground, start rule, unlocked unchanged).
 early-consumed exit 1  FAIL: sub-millimetre corner remainder is not consumed before a FullOccupy turn
 skip-bend exit 1  FAIL: finish a forward corner despite tolerant clearance of the outgoing leg
 drop-small-step exit 1  FAIL: tiny safe corner remainder reaches its exact validated endpoint

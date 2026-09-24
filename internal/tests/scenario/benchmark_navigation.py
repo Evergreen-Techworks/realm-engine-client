@@ -109,7 +109,7 @@ def main():
     regressions = []
     with (out / 'results.csv').open('w', newline='') as csvfile, (out / 'raw.jsonl').open('w') as raw, ThreadPoolExecutor(max_workers=args.jobs) as pool:
         writer = csv.DictWriter(csvfile, fieldnames=['case', 'profile', 'rule', 'scenario',
-                               'navigator', 'speed', 'start_shift', 'revision', *METRICS])
+                               'navigator', 'speed', 'start_shift', 'revision', *METRICS], lineterminator='\n')
         writer.writeheader()
         for index, case, pair in pool.map(lambda item: run_pair(item, binaries), enumerate(cases())):
             for revision, metrics in pair.items():
