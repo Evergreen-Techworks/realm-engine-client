@@ -65,6 +65,7 @@ struct Cand {
     // and "step there" compete on the same basis. SCORE only; admission is
     // unchanged and still the pure dwell-window test (Core::Temporal::DwellClear).
     float dur = 0.f;
+    float timeToDanger = -1.f; // cached full-horizon query; negative means unevaluated
     // Signed gap (tiles) from pos to the NEAREST enemy body surface — the same
     // circle EnemyBlocked excludes on (radius + kUPlayerHalf). Clamped at
     // kSolveStandoffBand when nothing is near, i.e. "no standoff penalty". SCORE
@@ -584,14 +585,6 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     out.routePops      = static_cast<uint16_t>(std::min(route.pops, 65535));
     out.routeRadius    = static_cast<uint8_t>(std::min(route.radiusCells, 255));
 
-    Cand cands[kMaxCandidates];
-    const int n = BuildCandidates(in, b, goal, pocketFound, pocketPos, cands);
-    // Nearby bodies for the general standoff score (kSolveStandoffW) — built once
-    // per solve, not per candidate.
-    StandoffSet standoff;
-    BuildStandoffSet(in, goal, b, standoff);
-    Evaluate(in, standoff, cands, n);
-
     // A commanded walk-to route owns direction whenever its immediate corridor
     // step is fully safe. Previously this direct step was attempted only when
     // the CURRENT stand was durable. If a future lane made standing non-durable,
@@ -628,6 +621,16 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             }
         }
     }
+
+    // A safe commanded corridor step returns above without evaluating the
+    // alternative dodge candidates. Their scores cannot change that decision.
+    Cand cands[kMaxCandidates];
+    const int n = BuildCandidates(in, b, goal, pocketFound, pocketPos, cands);
+    // Nearby bodies for the general standoff score (kSolveStandoffW) — built once
+    // per solve, not per candidate.
+    StandoffSet standoff;
+    BuildStandoffSet(in, goal, b, standoff);
+    Evaluate(in, standoff, cands, n);
 
     // ── Hold ONLY when the current spot is a DURABLE temporal pocket ─────────
     // The ONE exception: a boss lock drifted OUTSIDE weapon range repositions inward.
@@ -904,6 +907,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         // One march supplies both the mandatory transit/dwell safety answer
         // and the durability score. A spatial pass cannot override a collision.
         const float ttd = Core::Temporal::TimeToDanger(ctx, in.player, in.speed, cands[i].pos);
+        cands[i].timeToDanger = ttd;
         if (!Core::Temporal::DwellClear(in.player, in.speed, cands[i].pos, ttd)) continue;
         const bool tempSafe = !instSafe; // threading classification for scoring only
         // Durability recorded on the candidate itself (not just the scored copy) so
@@ -960,8 +964,22 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     const float playerToPocket = pocketFound ? Len(Sub(in.player, pocketPos)) : 0.f;
     int best2 = -1;
     float best2Time = -1.f;
-    const float standTime = Core::Temporal::TimeToDanger(ctx, in.player, in.speed,
-                                                       in.player, kUDwellMs);
+    // A travel step can still be in transit when the old fixed 200 ms scan
+    // ends. With buffered navigation, rank through the move plus its dwell,
+    // reusing the reflex query above. All candidates use the same window.
+    // Scope this to enemy-buffered travel: longer endpoint holds in unbuffered
+    // packs or locked fights overvalue retreat and can prevent re-engagement.
+    const bool travelPrediction = goal.walkTo && !goal.fromLock && !in.map->hasLock
+        && in.map->enemyStandoff != Standoff::Mode::Off;
+    const float fallbackHorizon = travelPrediction
+        ? std::min(Core::Temporal::kHorizonMs, kUDwellMs + b / in.speed) : kUDwellMs;
+    const auto fallbackTime = [&](const Cand& candidate) {
+        if (travelPrediction && candidate.timeToDanger >= 0.f)
+            return candidate.timeToDanger < fallbackHorizon
+                ? candidate.timeToDanger : Core::Temporal::kNoDanger;
+        return Core::Temporal::TimeToDanger(ctx, in.player, in.speed, candidate.pos, fallbackHorizon);
+    };
+    const float standTime = fallbackTime(cands[0]);
     // A lateral fallback helps point travel escape crossing fire. Applying
     // the same near-tie preference around a combat lock sacrifices safer
     // moves in dense rings; keep combat's latest-danger-time ranking intact.
@@ -984,8 +1002,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             !Core::EnemyEscapePathClear(in, in.player, cands[i].pos) ||
             !OccupancyPathClear(in, in.player, cands[i].pos) ||
             !Core::ZoneEscapePathClear(in, in.player, cands[i].pos)) continue;
-        const float safeTime = Core::Temporal::TimeToDanger(ctx, in.player, in.speed,
-                                                          cands[i].pos, kUDwellMs);
+        const float safeTime = fallbackTime(cands[i]);
         float val = cands[i].clr;
         if (pocketFound) {
             const float prog = playerToPocket - Len(Sub(cands[i].pos, pocketPos));

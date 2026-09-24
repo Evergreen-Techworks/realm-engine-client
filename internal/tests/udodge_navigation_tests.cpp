@@ -150,6 +150,21 @@ int main() {
     Solver::Solve(cornerInput, 0.2f, cornerGoal, emptyRoute, cornerState, cornerResult);
     Check(cornerResult.shouldMove && cornerResult.target.x > 0.f,
           "intermediate bend within half a tile still advances");
+    // Cost guard: a validated straight travel step does not need the full
+    // polar candidate search. Keep the swept safety checks, bound redundant
+    // map queries independently of host timing noise.
+    static int travelOccupancyQueries = 0;
+    cornerInput.env.canOccupy = [](float, float, bool) {
+        ++travelOccupancyQueries;
+        return true;
+    };
+    cornerGoal.pos = {2.f, 0.f};
+    Solver::Solve(cornerInput, 0.1f, cornerGoal, emptyRoute, cornerState, cornerResult);
+    Check(cornerResult.shouldMove && cornerResult.followedRoute,
+          "safe travel still uses its validated commanded route");
+    Check(travelOccupancyQueries < 32,
+          "safe travel avoids evaluating every alternate dodge heading");
+    cornerInput.env.canOccupy = nullptr;
     cornerGoal.exactTravel = true;
     cornerGoal.pos = {0.00005f, 0.f};
     Solver::Solve(cornerInput, 0.2f, cornerGoal, emptyRoute, cornerState, cornerResult);

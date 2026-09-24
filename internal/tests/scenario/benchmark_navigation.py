@@ -22,7 +22,8 @@ from run_scenarios import SCENARIOS
 HERE = Path(__file__).resolve().parent
 METRICS = ('success', 'time_s', 'final_dist', 'path_tiles', 'hits', 'stuck_s',
            'paused_travel_frames', 'refused_moves', 'overspeed_moves',
-           'damaging_ground_frames', 'replans_nav_route', 'heading_reversals_per_s')
+           'damaging_ground_frames', 'replans_nav_route', 'heading_reversals_per_s',
+           'in_range_frac', 'radial_out_frac')
 
 
 def cases():
@@ -131,6 +132,8 @@ def main():
                 reasons.append('stuck time increased')
             if old['success'] and new['time_s'] > old['time_s'] + max(0.25, old['time_s'] * 0.05):
                 reasons.append('arrival slower by >5% and >0.25s')
+            if old['lock'] and new['in_range_frac'] < old['in_range_frac'] - 0.02:
+                reasons.append('boss engagement fraction decreased by >0.02')
             if reasons:
                 regressions.append(dict(case=index, **case, reasons=reasons))
             csvfile.flush()

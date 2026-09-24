@@ -247,6 +247,28 @@ def travel_commit_check(binary, scan):
     return failures
 
 
+def travel_prediction_check(binary, scan):
+    """Travel must escape delayed crossfire without relying on optional sidestepping."""
+    failures = []
+    for rule in ("legacy", "game"):
+        env = {k: v for k, v in os.environ.items() if not k.startswith("HARNESS_")}
+        env.update(HARNESS_NAVIGATOR="legacy", HARNESS_ROUTE_COMMIT="on",
+                   HARNESS_ENEMY_STANDOFF="on", HARNESS_FALLBACK_SIDESTEP="off",
+                   HARNESS_FRAME_BUDGET="off")
+        done = subprocess.run([str(binary), "p_walk_pack_late_crossfire", str(scan), rule, "tactician"],
+                              check=True, env=env, capture_output=True, text=True)
+        row = json.loads(done.stdout.strip().splitlines()[-1])
+        if not (row["success"] and row["hits"] == 0 and row["time_s"] <= 6.0
+                and row["refused_moves"] == 0 and row["overspeed_moves"] == 0):
+            failures.append(f"travel prediction [{rule}]: success={row['success']} "
+                            f"hits={row['hits']} time={row['time_s']} (required <=6s, zero hits/refusals/overspeed)")
+    for failure in failures:
+        print("FAIL " + failure)
+    if not failures:
+        print("Travel prediction passed: delayed crossfire cleared within 6s, zero hits, both collision rules")
+    return failures
+
+
 def travel_fallback_check(binary, scan):
     """A travel-only fallback heuristic must preserve combat and solve the
     delayed-crossfire regression without dropping the movement objective."""
@@ -291,6 +313,8 @@ def main():
     ap.add_argument("--tactician-acceptance", action="store_true",
                     help="run the boss scenarios and exit non-zero unless they meet the Tactician spec's "
                          "thresholds. Separate from --check; expected to fail until the Tactician lands")
+    ap.add_argument("--travel-prediction-check", action="store_true",
+                    help="assert complete travel prediction escapes delayed crossfire safely")
     ap.add_argument("--travel-fallback-check", action="store_true",
                     help="verify fallback sidestepping preserves combat and improves late-crossfire travel")
     ap.add_argument("--travel-commit-check", action="store_true",
@@ -359,6 +383,8 @@ def main():
         subprocess.run(cmd, check=True)
         if args.binary_out:
             shutil.copy(binary, args.binary_out)
+        if args.travel_prediction_check:
+            sys.exit(1 if travel_prediction_check(binary, scan) else 0)
         if args.travel_fallback_check:
             sys.exit(1 if travel_fallback_check(binary, scan) else 0)
         if args.travel_commit_check:
