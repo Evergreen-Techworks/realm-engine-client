@@ -29,6 +29,8 @@ def main():
     ap.add_argument("--candidate", type=Path, required=True)
     ap.add_argument("--output", type=Path, required=True)
     ap.add_argument("--repeats", type=int, default=7)
+    ap.add_argument("--allow-movement-change", action="store_true",
+                    help="allow A/B-validated route changes; still reject added hits or nondeterminism")
     args = ap.parse_args()
     if args.repeats < 3:
         ap.error("use at least three measured repetitions")
@@ -73,10 +75,21 @@ def main():
                                             baseline=old, candidate=new))
             behavior = ("success", "hits", "path_tiles", "time_s", "final_dist", "refused_moves",
                         "overspeed_moves", "paused_travel_frames", "in_range_frames")
-            samples = [r["metrics"] for r in rows if r["scenario"] == scenario and r["rule"] == rule]
-            if any(any(m[k] != samples[0][k] for k in behavior) for m in samples[1:]):
+            groups = {revision: [r["metrics"] for r in rows if r["scenario"] == scenario
+                                 and r["rule"] == rule and r["revision"] == revision]
+                      for revision in binaries}
+            for revision, samples in groups.items():
+                if any(any(m[k] != samples[0][k] for k in behavior) for m in samples[1:]):
+                    regressions.append(dict(scenario=scenario, rule=rule, revision=revision,
+                                            reason="behavior varied across repetitions"))
+            old, new = groups["baseline"][0], groups["candidate"][0]
+            if not args.allow_movement_change and any(old[k] != new[k] for k in behavior):
                 regressions.append(dict(scenario=scenario, rule=rule, reason="shipped behavior changed"))
+            if (old["success"] and not new["success"]) or any(
+                    new[k] > old[k] for k in ("hits", "refused_moves", "overspeed_moves")):
+                regressions.append(dict(scenario=scenario, rule=rule, reason="safety regressed"))
     summary = dict(cpu=cpu, repeats=args.repeats, profile="shipped",
+                   allow_movement_change=args.allow_movement_change,
                    binaries={k: {"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
                              for k, p in binaries.items()},
                    note="Native simulation timing, worker executed inline; not live FPS.",

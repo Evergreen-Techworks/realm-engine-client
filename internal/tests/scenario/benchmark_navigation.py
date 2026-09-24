@@ -43,6 +43,21 @@ def cases():
                            navigator='dstar', speed='', start_shift='')
 
 
+def remote_travel_acceptance(rows, revision="candidate"):
+    """Quiet long-distance travel gets the same one-second pause limit under both rules."""
+    remote = [r for r in rows if r["revision"] == revision
+              and r["scenario"].startswith("n_rooms_remote_")]
+    failures = []
+    if len(remote) != 8:
+        failures.append(dict(reasons=[f"expected 8 remote route rows, found {len(remote)}"]))
+    for row in remote:
+        if row["paused_travel_frames"] > 60:
+            failures.append(dict(case=row["case"], profile=row["profile"], rule=row["rule"],
+                                 scenario=row["scenario"],
+                                 reasons=["quiet remote route paused for more than one second"]))
+    return failures
+
+
 def environment(case):
     env = {k: v for k, v in os.environ.items() if not k.startswith('HARNESS_')}
     toggle = 'on' if case['profile'] == 'fixture' else 'off'
@@ -138,6 +153,7 @@ def main():
                 regressions.append(dict(case=index, **case, reasons=reasons))
             csvfile.flush()
             raw.flush()
+    regressions.extend(remote_travel_acceptance(rows))
     summary = {'cases_per_revision': len(rows) // 2, 'regressions': regressions}
     for revision in binaries:
         subset = [r for r in rows if r['revision'] == revision]

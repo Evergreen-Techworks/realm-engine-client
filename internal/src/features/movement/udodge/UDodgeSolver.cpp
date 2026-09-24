@@ -541,7 +541,9 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     // wall is closing (a bullet WILL arrive) the stand is not durable, so we plan
     // a route out instead of waiting. This is the immediate-reflex floor for the
     // stand: temporal only ever makes us hold LESS than instantaneous safety.
-    const bool standDurable = IsDurablePocketTemporal(in, ctx, in.player, true);
+    // Commanded travel first validates its next step. A stand-and-hold forecast
+    // cannot change a safe travel return, so defer it until travel needs a dodge.
+    bool standDurable = !goal.walkTo && IsDurablePocketTemporal(in, ctx, in.player, true);
     if (standDurable && goal.groupActive && goal.fromLock && !goal.walkTo) {
         const Vec2 towardGroup = Sub(goal.groupPos, in.player);
         const float groupDistance = Len(towardGroup);
@@ -621,6 +623,8 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             }
         }
     }
+
+    if (goal.walkTo) standDurable = IsDurablePocketTemporal(in, ctx, in.player, true);
 
     // A safe commanded corridor step returns above without evaluating the
     // alternative dodge candidates. Their scores cannot change that decision.

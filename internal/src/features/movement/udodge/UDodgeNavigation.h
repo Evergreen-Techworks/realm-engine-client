@@ -13,6 +13,27 @@ inline bool SameRouteRequest(bool assisting, uint64_t epoch, uint64_t goalId,
         epoch == previousEpoch && goalId == previousGoalId;
 }
 
+// Continuing a consumed step only schedules another full safety solve. Under
+// the game collision rule, keep combat cadence and do not infer quiet travel
+// from missing/truncated projectile data. Legacy behavior remains unchanged.
+inline bool ContinueConsumedTravel(const MapInput& in, Vec2 nextStep)
+{
+    if (!UsesGameRule(in)) return true;
+    if (!in.map || in.map->hasLock || in.map->projectileSourceUnavailable || in.map->limited ||
+        in.map->enemyCount != 0 || in.map->laneCount != 0 || in.map->zoneCount != 0) return false;
+    // Preserve the old cadence close to terrain edges: game-rule point
+    // collision still has sensitive corner transitions. This clearance is only
+    // an eligibility check for an extra solve, never a new movement footprint.
+    constexpr float clearance = kWallPadding;
+    for (Vec2 offset : {Vec2{-clearance,-clearance}, Vec2{-clearance,clearance},
+                        Vec2{clearance,-clearance}, Vec2{clearance,clearance}}) {
+        const Vec2 from = Add(in.player, offset), to = Add(nextStep, offset);
+        if (!CanOccupyAt(in, from) || !CanOccupyAt(in, to) || !OccupancyPathClear(in, from, to))
+            return false;
+    }
+    return true;
+}
+
 inline bool TravelStepConsumed(bool walkTo, bool cacheValid, bool awaiting, bool safeMove,
                                Vec2 player, Vec2 target, Vec2 corridorStep, float frameTiles, bool exact = true)
 {

@@ -304,7 +304,7 @@ Vec2 g_trail[16]{};       // newest at [0]
 int  g_trailCount = 0;
 constexpr float kNavGoalMoveTiles = 3.0f;   // goal moved this far → re-plan
 constexpr float kNavDeviateTiles  = 5.0f;   // player pushed this far off the route → re-plan
-constexpr float kNavEndTiles      = 3.0f;   // within this of the route's end → consumed → re-plan
+constexpr float kNavEndTiles      = 3.0f;   // locked approaches retain their existing end tolerance
 // Per-tick safe-position solver result — game-thread-owned, cached for one
 // server tick and re-validated (or re-solved) every frame (plan 64).
 Solver::SolveResult g_solve;
@@ -1288,8 +1288,12 @@ void Tick(void* player, float px, float py, float dt)
         const bool routeInvalidated = commitNavigation
             ? (g_navCache.valid && !routeConnected)
             : (dev > kNavDeviateTiles);
-        const bool routeExhausted = nearEnd && (g_navCache.partial ||                    // consumed a partial route → extend
-            LenSq(Sub(in.player, wg)) > kNavEndTiles * kNavEndTiles);                    // at route end but not the goal
+        // A completed point route can end short after a small corridor-goal
+        // update. The goal-move threshold suppresses churn while travelling;
+        // it must not also postpone finishing the remaining distance until stall.
+        const float endTolerance = lockApproach ? kNavEndTiles : kUWalkArriveTiles;
+        const bool routeExhausted = nearEnd && (g_navCache.partial ||
+            LenSq(Sub(in.player, wg)) > endTolerance * endTolerance);                    // at route end but not the goal
         navRejoin = commitNavigation && routeConnected && dev > kNavDeviateTiles;
         navReplan = goalMoved || !g_navCache.valid || objectiveChanged || routeInvalidated || routeExhausted;
         if (goalMoved)               navReplanReason = Telemetry::ReplanReason::GoalMoved;
@@ -1771,14 +1775,19 @@ void Tick(void* player, float px, float py, float dt)
         g_route.found && g_route.ringGoal &&
         g_lastPubSeq >= g_route.forSeq && (g_lastPubSeq - g_route.forSeq) <= kUPlanMaxStaleSeq;
     const Vec2 steerStep = ringRoute ? g_route.stepTarget : navStep;
+    // Consumed safe steps need no server-tick wait during quiet travel. The
+    // game rule retains its existing cadence around combat: changing when we
+    // approach a shooter can change exposure even when each immediate step
+    // passes its safety checks. Legacy continuation is unchanged.
     const auto navHandoff = Navigation::FinishRefresh(goal.walkTo, wasNavWaiting, navWaiting,
         g_navCache.valid, in.player, navStep, rebuilt || tickChanged || throttleFallback,
         commitmentChanged, rejectedFreshWalk,
         (acceptedWalkSolve && LenSq(Sub(acceptedWalkStep, navWaiting ? in.player : steerStep))
             > kUNavAnchorArriveTiles * kUNavAnchorArriveTiles)
-        || (!UsesGameRule(in) && Navigation::TravelStepConsumed(goal.walkTo, g_navCache.valid, navWaiting,
+        || (Navigation::TravelStepConsumed(goal.walkTo, g_navCache.valid, navWaiting,
             g_solve.shouldMove && g_solve.kind == Solver::SolveKind::Safe,
-            in.player, g_solve.target, steerStep, in.speed * Clamp(dt * 1000.f, 1.f, 250.f), goal.exactTravel)));
+            in.player, g_solve.target, steerStep, in.speed * Clamp(dt * 1000.f, 1.f, 250.f),
+            goal.exactTravel) && Navigation::ContinueConsumedTravel(in, steerStep)));
     if (goal.walkTo) {
         navStep = navHandoff.step;
         goal.pos = ringRoute ? steerStep : navStep;

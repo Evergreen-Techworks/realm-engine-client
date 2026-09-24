@@ -141,6 +141,41 @@ int main() {
         Check(connected && step.x == 23.5f && step.y == 21.5f,
               "finish a forward corner despite tolerant clearance of the outgoing leg");
     }
+    {
+        static DangerMap quietMap{};
+        MapInput quiet{}; quiet.map = &quietMap;
+        quiet.env.rule = Movement::Collision::Rule::Game;
+        quiet.env.stepClear = [](float, float, float, float) { return true; };
+        quiet.env.canOccupy = [](float, float, bool) { return true; };
+        Check(Navigation::ContinueConsumedTravel(quiet, {}), "quiet game-rule travel can refresh a consumed safe step");
+        quiet.env.canOccupy = [](float x, float, bool) { return x < 0.1f; };
+        Check(!Navigation::ContinueConsumedTravel(quiet, {}), "nearby terrain retains corner cadence");
+        quiet.env.canOccupy = [](float, float, bool) { return true; };
+        Check(Navigation::TravelStepConsumed(true, true, false, true,
+                  {123.884765625f,95.115661621f}, {123.884773254f,95.115653992f},
+                  {126.436927795f,92.563072205f}, 0.1f, false),
+              "open-ground floating-point remainder does not wait for the next server tick");
+        quiet.env.canOccupy = [](float x, float, bool) { return x < 1.f; };
+        Check(!Navigation::ContinueConsumedTravel(quiet, {1.f, 0.f}),
+              "terrain clearance covers the next route segment, not only the current position");
+        quiet.env.canOccupy = [](float, float, bool) { return true; };
+        quietMap.enemyCount = 1;
+        Check(!Navigation::ContinueConsumedTravel(quiet, {}), "enemy presence preserves combat cadence before it fires");
+        quietMap.enemyCount = 0; quietMap.laneCount = 1;
+        Check(!Navigation::ContinueConsumedTravel(quiet, {}), "projectiles preserve combat cadence without an enemy");
+        quietMap.laneCount = 0; quietMap.zoneCount = 1;
+        Check(!Navigation::ContinueConsumedTravel(quiet, {}), "damage zones preserve combat cadence");
+        quietMap.zoneCount = 0; quietMap.hasLock = true;
+        Check(!Navigation::ContinueConsumedTravel(quiet, {}), "boss approach preserves combat cadence");
+        quietMap.hasLock = false; quietMap.projectileSourceUnavailable = true;
+        Check(!Navigation::ContinueConsumedTravel(quiet, {}), "missing projectile source is not evidence of quiet travel");
+        quietMap.projectileSourceUnavailable = false; quietMap.limited = true;
+        Check(!Navigation::ContinueConsumedTravel(quiet, {}), "truncated danger capture cannot enable continuation");
+        quiet.map = nullptr;
+        Check(!Navigation::ContinueConsumedTravel(quiet, {}), "absent danger map cannot enable continuation");
+        quiet.env.rule = Movement::Collision::Rule::Legacy;
+        Check(Navigation::ContinueConsumedTravel(quiet, {}), "legacy continuation remains unchanged");
+    }
     static DangerMap emptyMap{};
     MapInput cornerInput{}; cornerInput.map = &emptyMap; cornerInput.speed = 5.f;
     Solver::Goal cornerGoal{}; cornerGoal.active = true; cornerGoal.walkTo = true;
