@@ -9,6 +9,6 @@
     "server": "USWest"
   },
   "replacementRequired": false,
-  "minimumLevel": 2,
+  "minimumLevel": 20,
   "farmerSha256": "5fe644f2445ff693e090cf4b9b2ae72d2f78a22ccb134811207ba3b35de624ab"
 }
