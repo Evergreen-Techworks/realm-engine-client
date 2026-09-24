@@ -1,0 +1,605 @@
+{
+  "schema_version": 1,
+  "session_id": "20260924T190707Z",
+  "version": "1.0.44",
+  "build": {
+    "version": "1.0.44",
+    "commit": "b72f2a2",
+    "date": "2026-09-24T19:07:07.901Z",
+    "source": "marker"
+  },
+  "start_utc": "2026-09-24T19:07:07.898000+00:00",
+  "end_utc": "2026-09-24T19:16:09.948000+00:00",
+  "duration_s": 542.0,
+  "outcome": "OK",
+  "encounters": [
+    {
+      "boss": "Ethereal Shrine",
+      "quest_id": "230558",
+      "map": "Realm of the Mad God",
+      "map_instance": 2,
+      "start_ms": 1790276906376.0,
+      "end_ms": 1790276979972.0,
+      "outcome": "auto_nexus",
+      "nexus_requested": true,
+      "boss_kill_confirmed": false,
+      "slices": [
+        {
+          "start_ms": 1790276906376.0,
+          "end_ms": 1790276957921.0,
+          "phase": "approach",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 51.545,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 1,
+          "eligible_hits": 0,
+          "estimated_avoided": 1,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 54,
+          "kills": 8,
+          "observed_projectiles": 51,
+          "unsupported_projectiles": 12,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276957921.0,
+          "end_ms": 1790276960932.0,
+          "phase": "transition",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 3.011,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 1,
+          "eligible_hits": 0,
+          "estimated_avoided": 1,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 0,
+          "kills": 0,
+          "observed_projectiles": 13,
+          "unsupported_projectiles": 10,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276960932.0,
+          "end_ms": 1790276979972.0,
+          "phase": "approach",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 19.04,
+          "projectile_hits": 6,
+          "boss_hits": 0,
+          "other_enemy_hits": 6,
+          "unmodelled_hits": 1,
+          "eligible_near_passes": 38,
+          "eligible_hits": 5,
+          "estimated_avoided": 33,
+          "eligible_hit_rate": 0.13157894736842105,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 103,
+          "kills": 1,
+          "observed_projectiles": 502,
+          "unsupported_projectiles": 130,
+          "aoe_events": 10,
+          "aoe_sources": [
+            {
+              "otype": 9826,
+              "events": 8
+            },
+            {
+              "otype": 21889,
+              "events": 2
+            }
+          ],
+          "failure_samples": [
+            {
+              "t": 1790276972575,
+              "otype": 21889,
+              "x": 1305.257,
+              "y": 866.861,
+              "radius": 4,
+              "dmg": 150,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276972733,
+              "oid": 194686,
+              "otype": 9826,
+              "bid": 0,
+              "x": 1301.293,
+              "y": 861.535,
+              "odist": 4.155,
+              "edist": 4.155,
+              "hp": 675,
+              "maxhp": 675,
+              "kind": "hit"
+            },
+            {
+              "t": 1790276974133,
+              "otype": 9826,
+              "x": 1298.198,
+              "y": 862.472,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276974133,
+              "otype": 9826,
+              "x": 1302.425,
+              "y": 868.672,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276974133,
+              "otype": 9826,
+              "x": 1297.212,
+              "y": 867.686,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276974134,
+              "otype": 9826,
+              "x": 1303.411,
+              "y": 863.459,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276975563,
+              "otype": 21889,
+              "x": 1297.512,
+              "y": 859.048,
+              "radius": 4,
+              "dmg": 150,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276977389,
+              "otype": 9826,
+              "x": 1289.032,
+              "y": 859.987,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            }
+          ]
+        }
+      ],
+      "nexus": {
+        "layer": "hit-ledger",
+        "predicted_hp": 21,
+        "confirmed_hp": 403,
+        "max_hp": 775,
+        "escape_hp": 78,
+        "threshold_pct": 10,
+        "burst_guard": false
+      },
+      "review_reasons": [
+        "auto_nexus"
+      ],
+      "assessment": "needs_review"
+    }
+  ],
+  "categories": {
+    "script": {
+      "freezes_per_hour": 23.026982079464425,
+      "frozen_seconds_per_hour": 2736.5726042877113,
+      "longest_freeze_s": 210.3,
+      "flip_flops_per_hour": 15.351321386309618,
+      "distinct_quest_targets_per_hour": 7.675660693154809,
+      "raw": {
+        "freeze_count": 3,
+        "frozen_seconds_total": 356.5,
+        "flip_flop_count": 2,
+        "distinct_quest_targets": 1,
+        "active_farmer_basis_hours": 0.13
+      }
+    },
+    "survival": {
+      "deaths_per_hour": 0.0,
+      "disconnects_per_hour": 33.20726870214925,
+      "killers": {},
+      "raw": {
+        "death_count": 0,
+        "disconnect_count": 5,
+        "session_basis_hours": 0.151
+      },
+      "deaths_packet_count": 0,
+      "deaths_agree_log_vs_packet": true
+    },
+    "session": {
+      "active_farmer_minutes": 7.82,
+      "maps_visited": [
+        "Nexus",
+        "Realm of the Mad God"
+      ],
+      "maps_visited_count": 2,
+      "duration_minutes": 9.03,
+      "packet_recording_coverage_pct": 100.0
+    },
+    "dodge": {
+      "outcome": "INCONCLUSIVE",
+      "hits_per_1000_near_passes": 71.94244604316546,
+      "damage_per_1000_near_passes": 8345.323741007194,
+      "share_hits_enemy_within_3_tiles": 0.4,
+      "top_enemies": [
+        {
+          "otype": 29233,
+          "name": "Deep Sea Hydra",
+          "near_passes": 23,
+          "hits": 2,
+          "hits_per_1000_near_passes": 86.95652173913044
+        },
+        {
+          "otype": 9819,
+          "name": "Carboniferous Dinosaur",
+          "near_passes": 22,
+          "hits": 2,
+          "hits_per_1000_near_passes": 90.9090909090909
+        },
+        {
+          "otype": 21894,
+          "name": "Hallows Ghost God",
+          "near_passes": 8,
+          "hits": 1,
+          "hits_per_1000_near_passes": 125.0
+        },
+        {
+          "otype": 29209,
+          "name": "Deep Sea Jellyfish",
+          "near_passes": 7,
+          "hits": 1,
+          "hits_per_1000_near_passes": 142.85714285714286
+        },
+        {
+          "otype": 21889,
+          "name": "City Medusa",
+          "near_passes": 5,
+          "hits": 1,
+          "hits_per_1000_near_passes": 200.0
+        },
+        {
+          "otype": 14714,
+          "name": "Carboniferous Dragonfly",
+          "near_passes": 5,
+          "hits": 1,
+          "hits_per_1000_near_passes": 200.0
+        },
+        {
+          "otype": 9826,
+          "name": "Floral Dragon",
+          "near_passes": 3,
+          "hits": 1,
+          "hits_per_1000_near_passes": 333.3333333333333
+        },
+        {
+          "otype": 29459,
+          "name": "Floral Lily",
+          "near_passes": 1,
+          "hits": 1,
+          "hits_per_1000_near_passes": 1000.0
+        },
+        {
+          "otype": 21888,
+          "name": "Reef Leviathan",
+          "near_passes": 12,
+          "hits": 0,
+          "hits_per_1000_near_passes": 0.0
+        },
+        {
+          "otype": 29234,
+          "name": "Deep Sea Siren",
+          "near_passes": 8,
+          "hits": 0,
+          "hits_per_1000_near_passes": 0.0
+        }
+      ],
+      "raw": {
+        "near_passes": 139,
+        "near_passes_approx": 13,
+        "near_passes_from_hits": 2,
+        "hits": 10,
+        "damage_total": 1160.0,
+        "shots_without_projdef": 207,
+        "shots_backfilled": 231,
+        "shots_unresolved": 141,
+        "missing_projdef_pairs": [],
+        "min_near_passes": 300
+      },
+      "by_context": {
+        "walking": {
+          "near_passes": 53,
+          "hits": 6,
+          "hits_per_1000_near_passes": 113.20754716981132
+        }
+      }
+    },
+    "auto_aim": {
+      "player_shots": 1798,
+      "enemy_hits": 1459,
+      "hits_per_shot": 0.8114571746384872,
+      "hits_per_shot_unusable": null,
+      "kills": 242,
+      "kills_per_hour": 1643.9100604578493,
+      "low_span": true,
+      "raw": {
+        "player_shots": 1798,
+        "enemy_hits": 1459,
+        "kills": 242,
+        "packet_span_hours": 0.147
+      }
+    },
+    "navigation": {
+      "no_progress_walks_per_hour": 0.0,
+      "raw": {
+        "no_progress_walk_count": 0,
+        "active_farmer_basis_hours": 0.13,
+        "ground_damage_steps": 0,
+        "packet_span_hours": 0.147
+      },
+      "ground_damage_steps_per_hour": 0.0
+    }
+  },
+  "log_source": "/mnt/c/realm-engine-testlab/rig/RE_ASSETS/realm-engine-proxy.log",
+  "start_local": "2026-09-24 13:07:07 local",
+  "end_local": "2026-09-24 13:16:09 local",
+  "ab_experiments": [
+    {
+      "switch": "udodgeEnemyStandoff",
+      "a_value": "off",
+      "b_value": "auto",
+      "block_minutes": 2,
+      "seed": 1790276891944,
+      "start_ms": 1790276891944,
+      "stop_ms": 1790277369934,
+      "ended_by_stop": true,
+      "blocks": [
+        {
+          "index": 0,
+          "arm": "A",
+          "start_ms": 1790276891945,
+          "end_ms": 1790277012092,
+          "exposure_minutes": 1.919,
+          "near_passes": 48,
+          "hits": 6,
+          "hits_per_1000_near_passes": 125.0,
+          "kills": 52,
+          "shots_landed": 252,
+          "player_shots": 264,
+          "ground_damage_steps": 0,
+          "deaths": 0,
+          "frozen_seconds": 18.8,
+          "freeze_count": 1
+        },
+        {
+          "index": 1,
+          "arm": "B",
+          "start_ms": 1790277012092,
+          "end_ms": 1790277132264,
+          "exposure_minutes": 1.92,
+          "near_passes": 8,
+          "hits": 0,
+          "hits_per_1000_near_passes": 0.0,
+          "kills": 119,
+          "shots_landed": 409,
+          "player_shots": 438,
+          "ground_damage_steps": 0,
+          "deaths": 0,
+          "frozen_seconds": 110.1,
+          "freeze_count": 2
+        },
+        {
+          "index": 2,
+          "arm": "A",
+          "start_ms": 1790277132264,
+          "end_ms": 1790277252397,
+          "exposure_minutes": 1.919,
+          "near_passes": 34,
+          "hits": 2,
+          "hits_per_1000_near_passes": 58.8235294117647,
+          "kills": 46,
+          "shots_landed": 330,
+          "player_shots": 442,
+          "ground_damage_steps": 0,
+          "deaths": 0,
+          "frozen_seconds": 109.1,
+          "freeze_count": 2
+        },
+        {
+          "index": 3,
+          "arm": "B",
+          "start_ms": 1790277252397,
+          "end_ms": 1790277369934,
+          "exposure_minutes": 1.876,
+          "near_passes": 42,
+          "hits": 2,
+          "hits_per_1000_near_passes": 47.61904761904761,
+          "kills": 23,
+          "shots_landed": 426,
+          "player_shots": 574,
+          "ground_damage_steps": 0,
+          "deaths": 0,
+          "frozen_seconds": 103.5,
+          "freeze_count": 1
+        }
+      ],
+      "arms": {
+        "A": {
+          "exposure_minutes": 3.838,
+          "near_passes": 82,
+          "hits": 8,
+          "hits_per_1000_near_passes": 97.5609756097561,
+          "damage_per_1000_near_passes": 11219.51219512195,
+          "ground_damage_steps": 0,
+          "deaths": 0,
+          "guardrail": {
+            "minutes_in_world": 3.838,
+            "kills": 98,
+            "kills_per_min": 25.53413236060448,
+            "shots_landed": 582,
+            "shots_landed_per_min": 151.64147993746744,
+            "player_shots": 706,
+            "player_shots_per_min": 183.9499739447629,
+            "hits_per_shot": 0.8243626062322946,
+            "near_passes_per_min": 21.36529442417926,
+            "damage_taken_per_min": 239.70818134445022,
+            "deaths": 0,
+            "ground_damage_steps": 0,
+            "ground_damage_steps_per_min": 0.0,
+            "frozen_seconds": 127.9,
+            "freeze_count": 3
+          },
+          "raw": {
+            "near_passes": 82,
+            "hits": 8,
+            "damage_total": 920.0,
+            "exposure_minutes": 3.838,
+            "ground_damage_steps": 0,
+            "deaths": 0,
+            "kills": 98,
+            "shots_landed": 582,
+            "player_shots": 706,
+            "frozen_seconds": 127.9,
+            "freeze_count": 3
+          }
+        },
+        "B": {
+          "exposure_minutes": 3.795,
+          "near_passes": 50,
+          "hits": 2,
+          "hits_per_1000_near_passes": 40.0,
+          "damage_per_1000_near_passes": 4800.0,
+          "ground_damage_steps": 0,
+          "deaths": 0,
+          "guardrail": {
+            "minutes_in_world": 3.795,
+            "kills": 142,
+            "kills_per_min": 37.41617590872561,
+            "shots_landed": 835,
+            "shots_landed_per_min": 220.0176541111682,
+            "player_shots": 1012,
+            "player_shots_per_min": 266.65612689880504,
+            "hits_per_shot": 0.825098814229249,
+            "near_passes_per_min": 13.17470982701606,
+            "damage_taken_per_min": 63.23860716967709,
+            "deaths": 0,
+            "ground_damage_steps": 0,
+            "ground_damage_steps_per_min": 0.0,
+            "frozen_seconds": 213.7,
+            "freeze_count": 3
+          },
+          "raw": {
+            "near_passes": 50,
+            "hits": 2,
+            "damage_total": 240.0,
+            "exposure_minutes": 3.795,
+            "ground_damage_steps": 0,
+            "deaths": 0,
+            "kills": 142,
+            "shots_landed": 835,
+            "player_shots": 1012,
+            "frozen_seconds": 213.7,
+            "freeze_count": 3
+          }
+        }
+      },
+      "wilson_a": [
+        0.05026868828269794,
+        0.1808720576142121
+      ],
+      "wilson_b": [
+        0.011038884327619809,
+        0.1346009068750702
+      ],
+      "diff_interval": [
+        -0.14576235091503226,
+        0.048202401899714205
+      ],
+      "verdict": "INCONCLUSIVE (under-exposed)",
+      "guardrail": {
+        "status": "n/a",
+        "tripped": []
+      },
+      "qualified_verdict": "INCONCLUSIVE (under-exposed)"
+    }
+  ],
+  "dodge_fingerprint": "1341d16d4d4abcac0f93cea4d032657a9f5cedfba6d6fcde4227eb0ada0ebc6e",
+  "freezes": [
+    {
+      "type": "stall",
+      "family": "travelling to central realm",
+      "target": "Level 20",
+      "start_local": "2026-09-24 13:09:53 local",
+      "start_utc": "2026-09-24T19:09:53.341000+00:00",
+      "end_utc": "2026-09-24T19:10:28.738000+00:00",
+      "duration_s": 35.4,
+      "start_lineno": 24863,
+      "end_lineno": 24871,
+      "excerpt": [
+        "[19:09:53.341] [Script:farmer] [farmer] state: Level 20: travelling to central Realm | ctx pos=708.9,1433.5 goal=1024.0,1024.0 d=516.7 enemy=13.6 quest=-",
+        "[19:09:58.345] [Script:farmer] [farmer] state: Level 20: travelling to central Realm | ctx pos=727.8,1414.3 goal=1024.0,1024.0 d=489.9 enemy=19.5 quest=-",
+        "[19:10:03.434] [Script:farmer] [farmer] state: Level 20: travelling to central Realm | ctx pos=750.5,1391.7 goal=1024.0,1024.0 d=458.3 enemy=12.0 quest=-"
+      ],
+      "detail": "held 35.4s, budget 15.0s"
+    },
+    {
+      "type": "flip_flop",
+      "family": "beacon teleport <-> realm farmer: searching other beacon areas for purple white bosses",
+      "target": "Undead Forest Beacon",
+      "start_local": "2026-09-24 13:10:33 local",
+      "start_utc": "2026-09-24T19:10:33.807000+00:00",
+      "end_utc": "2026-09-24T19:12:24.618000+00:00",
+      "duration_s": 110.8,
+      "start_lineno": 24874,
+      "end_lineno": 24920,
+      "excerpt": [
+        "[19:10:33.807] [Script:farmer] [farmer] state: Beacon teleport \u2192 Undead Forest Beacon (Rookie) | ctx pos=863.9,1285.4 goal=1024.0,1024.0 d=306.5 enemy=3.8 quest=-",
+        "[19:10:36.892] [Script:farmer] [farmer] Realm Farmer: teleport confirmed \u2014 moved 244 tiles to \"Undead Forest Beacon (Rookie)\".",
+        "[19:10:36.896] [Script:farmer] [farmer] state: Realm Farmer: searching other beacon areas for purple/white bosses | ctx pos=671.5,1435.5 goal=605.5,1446.5 d=66.9 enemy=270.8 quest=-"
+      ],
+      "detail": "18 alternations over 110.8s"
+    },
+    {
+      "type": "flip_flop",
+      "family": "realm farmer: searching other beacon areas for purple white bosses <-> beacon teleport",
+      "target": "Deep Sea Abyss Beacon",
+      "start_local": "2026-09-24 13:12:30 local",
+      "start_utc": "2026-09-24T19:12:30.627000+00:00",
+      "end_utc": "2026-09-24T19:16:00.945000+00:00",
+      "duration_s": 210.3,
+      "start_lineno": 24925,
+      "end_lineno": 25012,
+      "excerpt": [
+        "[19:12:30.627] [Script:farmer] [farmer] state: Realm Farmer: searching other beacon areas for purple/white bosses | ctx pos=1081.4,146.6 goal=1072.5,151.5 d=10.1 enemy=15.5 quest=-",
+        "[19:12:35.719] [Script:farmer] [farmer] state: Realm Farmer: searching other beacon areas for purple/white bosses | ctx pos=1061.1,163.7 goal=378.5,951.5 d=1042.4 enemy=2.8 quest=-",
+        "[19:12:36.918] [Script:farmer] [farmer] Realm Farmer: beacon TP -> \"Deep Sea Abyss Beacon (Veteran)\" #174988 \u00b7 me->goal 1036, target->goal 0 (saves 1036)"
+      ],
+      "detail": "34 alternations over 210.3s"
+    }
+  ],
+  "deaths": []
+}

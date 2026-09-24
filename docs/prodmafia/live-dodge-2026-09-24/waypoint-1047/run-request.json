@@ -1,0 +1,37 @@
+{
+  "v": 1,
+  "runId": "20260924T201659Z-6fff",
+  "createdUtc": "2026-09-24T20:16:59Z",
+  "accountLabel": "lab1",
+  "minutes": 6.0,
+  "plugins": {
+    "testlab-recorder": {
+      "enabled": true
+    },
+    "auto-dodge": {
+      "settings": {
+        "dodgeMode": "unified",
+        "udodgePlanner": "tactician",
+        "navNavigator": "legacy",
+        "navCollisionRule": "legacy",
+        "udodgeEnemyStandoff": "auto",
+        "udodgeRouteCommit": "off",
+        "udodgeFallbackSidestep": "off",
+        "udodgeFrameBudget": "off"
+      }
+    },
+    "auto-nexus": {
+      "settings": {
+        "ForceAutoNexusHealth": "10",
+        "PredictiveNexusHealth": "5",
+        "BurstGuard": false
+      }
+    }
+  },
+  "stopOn": {
+    "death": true,
+    "maxReconnects": 5
+  },
+  "serverName": "USWest",
+  "scriptId": "farmer"
+}

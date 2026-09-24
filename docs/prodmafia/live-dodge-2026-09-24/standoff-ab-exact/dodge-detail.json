@@ -1,0 +1,775 @@
+{
+  "rows": [
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 1737,
+      "enemy_name": "Enraged Bunny",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 17901,
+      "enemy_name": "Hallows Werewolf",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 21843,
+      "enemy_name": "New Horned Drake",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 21848,
+      "enemy_name": "New Flayer",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 21849,
+      "enemy_name": "New Flayer Veteran",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 21853,
+      "enemy_name": "New Undead Dwarf Warrior",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 21855,
+      "enemy_name": "New Undead Dwarf Mage",
+      "bt": 0,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 21888,
+      "enemy_name": "Reef Leviathan",
+      "bt": 0,
+      "near_passes": 11,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 21888,
+      "enemy_name": "Reef Leviathan",
+      "bt": 1,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 21890,
+      "enemy_name": "City Beholder",
+      "bt": 1,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 21894,
+      "enemy_name": "Hallows Ghost God",
+      "bt": 0,
+      "near_passes": 8,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 120.0,
+      "hits_by_distance": {
+        "<3": 1,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 21956,
+      "enemy_name": "New Corsair Crab",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 29209,
+      "enemy_name": "Deep Sea Jellyfish",
+      "bt": 1,
+      "near_passes": 4,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 120.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 1,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 29209,
+      "enemy_name": "Deep Sea Jellyfish",
+      "bt": 2,
+      "near_passes": 3,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 29232,
+      "enemy_name": "Deep Sea Squid",
+      "bt": 1,
+      "near_passes": 0,
+      "near_passes_approx": 6,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 29233,
+      "enemy_name": "Deep Sea Hydra",
+      "bt": 0,
+      "near_passes": 11,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 120.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 1,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 29233,
+      "enemy_name": "Deep Sea Hydra",
+      "bt": 1,
+      "near_passes": 5,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 29233,
+      "enemy_name": "Deep Sea Hydra",
+      "bt": 2,
+      "near_passes": 7,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 120.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 1,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 29234,
+      "enemy_name": "Deep Sea Siren",
+      "bt": 0,
+      "near_passes": 0,
+      "near_passes_approx": 2,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 29234,
+      "enemy_name": "Deep Sea Siren",
+      "bt": 1,
+      "near_passes": 8,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 31508,
+      "enemy_name": "Tundra Yeti",
+      "bt": 0,
+      "near_passes": 4,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 31509,
+      "enemy_name": "Deep Sea Submarine",
+      "bt": 0,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 34516,
+      "enemy_name": "Flesh Satellite",
+      "bt": 0,
+      "near_passes": 0,
+      "near_passes_approx": 1,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 49340,
+      "enemy_name": "Reef Seahorse",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 49340,
+      "enemy_name": "Reef Seahorse",
+      "bt": 1,
+      "near_passes": 5,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 49341,
+      "enemy_name": "Reef Turtle",
+      "bt": 3,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 49342,
+      "enemy_name": "Reef Octopus",
+      "bt": 0,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 49344,
+      "enemy_name": "Reef Walrus",
+      "bt": 0,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "other",
+      "otype": 49897,
+      "enemy_name": "Hell Ghost",
+      "bt": 0,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 9819,
+      "enemy_name": "Carboniferous Dinosaur",
+      "bt": 0,
+      "near_passes": 11,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 120.0,
+      "hits_by_distance": {
+        "<3": 1,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 9819,
+      "enemy_name": "Carboniferous Dinosaur",
+      "bt": 1,
+      "near_passes": 11,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 120.0,
+      "hits_by_distance": {
+        "<3": 1,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 9826,
+      "enemy_name": "Floral Dragon",
+      "bt": 0,
+      "near_passes": 3,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 130.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 1,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 14714,
+      "enemy_name": "Carboniferous Dragonfly",
+      "bt": 3,
+      "near_passes": 5,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 110.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 1,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21807,
+      "enemy_name": "New Sand Phantom",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21811,
+      "enemy_name": "New Fire Sprite",
+      "bt": 0,
+      "near_passes": 4,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21825,
+      "enemy_name": "New Worker Wasp",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21826,
+      "enemy_name": "New Warrior Wasp",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21853,
+      "enemy_name": "New Undead Dwarf Warrior",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21855,
+      "enemy_name": "New Undead Dwarf Mage",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21858,
+      "enemy_name": "New Undead Dwarf God",
+      "bt": 0,
+      "near_passes": 2,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21889,
+      "enemy_name": "City Medusa",
+      "bt": 0,
+      "near_passes": 5,
+      "near_passes_approx": 0,
+      "hits": 1,
+      "damage": 100.0,
+      "hits_by_distance": {
+        "<3": 1,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21890,
+      "enemy_name": "City Beholder",
+      "bt": 0,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 21890,
+      "enemy_name": "City Beholder",
+      "bt": 1,
+      "near_passes": 1,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 29459,
+      "enemy_name": "Floral Lily",
+      "bt": 1,
+      "near_passes": 1,
+      "near_passes_approx": 4,
+      "hits": 1,
+      "damage": 100.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 1,
+        ">6": 0,
+        "unknown": 0
+      }
+    },
+    {
+      "map": "Realm of the Mad God",
+      "context": "walking",
+      "otype": 30573,
+      "enemy_name": "Carboniferous Spider",
+      "bt": 0,
+      "near_passes": 3,
+      "near_passes_approx": 0,
+      "hits": 0,
+      "damage": 0.0,
+      "hits_by_distance": {
+        "<3": 0,
+        "3-6": 0,
+        ">6": 0,
+        "unknown": 0
+      }
+    }
+  ],
+  "distance_bucket_note": "distance bucketing applies to hits only (hit.edist, the game's own ground truth); near passes have no enemy-position tracking in the recording to bucket by distance",
+  "_recording": {
+    "name": "packets-20260924T190719Z.jsonl",
+    "size": 801150,
+    "mtime_ns": 1790277369935059400
+  }
+}

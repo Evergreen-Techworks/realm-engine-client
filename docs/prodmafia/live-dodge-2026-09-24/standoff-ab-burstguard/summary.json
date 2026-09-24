@@ -1,0 +1,2101 @@
+{
+  "schema_version": 1,
+  "session_id": "20260924T185705Z",
+  "version": "1.0.44",
+  "build": {
+    "version": "1.0.44",
+    "commit": "b72f2a2",
+    "date": "2026-09-24T18:57:05.083Z",
+    "source": "marker"
+  },
+  "start_utc": "2026-09-24T18:57:05.080000+00:00",
+  "end_utc": "2026-09-24T19:06:07.245000+00:00",
+  "duration_s": 542.2,
+  "outcome": "OK",
+  "encounters": [
+    {
+      "boss": "Rock Dragon",
+      "quest_id": "222266",
+      "map": "Realm of the Mad God",
+      "map_instance": 2,
+      "start_ms": 1790276305905.0,
+      "end_ms": 1790276409904.0,
+      "outcome": "auto_nexus",
+      "nexus_requested": true,
+      "boss_kill_confirmed": false,
+      "slices": [
+        {
+          "start_ms": 1790276305905.0,
+          "end_ms": 1790276358325.0,
+          "phase": "approach",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 52.42,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 8,
+          "eligible_hits": 0,
+          "estimated_avoided": 8,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 291,
+          "kills": 127,
+          "observed_projectiles": 445,
+          "unsupported_projectiles": 73,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276358325.0,
+          "end_ms": 1790276361360.0,
+          "phase": "transition",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 3.035,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 0,
+          "eligible_hits": 0,
+          "estimated_avoided": 0,
+          "eligible_hit_rate": null,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 0,
+          "kills": 0,
+          "observed_projectiles": 90,
+          "unsupported_projectiles": 10,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276361360.0,
+          "end_ms": 1790276409904.0,
+          "phase": "approach",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 48.544,
+          "projectile_hits": 5,
+          "boss_hits": 0,
+          "other_enemy_hits": 5,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 49,
+          "eligible_hits": 5,
+          "estimated_avoided": 44,
+          "eligible_hit_rate": 0.10204081632653061,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 348,
+          "kills": 16,
+          "observed_projectiles": 1534,
+          "unsupported_projectiles": 262,
+          "aoe_events": 2,
+          "aoe_sources": [
+            {
+              "otype": 21889,
+              "events": 2
+            }
+          ],
+          "failure_samples": [
+            {
+              "t": 1790276387121,
+              "otype": 21889,
+              "x": 1229.365,
+              "y": 1097.269,
+              "radius": 4,
+              "dmg": 150,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276387938,
+              "oid": 188584,
+              "otype": 21889,
+              "bid": 18,
+              "x": 1228.455,
+              "y": 1093.679,
+              "odist": 6.551,
+              "edist": 6.551,
+              "hp": 542,
+              "maxhp": 675,
+              "kind": "hit"
+            },
+            {
+              "t": 1790276388498,
+              "oid": 188584,
+              "otype": 21889,
+              "bid": 22,
+              "x": 1226.798,
+              "y": 1093.984,
+              "odist": 6.251,
+              "edist": 6.251,
+              "hp": 460,
+              "maxhp": 675,
+              "kind": "hit"
+            },
+            {
+              "t": 1790276390202,
+              "otype": 21889,
+              "x": 1227.868,
+              "y": 1093.906,
+              "radius": 4,
+              "dmg": 150,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276409451,
+              "oid": 202264,
+              "otype": 21889,
+              "bid": 12,
+              "x": 1157.622,
+              "y": 1128.836,
+              "odist": 4.849,
+              "edist": 3.257,
+              "hp": 501,
+              "maxhp": 675,
+              "kind": "hit"
+            },
+            {
+              "t": 1790276409661,
+              "oid": 176859,
+              "otype": 21895,
+              "bid": 21,
+              "x": 1158.514,
+              "y": 1127.923,
+              "odist": 6.539,
+              "edist": 3.967,
+              "hp": 502,
+              "maxhp": 675,
+              "kind": "hit"
+            },
+            {
+              "t": 1790276409903,
+              "oid": 190642,
+              "otype": 21890,
+              "bid": 14,
+              "x": 1158.549,
+              "y": 1126.853,
+              "odist": 7.133,
+              "edist": 3.645,
+              "hp": 291,
+              "maxhp": 675,
+              "kind": "hit"
+            }
+          ]
+        }
+      ],
+      "nexus": {
+        "layer": "hit-ledger",
+        "predicted_hp": 187,
+        "confirmed_hp": 291,
+        "max_hp": 775,
+        "escape_hp": 264,
+        "threshold_pct": null,
+        "burst_guard": true
+      },
+      "review_reasons": [
+        "auto_nexus"
+      ],
+      "assessment": "needs_review"
+    },
+    {
+      "boss": "Ravenous Rot",
+      "quest_id": "225047",
+      "map": "Realm of the Mad God",
+      "map_instance": 4,
+      "start_ms": 1790276423460.0,
+      "end_ms": 1790276460668.0,
+      "outcome": "auto_nexus",
+      "nexus_requested": true,
+      "boss_kill_confirmed": false,
+      "slices": [
+        {
+          "start_ms": 1790276423460.0,
+          "end_ms": 1790276439772.0,
+          "phase": "approach",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 16.312,
+          "projectile_hits": 1,
+          "boss_hits": 0,
+          "other_enemy_hits": 1,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 3,
+          "eligible_hits": 1,
+          "estimated_avoided": 2,
+          "eligible_hit_rate": 0.3333333333333333,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 186,
+          "kills": 2,
+          "observed_projectiles": 136,
+          "unsupported_projectiles": 78,
+          "aoe_events": 4,
+          "aoe_sources": [
+            {
+              "otype": 9826,
+              "events": 4
+            }
+          ],
+          "failure_samples": [
+            {
+              "t": 1790276428752,
+              "oid": 217009,
+              "otype": null,
+              "bid": 13,
+              "x": 1257.884,
+              "y": 550.567,
+              "odist": null,
+              "edist": 4.21,
+              "hp": 593,
+              "maxhp": 675,
+              "kind": "hit"
+            },
+            {
+              "t": 1790276430369,
+              "otype": 9826,
+              "x": 1267.951,
+              "y": 555.39,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276430369,
+              "otype": 9826,
+              "x": 1257.254,
+              "y": 554.324,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276430369,
+              "otype": 9826,
+              "x": 1263.135,
+              "y": 549.509,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276430370,
+              "otype": 9826,
+              "x": 1262.07,
+              "y": 560.206,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            }
+          ]
+        },
+        {
+          "start_ms": 1790276439772.0,
+          "end_ms": 1790276442713.0,
+          "phase": "loot",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 2.941,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 1,
+          "eligible_hits": 0,
+          "estimated_avoided": 1,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 34,
+          "kills": 0,
+          "observed_projectiles": 18,
+          "unsupported_projectiles": 6,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276442713.0,
+          "end_ms": 1790276460668.0,
+          "phase": "approach",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 17.955,
+          "projectile_hits": 2,
+          "boss_hits": 0,
+          "other_enemy_hits": 2,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 33,
+          "eligible_hits": 2,
+          "estimated_avoided": 31,
+          "eligible_hit_rate": 0.06060606060606061,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 190,
+          "kills": 2,
+          "observed_projectiles": 1068,
+          "unsupported_projectiles": 229,
+          "aoe_events": 261,
+          "aoe_sources": [
+            {
+              "otype": 767,
+              "events": 247
+            },
+            {
+              "otype": 9826,
+              "events": 8
+            },
+            {
+              "otype": 31637,
+              "events": 4
+            },
+            {
+              "otype": 9825,
+              "events": 2
+            }
+          ],
+          "failure_samples": [
+            {
+              "t": 1790276448277,
+              "otype": 9826,
+              "x": 1308.768,
+              "y": 594.834,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276448277,
+              "otype": 9826,
+              "x": 1306.536,
+              "y": 584.947,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276448277,
+              "otype": 9826,
+              "x": 1316.424,
+              "y": 582.715,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276448277,
+              "otype": 9826,
+              "x": 1318.655,
+              "y": 592.602,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276449294,
+              "otype": 9825,
+              "x": 1310.426,
+              "y": 596.393,
+              "radius": 3,
+              "dmg": 110,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276450102,
+              "otype": 9825,
+              "x": 1314.486,
+              "y": 598.369,
+              "radius": 3,
+              "dmg": 110,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276451531,
+              "otype": 9826,
+              "x": 1312.025,
+              "y": 595.137,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276451531,
+              "otype": 9826,
+              "x": 1316.76,
+              "y": 595.927,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            }
+          ]
+        }
+      ],
+      "nexus": {
+        "layer": "hit-ledger",
+        "predicted_hp": 58,
+        "confirmed_hp": 161,
+        "max_hp": 775,
+        "escape_hp": 116,
+        "threshold_pct": null,
+        "burst_guard": true
+      },
+      "review_reasons": [
+        "auto_nexus"
+      ],
+      "assessment": "needs_review"
+    },
+    {
+      "boss": "Skull Knight",
+      "quest_id": "227034",
+      "map": "Realm of the Mad God",
+      "map_instance": 6,
+      "start_ms": 1790276474610.0,
+      "end_ms": 1790276528951.0,
+      "outcome": "auto_nexus",
+      "nexus_requested": true,
+      "boss_kill_confirmed": false,
+      "slices": [
+        {
+          "start_ms": 1790276474610.0,
+          "end_ms": 1790276486585.0,
+          "phase": "approach",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 11.975,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 0,
+          "eligible_hits": 0,
+          "estimated_avoided": 0,
+          "eligible_hit_rate": null,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 26,
+          "kills": 0,
+          "observed_projectiles": 17,
+          "unsupported_projectiles": 0,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276486585.0,
+          "end_ms": 1790276495123.0,
+          "phase": "transition",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 8.538,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 5,
+          "eligible_hits": 0,
+          "estimated_avoided": 5,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 62,
+          "kills": 4,
+          "observed_projectiles": 132,
+          "unsupported_projectiles": 107,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276495123.0,
+          "end_ms": 1790276504244.0,
+          "phase": "combat",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 9.121,
+          "projectile_hits": 2,
+          "boss_hits": 1,
+          "other_enemy_hits": 1,
+          "unmodelled_hits": 1,
+          "eligible_near_passes": 17,
+          "eligible_hits": 1,
+          "estimated_avoided": 16,
+          "eligible_hit_rate": 0.058823529411764705,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 115,
+          "kills": 0,
+          "observed_projectiles": 409,
+          "unsupported_projectiles": 293,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": [
+            {
+              "t": 1790276501548,
+              "oid": 227034,
+              "otype": 34537,
+              "bid": 303,
+              "x": 1172.803,
+              "y": 1428.247,
+              "odist": 2.855,
+              "edist": 2.708,
+              "hp": 605,
+              "maxhp": 675,
+              "kind": "hit"
+            },
+            {
+              "t": 1790276503500,
+              "oid": 224724,
+              "otype": 17898,
+              "bid": 28,
+              "x": 1173.035,
+              "y": 1434.727,
+              "odist": 6.08,
+              "edist": 4.83,
+              "hp": 533,
+              "maxhp": 675,
+              "kind": "hit"
+            }
+          ]
+        },
+        {
+          "start_ms": 1790276504244.0,
+          "end_ms": 1790276507269.0,
+          "phase": "transition",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 3.025,
+          "projectile_hits": 1,
+          "boss_hits": 1,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 6,
+          "eligible_hits": 1,
+          "estimated_avoided": 5,
+          "eligible_hit_rate": 0.16666666666666666,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 2,
+          "kills": 0,
+          "observed_projectiles": 145,
+          "unsupported_projectiles": 57,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": [
+            {
+              "t": 1790276504540,
+              "oid": 227034,
+              "otype": 34537,
+              "bid": 430,
+              "x": 1173.731,
+              "y": 1434.623,
+              "odist": 3.836,
+              "edist": 3.836,
+              "hp": 464,
+              "maxhp": 675,
+              "kind": "hit"
+            }
+          ]
+        },
+        {
+          "start_ms": 1790276507269.0,
+          "end_ms": 1790276516400.0,
+          "phase": "combat",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 9.131,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 5,
+          "eligible_hits": 0,
+          "estimated_avoided": 5,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 70,
+          "kills": 15,
+          "observed_projectiles": 414,
+          "unsupported_projectiles": 111,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276516400.0,
+          "end_ms": 1790276519417.0,
+          "phase": "transition",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 3.017,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 2,
+          "eligible_hits": 0,
+          "estimated_avoided": 2,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 4,
+          "kills": 0,
+          "observed_projectiles": 122,
+          "unsupported_projectiles": 83,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276519417.0,
+          "end_ms": 1790276528471.0,
+          "phase": "combat",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 9.054,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 5,
+          "eligible_hits": 0,
+          "estimated_avoided": 5,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 88,
+          "kills": 2,
+          "observed_projectiles": 314,
+          "unsupported_projectiles": 232,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276528471.0,
+          "end_ms": 1790276528951.0,
+          "phase": "transition",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 0.48,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 0,
+          "eligible_hits": 0,
+          "estimated_avoided": 0,
+          "eligible_hit_rate": null,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 2,
+          "kills": 0,
+          "observed_projectiles": 17,
+          "unsupported_projectiles": 12,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        }
+      ],
+      "nexus": {
+        "layer": "hit-ledger",
+        "predicted_hp": 140,
+        "confirmed_hp": 283,
+        "max_hp": 775,
+        "escape_hp": 178,
+        "threshold_pct": null,
+        "burst_guard": true
+      },
+      "review_reasons": [
+        "auto_nexus"
+      ],
+      "assessment": "needs_review"
+    },
+    {
+      "boss": "Skull Knight",
+      "quest_id": "227034",
+      "map": "Realm of the Mad God",
+      "map_instance": 8,
+      "start_ms": 1790276548420.0,
+      "end_ms": 1790276628039.0,
+      "outcome": "auto_nexus",
+      "nexus_requested": true,
+      "boss_kill_confirmed": false,
+      "slices": [
+        {
+          "start_ms": 1790276548420.0,
+          "end_ms": 1790276563151.0,
+          "phase": "approach",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 14.731,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 0,
+          "eligible_hits": 0,
+          "estimated_avoided": 0,
+          "eligible_hit_rate": null,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 0,
+          "kills": 0,
+          "observed_projectiles": 185,
+          "unsupported_projectiles": 6,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276563151.0,
+          "end_ms": 1790276568827.0,
+          "phase": "combat",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 5.676,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 3,
+          "eligible_hits": 0,
+          "estimated_avoided": 3,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 136,
+          "kills": 16,
+          "observed_projectiles": 233,
+          "unsupported_projectiles": 31,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276568827.0,
+          "end_ms": 1790276571875.0,
+          "phase": "transition",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 3.048,
+          "projectile_hits": 1,
+          "boss_hits": 1,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 1,
+          "eligible_near_passes": 1,
+          "eligible_hits": 0,
+          "estimated_avoided": 1,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 6,
+          "kills": 0,
+          "observed_projectiles": 96,
+          "unsupported_projectiles": 75,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": [
+            {
+              "t": 1790276571847,
+              "oid": 227034,
+              "otype": 34537,
+              "bid": 1616,
+              "x": 1162.281,
+              "y": 1442.031,
+              "odist": 1.826,
+              "edist": 1.826,
+              "hp": 675,
+              "maxhp": 675,
+              "kind": "hit"
+            }
+          ]
+        },
+        {
+          "start_ms": 1790276571875.0,
+          "end_ms": 1790276580903.0,
+          "phase": "combat",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 9.028,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 4,
+          "eligible_hits": 0,
+          "estimated_avoided": 4,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 124,
+          "kills": 0,
+          "observed_projectiles": 317,
+          "unsupported_projectiles": 242,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276580903.0,
+          "end_ms": 1790276584049.0,
+          "phase": "transition",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 3.146,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 5,
+          "eligible_hits": 0,
+          "estimated_avoided": 5,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 18,
+          "kills": 0,
+          "observed_projectiles": 111,
+          "unsupported_projectiles": 7,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276584049.0,
+          "end_ms": 1790276593072.0,
+          "phase": "combat",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 9.023,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 11,
+          "eligible_hits": 0,
+          "estimated_avoided": 11,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 122,
+          "kills": 0,
+          "observed_projectiles": 340,
+          "unsupported_projectiles": 18,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276593072.0,
+          "end_ms": 1790276596091.0,
+          "phase": "transition",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 3.019,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 4,
+          "eligible_hits": 0,
+          "estimated_avoided": 4,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 6,
+          "kills": 0,
+          "observed_projectiles": 79,
+          "unsupported_projectiles": 10,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276596091.0,
+          "end_ms": 1790276605163.0,
+          "phase": "combat",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 9.072,
+          "projectile_hits": 2,
+          "boss_hits": 2,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 1,
+          "eligible_near_passes": 8,
+          "eligible_hits": 1,
+          "estimated_avoided": 7,
+          "eligible_hit_rate": 0.125,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 106,
+          "kills": 0,
+          "observed_projectiles": 229,
+          "unsupported_projectiles": 40,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": [
+            {
+              "t": 1790276602173,
+              "oid": 227034,
+              "otype": 34537,
+              "bid": 2608,
+              "x": 1164.43,
+              "y": 1449.363,
+              "odist": 6.75,
+              "edist": 6.75,
+              "hp": 604,
+              "maxhp": 675,
+              "kind": "hit"
+            },
+            {
+              "t": 1790276603829,
+              "oid": 227034,
+              "otype": 34537,
+              "bid": 2649,
+              "x": 1164.354,
+              "y": 1449.221,
+              "odist": 6.321,
+              "edist": 6.321,
+              "hp": 546,
+              "maxhp": 675,
+              "kind": "hit"
+            }
+          ]
+        },
+        {
+          "start_ms": 1790276605163.0,
+          "end_ms": 1790276608184.0,
+          "phase": "transition",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 3.021,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 2,
+          "eligible_hits": 0,
+          "estimated_avoided": 2,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 4,
+          "kills": 0,
+          "observed_projectiles": 104,
+          "unsupported_projectiles": 0,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276608184.0,
+          "end_ms": 1790276611541.0,
+          "phase": "combat",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 3.357,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 2,
+          "eligible_hits": 0,
+          "estimated_avoided": 2,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 54,
+          "kills": 0,
+          "observed_projectiles": 114,
+          "unsupported_projectiles": 0,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276611541.0,
+          "end_ms": 1790276614455.0,
+          "phase": "transition",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 2.914,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 7,
+          "eligible_hits": 0,
+          "estimated_avoided": 7,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 4,
+          "kills": 0,
+          "observed_projectiles": 164,
+          "unsupported_projectiles": 111,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276614455.0,
+          "end_ms": 1790276627716.0,
+          "phase": "combat",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 13.261,
+          "projectile_hits": 2,
+          "boss_hits": 2,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 20,
+          "eligible_hits": 2,
+          "estimated_avoided": 18,
+          "eligible_hit_rate": 0.1,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 154,
+          "kills": 0,
+          "observed_projectiles": 735,
+          "unsupported_projectiles": 474,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": [
+            {
+              "t": 1790276615603,
+              "oid": 227034,
+              "otype": 34537,
+              "bid": 3082,
+              "x": 1174.765,
+              "y": 1443.163,
+              "odist": 5.669,
+              "edist": 5.669,
+              "hp": 415,
+              "maxhp": 675,
+              "kind": "hit"
+            },
+            {
+              "t": 1790276618447,
+              "oid": 227034,
+              "otype": 34537,
+              "bid": 3224,
+              "x": 1181.953,
+              "y": 1443.555,
+              "odist": 4.272,
+              "edist": 4.272,
+              "hp": 313,
+              "maxhp": 675,
+              "kind": "hit"
+            }
+          ]
+        },
+        {
+          "start_ms": 1790276627716.0,
+          "end_ms": 1790276628039.0,
+          "phase": "transition",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 0.323,
+          "projectile_hits": 1,
+          "boss_hits": 1,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 1,
+          "eligible_near_passes": 1,
+          "eligible_hits": 0,
+          "estimated_avoided": 1,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 0,
+          "kills": 0,
+          "observed_projectiles": 3,
+          "unsupported_projectiles": 3,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": [
+            {
+              "t": 1790276627827,
+              "oid": 227034,
+              "otype": 34537,
+              "bid": 3623,
+              "x": 1189.71,
+              "y": 1451.658,
+              "odist": 6.578,
+              "edist": 5.081,
+              "hp": 247,
+              "maxhp": 675,
+              "kind": "hit"
+            }
+          ]
+        }
+      ],
+      "nexus": {
+        "layer": "confirmed-health",
+        "predicted_hp": 104,
+        "confirmed_hp": 105,
+        "max_hp": 775,
+        "escape_hp": 178,
+        "threshold_pct": null,
+        "burst_guard": true
+      },
+      "review_reasons": [
+        "auto_nexus"
+      ],
+      "assessment": "needs_review"
+    },
+    {
+      "boss": "Ethereal Shrine",
+      "quest_id": "230558",
+      "map": "Realm of the Mad God",
+      "map_instance": 10,
+      "start_ms": 1790276641752.0,
+      "end_ms": 1790276722021.0,
+      "outcome": "auto_nexus",
+      "nexus_requested": true,
+      "boss_kill_confirmed": false,
+      "slices": [
+        {
+          "start_ms": 1790276641752.0,
+          "end_ms": 1790276649659.0,
+          "phase": "approach",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 7.907,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 1,
+          "eligible_hits": 0,
+          "estimated_avoided": 1,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 72,
+          "kills": 2,
+          "observed_projectiles": 119,
+          "unsupported_projectiles": 18,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276649659.0,
+          "end_ms": 1790276651736,
+          "phase": "loot",
+          "settings": {
+            "udodgeEnemyStandoff": "off"
+          },
+          "duration_s": 2.077,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 1,
+          "eligible_hits": 0,
+          "estimated_avoided": 1,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 6,
+          "kills": 0,
+          "observed_projectiles": 0,
+          "unsupported_projectiles": 0,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276651736,
+          "end_ms": 1790276652354.0,
+          "phase": "loot",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 0.618,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 0,
+          "eligible_hits": 0,
+          "estimated_avoided": 0,
+          "eligible_hit_rate": null,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 0,
+          "kills": 0,
+          "observed_projectiles": 0,
+          "unsupported_projectiles": 0,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276652354.0,
+          "end_ms": 1790276673125.0,
+          "phase": "approach",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 20.771,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 5,
+          "eligible_hits": 0,
+          "estimated_avoided": 5,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 180,
+          "kills": 18,
+          "observed_projectiles": 464,
+          "unsupported_projectiles": 82,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276673125.0,
+          "end_ms": 1790276677223.0,
+          "phase": "loot",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 4.098,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 2,
+          "eligible_hits": 0,
+          "estimated_avoided": 2,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 38,
+          "kills": 2,
+          "observed_projectiles": 74,
+          "unsupported_projectiles": 20,
+          "aoe_events": 1,
+          "aoe_sources": [
+            {
+              "otype": 9825,
+              "events": 1
+            }
+          ],
+          "failure_samples": [
+            {
+              "t": 1790276673731,
+              "otype": 9825,
+              "x": 1193.614,
+              "y": 868.993,
+              "radius": 3,
+              "dmg": 110,
+              "kind": "aoe"
+            }
+          ]
+        },
+        {
+          "start_ms": 1790276677223.0,
+          "end_ms": 1790276689298.0,
+          "phase": "approach",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 12.075,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 1,
+          "eligible_hits": 0,
+          "estimated_avoided": 1,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 102,
+          "kills": 0,
+          "observed_projectiles": 108,
+          "unsupported_projectiles": 58,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276689298.0,
+          "end_ms": 1790276692309.0,
+          "phase": "transition",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 3.011,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 0,
+          "eligible_hits": 0,
+          "estimated_avoided": 0,
+          "eligible_hit_rate": null,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 8,
+          "kills": 0,
+          "observed_projectiles": 33,
+          "unsupported_projectiles": 23,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276692309.0,
+          "end_ms": 1790276720103.0,
+          "phase": "approach",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 27.794,
+          "projectile_hits": 3,
+          "boss_hits": 0,
+          "other_enemy_hits": 3,
+          "unmodelled_hits": 2,
+          "eligible_near_passes": 15,
+          "eligible_hits": 1,
+          "estimated_avoided": 14,
+          "eligible_hit_rate": 0.06666666666666667,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 239,
+          "kills": 4,
+          "observed_projectiles": 623,
+          "unsupported_projectiles": 418,
+          "aoe_events": 8,
+          "aoe_sources": [
+            {
+              "otype": 9826,
+              "events": 8
+            }
+          ],
+          "failure_samples": [
+            {
+              "t": 1790276693152,
+              "otype": 9826,
+              "x": 1218.495,
+              "y": 803.184,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276693152,
+              "otype": 9826,
+              "x": 1219.264,
+              "y": 810.361,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276693152,
+              "otype": 9826,
+              "x": 1226.441,
+              "y": 809.592,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276693153,
+              "otype": 9826,
+              "x": 1225.672,
+              "y": 802.415,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276699885,
+              "oid": 176212,
+              "otype": 9828,
+              "bid": 11,
+              "x": 1237.596,
+              "y": 804.25,
+              "odist": 3.869,
+              "edist": 3.869,
+              "hp": 675,
+              "maxhp": 675,
+              "kind": "hit"
+            },
+            {
+              "t": 1790276714440,
+              "oid": 194814,
+              "otype": 29459,
+              "bid": 47,
+              "x": 1239.031,
+              "y": 804.757,
+              "odist": 5.034,
+              "edist": 4.094,
+              "hp": 455,
+              "maxhp": 675,
+              "kind": "hit"
+            },
+            {
+              "t": 1790276719781,
+              "otype": 9826,
+              "x": 1248.557,
+              "y": 801.268,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276719781,
+              "otype": 9826,
+              "x": 1250.14,
+              "y": 806.611,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            }
+          ]
+        },
+        {
+          "start_ms": 1790276720103.0,
+          "end_ms": 1790276722021.0,
+          "phase": "transition",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 1.918,
+          "projectile_hits": 1,
+          "boss_hits": 0,
+          "other_enemy_hits": 1,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 5,
+          "eligible_hits": 1,
+          "estimated_avoided": 4,
+          "eligible_hit_rate": 0.2,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 14,
+          "kills": 0,
+          "observed_projectiles": 121,
+          "unsupported_projectiles": 48,
+          "aoe_events": 4,
+          "aoe_sources": [
+            {
+              "otype": 9826,
+              "events": 4
+            }
+          ],
+          "failure_samples": [
+            {
+              "t": 1790276721862,
+              "oid": 192260,
+              "otype": 9830,
+              "bid": 34,
+              "x": 1246.503,
+              "y": 789.285,
+              "odist": 5.111,
+              "edist": 5.111,
+              "hp": 319,
+              "maxhp": 675,
+              "kind": "hit"
+            },
+            {
+              "t": 1790276722017,
+              "otype": 9826,
+              "x": 1251.345,
+              "y": 788.486,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276722017,
+              "otype": 9826,
+              "x": 1257.94,
+              "y": 793.187,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276722018,
+              "otype": 9826,
+              "x": 1253.238,
+              "y": 799.782,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            },
+            {
+              "t": 1790276722018,
+              "otype": 9826,
+              "x": 1246.643,
+              "y": 795.08,
+              "radius": 3,
+              "dmg": 160,
+              "kind": "aoe"
+            }
+          ]
+        }
+      ],
+      "nexus": {
+        "layer": "confirmed-health",
+        "predicted_hp": 124,
+        "confirmed_hp": 124,
+        "max_hp": 775,
+        "escape_hp": 244,
+        "threshold_pct": null,
+        "burst_guard": true
+      },
+      "review_reasons": [
+        "auto_nexus"
+      ],
+      "assessment": "needs_review"
+    },
+    {
+      "boss": "Skull Shrine",
+      "quest_id": "230889",
+      "map": "Realm of the Mad God",
+      "map_instance": 12,
+      "start_ms": 1790276736738.0,
+      "end_ms": 1790276761045.0,
+      "outcome": "disconnect",
+      "nexus_requested": false,
+      "boss_kill_confirmed": false,
+      "slices": [
+        {
+          "start_ms": 1790276736738.0,
+          "end_ms": 1790276752904.0,
+          "phase": "approach",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 16.166,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 25,
+          "eligible_hits": 0,
+          "estimated_avoided": 25,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 92,
+          "kills": 8,
+          "observed_projectiles": 1075,
+          "unsupported_projectiles": 216,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        },
+        {
+          "start_ms": 1790276752904.0,
+          "end_ms": 1790276761045.0,
+          "phase": "combat",
+          "settings": {
+            "udodgeEnemyStandoff": "auto"
+          },
+          "duration_s": 8.141,
+          "projectile_hits": 0,
+          "boss_hits": 0,
+          "other_enemy_hits": 0,
+          "unmodelled_hits": 0,
+          "eligible_near_passes": 31,
+          "eligible_hits": 0,
+          "estimated_avoided": 31,
+          "eligible_hit_rate": 0.0,
+          "ground_steps": 0,
+          "ground_cells": [],
+          "shots_landed": 25,
+          "kills": 0,
+          "observed_projectiles": 696,
+          "unsupported_projectiles": 204,
+          "aoe_events": 0,
+          "aoe_sources": [],
+          "failure_samples": []
+        }
+      ],
+      "nexus": null,
+      "review_reasons": [],
+      "assessment": "incomplete"
+    }
+  ],
+  "categories": {
+    "script": {
+      "freezes_per_hour": 38.569913324833685,
+      "frozen_seconds_per_hour": 783.7097828299607,
+      "longest_freeze_s": 43.7,
+      "flip_flops_per_hour": 23.14194799490021,
+      "distinct_quest_targets_per_hour": 38.569913324833685,
+      "raw": {
+        "freeze_count": 5,
+        "frozen_seconds_total": 101.6,
+        "flip_flop_count": 3,
+        "distinct_quest_targets": 5,
+        "active_farmer_basis_hours": 0.13
+      }
+    },
+    "survival": {
+      "deaths_per_hour": 0.0,
+      "disconnects_per_hour": 86.3205850617432,
+      "killers": {},
+      "raw": {
+        "death_count": 0,
+        "disconnect_count": 13,
+        "session_basis_hours": 0.151
+      },
+      "deaths_packet_count": 0,
+      "deaths_agree_log_vs_packet": true
+    },
+    "session": {
+      "active_farmer_minutes": 7.78,
+      "maps_visited": [
+        "Nexus",
+        "Realm of the Mad God"
+      ],
+      "maps_visited_count": 2,
+      "duration_minutes": 9.04,
+      "packet_recording_coverage_pct": 100.0
+    },
+    "dodge": {
+      "outcome": "OK",
+      "hits_per_1000_near_passes": 70.1219512195122,
+      "damage_per_1000_near_passes": 7789.634146341464,
+      "share_hits_enemy_within_3_tiles": 0.17391304347826086,
+      "top_enemies": [
+        {
+          "otype": 34537,
+          "name": "Skull Knight",
+          "near_passes": 97,
+          "hits": 9,
+          "hits_per_1000_near_passes": 92.78350515463917
+        },
+        {
+          "otype": 9830,
+          "name": "Floral Rhino",
+          "near_passes": 32,
+          "hits": 3,
+          "hits_per_1000_near_passes": 93.75
+        },
+        {
+          "otype": 21889,
+          "name": "City Medusa",
+          "near_passes": 9,
+          "hits": 3,
+          "hits_per_1000_near_passes": 333.3333333333333
+        },
+        {
+          "otype": 29459,
+          "name": "Floral Lily",
+          "near_passes": 9,
+          "hits": 2,
+          "hits_per_1000_near_passes": 222.2222222222222
+        },
+        {
+          "otype": 17898,
+          "name": "Hallows Banshee",
+          "near_passes": 16,
+          "hits": 1,
+          "hits_per_1000_near_passes": 62.5
+        },
+        {
+          "otype": 9828,
+          "name": "Floral Sunflower",
+          "near_passes": 10,
+          "hits": 1,
+          "hits_per_1000_near_passes": 100.0
+        },
+        {
+          "otype": 31635,
+          "name": "Sanguine Archer",
+          "near_passes": 7,
+          "hits": 1,
+          "hits_per_1000_near_passes": 142.85714285714286
+        },
+        {
+          "otype": 21890,
+          "name": "City Beholder",
+          "near_passes": 5,
+          "hits": 1,
+          "hits_per_1000_near_passes": 200.0
+        },
+        {
+          "otype": 21895,
+          "name": "City Djinn",
+          "near_passes": 2,
+          "hits": 1,
+          "hits_per_1000_near_passes": 500.0
+        },
+        {
+          "otype": null,
+          "name": "otype None",
+          "near_passes": 0,
+          "hits": 1,
+          "hits_per_1000_near_passes": null
+        }
+      ],
+      "raw": {
+        "near_passes": 328,
+        "near_passes_approx": 94,
+        "near_passes_from_hits": 8,
+        "hits": 23,
+        "damage_total": 2555.0,
+        "shots_without_projdef": 77,
+        "shots_backfilled": 411,
+        "shots_unresolved": 28,
+        "missing_projdef_pairs": [],
+        "min_near_passes": 300
+      },
+      "by_context": {
+        "walking": {
+          "near_passes": 165,
+          "hits": 12,
+          "hits_per_1000_near_passes": 72.72727272727272
+        },
+        "fighting": {
+          "near_passes": 115,
+          "hits": 6,
+          "hits_per_1000_near_passes": 52.17391304347826
+        }
+      }
+    },
+    "auto_aim": {
+      "player_shots": 2806,
+      "enemy_hits": 2930,
+      "hits_per_shot": 1.044191019244476,
+      "hits_per_shot_unusable": null,
+      "kills": 218,
+      "kills_per_hour": 1481.8954969108293,
+      "low_span": true,
+      "raw": {
+        "player_shots": 2806,
+        "enemy_hits": 2930,
+        "kills": 218,
+        "packet_span_hours": 0.147
+      }
+    },
+    "navigation": {
+      "no_progress_walks_per_hour": 15.427965329933473,
+      "raw": {
+        "no_progress_walk_count": 2,
+        "active_farmer_basis_hours": 0.13,
+        "ground_damage_steps": 0,
+        "packet_span_hours": 0.147
+      },
+      "ground_damage_steps_per_hour": 0.0
+    }
+  },
+  "log_source": "/mnt/c/realm-engine-testlab/rig/RE_ASSETS/realm-engine-proxy.log",
+  "start_local": "2026-09-24 12:57:05 local",
+  "end_local": "2026-09-24 13:06:07 local",
+  "ab_experiments": [
+    {
+      "switch": "udodgeEnemyStandoff",
+      "a_value": "off",
+      "b_value": "auto",
+      "block_minutes": 2,
+      "seed": 1790276291318,
+      "start_ms": 1790276291319,
+      "stop_ms": 1790276767233,
+      "ended_by_stop": true,
+      "blocks": [
+        {
+          "index": 0,
+          "arm": "A",
+          "start_ms": 1790276291320,
+          "end_ms": 1790276411450,
+          "exposure_minutes": 1.919,
+          "near_passes": 60,
+          "hits": 5,
+          "hits_per_1000_near_passes": 83.33333333333333,
+          "kills": 143,
+          "shots_landed": 639,
+          "player_shots": 636,
+          "ground_damage_steps": 0,
+          "deaths": 0,
+          "frozen_seconds": 0.0,
+          "freeze_count": 0
+        },
+        {
+          "index": 1,
+          "arm": "B",
+          "start_ms": 1790276411450,
+          "end_ms": 1790276531619,
+          "exposure_minutes": 1.919,
+          "near_passes": 85,
+          "hits": 8,
+          "hits_per_1000_near_passes": 94.11764705882352,
+          "kills": 25,
+          "shots_landed": 781,
+          "player_shots": 726,
+          "ground_damage_steps": 0,
+          "deaths": 0,
+          "frozen_seconds": 36.2,
+          "freeze_count": 2
+        },
+        {
+          "index": 2,
+          "arm": "A",
+          "start_ms": 1790276531619,
+          "end_ms": 1790276651736,
+          "exposure_minutes": 1.919,
+          "near_passes": 75,
+          "hits": 6,
+          "hits_per_1000_near_passes": 80.0,
+          "kills": 18,
+          "shots_landed": 812,
+          "player_shots": 658,
+          "ground_damage_steps": 0,
+          "deaths": 0,
+          "frozen_seconds": 43.7,
+          "freeze_count": 1
+        },
+        {
+          "index": 3,
+          "arm": "B",
+          "start_ms": 1790276651736,
+          "end_ms": 1790276767233,
+          "exposure_minutes": 1.842,
+          "near_passes": 99,
+          "hits": 4,
+          "hits_per_1000_near_passes": 40.40404040404041,
+          "kills": 32,
+          "shots_landed": 684,
+          "player_shots": 770,
+          "ground_damage_steps": 0,
+          "deaths": 0,
+          "frozen_seconds": 21.8,
+          "freeze_count": 2
+        }
+      ],
+      "arms": {
+        "A": {
+          "exposure_minutes": 3.837,
+          "near_passes": 135,
+          "hits": 11,
+          "hits_per_1000_near_passes": 81.4814814814815,
+          "damage_per_1000_near_passes": 8925.925925925925,
+          "ground_damage_steps": 0,
+          "deaths": 0,
+          "guardrail": {
+            "minutes_in_world": 3.837,
+            "kills": 161,
+            "kills_per_min": 41.9549440383588,
+            "shots_landed": 1451,
+            "shots_landed_per_min": 378.1156757742772,
+            "player_shots": 1294,
+            "player_shots_per_min": 337.20309059401427,
+            "hits_per_shot": 1.1213292117465223,
+            "near_passes_per_min": 35.17961146073564,
+            "damage_taken_per_min": 314.0106060013811,
+            "deaths": 0,
+            "ground_damage_steps": 0,
+            "ground_damage_steps_per_min": 0.0,
+            "frozen_seconds": 43.7,
+            "freeze_count": 1
+          },
+          "raw": {
+            "near_passes": 135,
+            "hits": 11,
+            "damage_total": 1205.0,
+            "exposure_minutes": 3.837,
+            "ground_damage_steps": 0,
+            "deaths": 0,
+            "kills": 161,
+            "shots_landed": 1451,
+            "player_shots": 1294,
+            "frozen_seconds": 43.7,
+            "freeze_count": 1
+          }
+        },
+        "B": {
+          "exposure_minutes": 3.761,
+          "near_passes": 184,
+          "hits": 12,
+          "hits_per_1000_near_passes": 65.21739130434783,
+          "damage_per_1000_near_passes": 7336.956521739131,
+          "ground_damage_steps": 0,
+          "deaths": 0,
+          "guardrail": {
+            "minutes_in_world": 3.761,
+            "kills": 57,
+            "kills_per_min": 15.155140783281487,
+            "shots_landed": 1465,
+            "shots_landed_per_min": 389.5137060966207,
+            "player_shots": 1496,
+            "player_shots_per_min": 397.7559756454229,
+            "hits_per_shot": 0.9792780748663101,
+            "near_passes_per_min": 48.9218579670841,
+            "damage_taken_per_min": 358.93754486719314,
+            "deaths": 0,
+            "ground_damage_steps": 0,
+            "ground_damage_steps_per_min": 0.0,
+            "frozen_seconds": 57.9,
+            "freeze_count": 4
+          },
+          "raw": {
+            "near_passes": 184,
+            "hits": 12,
+            "damage_total": 1350.0,
+            "exposure_minutes": 3.761,
+            "ground_damage_steps": 0,
+            "deaths": 0,
+            "kills": 57,
+            "shots_landed": 1465,
+            "player_shots": 1496,
+            "frozen_seconds": 57.9,
+            "freeze_count": 4
+          }
+        }
+      },
+      "wilson_a": [
+        0.046105544792879184,
+        0.14001651874771576
+      ],
+      "wilson_b": [
+        0.03769728667054058,
+        0.11052057213170847
+      ],
+      "diff_interval": [
+        -0.08094566983328565,
+        0.041214906766728676
+      ],
+      "verdict": "INCONCLUSIVE (under-exposed)",
+      "guardrail": {
+        "status": "n/a",
+        "tripped": []
+      },
+      "qualified_verdict": "INCONCLUSIVE (under-exposed)"
+    }
+  ],
+  "dodge_fingerprint": "1341d16d4d4abcac0f93cea4d032657a9f5cedfba6d6fcde4227eb0ada0ebc6e",
+  "freezes": [
+    {
+      "type": "flip_flop",
+      "family": "loot detour <-> waiting for auto loot",
+      "target": null,
+      "start_local": "2026-09-24 13:00:39 local",
+      "start_utc": "2026-09-24T19:00:39.772000+00:00",
+      "end_utc": "2026-09-24T19:00:42.602000+00:00",
+      "duration_s": 2.8,
+      "start_lineno": 24310,
+      "end_lineno": 24318,
+      "excerpt": [
+        "[19:00:39.772] [Script:farmer] [farmer] state: Loot detour (5.9 tiles) | ctx pos=1295.6,577.9 goal=1289.8,577.5 d=5.9 enemy=5.8 quest=225047",
+        "[19:00:40.849] [Script:farmer] [farmer] state: Loot detour (5.8 tiles) | ctx pos=1295.5,578.2 goal=1289.8,577.5 d=5.8 enemy=3.4 quest=225047",
+        "[19:00:41.617] [Script:farmer] [farmer] state: Waiting for Auto Loot | ctx pos=1290.0,577.8 goal=1289.8,577.5 d=0.4 enemy=5.1 quest=225047"
+      ],
+      "detail": "7 alternations over 2.8s"
+    },
+    {
+      "type": "flip_flop",
+      "family": "fighting <-> waiting through brief boss transition",
+      "target": "Skull Knight",
+      "start_local": "2026-09-24 13:01:35 local",
+      "start_utc": "2026-09-24T19:01:35.123000+00:00",
+      "end_utc": "2026-09-24T19:02:08.471000+00:00",
+      "duration_s": 33.3,
+      "start_lineno": 24383,
+      "end_lineno": 24391,
+      "excerpt": [
+        "[19:01:35.123] [Script:farmer] [farmer] state: Fighting: Skull Knight | ctx pos=1161.8,1430.0 goal=1160.9,1436.3 d=6.3 enemy=2.6 quest=227034",
+        "[19:01:40.222] [Script:farmer] [farmer] state: Fighting: Skull Knight | ctx pos=1169.9,1428.0 goal=1160.9,1436.3 d=12.3 enemy=1.0 quest=227034",
+        "[19:01:44.244] [Script:farmer] [farmer] state: Skull Knight: waiting through brief boss transition | ctx pos=1173.6,1434.4 goal=1160.9,1436.3 d=12.8 enemy=3.2 quest=227034"
+      ],
+      "detail": "5 alternations over 33.3s"
+    },
+    {
+      "type": "flip_flop",
+      "family": "fighting <-> waiting through brief boss transition",
+      "target": "Skull Knight",
+      "start_local": "2026-09-24 13:03:04 local",
+      "start_utc": "2026-09-24T19:03:04.049000+00:00",
+      "end_utc": "2026-09-24T19:03:47.716000+00:00",
+      "duration_s": 43.7,
+      "start_lineno": 24452,
+      "end_lineno": 24463,
+      "excerpt": [
+        "[19:03:04.049] [Script:farmer] [farmer] state: Fighting: Skull Knight | ctx pos=1160.7,1456.7 goal=1157.6,1437.4 d=19.5 enemy=3.2 quest=227034",
+        "[19:03:09.054] [Script:farmer] [farmer] state: Fighting: Skull Knight | ctx pos=1163.4,1453.8 goal=1157.6,1437.4 d=17.4 enemy=6.2 quest=227034",
+        "[19:03:13.072] [Script:farmer] [farmer] state: Skull Knight: waiting through brief boss transition | ctx pos=1160.3,1456.1 goal=1157.6,1437.4 d=18.9 enemy=6.6 quest=227034"
+      ],
+      "detail": "7 alternations over 43.7s"
+    },
+    {
+      "type": "no_progress_walk",
+      "family": "maxing: approach",
+      "target": "Ethereal Shrine",
+      "start_local": "2026-09-24 13:05:05 local",
+      "start_utc": "2026-09-24T19:05:05.597000+00:00",
+      "end_utc": "2026-09-24T19:05:18.711000+00:00",
+      "duration_s": 13.1,
+      "start_lineno": 24559,
+      "end_lineno": 24571,
+      "excerpt": [
+        "[19:05:05.597] [Script:farmer] [farmer] state: Maxing: Ethereal Shrine \u2192 (1249, 780) \u00b7 21 tiles | ctx pos=1243.3,800.7 goal=1244.8,785.6 d=15.2 enemy=4.5 quest=230558",
+        "[19:05:06.699] [Script:farmer] [farmer] state: Maxing: Ethereal Shrine \u2192 (1249, 780) \u00b7 25 tiles | ctx pos=1240.1,803.9 goal=1244.8,785.6 d=18.8 enemy=7.3 quest=230558",
+        "[19:05:07.792] [Script:farmer] [farmer] state: Maxing: Ethereal Shrine \u2192 (1249, 780) \u00b7 22 tiles | ctx pos=1237.5,799.2 goal=1244.8,785.6 d=15.4 enemy=7.6 quest=230558"
+      ],
+      "detail": "dist_to_goal 15.2->11.3 tiles over 13.1s"
+    },
+    {
+      "type": "no_progress_walk",
+      "family": "maxing: approach",
+      "target": "Skull Shrine",
+      "start_local": "2026-09-24 13:05:42 local",
+      "start_utc": "2026-09-24T19:05:42.398000+00:00",
+      "end_utc": "2026-09-24T19:05:51.035000+00:00",
+      "duration_s": 8.6,
+      "start_lineno": 24612,
+      "end_lineno": 24620,
+      "excerpt": [
+        "[19:05:42.398] [Script:farmer] [farmer] state: Maxing: Skull Shrine \u2192 (1405, 1232) \u00b7 20 tiles | ctx pos=1423.0,1222.8 goal=1409.9,1227.1 d=13.7 enemy=6.3 quest=230889",
+        "[19:05:43.399] [Script:farmer] [farmer] state: Maxing: Skull Shrine \u2192 (1405, 1232) \u00b7 19 tiles | ctx pos=1422.6,1226.0 goal=1409.9,1227.1 d=12.7 enemy=9.3 quest=230889",
+        "[19:05:44.478] [Script:farmer] [farmer] state: Maxing: Skull Shrine \u2192 (1405, 1232) \u00b7 16 tiles | ctx pos=1420.8,1228.4 goal=1409.9,1227.1 d=10.9 enemy=2.5 quest=230889"
+      ],
+      "detail": "dist_to_goal 13.7->14.1 tiles over 8.6s"
+    }
+  ],
+  "deaths": []
+}
