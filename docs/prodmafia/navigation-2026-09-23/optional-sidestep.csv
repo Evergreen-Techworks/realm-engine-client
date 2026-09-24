@@ -1,0 +1,9 @@
+revision,rule,sidestep,success,hits,time_s
+baseline,legacy,off,False,1,8.62
+baseline,legacy,on,True,0,9.15
+baseline,game,off,True,0,5.77
+baseline,game,on,True,0,5.77
+candidate,legacy,off,False,1,8.62
+candidate,legacy,on,True,0,9.15
+candidate,game,off,True,0,5.77
+candidate,game,on,True,0,5.77

@@ -1,0 +1,17 @@
+{
+  "baseline": {
+    "root": "/home/jesse/rec-worktrees/navigation-benchmark-20260923",
+    "head": "1404b06842411dddca01355f694bcc33fa02b128",
+    "dirty": "",
+    "production_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "candidate": {
+    "root": "/home/jesse/rec-worktrees/predictive-nexus-testlab",
+    "head": "9e2c244c92991e7c00aa898b07967a21828e7fa1",
+    "dirty": "M internal/src/features/movement/udodge/UDodge.cpp\n M internal/src/features/movement/udodge/UDodgePathfinder.h\n M internal/src/features/movement/udodge/UDodgeSolver.cpp\n M internal/src/features/movement/udodge/UDodgeSolver.h\n M internal/src/features/movement/udodge/UDodgeWorkerCycle.h\n M internal/tests/scenario/benchmark_navigation.py\n M internal/tests/scenario/run_scenarios.py\n M internal/tests/udodge_navigation_tests.cpp\n M internal/tests/udodge_worker_clock_tests.cpp\n?? internal/tests/scenario/__pycache__/",
+    "production_diff_sha256": "a39eff5c73ec59272bac0c7309702b2ce1bf8e2744c28a5ffd224f8496e386aa"
+  },
+  "harness_sha256": "356e48f0b24e7a8ca80401ab7e44d5fb073cd8e3deaf7ead97e0c0ecc16a7c55",
+  "policy": "tactician",
+  "scan_mode": 3
+}

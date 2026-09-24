@@ -1,0 +1,3 @@
+Worker clock tests: 13 checks, 1 failures
+ FAIL: worker preserves exact FullOccupy corner completion
+ exit 1
