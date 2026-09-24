@@ -1,0 +1,22 @@
+DRY RUN -- would build d136fd0 as 1.0.42. Nothing was changed.
+  1 file(s) to mirror into the source root:
+    internal/src/features/movement/udodge/UDodgeSolver.cpp
+  5 test-only path(s) excluded:
+    internal/tests/run_udodge_zone_tests.py
+    internal/tests/scenario/benchmark_frame_cost.py
+    internal/tests/scenario/benchmark_navigation.py
+    internal/tests/scenario/run_scenarios.py
+    internal/tests/udodge_navigation_tests.cpp
+  typecheck: npx tsc --noEmit -p tsconfig.json
+  protected paths (7), not touched by this delta:
+    client/build-tools/sync-local.bat
+    client/scripts/build-prod.mjs
+    client/src/dashboard/public/app.js
+    client/src/dashboard/public/index.html
+    client/src/dashboard/public/js/translations.js
+    client/src/dashboard/public/style.css
+    internal/.gitignore
+  would launch build-update.ps1 -Output C:\realm-engine-builds\testlab-1.0.42-20260924-043916\run
+    args: -SourceRoot C:\realm-engine -GameDirectory C:\realm-engine-pinned\game-86ad651b -BaselineCollection C:\realm-engine-pinned\static-all-4a8beb50\collection.json -CurrentCollection C:\realm-engine-pinned\static-all-86ad651b\collection.json -Version 1.0.42 -Output C:\realm-engine-builds\testlab-1.0.42-20260924-043916\run -PrivateBuild
+  exact command line that would be launched (review before dropping --dry-run):
+    powershell.exe -NoProfile -Command $p = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','\\wsl.localhost\Debian\home\jesse\realm-engine\.worktrees\private-only-strip\infra\build-vm\portable-baseline\build-update.ps1','-SourceRoot','C:\realm-engine','-GameDirectory','C:\realm-engine-pinned\game-86ad651b','-BaselineCollection','C:\realm-engine-pinned\static-all-4a8beb50\collection.json','-CurrentCollection','C:\realm-engine-pinned\static-all-86ad651b\collection.json','-Version','1.0.42','-Output','C:\realm-engine-builds\testlab-1.0.42-20260924-043916\run','-PrivateBuild' -RedirectStandardOutput 'C:\realm-engine-builds\testlab-1.0.42-20260924-043916\build-stdout.log' -RedirectStandardError 'C:\realm-engine-builds\testlab-1.0.42-20260924-043916\build-stderr.log' -WindowStyle Hidden -PassThru; Write-Output ('PID=' + $p.Id)

@@ -1,0 +1,8 @@
+baseline: exit 1
+FAIL: safe travel avoids evaluating every alternate dodge heading
+
+candidate: exit 0
+Navigation regressions passed (real A*, corner compression, swept steering, completion).
+Locked fight route passed (time-checked round the shot arm).
+Ring ladder tests passed (ring goal outranks out-of-range ground, start rule, unlocked unchanged).
+

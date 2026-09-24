@@ -1,0 +1,122 @@
+{
+  "cases_per_revision": 316,
+  "regressions": [
+    {
+      "case": 90,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "d_boss_open_dense",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "hits increased"
+      ]
+    },
+    {
+      "case": 91,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "d_boss_wall_dense",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "refused_moves increased"
+      ]
+    },
+    {
+      "case": 92,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "d_boss_open_dense_x100",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "hits increased"
+      ]
+    },
+    {
+      "case": 93,
+      "profile": "fixture",
+      "rule": "game",
+      "scenario": "d_boss_wall_dense_x100",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "refused_moves increased"
+      ]
+    },
+    {
+      "case": 248,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "d_boss_open_dense",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "hits increased"
+      ]
+    },
+    {
+      "case": 249,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "d_boss_wall_dense",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "refused_moves increased"
+      ]
+    },
+    {
+      "case": 250,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "d_boss_open_dense_x100",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "hits increased"
+      ]
+    },
+    {
+      "case": 251,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "d_boss_wall_dense_x100",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "refused_moves increased"
+      ]
+    },
+    {
+      "case": 281,
+      "profile": "shipped",
+      "rule": "game",
+      "scenario": "p_walk_pack_late_crossfire",
+      "navigator": "legacy",
+      "speed": "",
+      "start_shift": "",
+      "reasons": [
+        "arrival lost",
+        "hits increased"
+      ]
+    }
+  ],
+  "baseline": {
+    "passed": 281,
+    "hits": 7
+  },
+  "candidate": {
+    "passed": 282,
+    "hits": 6
+  }
+}

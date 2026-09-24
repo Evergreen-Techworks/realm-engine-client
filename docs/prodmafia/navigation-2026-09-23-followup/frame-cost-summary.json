@@ -1,0 +1,327 @@
+{
+  "cpu": 0,
+  "repeats": 5,
+  "profile": "shipped",
+  "binaries": {
+    "baseline": {
+      "path": "/tmp/nav-next-buffered-final/baseline-harness",
+      "sha256": "2ca99a2f7e04982e1803af55b1face5b70d35748ddfcfe3314640f70381508ad"
+    },
+    "candidate": {
+      "path": "/tmp/nav-next-buffered-final/candidate-harness",
+      "sha256": "83e3b2a1ec997ba6b18a8358b4616f9ec362311c1677cc6fe054cae0e24f2261"
+    }
+  },
+  "note": "Native simulation timing, worker executed inline; not live FPS.",
+  "comparisons": [
+    {
+      "scenario": "c_u_wall",
+      "rule": "legacy",
+      "baseline": {
+        "tick_ms_avg": 0.041,
+        "tick_ms_p95": 0.141,
+        "tick_ms_max": 0.969,
+        "dodge_ms_avg": 0.0,
+        "dodge_ms_p95": 0.0,
+        "cycle_ms_avg": 0.029,
+        "cycle_ms_p95": 0.05
+      },
+      "candidate": {
+        "tick_ms_avg": 0.033,
+        "tick_ms_p95": 0.125,
+        "tick_ms_max": 0.943,
+        "dodge_ms_avg": 0.0,
+        "dodge_ms_p95": 0.0,
+        "cycle_ms_avg": 0.019,
+        "cycle_ms_p95": 0.047
+      }
+    },
+    {
+      "scenario": "c_u_wall",
+      "rule": "game",
+      "baseline": {
+        "tick_ms_avg": 0.031,
+        "tick_ms_p95": 0.152,
+        "tick_ms_max": 1.404,
+        "dodge_ms_avg": 0.0,
+        "dodge_ms_p95": 0.0,
+        "cycle_ms_avg": 0.033,
+        "cycle_ms_p95": 0.055
+      },
+      "candidate": {
+        "tick_ms_avg": 0.025,
+        "tick_ms_p95": 0.127,
+        "tick_ms_max": 1.298,
+        "dodge_ms_avg": 0.0,
+        "dodge_ms_p95": 0.001,
+        "cycle_ms_avg": 0.007,
+        "cycle_ms_p95": 0.007
+      }
+    },
+    {
+      "scenario": "n_rooms1_fullocc_forward",
+      "rule": "legacy",
+      "baseline": {
+        "tick_ms_avg": 0.096,
+        "tick_ms_p95": 0.252,
+        "tick_ms_max": 1.187,
+        "dodge_ms_avg": 0.0,
+        "dodge_ms_p95": 0.0,
+        "cycle_ms_avg": 0.019,
+        "cycle_ms_p95": 0.033
+      },
+      "candidate": {
+        "tick_ms_avg": 0.086,
+        "tick_ms_p95": 0.242,
+        "tick_ms_max": 1.102,
+        "dodge_ms_avg": 0.0,
+        "dodge_ms_p95": 0.0,
+        "cycle_ms_avg": 0.005,
+        "cycle_ms_p95": 0.004
+      }
+    },
+    {
+      "scenario": "n_rooms1_fullocc_forward",
+      "rule": "game",
+      "baseline": {
+        "tick_ms_avg": 0.055,
+        "tick_ms_p95": 0.194,
+        "tick_ms_max": 1.52,
+        "dodge_ms_avg": 0.0,
+        "dodge_ms_p95": 0.0,
+        "cycle_ms_avg": 0.029,
+        "cycle_ms_p95": 0.039
+      },
+      "candidate": {
+        "tick_ms_avg": 0.046,
+        "tick_ms_p95": 0.145,
+        "tick_ms_max": 1.403,
+        "dodge_ms_avg": 0.0,
+        "dodge_ms_p95": 0.0,
+        "cycle_ms_avg": 0.005,
+        "cycle_ms_p95": 0.005
+      }
+    },
+    {
+      "scenario": "d_boss_open_rings",
+      "rule": "legacy",
+      "baseline": {
+        "tick_ms_avg": 0.028,
+        "tick_ms_p95": 0.186,
+        "tick_ms_max": 2.721,
+        "dodge_ms_avg": 0.032,
+        "dodge_ms_p95": 0.018,
+        "cycle_ms_avg": 0.143,
+        "cycle_ms_p95": 0.202
+      },
+      "candidate": {
+        "tick_ms_avg": 0.027,
+        "tick_ms_p95": 0.184,
+        "tick_ms_max": 2.751,
+        "dodge_ms_avg": 0.033,
+        "dodge_ms_p95": 0.017,
+        "cycle_ms_avg": 0.139,
+        "cycle_ms_p95": 0.183
+      }
+    },
+    {
+      "scenario": "d_boss_open_rings",
+      "rule": "game",
+      "baseline": {
+        "tick_ms_avg": 0.032,
+        "tick_ms_p95": 0.225,
+        "tick_ms_max": 3.213,
+        "dodge_ms_avg": 0.042,
+        "dodge_ms_p95": 0.016,
+        "cycle_ms_avg": 0.171,
+        "cycle_ms_p95": 0.255
+      },
+      "candidate": {
+        "tick_ms_avg": 0.032,
+        "tick_ms_p95": 0.226,
+        "tick_ms_max": 3.148,
+        "dodge_ms_avg": 0.043,
+        "dodge_ms_p95": 0.018,
+        "cycle_ms_avg": 0.168,
+        "cycle_ms_p95": 0.229
+      }
+    },
+    {
+      "scenario": "d_boss_open_dense",
+      "rule": "legacy",
+      "baseline": {
+        "tick_ms_avg": 0.492,
+        "tick_ms_p95": 2.373,
+        "tick_ms_max": 19.13,
+        "dodge_ms_avg": 0.746,
+        "dodge_ms_p95": 1.933,
+        "cycle_ms_avg": 2.533,
+        "cycle_ms_p95": 7.037
+      },
+      "candidate": {
+        "tick_ms_avg": 0.469,
+        "tick_ms_p95": 2.329,
+        "tick_ms_max": 18.532,
+        "dodge_ms_avg": 0.747,
+        "dodge_ms_p95": 1.952,
+        "cycle_ms_avg": 2.419,
+        "cycle_ms_p95": 7.066
+      }
+    },
+    {
+      "scenario": "d_boss_open_dense",
+      "rule": "game",
+      "baseline": {
+        "tick_ms_avg": 0.553,
+        "tick_ms_p95": 2.65,
+        "tick_ms_max": 36.889,
+        "dodge_ms_avg": 0.989,
+        "dodge_ms_p95": 2.341,
+        "cycle_ms_avg": 3.123,
+        "cycle_ms_p95": 8.728
+      },
+      "candidate": {
+        "tick_ms_avg": 0.518,
+        "tick_ms_p95": 2.341,
+        "tick_ms_max": 38.175,
+        "dodge_ms_avg": 0.956,
+        "dodge_ms_p95": 2.208,
+        "cycle_ms_avg": 2.929,
+        "cycle_ms_p95": 8.526
+      }
+    },
+    {
+      "scenario": "d_boss_wall_dense",
+      "rule": "legacy",
+      "baseline": {
+        "tick_ms_avg": 0.521,
+        "tick_ms_p95": 2.354,
+        "tick_ms_max": 24.416,
+        "dodge_ms_avg": 0.694,
+        "dodge_ms_p95": 2.193,
+        "cycle_ms_avg": 2.737,
+        "cycle_ms_p95": 8.938
+      },
+      "candidate": {
+        "tick_ms_avg": 0.504,
+        "tick_ms_p95": 2.225,
+        "tick_ms_max": 24.382,
+        "dodge_ms_avg": 0.697,
+        "dodge_ms_p95": 2.21,
+        "cycle_ms_avg": 2.63,
+        "cycle_ms_p95": 8.888
+      }
+    },
+    {
+      "scenario": "d_boss_wall_dense",
+      "rule": "game",
+      "baseline": {
+        "tick_ms_avg": 0.559,
+        "tick_ms_p95": 2.714,
+        "tick_ms_max": 43.722,
+        "dodge_ms_avg": 0.975,
+        "dodge_ms_p95": 2.515,
+        "cycle_ms_avg": 3.191,
+        "cycle_ms_p95": 10.822
+      },
+      "candidate": {
+        "tick_ms_avg": 0.536,
+        "tick_ms_p95": 2.633,
+        "tick_ms_max": 37.16,
+        "dodge_ms_avg": 0.979,
+        "dodge_ms_p95": 2.587,
+        "cycle_ms_avg": 3.077,
+        "cycle_ms_p95": 10.279
+      }
+    },
+    {
+      "scenario": "p_walk_pack_late_crossfire",
+      "rule": "legacy",
+      "baseline": {
+        "tick_ms_avg": 0.672,
+        "tick_ms_p95": 1.344,
+        "tick_ms_max": 41.739,
+        "dodge_ms_avg": 0.026,
+        "dodge_ms_p95": 0.123,
+        "cycle_ms_avg": 5.164,
+        "cycle_ms_p95": 25.709
+      },
+      "candidate": {
+        "tick_ms_avg": 0.675,
+        "tick_ms_p95": 1.333,
+        "tick_ms_max": 40.573,
+        "dodge_ms_avg": 0.026,
+        "dodge_ms_p95": 0.111,
+        "cycle_ms_avg": 5.258,
+        "cycle_ms_p95": 26.044
+      }
+    },
+    {
+      "scenario": "p_walk_pack_late_crossfire",
+      "rule": "game",
+      "baseline": {
+        "tick_ms_avg": 0.695,
+        "tick_ms_p95": 1.066,
+        "tick_ms_max": 39.031,
+        "dodge_ms_avg": 0.018,
+        "dodge_ms_p95": 0.088,
+        "cycle_ms_avg": 5.752,
+        "cycle_ms_p95": 26.939
+      },
+      "candidate": {
+        "tick_ms_avg": 0.692,
+        "tick_ms_p95": 1.039,
+        "tick_ms_max": 40.289,
+        "dodge_ms_avg": 0.02,
+        "dodge_ms_p95": 0.094,
+        "cycle_ms_avg": 5.782,
+        "cycle_ms_p95": 27.153
+      }
+    },
+    {
+      "scenario": "f_lava_pressure",
+      "rule": "legacy",
+      "baseline": {
+        "tick_ms_avg": 0.036,
+        "tick_ms_p95": 0.132,
+        "tick_ms_max": 0.984,
+        "dodge_ms_avg": 0.0,
+        "dodge_ms_p95": 0.001,
+        "cycle_ms_avg": 0.028,
+        "cycle_ms_p95": 0.049
+      },
+      "candidate": {
+        "tick_ms_avg": 0.029,
+        "tick_ms_p95": 0.088,
+        "tick_ms_max": 0.928,
+        "dodge_ms_avg": 0.0,
+        "dodge_ms_p95": 0.0,
+        "cycle_ms_avg": 0.011,
+        "cycle_ms_p95": 0.037
+      }
+    },
+    {
+      "scenario": "f_lava_pressure",
+      "rule": "game",
+      "baseline": {
+        "tick_ms_avg": 0.043,
+        "tick_ms_p95": 0.148,
+        "tick_ms_max": 1.204,
+        "dodge_ms_avg": 0.0,
+        "dodge_ms_p95": 0.001,
+        "cycle_ms_avg": 0.043,
+        "cycle_ms_p95": 0.065
+      },
+      "candidate": {
+        "tick_ms_avg": 0.035,
+        "tick_ms_p95": 0.108,
+        "tick_ms_max": 1.192,
+        "dodge_ms_avg": 0.0,
+        "dodge_ms_p95": 0.0,
+        "cycle_ms_avg": 0.013,
+        "cycle_ms_p95": 0.048
+      }
+    }
+  ],
+  "regressions": []
+}
