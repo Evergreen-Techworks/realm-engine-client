@@ -928,13 +928,14 @@ float NavOctile(int ax, int ay, int bx, int by)
 // s_navPrev until the next pass.
 struct NavSearch {
     bool  reached = false;
+    bool  blockedGoalApproach = false;
     int   start = 0, target = 0;
     int   pops = 0;
     float targetH = 0.f;   // remaining estimate (cells) from `target` to the goal (disk)
 };
 
 NavSearch RunNavSearch(const PlannerSnapshot& in, int startGx, int startGy, int goalGx, int goalGy,
-                       bool hazardIsWall, float fBound = 1e30f)
+                       bool hazardIsWall, bool goalInWindow, float fBound = 1e30f)
 {
     NavSearch r;
     r.start = NavIdx(startGx, startGy);
@@ -1088,9 +1089,18 @@ NavSearch RunNavSearch(const PlannerSnapshot& in, int startGx, int startGy, int 
     r.pops = pops;
     r.reached = reached;
     // Prefer the frontier (edge) cell for a partial route so we route AROUND walls
-    // toward an opening; only fall back to the closest-interior cell when nothing
-    // reached the window edge (a fully enclosed pocket).
-    const int partialTarget = (bestFrontier >= 0) ? bestFrontier : bestCell;
+    // toward an opening. A fully enclosed pocket falls back to its closest
+    // reachable cell; the blocked-endpoint exception below also stays nearby.
+    // Exploration cannot make a known blocked endpoint traversable. For a
+    // nearby point request, wait at its closest reachable approach instead of
+    // touring a distant frontier. Clear-but-unreachable goals still explore.
+    const int goalIndex = NavIdx(goalGx, goalGy);
+    const bool nearbyBlockedPoint = goalInWindow && in.navGoalRadius <= 0.f &&
+        LenSq(Sub(in.navGoal, in.player)) <= 12.f * 12.f &&
+        (in.navGrid.flags[goalIndex] & 0x8) == 0 && blocked(goalGx, goalGy);
+    r.blockedGoalApproach = !reached && nearbyBlockedPoint;
+    const int partialTarget = r.blockedGoalApproach ? bestCell
+        : (bestFrontier >= 0 ? bestFrontier : bestCell);
     if (!reached) r.target = partialTarget;
     r.targetH = goalH(r.target % kNS, r.target / kNS);
     return r;
@@ -1129,7 +1139,7 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
         for (int c = target; c != -1 && n < kUNavCells; c = s_navPrev[c]) chain[n++] = c;
         return n;
     };
-    NavSearch search = RunNavSearch(in, startGx, startGy, goalGx, goalGy, in.settings.safeWalk);
+    NavSearch search = RunNavSearch(in, startGx, startGy, goalGx, goalGy, in.settings.safeWalk, goalInWindow);
     int totalPops = search.pops;
     int len = search.target == search.start ? 0 : buildChain(search.target, s_navChain);
     bool crossesHazard = false;
@@ -1142,8 +1152,10 @@ void ComputeNav(const PlannerSnapshot& in, PlanResult& out)
     const int  target = search.target;
 
     out.navPops = totalPops;
+    out.navBlockedGoalApproach = search.blockedGoalApproach;
     if (target == start) {                  // already at the goal cell (or boxed in at start)
         out.navFound   = true;
+        out.navPartial = search.blockedGoalApproach;
         out.navArrived = reached && goalInWindow;
         out.navGoalCell = NavCellWorld(center, target % kNS, target / kNS);
         out.navStepTarget = out.navArrived ? in.navGoal : in.player; // boxed in: hold for a route

@@ -1869,6 +1869,26 @@ void ScenarioHiddenBlocker(const char* name)
     Emit(Run(name, w, Goal::WalkTo, { 16.5f, 0.5f }, 60));
 }
 
+// Nearby loot-like point blocked until three seconds: approach and wait,
+// then recover after the obstacle opens, without walking the remote frontier.
+void ScenarioBlockedGoalWait(const char* name)
+{
+    World w; Floor(w, 12); w.SetGround(4, 0, kNoWalkWall);
+    w.px=.5f; w.py=.5f;
+    float maxBlockedDistance=0.f; uint32_t blockedNavRuns=0;
+    w.script = [&](World& ww) {
+        const double t=(g_nowMs-100000.0)/1000.0;
+        if(t<3.0) {
+            maxBlockedDistance=std::max(maxBlockedDistance,Len(Sub({ww.px,ww.py},{4.5f,.5f})));
+            blockedNavRuns=g_worker.navRuns;
+        } else ww.SetGround(4,0,kFloor);
+    };
+    Result r=Run(name,w,Goal::WalkTo,{4.5f,.5f},8);
+    r.success=r.success&&maxBlockedDistance<=4.1f&&blockedNavRuns<=6;
+    std::fprintf(stderr,"%s: blocked maxDistance=%.2f navRuns=%u\n",name,maxBlockedDistance,blockedNavRuns);
+    Emit(r);
+}
+
 // (k) movement speed the game allows. The game's MoveTo does not clamp, so these
 // pass only when every commanded step fits the game's own speed for that frame
 // (overspeed_moves == 0, enforced for every scenario by run_scenarios.py --check).
@@ -2559,6 +2579,7 @@ int main(int argc, char** argv)
     if (want("f_lava_pressure"))    H::ScenarioDamagingRow("f_lava_pressure", false, true);
     if (want("g_fullocc_gap"))      H::ScenarioFullOccupyGap("g_fullocc_gap");
     if (want("h_learned_keepout"))  H::ScenarioLearnedKeepout("h_learned_keepout");
+    if (want("j_blocked_goal_wait")) H::ScenarioBlockedGoalWait("j_blocked_goal_wait");
     if (want("j_hidden_blocker"))   H::ScenarioHiddenBlocker("j_hidden_blocker");
     if (want("k_slowed_midwalk"))   H::ScenarioSlowedMidWalk("k_slowed_midwalk");
     if (want("k_paralyzed_midwalk"))H::ScenarioParalyzedMidWalk("k_paralyzed_midwalk");

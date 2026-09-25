@@ -213,6 +213,7 @@ struct PlanResult {
     // ── Navigation A* output (walk-to) ───────────────────────────────────────
     bool  navFound     = false; // an A* route toward the walk-to goal was produced
     bool  navPartial   = false; // goal was outside the window → route heads to the in-window cell nearest it
+    bool  navBlockedGoalApproach = false; // nearby known blocked point: approach, then bounded retry
     bool  navArrived   = false; // the goal cell itself was reached within the window
     Vec2  navStepTarget{};      // immediate steering target: route point ~one move budget ahead
     Vec2  navGoalCell{};        // world center of the reached/target goal cell (diagnostics)

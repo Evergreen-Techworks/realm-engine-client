@@ -48,7 +48,7 @@ SCENARIOS = [
     "d_boss_open_rings", "d_boss_wall_rings", "d_boss_open_dense", "d_boss_wall_dense",
     "d_boss_open_dense_x100", "d_boss_wall_dense_x100", "d_boss_open_dense_x065", "d_boss_wall_dense_x065",
     "e_corridor1_nowalk", "e_corridor1_fullocc", "e_corridor2_fullocc",
-    "f_damaging_row", "f_lava_detour", "f_lava_pressure", "g_fullocc_gap", "h_learned_keepout", "j_hidden_blocker",
+    "f_damaging_row", "f_lava_detour", "f_lava_pressure", "g_fullocc_gap", "h_learned_keepout", "j_hidden_blocker", "j_blocked_goal_wait",
     "i_tilelist_revisit", "i_tilelist_frontier",
     "k_slowed_midwalk", "k_paralyzed_midwalk", "k_water_midpath", "k_dodge_in_water",
     "k_speedy_walk", "k_slowed_water", "k_mixed_water_land",

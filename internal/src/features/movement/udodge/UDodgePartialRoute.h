@@ -3,6 +3,15 @@
 
 namespace UDodge { namespace Navigation {
 
+// A settled blocked endpoint is a deliberate wait, not a failed movement.
+// Recheck once per second. Reflex dodge remains independent; leaving the
+// endpoint or changing the request immediately restores ordinary replanning.
+inline bool PauseBlockedGoalRetry(bool blockedApproach, bool atEnd,
+                                  uint64_t now, uint64_t plannedAt)
+{
+    return blockedApproach && atEnd && now >= plannedAt && now - plannedAt < 1000;
+}
+
 // Partial routes explore when a destination cannot currently be reached. A
 // nearby destination can reopen before the frontier is reached; check cheaply
 // at a bounded cadence rather than committing to an obsolete excursion.

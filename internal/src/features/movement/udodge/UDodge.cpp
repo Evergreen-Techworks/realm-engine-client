@@ -176,6 +176,8 @@ struct NavCache {
     Vec2 wpts[kMaxNavWpts]{};     // route polyline (world; [0] = player at plan time)
     bool partial = false;        // route only reaches toward the goal (needs extending near its end)
     bool crossesHazard = false;
+    bool blockedGoalApproach = false;
+    uint64_t plannedAt = 0;
 };
 NavCache g_navCache;
 // The objective the currently-cached route was last checked against (Item 1
@@ -734,7 +736,14 @@ Vec2 NavStepFromCache(const NavCache& c, Vec2 player, float lookahead,
                       float& outDev, bool& outNearEnd, bool& outConnected, const MapInput& in)
 {
     outDev = 0.f; outNearEnd = false; outConnected = false;
-    if (!c.valid || c.n < 2) return player;
+    if (!c.valid) return player;
+    if (c.n == 1 && c.blockedGoalApproach) {
+        outDev = Len(Sub(player, c.wpts[0]));
+        outNearEnd = outDev <= kUWalkArriveTiles;
+        outConnected = outNearEnd;
+        return player;
+    }
+    if (c.n < 2) return player;
 
     Vec2 avoid[kMaxNavAvoid];
     const int avoidCount = ActiveNavAvoid(avoid, GetTickCount64());
@@ -1300,7 +1309,10 @@ void Tick(void* player, float px, float py, float dt)
         // update. The goal-move threshold suppresses churn while travelling;
         // it must not also postpone finishing the remaining distance until stall.
         const float endTolerance = lockApproach ? kNavEndTiles : kUWalkArriveTiles;
-        const bool routeExhausted = nearEnd && (g_navCache.partial ||
+        const bool pauseBlockedGoal = !goalMoved && !objectiveChanged && !lockApproach &&
+            Navigation::PauseBlockedGoalRetry(g_navCache.blockedGoalApproach, nearEnd,
+                                               GetTickCount64(), g_navCache.plannedAt);
+        const bool routeExhausted = !pauseBlockedGoal && nearEnd && (g_navCache.partial ||
             LenSq(Sub(in.player, wg)) > endTolerance * endTolerance);                    // at route end but not the goal
         navRejoin = commitNavigation && routeConnected && dev > kNavDeviateTiles;
         navReplan = goalMoved || !g_navCache.valid || objectiveChanged || routeInvalidated || routeExhausted;
@@ -1319,13 +1331,14 @@ void Tick(void* player, float px, float py, float dt)
         // A keep-out that moved onto the route (its enemy walked there) blocks it as
         // surely as a wall: the solver will not step in, so re-plan now rather than
         // waiting for the stall timer.
-        const bool blocked = g_navCache.valid &&
+        const bool blocked = !pauseBlockedGoal && g_navCache.valid &&
             (!Navigation::PaddedPathClear(in, in.player, navStep) ||
              !Navigation::EnemyKeepoutPathClear(in, in.player, navStep));
         // Item 1 S2: "no progress along the route for 1.5 s" under route
         // commitment (a detour needs time to rejoin before the follower gives up
         // on the route); the pre-existing 500 ms timer otherwise.
-        const bool stalled = in.speed > 0.f &&
+        if (pauseBlockedGoal) g_navProgress.Reset();
+        const bool stalled = !pauseBlockedGoal && in.speed > 0.f &&
             g_navProgress.Stalled(in.player, nowNav, g_navAwaiting, commitNavigation ? 1500ULL : 500ULL);
         // Item 1 S2 refinement (controller ruling): a step the GAME refuses is
         // direct evidence the committed route is wrong right here — the world
@@ -1760,7 +1773,8 @@ void Tick(void* player, float px, float py, float dt)
             g_navAwaiting = false;
             navArrivedFresh = true;
         }
-        if (acceptFresh && g_route.navFound && g_route.navWptCount >= 2) {
+        if (acceptFresh && g_route.navFound && (g_route.navWptCount >= 2 ||
+            (g_route.navBlockedGoalApproach && g_route.navWptCount == 1))) {
             g_navAwaiting = false;
             g_navCache.valid   = true;
             navCacheRefreshed = true;
@@ -1770,6 +1784,16 @@ void Tick(void* player, float px, float py, float dt)
             for (int i = 0; i < g_navCache.n; ++i) g_navCache.wpts[i] = g_route.navWpts[i];
             g_navCache.partial = g_route.navPartial;
             g_navCache.crossesHazard = g_route.navCrossesHazard;
+            g_navCache.blockedGoalApproach = g_route.navBlockedGoalApproach;
+            g_navCache.plannedAt = GetTickCount64();
+            if (diagOn && g_route.navBlockedGoalApproach) {
+                static uint64_t lastBlockedGoalLog = 0;
+                if (g_navCache.plannedAt - lastBlockedGoalLog >= 2000) {
+                    lastBlockedGoalLog = g_navCache.plannedAt;
+                    DiagTiming::Logf("[Diag/BlockedGoal] known=1 blocked=1 point=1 goal=(%.2f,%.2f) approach=(%.2f,%.2f) wpts=%d retryMs=1000",
+                        walkX, walkY, g_route.navGoalCell.x, g_route.navGoalCell.y, g_route.navWptCount);
+                }
+            }
             if (diagOn && g_route.navCrossesHazard) ++DiagTiming::Game().hazardRoutes;
         } else if (acceptFresh && g_route.navPops > 0 &&
                    g_route.navWptCount < 2 && !g_route.navArrived) {

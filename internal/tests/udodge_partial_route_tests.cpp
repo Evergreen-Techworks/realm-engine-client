@@ -12,8 +12,8 @@ static void Check(bool ok, const char* message) {
 }
 
 int main() {
-    // Live failure family: a nearby loot destination is initially blocked, so
-    // A* sends the player toward a distant exploration frontier. Its blocker
+    // Live failure family: a nearby loot destination is initially blocked, which
+    // now produces a nearby partial approach. Its blocker
     // clears while that partial route remains connected and moving normally.
     // This models a possible cause, not unrecorded geometry from the live map.
     static Path::PlannerSnapshot snapshot{};
@@ -32,8 +32,8 @@ int main() {
     Path::PlanResult cached{};
     Path::Compute(snapshot, cached);
     Check(cached.navFound && cached.navPartial, "temporarily blocked nearby goal creates partial route");
-    Check(Len(Sub(cached.navGoalCell, snapshot.navGoal)) > 5.f,
-          "partial target explores a distant frontier despite nearby goal");
+    Check(Len(Sub(cached.navGoalCell, snapshot.navGoal)) <= 1.01f,
+          "blocked point goal retains closest reachable approach");
 
     MapInput input{};
     input.map = &snapshot.map;
