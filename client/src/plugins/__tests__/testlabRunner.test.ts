@@ -605,6 +605,91 @@ describe('Test Lab Runner plugin', () => {
     expect(logs.some((l) => /\[TestLabRun\] native bridge ready after \d+s/.test(l))).toBe(true);
   });
 
+  it('requires current connected admission after a disconnect while awaiting the bridge', async () => {
+    let bridgeReady = false;
+    const hostAccess = makeHostAccess({ isNativeBridgeReady: vi.fn(() => bridgeReady) });
+    writeRequest(testlabDir, { scriptId: 'farmer' });
+    const { ctx, connectClient, clientDisconnectedCbs } = makeCtx(hostAccess);
+    register(ctx);
+    connectClient('loaded');
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(10_000);
+    clientDisconnectedCbs.forEach((cb) => cb());
+    bridgeReady = true;
+    await vi.advanceTimersByTimeAsync(BRIDGE_SETTLE_ADVANCE_MS);
+    expect(hostAccess.startScript).not.toHaveBeenCalled();
+    const recovered = connectClient('connecting');
+    await vi.advanceTimersByTimeAsync(BRIDGE_SETTLE_ADVANCE_MS);
+    expect(hostAccess.startScript).not.toHaveBeenCalled();
+    recovered.admission.phase = 'loaded';
+    await vi.advanceTimersByTimeAsync(BRIDGE_SETTLE_ADVANCE_MS);
+    expect(hostAccess.startScript).toHaveBeenCalledWith('farmer');
+    expect(hostAccess.launchSavedAccountByLabel).toHaveBeenCalledTimes(1);
+  });
+
+  it('classifies an outage before running as connection-lost, never completed', async () => {
+    let bridgeReady = false;
+    const hostAccess = makeHostAccess({ isNativeBridgeReady: vi.fn(() => bridgeReady) });
+    writeRequest(testlabDir, { runId: 'startup-outage', scriptId: 'farmer', minutes: 2 });
+    const { ctx, connectClient, clientDisconnectedCbs } = makeCtx(hostAccess);
+    register(ctx);
+    connectClient('loaded');
+    await flushAsync();
+    await vi.advanceTimersByTimeAsync(10_000);
+    clientDisconnectedCbs.forEach((cb) => cb());
+    bridgeReady = true;
+    await vi.advanceTimersByTimeAsync(NATIVE_BRIDGE_TIMEOUT_MS + 8000);
+    expect(readResult(testlabDir, 'startup-outage').reason).toBe('connection-lost');
+    expect(hostAccess.startScript).not.toHaveBeenCalled();
+    expect(hostAccess.launchSavedAccountByLabel).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects stale loaded admission when the client socket is disconnected', async () => {
+    const hostAccess = makeHostAccess();
+    writeRequest(testlabDir, { runId: 'stale-loaded', scriptId: 'farmer' });
+    const { ctx, connectClient } = makeCtx(hostAccess);
+    register(ctx);
+    const client = connectClient('loaded');
+    await flushAsync();
+    client.connected = false;
+    await vi.advanceTimersByTimeAsync(NATIVE_BRIDGE_TIMEOUT_MS + 8000);
+    expect(readResult(testlabDir, 'stale-loaded').reason).toBe('connection-lost');
+    expect(hostAccess.startScript).not.toHaveBeenCalled();
+  });
+
+  it('revalidates loaded admission after the temporary profile reconnects', async () => {
+    const hostAccess = makeHostAccess();
+    writeRequest(testlabDir, { scriptId: 'farmer', serverName: 'USWest' });
+    const { ctx, connectClient, clientDisconnectedCbs } = makeCtx(hostAccess);
+    hostAccess.writeAndLoadPluginConfig.mockImplementation(() => {
+      clientDisconnectedCbs.forEach((cb) => cb());
+      return { ok: true, message: 'ok' };
+    });
+    register(ctx);
+    await connectAndSettle(connectClient);
+    expect(hostAccess.writeAndLoadPluginConfig).toHaveBeenCalledTimes(1);
+    expect(hostAccess.startScript).not.toHaveBeenCalled();
+    await connectAndSettle(connectClient);
+    expect(hostAccess.startScript).toHaveBeenCalledWith('farmer');
+    expect(hostAccess.launchSavedAccountByLabel).toHaveBeenCalledTimes(1);
+  });
+
+  it('classifies a disconnect during asynchronous script startup before entering running', async () => {
+    const hostAccess = makeHostAccess();
+    writeRequest(testlabDir, { runId: 'script-start-outage', scriptId: 'farmer', minutes: 2 });
+    const { ctx, connectClient, clientDisconnectedCbs } = makeCtx(hostAccess);
+    hostAccess.startScript.mockImplementation(async () => {
+      clientDisconnectedCbs.forEach((cb) => cb());
+      return { ok: true };
+    });
+    register(ctx);
+    await connectAndSettle(connectClient);
+    await advancePastNexusWait();
+    expect(readResult(testlabDir, 'script-start-outage').reason).toBe('connection-lost');
+    expect(hostAccess.startScript).toHaveBeenCalledTimes(1);
+    expect(hostAccess.launchSavedAccountByLabel).toHaveBeenCalledTimes(1);
+  });
+
   it('ends the run with reason native-not-connected if the bridge never connects within NATIVE_BRIDGE_TIMEOUT_MS of entering world', async () => {
     const hostAccess = makeHostAccess({ isNativeBridgeReady: vi.fn(() => false) });
     writeRequest(testlabDir, { runId: 'run-no-bridge', accountLabel: 'lab-1', scriptId: 'farmer' });

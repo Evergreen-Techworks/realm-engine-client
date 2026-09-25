@@ -171,7 +171,7 @@ export function register(ctx: PluginContext) {
 
   ctx.on('clientDisconnected', () => {
     currentClient = null;
-    if (machine?.getPhase() === 'running' && disconnectedSinceMs == null) {
+    if ((machine?.getPhase() === 'running' || machine?.getPhase() === 'waiting-bridge') && disconnectedSinceMs == null) {
       disconnectedSinceMs = Date.now();
     }
   });
@@ -268,6 +268,12 @@ export function register(ctx: PluginContext) {
       log(`native bridge ready after ${Math.max(0, Math.round((Date.now() - bridgeWaitStartedAtMs) / 1000))}s`);
 
       applyThrowawayPluginConfig(request);
+      // Loading settings can reconnect the game. A bridge socket alone does
+      // not establish that the current game connection still has a player.
+      if (!await waitForNativeBridge()) {
+        await finishRun();
+        return;
+      }
 
       if (request.scriptId) {
         const startResult = await (ctx.hostAccess?.startScript(request.scriptId) ??
@@ -286,6 +292,13 @@ export function register(ctx: PluginContext) {
         log(`started script "${request.scriptId}"`);
       }
 
+      // Script startup is asynchronous; retain a connection failure if the
+      // admitted client disappeared before the running phase began.
+      if (!currentClient?.connected || currentClient.admission?.phase !== 'loaded') {
+        machine.requestStop('connection-lost', 'client lost connected, loaded admission during script startup');
+        await finishRun();
+        return;
+      }
       machine.enterRunning();
       if (request.scriptId) {
         machine.armMovementWatchdog(Date.now(), currentWorldPosition());
@@ -318,7 +331,7 @@ export function register(ctx: PluginContext) {
           resolveWait(false);
           return;
         }
-        if (currentClient?.admission?.phase === 'loaded') {
+        if (currentClient?.connected && currentClient.admission?.phase === 'loaded') {
           reconnectClassifier?.onAdmissionLoaded();
           machine.enterWaitingBridge(Date.now());
           stop();
@@ -397,8 +410,9 @@ export function register(ctx: PluginContext) {
           return;
         }
         if (currentClient?.admission?.phase === 'loaded') reconnectClassifier?.onAdmissionLoaded();
+        const worldReady = currentClient?.connected === true && currentClient.admission?.phase === 'loaded';
         const bridgeConnected = ctx.hostAccess?.isNativeBridgeReady() ?? false;
-        const outcome = machine.checkBridgeReady(Date.now(), bridgeConnected, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS);
+        const outcome = machine.checkBridgeReady(Date.now(), bridgeConnected, SCRIPT_START_SETTLE_MS, NATIVE_BRIDGE_TIMEOUT_MS, worldReady);
         if (outcome === 'ready') {
           stop();
           resolveWait(true);

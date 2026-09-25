@@ -540,20 +540,21 @@ export class RunnerStateMachine {
 
   /**
    * waiting-bridge only: call on every poll with the current bridge-connected
-   * boolean. Tracks the "both signals true" settle window (reset the instant
-   * the bridge drops before it elapses) and the overall connect timeout
-   * measured from `enterWaitingBridge`.
+   * boolean and current connected, loaded admission. Tracks the "both signals
+   * true" settle window (reset when either signal is observed down) and the
+   * overall connect timeout measured from `enterWaitingBridge`.
    *  - `'ready'`   the settle delay elapsed with the bridge continuously
    *                connected; phase stays at waiting-bridge — the caller
    *                transitions with `enterRunning()`.
    *  - `'timeout'` `timeoutMs` elapsed since entering the world without the
    *                settle condition ever being satisfied; transitions to
-   *                stopping with reason `native-not-connected`.
+   *                stopping with `connection-lost` if admission is absent,
+   *                otherwise `native-not-connected`.
    *  - `'waiting'` neither yet.
    */
-  checkBridgeReady(now: number, bridgeConnected: boolean, settleMs: number, timeoutMs: number): 'waiting' | 'ready' | 'timeout' {
+  checkBridgeReady(now: number, bridgeConnected: boolean, settleMs: number, timeoutMs: number, worldReady = true): 'waiting' | 'ready' | 'timeout' {
     if (this.phase !== 'waiting-bridge') return 'waiting';
-    if (!bridgeConnected) {
+    if (!bridgeConnected || !worldReady) {
       this.bridgeReadySinceMs = null;
     } else if (this.bridgeReadySinceMs == null) {
       this.bridgeReadySinceMs = now;
@@ -563,8 +564,10 @@ export class RunnerStateMachine {
     }
     if (now - (this.inWorldAtMs ?? now) >= timeoutMs) {
       this.requestStop(
-        'native-not-connected',
-        `native bridge did not connect within ${Math.round(timeoutMs / 1000)}s of entering world`,
+        worldReady ? 'native-not-connected' : 'connection-lost',
+        worldReady
+          ? `native bridge did not connect within ${Math.round(timeoutMs / 1000)}s of entering world`
+          : `client did not regain connected, loaded admission within ${Math.round(timeoutMs / 1000)}s of entering world`,
       );
       return 'timeout';
     }
