@@ -323,17 +323,22 @@ inline void MaybeEmit(State& st, uint64_t nowMs, Sink sink)
 // window yet). At a hit, FindCulprit scans the still-in-window entries for the
 // smallest (cheb - T) — the shot that came closest to actually touching the
 // player's box, tracked or not — and reports how long that identity had been
-// in the ring before this occurrence (0 = this IS the first sighting: never
-// tracked before contact) and the smallest cheb/T ratio seen for it in the
-// window, so a caller can tell apart a tracked-but-too-small box (small
-// margin, sinceFirstMs > 0), a mispredicted position (larger margin, ratio
-// swings a lot across the window) and a shot that was simply never seen in
-// time (sinceFirstMs == 0, or found == false).
+// in the retained ring before the selected observation, and the smallest
+// cheb/T ratio seen for it in the
+// window. These are nearest-lane observations, not proof of which shot hit:
+// sinceFirstMs == 0 means the selected sample is the earliest retained sample
+// for that key, not that the shot was never tracked before contact. Sampling,
+// expiry and delayed HP updates can all remove earlier evidence. Report the
+// selected observation's age so delayed damage is not read as current geometry.
 namespace HitCulprit {
 
 constexpr int      kNearestN  = 4;     // nearest lanes recorded per tick
-constexpr int      kRingCap   = 96;    // >= kHistoryMs worth of ticks * kNearestN
-constexpr uint64_t kHistoryMs = 300;
+// A live client hit preceded HP recognition by 335 ms. One second preserves
+// that contact plus its approach, without attributing indefinitely old misses.
+// 512 entries hold four nearest lanes at up to 125 Hz for the full window.
+// Faster callers remain bounded but may overwrite samples before time expiry.
+constexpr int      kRingCap   = 512;
+constexpr uint64_t kHistoryMs = 1000;
 
 struct Entry {
     bool     used = false;
@@ -361,8 +366,10 @@ inline void Record(Ring& r, Key key, uint32_t ownerType, float half, float speed
                    float chebTiles, bool beam, bool provisional, uint64_t nowMs)
 {
     bool isNew = true;
+    // Recent lanes usually recur in the previous frame: inspect newest first
+    // so growing the retention window does not increase that common lookup.
     for (int i = 0; i < kRingCap; ++i) {
-        const Entry& e = r.ring[i];
+        const Entry& e = r.ring[(r.writeIdx + kRingCap - 1 - i) % kRingCap];
         if (e.used && e.key == key && nowMs >= e.atMs && nowMs - e.atMs <= kHistoryMs) { isNew = false; break; }
     }
     Entry& e = r.ring[r.writeIdx];
@@ -376,7 +383,8 @@ inline void Record(Ring& r, Key key, uint32_t ownerType, float half, float speed
 struct Culprit {
     bool     found = false;
     Entry    entry{};
-    uint64_t sinceFirstMs = 0;   // ms between this key's earliest still-in-window entry and `entry`; 0 = entry IS the earliest
+    uint64_t sinceFirstMs = 0;   // selected sample minus earliest retained sample; not total tracking age
+    uint64_t observationAgeMs = 0; // HP recognition time minus selected observation time
     float    minChebOverT = 0.f; // min(cheb/half) for this key across the window
 };
 
@@ -398,6 +406,7 @@ inline Culprit FindCulprit(const Ring& r, uint64_t nowMs)
     if (bestIdx < 0) return c;
     c.found = true;
     c.entry = r.ring[bestIdx];
+    c.observationAgeMs = nowMs - c.entry.atMs;
     uint64_t earliest = c.entry.atMs;
     float minRatio = c.entry.half > 1e-4f ? c.entry.cheb / c.entry.half : c.entry.cheb;
     for (int i = 0; i < kRingCap; ++i) {
@@ -424,11 +433,12 @@ inline size_t AppendCulprit(const Culprit& c, char* out, size_t used, size_t cap
     } else {
         n = std::snprintf(out + used, cap - used,
             " culprit{owner=%u type=0x%X half=%.3f cheb=%.3f margin=%.3f spd=%.1ft/s beam=%d prov=%d"
-            " new=%d sinceFirstMs=%llu minChebOverT=%.2f}",
+            " new=%d sinceFirstMs=%llu minChebOverT=%.2f observationAgeMs=%llu}",
             c.entry.key.ownerObjId, c.entry.ownerType, c.entry.half, c.entry.cheb,
             c.entry.cheb - c.entry.half, c.entry.speedTilesPerSec, c.entry.beam ? 1 : 0,
             c.entry.provisional ? 1 : 0, c.entry.isNew ? 1 : 0,
-            static_cast<unsigned long long>(c.sinceFirstMs), c.minChebOverT);
+            static_cast<unsigned long long>(c.sinceFirstMs), c.minChebOverT,
+            static_cast<unsigned long long>(c.observationAgeMs));
     }
     if (n <= 0) return used;
     return std::min(cap - 1, used + static_cast<size_t>(n));

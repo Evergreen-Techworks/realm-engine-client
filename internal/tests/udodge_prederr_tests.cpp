@@ -213,16 +213,16 @@ int main()
         HC::Record(ring, { 1, 1, 1 }, 100u, 0.30f, 6.f, 0.60f, false, false, 1000);
         HC::Record(ring, { 1, 1, 1 }, 100u, 0.30f, 6.f, 0.40f, false, false, 1050);
         HC::Record(ring, { 1, 1, 1 }, 100u, 0.30f, 6.f, 0.32f, false, false, 1100);
-        // Enemy B: never tracked before, shows up RIGHT at the hit with cheb inside
-        // its own half (the game already counted a hit; this is the "never tracked
-        // in time" case).
+        // Enemy B: no earlier nearest-lane sample in this fixture, with cheb
+        // inside its own half. In live use an absent sample is not proof the
+        // projectile was never tracked by the movement solver.
         HC::Record(ring, { 2, 2, 2 }, 200u, 0.25f, 8.f, 0.10f, false, false, 1120);
 
         const HC::Culprit c = HC::FindCulprit(ring, 1120);
         Check(c.found, "a culprit is found when the ring has entries in the window");
         Check(c.entry.key.bulletId == 2, "the smallest (cheb - half) margin wins, not the longest-tracked shot");
         Check(Near(c.entry.cheb - c.entry.half, -0.15f), "enemy B's margin is negative (inside the box)");
-        Check(c.sinceFirstMs == 0, "enemy B's only sighting is this one: never tracked before contact");
+        Check(c.sinceFirstMs == 0, "enemy B's selected sample is its earliest retained sighting");
         Check(c.entry.isNew, "enemy B's own entry was flagged new when recorded (no prior entry in-window)");
         Check(Near(c.minChebOverT, 0.10f / 0.25f), "min cheb/T ratio over the window for the winning key");
 
@@ -244,6 +244,53 @@ int main()
         char none_buf[64] = {};
         const size_t noneUsed = HC::AppendCulprit(none, none_buf, 0, sizeof(none_buf));
         Check(Has(none_buf, "culprit=none") && noneUsed < sizeof(none_buf), "no culprit formats as culprit=none");
+    }
+
+    // Live 2026-09-25: HP recognition followed the client hit by 335 ms.
+    // Keep that contact and its earlier approach despite four new lanes/frame.
+    {
+        namespace HC = PE::HitCulprit;
+        HC::Ring ring{};
+        HC::Record(ring, {99, 99, 99}, 100u, .5f, 8.f, 2.f, false, false, 1000);
+        HC::Record(ring, {99, 99, 99}, 100u, .5f, 8.f, .1f, false, false, 1250);
+        for (uint64_t t = 1258; t <= 1585; t += 8)
+            for (int lane = 0; lane < HC::kNearestN; ++lane)
+                HC::Record(ring, {lane, lane, uint32_t(lane)}, 200u,
+                           .5f, 6.f, 2.f, false, false, t);
+        const auto delayed = HC::FindCulprit(ring, 1585);
+        Check(delayed.found && delayed.entry.key.ownerObjId == 99 && delayed.entry.atMs == 1250,
+              "335 ms delayed HP retains contact amid 125 Hz nearest-lane traffic");
+        Check(delayed.sinceFirstMs == 250,
+              "delayed HP retains pre-contact approach history");
+        char buf[320] = {};
+        HC::AppendCulprit(delayed, buf, 0, sizeof(buf));
+        Check(Has(buf, "observationAgeMs=335"),
+              "culprit log exposes selected observation age at HP recognition");
+        const auto boundary = HC::FindCulprit(ring, 2250);
+        Check(boundary.found && boundary.entry.key.ownerObjId == 99,
+              "one-second contact-history boundary is inclusive");
+        const auto expiredContact = HC::FindCulprit(ring, 2251);
+        Check(expiredContact.found && expiredContact.entry.key.ownerObjId != 99,
+              "contact expires immediately beyond one-second history");
+        Check(!HC::FindCulprit(ring, 2586).found,
+              "delayed HP history does not attribute expired observations");
+
+        HC::Ring busy{};
+        HC::Record(busy, {99, 99, 99}, 100u, .5f, 8.f, .1f, false, false, 1000);
+        for (uint64_t t = 1008; t <= 2000; t += 8)
+            for (int lane = 0; lane < HC::kNearestN; ++lane)
+                HC::Record(busy, {lane, lane, uint32_t(lane)}, 200u,
+                           .5f, 6.f, 2.f, false, false, t);
+        const auto fullWindow = HC::FindCulprit(busy, 2000);
+        Check(fullWindow.found && fullWindow.entry.key.ownerObjId == 99,
+              "bounded ring preserves full second under four-lane 125 Hz load");
+        // Wrap storage repeatedly: nearest-key recency must survive ring wrap,
+        // and observations evicted by the count bound must never resurface.
+        for (int i = 0; i < HC::kRingCap * 2; ++i)
+            HC::Record(busy, {7, 7, 7}, 200u, .5f, 6.f, 2.f, false, false, 2001);
+        const int latest = (busy.writeIdx + HC::kRingCap - 1) % HC::kRingCap;
+        Check(!busy.ring[latest].isNew && HC::FindCulprit(busy, 2001).entry.key.ownerObjId == 7,
+              "newest-first recency survives wrap and evicted contact stays absent");
     }
 
     // ── GroundDiag: edge-triggered enter/leave ────────────────────────────────
