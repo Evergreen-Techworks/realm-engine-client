@@ -155,6 +155,18 @@ int main() {
     Check(!Navigation::SameRouteRequest(true, 7, 43, 7, 42), "new goals invalidate the old local route");
     Check(!Navigation::SameRouteRequest(false, 7, 42, 7, 42), "manual and legacy goal changes never retain stale routes");
     Check(!Navigation::SameRouteRequest(true, 0, 0, 0, 0), "uncorrelated routes cannot be retained");
+    const Vec2 recoveryPlayer{10.f, 20.f};
+    const Vec2 recoveryGoal{110.f, 20.f};
+    Check(LenSq(Sub(Navigation::AwaitingRecoveryGoal(true, 1000, 1999,
+              recoveryPlayer, recoveryGoal), recoveryPlayer)) == 0.f,
+          "a fresh route wait still holds for the worker");
+    const Vec2 recovery = Navigation::AwaitingRecoveryGoal(true, 1000, 2000,
+        recoveryPlayer, recoveryGoal);
+    Check(std::fabs(recovery.x - 12.f) < 1e-6f && recovery.y == 20.f,
+          "a persistent boxed route gives the local solver a bounded forward intent");
+    Check(LenSq(Sub(Navigation::AwaitingRecoveryGoal(false, 1000, 5000,
+              recoveryPlayer, recoveryGoal), recoveryPlayer)) == 0.f,
+          "a delivered route never uses boxed-route recovery");
     Check(Navigation::TravelStepConsumed(true, true, false, true, {1,0}, {1,0}, {4,0}, 0.1f),
           "completed safe travel steps refresh before the next server tick");
     Check(!Navigation::TravelStepConsumed(true, true, false, false, {1,0}, {1,0}, {4,0}, 0.1f),

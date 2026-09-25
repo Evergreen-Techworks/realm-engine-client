@@ -188,6 +188,7 @@ uint64_t g_globalCorridorEpoch = 0;
 uint64_t g_globalCorridorGoalId = 0;
 Navigation::Progress g_navProgress;
 bool g_navAwaiting = false;
+uint64_t g_navAwaitingSinceMs = 0;
 // Stuck memory (get-unstuck). A stall re-plans, but a re-plan over the same tile
 // map returns the same route, so a blocker the map does not show (an object the
 // world scan missed, say) held the player against it indefinitely. When a stall
@@ -891,6 +892,7 @@ void OnEnter()
     g_globalCorridorEpoch = 0;
     g_globalCorridorGoalId = 0;
     g_navAwaiting = false;
+    g_navAwaitingSinceMs = 0;
     g_navProgress.Reset();
     g_lockApproach = false;
     g_lockApproachGoalValid = false;
@@ -1403,6 +1405,7 @@ void Tick(void* player, float px, float py, float dt)
     } else {
         g_navProgress.Reset();
         g_navAwaiting = false;
+        g_navAwaitingSinceMs = 0;
         g_navCache.valid = false;              // walk-to ended → drop the cache
         g_lastRouteObjective = GoalOwner{};     // Item 1 S1/S2: next walk-to starts as a plan, not a replan
         g_routeId = 0;
@@ -1745,6 +1748,12 @@ void Tick(void* player, float px, float py, float dt)
     // Refresh BOTH the local waiting flag and steering goal before any fallback
     // solve; otherwise an accepted route is immediately overwritten by HOLD.
     navWaiting = g_navAwaiting;
+    const uint64_t navHandoffNowMs = GetTickCount64();
+    if (navWaiting) {
+        if (g_navAwaitingSinceMs == 0) g_navAwaitingSinceMs = navHandoffNowMs;
+    } else {
+        g_navAwaitingSinceMs = 0;
+    }
     if (goal.walkTo && navArrivedFresh) navStep = {walkX, walkY};
     else if (goal.walkTo && navCacheRefreshed && g_navCache.valid && !navWaiting) {
         float dev = 0.f; bool nearEnd = false; bool routeConnected = false;
@@ -1779,6 +1788,9 @@ void Tick(void* player, float px, float py, float dt)
             goal.exactTravel) && Navigation::ContinueConsumedTravel(in, steerStep)));
     if (goal.walkTo) {
         navStep = navHandoff.step;
+        if (navWaiting)
+            navStep = Navigation::AwaitingRecoveryGoal(true, g_navAwaitingSinceMs,
+                navHandoffNowMs, in.player, Vec2{walkX, walkY});
         goal.pos = ringRoute ? steerStep : navStep;
     }
 

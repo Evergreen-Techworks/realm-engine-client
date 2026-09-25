@@ -5,6 +5,26 @@
 
 namespace UDodge { namespace Navigation {
 constexpr float kWallPadding = 0.15f;
+constexpr uint64_t kAwaitingRecoveryMs = 1000;
+constexpr float kAwaitingRecoveryTiles = 2.f;
+
+// The coarse one-tile navigation grid can temporarily report only its start
+// cell after a realm/beacon handoff. Holding at the player forever makes the
+// finer local solver see `start_is_goal`, so it never gets a chance to find an
+// egress. After a bounded wait, give that solver a near-space goal in the raw
+// objective's direction. This is intent only: the solver still applies walls,
+// damaging ground, enemy bodies and temporal projectile admission before it
+// can issue any movement.
+inline Vec2 AwaitingRecoveryGoal(bool awaiting, uint64_t awaitingSinceMs, uint64_t nowMs,
+                                 Vec2 player, Vec2 rawGoal)
+{
+    if (!awaiting || awaitingSinceMs == 0 || nowMs - awaitingSinceMs < kAwaitingRecoveryMs)
+        return player;
+    const Vec2 delta = Sub(rawGoal, player);
+    const float distance = Len(delta);
+    if (distance <= 1e-5f) return player;
+    return Add(player, Mul(delta, std::min(distance, kAwaitingRecoveryTiles) / distance));
+}
 
 inline bool SameRouteRequest(bool assisting, uint64_t epoch, uint64_t goalId,
                              uint64_t previousEpoch, uint64_t previousGoalId)
