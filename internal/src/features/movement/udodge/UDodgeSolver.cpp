@@ -1092,6 +1092,82 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     out.shouldMove = false;
 }
 
+SurroundedDiagnostics ExplainSurrounded(const MapInput& in, float moveBudgetTiles,
+                                       const Goal& goal)
+{
+    SurroundedDiagnostics out{};
+    if (!in.map) return out;
+    out.movementLocked = in.movementLocked || !std::isfinite(in.speed) || in.speed <= 0.f;
+    const auto retain = [](SurroundedDiagnostics::Containing* entries,
+                           SurroundedDiagnostics::Containing value) {
+        for (int i = 0; i < SurroundedDiagnostics::kMaxDetails; ++i) {
+            if (entries[i].index >= 0 && entries[i].distance <= value.distance) continue;
+            for (int j = SurroundedDiagnostics::kMaxDetails - 1; j > i; --j) entries[j] = entries[j - 1];
+            entries[i] = value;
+            break;
+        }
+    };
+    for (int i = 0; i < in.map->enemyCount; ++i) {
+        const auto& e = in.map->enemies[i];
+        const float radius = EnemyAvoidanceRadius(e, in.settings);
+        const float distance = Len(Sub(in.player, e.pos));
+        if (distance >= radius) continue;
+        ++out.containingEnemies;
+        retain(out.enemies, {i, e.pos, e.radius, radius, distance, false, e.passiveScenery});
+    }
+    // Same physical zone pad as Core::ZoneEscapePathClear, independent of the
+    // projectile collider scale. Log both radii to make the expansion explicit.
+    const float zonePad = kUPlayerHalf + std::clamp(in.settings.positionUncertainty, 0.f, .35f);
+    for (int i = 0; i < in.map->zoneCount; ++i) {
+        const auto& z = in.map->zones[i];
+        const float radius = z.radius + zonePad;
+        const float distance = Len(Sub(in.player, z.pos));
+        if (!z.active || distance >= radius) continue;
+        ++out.containingZones;
+        retain(out.zones, {i, z.pos, z.radius, radius, distance, z.enemyKeepout, false});
+    }
+    if (out.movementLocked) return out;
+
+    const float b = std::max(moveBudgetTiles, 1e-3f);
+    Cand candidates[kMaxCandidates];
+    // Fixed polar probes plus the objective direction. This is not a replay of
+    // Solve's pocket candidates, which depend on its temporal pocket search.
+    const int n = BuildCandidates(in, b, goal, false, {}, candidates);
+    // Do not build or query the temporal context if geometry rejects everything.
+    static thread_local Core::Temporal::Ctx ctx;
+    bool built = false;
+    float standTime = 0.f;
+    const bool travelPrediction = goal.walkTo && !goal.fromLock && !in.map->hasLock &&
+        in.map->enemyStandoff != Standoff::Mode::Off;
+    const float horizon = travelPrediction
+        ? std::min(Core::Temporal::kHorizonMs, kUDwellMs + b / in.speed) : kUDwellMs;
+    for (int i = 0; i < n; ++i) {
+        const auto& c = candidates[i];
+        if (c.stand || c.moveDist <= 1e-4f) continue;
+        ++out.movingCandidates;
+        // Preserve the fallback's first-failure order. Counters are exclusive;
+        // a terrain rejection must not also be blamed on an overlapping enemy.
+        if (!CanOccupyAt(in, c.pos)) { ++out.terrainEndpoint; continue; }
+        if (!Core::EnemyEscapePathClear(in, in.player, c.pos)) { ++out.enemyEscape; continue; }
+        if (!OccupancyPathClear(in, in.player, c.pos)) { ++out.terrainSweep; continue; }
+        if (!Core::ZoneEscapePathClear(in, in.player, c.pos)) { ++out.zoneEscape; continue; }
+        ++out.admitted;
+        if (!built) {
+            Core::Temporal::Build(*in.map, in.settings.hitScale, in.settings.positionUncertainty,
+                in.player, kUTemporalCullTiles, ctx, Core::ProjectilePlayerHalf(in.settings));
+            standTime = Core::Temporal::TimeToDanger(ctx, in.player, in.speed, in.player,
+                horizon, goal.walkTo && !goal.fromLock && !in.map->hasLock);
+            built = true;
+        }
+        const float time = Core::Temporal::TimeToDanger(ctx, in.player, in.speed, c.pos,
+            horizon, goal.walkTo && !goal.fromLock && !in.map->hasLock);
+        if (time > standTime) ++out.temporalBetter;
+        else if (time < standTime) ++out.temporalWorse;
+        else ++out.temporalEqual;
+    }
+    return out;
+}
+
 int SelectFallbackCandidate(const FallbackCandidate* cands, int n, Vec2 radialRef,
                             bool sidestepOn, float standTime)
 {

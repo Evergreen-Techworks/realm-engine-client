@@ -149,6 +149,7 @@ PredErr::GroundDiag::State g_groundDiag;
 // [Diag/Map]: Item 3 map-capture readiness observability (UDodgeMapDiag.h).
 // OFF unless diagOn; game-update thread only.
 MapDiag::State g_mapDiag;
+Solver::SurroundedDiagnosticGate g_surroundedDiag;
 
 // ── Decision telemetry (UDodgeTelemetry.h) ───────────────────────────────────
 // OFF unless DiagTiming::On() (RE_ASSETS\diag-timing.flag, or the developer "Diag
@@ -897,6 +898,7 @@ void OnEnter()
     g_navAwaitingSinceMs = 0;
     g_navProgress.Reset();
     g_partialRouteRecovery.Reset();
+    g_surroundedDiag.Reset();
     g_lockApproach = false;
     g_lockApproachGoalValid = false;
     g_lockApproachId = 0;
@@ -1930,6 +1932,28 @@ void Tick(void* player, float px, float py, float dt)
             case Solver::SolveKind::Safe:       ++gs.safes;      break;
             case Solver::SolveKind::Fallback:   ++gs.fallbacks;  break;
             case Solver::SolveKind::Surrounded: ++gs.surrounded; break;
+        }
+        // Failure-only polar and goal probes of the current geometry, on the same
+        // two-second cadence as stuck-map diagnostics. Normal decisions do no
+        // extra candidate work; nothing from this explanation feeds movement.
+        if (g_solve.kind == Solver::SolveKind::Surrounded && g_surroundedDiag.Ready(GetTickCount64())) {
+            const auto d = Solver::ExplainSurrounded(in, b, goal);
+            DiagTiming::Logf("[Diag/Surrounded] player=(%.3f,%.3f) budget=%.3f speed=%.4f locked=%d"
+                " candidateSet=polar+goal moving=%d firstVeto{terrainEnd=%d enemy=%d terrainSweep=%d zone=%d} admitted=%d"
+                " temporalVsStand{better=%d equal=%d worse=%d} containing{enemies=%d zones=%d} ids=unavailable",
+                in.player.x, in.player.y, b, in.speed, d.movementLocked ? 1 : 0,
+                d.movingCandidates, d.terrainEndpoint, d.enemyEscape, d.terrainSweep, d.zoneEscape, d.admitted,
+                d.temporalBetter, d.temporalEqual, d.temporalWorse, d.containingEnemies, d.containingZones);
+            for (int i = 0; i < Solver::SurroundedDiagnostics::kMaxDetails; ++i) {
+                const auto& e = d.enemies[i];
+                if (e.index >= 0)
+                    DiagTiming::Logf("[Diag/SurroundedBody] index=%d at=(%.3f,%.3f) radius=%.3f effective=%.3f distance=%.3f scenery=%d",
+                        e.index, e.pos.x, e.pos.y, e.radius, e.effectiveRadius, e.distance, e.scenery ? 1 : 0);
+                const auto& z = d.zones[i];
+                if (z.index >= 0)
+                    DiagTiming::Logf("[Diag/SurroundedZone] index=%d at=(%.3f,%.3f) radius=%.3f effective=%.3f distance=%.3f policyOnly=%d",
+                        z.index, z.pos.x, z.pos.y, z.radius, z.effectiveRadius, z.distance, z.policyOnly ? 1 : 0);
+            }
         }
     }
 

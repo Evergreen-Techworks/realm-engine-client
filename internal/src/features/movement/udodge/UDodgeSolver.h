@@ -262,4 +262,34 @@ struct FallbackCandidate {
 int SelectFallbackCandidate(const FallbackCandidate* cands, int n, Vec2 radialRef,
                             bool sidestepOn, float standTime);
 
+// Failure-only snapshot. Call after a Surrounded result at a bounded diagnostic
+// cadence; never use these counts to change movement admission or ranking.
+struct SurroundedDiagnostics {
+    static constexpr int kMaxDetails = 3;
+    struct Containing {
+        int index = -1; // index in this map; maps do not retain entity IDs
+        Vec2 pos{};
+        float radius = 0.f, effectiveRadius = 0.f, distance = 0.f;
+        bool policyOnly = false, scenery = false;
+    };
+    bool movementLocked = false;
+    int movingCandidates = 0;
+    int terrainEndpoint = 0, enemyEscape = 0, terrainSweep = 0, zoneEscape = 0;
+    int admitted = 0, temporalBetter = 0, temporalEqual = 0, temporalWorse = 0;
+    int containingEnemies = 0, containingZones = 0;
+    Containing enemies[kMaxDetails]{}, zones[kMaxDetails]{};
+};
+struct SurroundedDiagnosticGate {
+    bool sampled = false;
+    uint64_t lastMs = 0;
+    void Reset() { sampled = false; lastMs = 0; }
+    bool Ready(uint64_t now) {
+        if (sampled && now >= lastMs && now - lastMs < 2000) return false;
+        sampled = true; lastMs = now;
+        return true;
+    }
+};
+SurroundedDiagnostics ExplainSurrounded(const MapInput& in, float moveBudgetTiles,
+                                       const Goal& goal);
+
 } } // namespace UDodge::Solver
