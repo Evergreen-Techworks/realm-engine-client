@@ -23,6 +23,20 @@ import {
 
 const T = 1_700_000_000_000;
 
+it('records synchronized boss/player positions without copying names or identities', () => {
+  const records = dispatchPacket('NEWTICK', T, { statuses: [
+    { objectId: 1, position: { x: 0, y: 1 }, data: [] },
+    { objectId: 42, position: { x: 5, y: 1 }, data: [], name: 'private' },
+  ] }, { selfId: 1, questId: 42, rangeMax: 7, bossDamageable: true, level: 20,
+    benchmarkSettings: { 'auto-nexus.ForceAutoNexusHealth': 10, token: 'private-token' } }, new ProjDefTracker());
+  expect(records).toContainEqual(expect.objectContaining({ k: 'combat', quest_id: 42, px: 0, bx: 5, sample_age_ms: 0, level: 20 }));
+  expect(JSON.stringify(records)).not.toContain('private');
+  expect(records).toContainEqual(expect.objectContaining({ settings: { 'auto-nexus.ForceAutoNexusHealth': 10 } }));
+  const missing = dispatchPacket('NEWTICK', T, { statuses: [{objectId: 1, data: []}] },
+    { selfId: 1, questId: 42 }, new ProjDefTracker());
+  expect(missing).toEqual([]);
+});
+
 const PROJ: ProjDefInput = {
   oname: 'Ghost Bear',
   speed: 8.5,

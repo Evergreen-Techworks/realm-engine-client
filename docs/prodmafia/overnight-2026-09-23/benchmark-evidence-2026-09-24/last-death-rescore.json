@@ -1,0 +1,141 @@
+{
+  "session_id": "20260925T001721Z",
+  "boss": "Ethereal Shrine",
+  "outcome": "death",
+  "escape_result": "not_requested",
+  "quality": [
+    {
+      "burst_hits": {
+        "100": 0,
+        "250": 0,
+        "500": 0
+      },
+      "burst_server_damage": {
+        "100": null,
+        "250": null,
+        "500": null
+      },
+      "server_damage_total": null,
+      "server_damage_observations": 0,
+      "minimum_observed_hp": null,
+      "minimum_ledger_hp": null,
+      "ground_damage_total": null,
+      "aoe_damage_total": null,
+      "damage_source_note": "Server DAMAGE only; ground/AoE attribution unavailable without a confirmed source.",
+      "boss_position_samples": 0,
+      "boss_position_coverage": 0.0,
+      "boss_distance_mean_tiles": null,
+      "boss_distance_p95_tiles": null,
+      "player_outward_tiles": null,
+      "damageable_observed_ms": 0,
+      "effective_firing_band_fraction": null,
+      "firing_band_note": "Nominal linear weapon reach while damageable; line of sight unverified.",
+      "firing_band_reentry_ms": [],
+      "boss_sample_max_gap_ms": null,
+      "move_gap_max_ms": 308,
+      "hits_after_move_gap": 0,
+      "render_gap_max_ms": null,
+      "hits_after_render_gap": null
+    },
+    {
+      "burst_hits": {
+        "100": 1,
+        "250": 1,
+        "500": 1
+      },
+      "burst_server_damage": {
+        "100": null,
+        "250": null,
+        "500": null
+      },
+      "server_damage_total": null,
+      "server_damage_observations": 0,
+      "minimum_observed_hp": 318,
+      "minimum_ledger_hp": null,
+      "ground_damage_total": null,
+      "aoe_damage_total": null,
+      "damage_source_note": "Server DAMAGE only; ground/AoE attribution unavailable without a confirmed source.",
+      "boss_position_samples": 0,
+      "boss_position_coverage": 0.0,
+      "boss_distance_mean_tiles": null,
+      "boss_distance_p95_tiles": null,
+      "player_outward_tiles": null,
+      "damageable_observed_ms": 0,
+      "effective_firing_band_fraction": null,
+      "firing_band_note": "Nominal linear weapon reach while damageable; line of sight unverified.",
+      "firing_band_reentry_ms": [],
+      "boss_sample_max_gap_ms": null,
+      "move_gap_max_ms": 247,
+      "hits_after_move_gap": 0,
+      "render_gap_max_ms": null,
+      "hits_after_render_gap": null
+    },
+    {
+      "burst_hits": {
+        "100": 0,
+        "250": 0,
+        "500": 0
+      },
+      "burst_server_damage": {
+        "100": null,
+        "250": null,
+        "500": null
+      },
+      "server_damage_total": null,
+      "server_damage_observations": 0,
+      "minimum_observed_hp": 326,
+      "minimum_ledger_hp": null,
+      "ground_damage_total": null,
+      "aoe_damage_total": null,
+      "damage_source_note": "Server DAMAGE only; ground/AoE attribution unavailable without a confirmed source.",
+      "boss_position_samples": 0,
+      "boss_position_coverage": 0.0,
+      "boss_distance_mean_tiles": null,
+      "boss_distance_p95_tiles": null,
+      "player_outward_tiles": null,
+      "damageable_observed_ms": 0,
+      "effective_firing_band_fraction": null,
+      "firing_band_note": "Nominal linear weapon reach while damageable; line of sight unverified.",
+      "firing_band_reentry_ms": [],
+      "boss_sample_max_gap_ms": null,
+      "move_gap_max_ms": 318,
+      "hits_after_move_gap": 0,
+      "render_gap_max_ms": null,
+      "hits_after_render_gap": null
+    },
+    {
+      "burst_hits": {
+        "100": 2,
+        "250": 2,
+        "500": 2
+      },
+      "burst_server_damage": {
+        "100": null,
+        "250": null,
+        "500": null
+      },
+      "server_damage_total": null,
+      "server_damage_observations": 0,
+      "minimum_observed_hp": 284,
+      "minimum_ledger_hp": 92,
+      "ground_damage_total": null,
+      "aoe_damage_total": null,
+      "damage_source_note": "Server DAMAGE only; ground/AoE attribution unavailable without a confirmed source.",
+      "boss_position_samples": 0,
+      "boss_position_coverage": 0.0,
+      "boss_distance_mean_tiles": null,
+      "boss_distance_p95_tiles": null,
+      "player_outward_tiles": null,
+      "damageable_observed_ms": 0,
+      "effective_firing_band_fraction": null,
+      "firing_band_note": "Nominal linear weapon reach while damageable; line of sight unverified.",
+      "firing_band_reentry_ms": [],
+      "boss_sample_max_gap_ms": null,
+      "move_gap_max_ms": 322,
+      "hits_after_move_gap": 0,
+      "render_gap_max_ms": null,
+      "hits_after_render_gap": null,
+      "ledger_hp_source": "sparse AutoNexus log witnesses, not continuous HP telemetry"
+    }
+  ]
+}

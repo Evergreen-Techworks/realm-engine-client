@@ -1,3 +1,5 @@
+#include "benchmark_truth.h"
+#include <stdexcept>
 // UDodge scenario harness — drives the PRODUCTION UDodge::Tick, worker cycle,
 // grid pathfinder, solver and route follower through synthetic worlds, and
 // measures whether the player actually gets where it was sent.
@@ -120,7 +122,7 @@ struct Enemy  { int id = 0, type = 0; float x = 0.f, y = 0.f; int hp = 1000, max
                 float shotSpeed = 0.f;
                 bool  hasShots = false; };
 struct Bullet { double t0 = 0; float x0 = 0, y0 = 0, vx = 0, vy = 0; float lifeMs = 0, half = 0.4f;
-                int owner = 0, id = 0; bool alive = true; };
+                int owner = 0, id = 0; bool alive = true; double visibleAt = 0; float curve = 0, damage = 80; };
 
 inline uint32_t Key(int tx, int ty)
 {
@@ -129,7 +131,19 @@ inline uint32_t Key(int tx, int ty)
 }
 inline int FloorI(float v) { return static_cast<int>(std::floor(v)); }
 
+inline Vec2 BulletPosition(const Bullet& b, float age) {
+    const float speed = std::sqrt(b.vx*b.vx+b.vy*b.vy);
+    const float bend = b.curve*std::sin(age*.006f);
+    return {b.x0+b.vx*age-(speed>0 ? b.vy/speed*bend : 0),
+            b.y0+b.vy*age+(speed>0 ? b.vx/speed*bend : 0)};
+}
 struct World {
+    BenchmarkHealth health;
+    bool benchmark = false;
+    int eventsFired = 0, sensorLimitedFrames = 0, previsibleHits = 0, shotsSpawned = 0;
+    int requiredEvents = 0, hazardContacts = 0;
+    double stallStart = -1, stallDuration = 0, maxDecisionAge = 0;
+
     std::unordered_map<uint32_t, Ground> tiles;   // absent = never streamed (void)
     std::unordered_map<uint32_t, Obj>    objs;
     std::unordered_map<uint32_t, Obj>    hiddenObjs;   // block the player but never reach the DLL's view
@@ -196,7 +210,7 @@ struct World {
         b.vx = std::cos(angle) * tilesPerSec / 1000.f;
         b.vy = std::sin(angle) * tilesPerSec / 1000.f;
         b.lifeMs = lifeMs; b.half = half; b.owner = owner; b.id = nextBulletId++;
-        bullets.push_back(b);
+        bullets.push_back(b); ++shotsSpawned;
         ++bulletVersion;
     }
 };
@@ -209,11 +223,11 @@ World* g_world = nullptr;
 // read this one filter, so "a lane threat is live" means "FillDanger emits a lane".
 inline bool LaneVisible(const Bullet& b, float playerX, float playerY, float& age, float& rem, Vec2& live)
 {
-    if (!b.alive) return false;
+    if (!b.alive || g_nowMs < b.visibleAt) return false;
     age = static_cast<float>(g_nowMs - b.t0);
     rem = b.lifeMs - age;
     if (rem <= 0.f) return false;
-    live = { b.x0 + b.vx * age, b.y0 + b.vy * age };
+    live = BulletPosition(b, age);
     return LenSq(Sub(live, { playerX, playerY })) <= 16.f * 16.f;
 }
 inline bool AnyLaneLive(const World& w, float playerX, float playerY)
@@ -465,7 +479,7 @@ PredErr::State g_predErr;
 
 void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s, bool diagOn)
 {
-    const World& w = *g_world;
+    World& w = *g_world;
     out.laneCount = 0; out.zoneCount = 0; out.enemyCount = 0;
     out.projectileSourceUnavailable = false; out.limited = false;
     out.hasLock = false; out.lockId = 0; out.lockPos = {};
@@ -476,17 +490,18 @@ void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s,
     out.colliderTrusted = true;
     for (const Bullet& b : w.bullets) {
         float age = 0.f, rem = 0.f; Vec2 live{};
-        if (!LaneVisible(b, playerX, playerY, age, rem, live) || out.laneCount >= kMaxProjectiles) continue;
+        if (!LaneVisible(b, playerX, playerY, age, rem, live)) continue;
+        if (out.laneCount >= kMaxProjectiles) { out.limited = true; ++w.sensorLimitedFrames; continue; }
         LaneThreat& L = out.lanes[out.laneCount++];
         L = LaneThreat{};
         L.bulletId = b.id; L.ownerObjId = static_cast<uint32_t>(b.owner); L.attackerObjId = b.owner;
         L.hitHalf = b.half; L.remainingLifeMs = rem;
-        L.hasLinearMotion = true; L.linearVelocity = { b.vx, b.vy };
+        L.hasLinearMotion = b.curve == 0; L.linearVelocity = { b.vx, b.vy };
         float t = 0.f;
         for (;;) {
             const float tt = std::min(t, rem);
             L.pointTimesMs[L.pointCount] = tt;
-            L.points[L.pointCount++] = { live.x + b.vx * tt, live.y + b.vy * tt };
+            L.points[L.pointCount++] = BulletPosition(b, age + tt);
             if (tt >= rem) { L.tailAtShotEnd = true; break; }
             if (tt >= kLaneCoverMs || L.pointCount >= kMaxLanePoints) break;
             t += kTraceStepMs;
@@ -506,7 +521,7 @@ void FillDanger(DangerMap& out, float playerX, float playerY, const Settings& s,
     if (diagOn) PredErr::MaybeEmit(g_predErr, static_cast<uint64_t>(g_nowMs), &DbgFileLogWrite);
     const int32_t lock = w.lockId;
     for (const Enemy& e : w.enemies) {
-        if (e.hp <= 0) continue;
+        if (e.hp <= 0 && !e.invuln) continue;
         if (LenSq(Sub({ e.x, e.y }, { playerX, playerY })) <= 16.f * 16.f && out.enemyCount < kMaxEnemies) {
             EnemyBlocker& b = out.enemies[out.enemyCount++];
             b.pos = { e.x, e.y };
@@ -1243,6 +1258,10 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
     RebuildView(w);
 
     Result r; r.name = name;
+    if (w.benchmark && (!TruthSquareOpen(w, FloorI(w.px), FloorI(w.py)) ||
+                       (kind == Goal::WalkTo && !TruthSquareOpen(w, FloorI(goal.x), FloorI(goal.y)))))
+        throw std::runtime_error("invalid benchmark start/goal");
+    double lastDecisionMs = g_nowMs;
     r.lock = kind == Goal::Lock;
     Vec2 lastHeading{};   // unit direction of the last frame that moved
     Vec2 prev{ w.px, w.py };
@@ -1264,7 +1283,14 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
         Vec2 lockPos{};
         const bool threatened = LockTarget(w, lockPos) && AnyLaneLive(w, before.x, before.y);
         const auto t0 = std::chrono::steady_clock::now();
-        UDodge::Tick(reinterpret_cast<void*>(&w), w.px, w.py, 1.f / 60.f);
+        const double elapsed = g_nowMs-100000.0;
+        const bool stalled = w.stallStart >= 0 && elapsed >= w.stallStart && elapsed < w.stallStart+w.stallDuration;
+        const bool disabled = std::getenv("HARNESS_DISABLE_CONTROLLER") != nullptr;
+        if (!stalled && !disabled) {
+            UDodge::Tick(reinterpret_cast<void*>(&w), w.px, w.py, 1.f / 60.f);
+            lastDecisionMs = g_nowMs;
+        }
+        w.maxDecisionAge = std::max(w.maxDecisionAge, g_nowMs-lastDecisionMs);
         if (std::getenv("HARNESS_TRACE_FRAMES")) UDodge::RenderDebugOverlay(0, 0, 0, 1, 0, 0);
         const double tickMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         ++g_tick.n; g_tick.sum += tickMs; g_tick.max = std::max(g_tick.max, tickMs);
@@ -1272,7 +1298,10 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
 
         const Vec2 cur{ w.px, w.py };
         const Ground* currentGround = w.GroundAt(FloorI(cur.x), FloorI(cur.y));
-        if (currentGround && currentGround->damage > 0) ++r.damagingGroundFrames;
+        if (currentGround && currentGround->damage > 0) {
+            ++r.damagingGroundFrames;
+            if (g_frame % 12 == 0) w.health.Hit(g_nowMs, currentGround->damage, true);
+        }
         if (kind == Goal::WalkTo && w.walkActive && r.pathTiles > 1.f &&
             Len(Sub(cur, goal)) > 1.f && LenSq(Sub(cur, prev)) < 1e-8f)
             ++r.pausedTravelFrames;
@@ -1322,7 +1351,8 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
             if (!b.alive) continue;
             const float age = static_cast<float>(g_nowMs - b.t0);
             if (age > b.lifeMs) { b.alive = false; continue; }
-            const float bx = b.x0 + b.vx * age, by = b.y0 + b.vy * age;
+            const Vec2 bp = BulletPosition(b, age);
+            const float bx = bp.x, by = bp.y;
             if (!TruthSquareOpen(w, FloorI(bx), FloorI(by))) { b.alive = false; continue; }   // walls stop shots
             // TRUTH (S3.5) = the game's proven rule: per-axis, NON-strict, player a
             // point, box = T x this world's collisionRadiusMultiplier.
@@ -1333,8 +1363,12 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
                         (g_nowMs - 100000.0) / 1000.0, cur.x, cur.y, before.x, before.y, bx, by,
                         b.vx, b.vy, b.half, age, b.lifeMs);
                 ++r.hits; b.alive = false; ++w.bulletVersion;
+                if (g_nowMs < b.visibleAt) ++w.previsibleHits;
+                w.health.Hit(g_nowMs, b.damage);
             }
         }
+        w.health.Advance(g_nowMs, !stalled && !disabled);
+        if (w.health.enabled && (w.health.deathMs >= 0 || w.health.escapeMs >= 0)) break;
         if (g_nowMs - windowStart >= 2000.0) {
             // Holding still counts as stuck only while short of the goal (walk-to not
             // arrived, or a locked target still beyond engagement range).
@@ -1377,6 +1411,9 @@ Result Run(const char* name, World& w, Goal kind, Vec2 goal, double limitS)
         r.success = r.firstInRangeS >= 0 && r.inRangeFrac >= 0.5;
         r.timeS = r.firstInRangeS;
     }
+    if (w.benchmark && (w.eventsFired < w.requiredEvents || w.shotsSpawned == 0))
+        throw std::runtime_error("benchmark did not exercise required hazards");
+    if (w.health.deathMs >= 0 || w.health.escapeMs >= 0) r.success = false;
     UDodge::SetEnabled(false);
     return r;
 }
@@ -1387,10 +1424,10 @@ void Emit(const Result& r)
     const double navAvg = g_worker.navRuns ? g_worker.navMsSum / g_worker.navRuns : 0;
     const double dodgeAvg = g_worker.cycles ? g_worker.dodgeMsSum / g_worker.cycles : 0;
     const double cycleAvg = g_worker.cycles ? g_worker.cycleMsSum / g_worker.cycles : 0;
-    const auto p95 = [](std::vector<double> v) {   // nearest-rank 95th percentile; 0 with no samples
+    const auto p95 = [](std::vector<double> v, double percentile = .95) {   // nearest-rank 95th percentile; 0 with no samples
         if (v.empty()) return 0.0;
         std::sort(v.begin(), v.end());
-        return v[std::min(v.size() - 1, static_cast<size_t>(std::ceil(0.95 * v.size())) - 1)];
+        return v[std::min(v.size() - 1, static_cast<size_t>(std::ceil(percentile * v.size())) - 1)];
     };
     // 0 when nothing was moved under lock + live lane, and when no time was simulated.
     const double radialOutFrac = r.threatMoveTiles > 1e-9 ? r.radialOutTiles / r.threatMoveTiles : 0.0;
@@ -1430,7 +1467,7 @@ void Emit(const Result& r)
                 "\"liveSolve_ms_avg\":%.3f,\"liveSolve_ms_max\":%.3f,"
                 "\"revalidate_ms_avg\":%.3f,\"revalidate_ms_max\":%.3f,"
                 "\"debug_ms_avg\":%.3f,\"debug_ms_max\":%.3f,"
-                "\"phase_total_ms_avg\":%.3f,\"phase_total_ms_max\":%.3f}\n",
+                "\"phase_total_ms_avg\":%.3f,\"phase_total_ms_max\":%.3f",
                 r.name.c_str(), r.success ? "true" : "false", r.timeS, r.pathTiles, r.finalDist, r.stuckS, r.hits,
                 r.inRangeFrac, g_move.refused, g_move.overspeed, std::min(g_move.maxStepRatio, 999.0),
                 tickAvg, g_tick.max, g_worker.navRuns, navAvg, g_worker.navMsMax,
@@ -1463,6 +1500,14 @@ void Emit(const Result& r)
                 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 #endif
                 );
+    const World& w = *g_world;
+    std::printf(",\"tick_ms_p99\":%.3f,\"benchmark_valid\":true,\"events_fired\":%d,\"shots_spawned\":%d,"
+        "\"sensor_limited_observations\":%d,\"previsibility_hits\":%d,\"max_decision_age_ms\":%.1f,"
+        "\"survival_model_enabled\":%s,\"deaths\":%d,\"escapes\":%d,\"min_truth_hp\":%.1f,"
+        "\"damage_peak_100ms\":%.1f,\"damage_peak_250ms\":%.1f,\"damage_peak_500ms\":%.1f}\n",
+        p95(g_tick.samples,.99), w.eventsFired,w.shotsSpawned,w.sensorLimitedFrames,w.previsibleHits,w.maxDecisionAge,
+        w.health.enabled ? "true":"false", w.health.deathMs>=0, w.health.escapeMs>=0,w.health.minHp,
+        w.health.Peak(100),w.health.Peak(250),w.health.Peak(500));
     std::fflush(stdout);
 }
 
@@ -2073,7 +2118,7 @@ void ScenarioStandoffPack(const char* name, bool crossfire = false, double shotD
                 ww.Fire(e.x, e.y, a + k * 0.12f, shotSpeed, 1400.f, 0.4f, e.id);
                 // Same late-packet model as the shotgun fixture: a shot can
                 // already have travelled a server tick before becoming visible.
-                ww.bullets.back().t0 -= shotDelayMs;
+                ww.bullets.back().visibleAt = g_nowMs + shotDelayMs;
             }
             if (!crossfire) return;
         }
@@ -2208,6 +2253,7 @@ void ScenarioMoveToNoClamp(const char* name)
     g_plan = PlanStats{};   // no Run() here: nothing is planned, so nothing may be reported
     const bool ok = DodgeRuntime::CallMoveTo(&w, 5.5f, 0.5f);
     Result r; r.name = name;
+
     r.success = ok && std::fabs(w.px - 5.5f) < 1e-3f && std::fabs(w.py - 0.5f) < 1e-3f && g_move.overspeed == 1;
     // The unblocked final substep must land exactly on a requested centreline.
     // Repeated float addition previously stopped one ULP short at this speed;
@@ -2356,10 +2402,106 @@ void BenchNav()
     bench({ 60.5f, 0.5f }, "hazard_ring");
 }
 
+
+// Structurally distinct benchmark fixtures. Synthetic hazard shapes, not claims
+// of exact boss parity. Truth contacts exist independently of targetability.
+void ScenarioBenchmark(const char* name)
+{
+    const std::string family(name);
+    World w; Floor(w,100); if (const char* speed=std::getenv("HARNESS_PLAYER_SPEED")) w.tps=std::atof(speed); w.benchmark=true; w.health.enabled=true;
+    w.requiredEvents=2; w.px=.5f; w.py=.5f;
+    const bool moving = family=="q_moving_boss_adds";
+    const bool corner = family=="q_corner_exit";
+    const bool door = family=="q_doorway_volley";
+    const bool streaming = family=="q_streamed_route";
+    const bool changing = family=="q_route_becomes_unsafe";
+    const bool hazard = family=="q_untargetable_hazard";
+    const bool curved = family=="q_curved_ground_overlap";
+    const bool saturation = family=="q_sensor_saturation";
+    const uint32_t seed = std::getenv("HARNESS_LAYOUT_SEED") ? static_cast<uint32_t>(std::strtoul(std::getenv("HARNESS_LAYOUT_SEED"), nullptr, 10)) : 0;
+    const float offset = static_cast<float>((seed*2654435761u) & 65535u)/65535.f*5.f;
+    if (corner) {
+        w.Fill(-2,-2,10,-2,kNoWalkWall); w.Fill(-2,-2,-2,8,kNoWalkWall);
+        w.Fill(3,-1,3,4,kNoWalkWall); // leave through y>4, not through the corner
+    }
+    if (door) {
+        w.Fill(7,-12,7,-2,kNoWalkWall); w.Fill(7,2,7,12,kNoWalkWall);
+    }
+    if (curved) w.Fill(5,-1,8,1,kLava);
+    Enemy boss; boss.id=800; boss.type=0x0f10; boss.x=12.5f; boss.y=2.5f+offset*.2f;
+    boss.shotSpeed=8; boss.shotRange=12; boss.hasShots=true;
+    if (moving) w.lockId=boss.id;
+    if (hazard) { boss.hp=0; boss.invuln=true; boss.type=0xb2a9; boss.x=7.5f; boss.y=.5f; }
+    w.enemies.push_back(boss);
+    w.stallStart=1000;
+    w.stallDuration=std::getenv("HARNESS_STALL_MS") ? std::atof(std::getenv("HARNESS_STALL_MS")) : 0;
+    double next=0; bool added=false;
+    w.script=[=](World& ww) mutable {
+        const double elapsed=g_nowMs-100000.0;
+        if (moving) { ww.enemies[0].y=2.5f+std::sin(elapsed*.0008f)*3; }
+        if (!added && elapsed>=500 && (moving||streaming||changing)) {
+            added=true; ++ww.eventsFired;
+            Enemy add=boss; add.id=801; add.hp=1000; add.invuln=false;
+            add.x=streaming ? 25.5f : 7.5f; add.y=-2.5f;
+            ww.enemies.push_back(add);
+        }
+        if (elapsed<next) return;
+        next=elapsed+500; ++ww.eventsFired;
+        if (saturation) {
+            for (int i=0;i<kMaxProjectiles+32;++i) {
+                float a=kTwoPi*i/(kMaxProjectiles+32);
+                ww.Fire(ww.px+6*std::cos(a),ww.py+6*std::sin(a),a+kTwoPi/2,5,1800,.2f,800);
+            }
+        } else {
+            for (const auto& e:ww.enemies) {
+                float angle=std::atan2(ww.py-e.y,ww.px-e.x);
+                for (int i=-1;i<=1;++i) {
+                    ww.Fire(e.x,e.y,angle+i*.15f,8,2500,.35f,e.id);
+                    ww.bullets.back().visibleAt=g_nowMs+(curved?150:100);
+                    if(curved) ww.bullets.back().curve=1;
+                }
+                if(hazard && Len(Sub({ww.px,ww.py},{e.x,e.y}))<2.5f) {
+                    ww.health.Hit(g_nowMs,120,true); ++ww.hazardContacts;
+                }
+            }
+        }
+    };
+    const Vec2 goal{streaming?60.5f:18.5f,corner?6.5f:.5f};
+    Result r=Run(name,w,moving?Goal::Lock:Goal::WalkTo,goal,streaming?25:12);
+    r.hits+=w.hazardContacts;
+    Emit(r);
+}
+
+
+void BenchmarkSelfCheck()
+{
+    World w; Floor(w); g_world=&w; g_nowMs=100000;
+    w.Fire(.5f,.5f,0,0,1000,.4f,1); w.bullets.back().visibleAt=g_nowMs+200;
+    float age=0,remaining=0; Vec2 live{};
+    if (LaneVisible(w.bullets[0],.5f,.5f,age,remaining,live)) throw std::runtime_error("late shot visible early");
+    Vec2 truth=BulletPosition(w.bullets[0],0);
+    if (!Contact::Hit(truth.x-.5f,truth.y-.5f,Contact::TruthHalf(.4f,1)))
+        throw std::runtime_error("hidden shot absent from truth");
+    w.bullets.clear();
+    for(int i=0;i<kMaxProjectiles+1;++i) w.Fire(1,1,0,0,1000,.1f,1);
+    Enemy hazard; hazard.id=10;hazard.type=0xb2a9;hazard.hp=0;hazard.invuln=true;hazard.x=3;
+    w.enemies.push_back(hazard);
+    static DangerMap map; Settings settings;
+    FillDanger(map,.5f,.5f,settings,false);
+    if(!map.limited || map.laneCount!=kMaxProjectiles) throw std::runtime_error("sensor overflow not signalled");
+    if(map.enemyCount!=1 || map.zoneCount<1) throw std::runtime_error("untargetable hazard erased");
+    BenchmarkHealth batch; batch.enabled=true;
+    batch.Hit(0,550);batch.Advance(0);batch.Hit(20,100);batch.Advance(100);
+    if(batch.deathMs!=20 || batch.escapeMs>=0) throw std::runtime_error("request credited as escape");
+    std::puts("benchmark truth self-check passed");
+    g_world=nullptr;
+}
+
 } // namespace H
 
 int main(int argc, char** argv)
 {
+    if (argc>1 && std::string(argv[1])=="--benchmark-selfcheck") { H::BenchmarkSelfCheck(); return 0; }
     const std::string only = argc > 1 ? argv[1] : "";
     const int scanMode = argc > 2 ? std::atoi(argv[2]) : 0;
 #ifdef HARNESS_NAV_FOUNDATION
@@ -2436,6 +2578,9 @@ int main(int argc, char** argv)
     if (want("m_pinch_nowalk"))     H::ScenarioDiagonalPinch("m_pinch_nowalk", H::PinchWall::NoWalk);
     if (want("m_pinch_fulloccupy")) H::ScenarioDiagonalPinch("m_pinch_fulloccupy", H::PinchWall::FullOccupy);
     if (want("m_pinch_object"))     H::ScenarioDiagonalPinch("m_pinch_object", H::PinchWall::OccupySquare);
+    for (const char* name : {"q_moving_boss_adds", "q_corner_exit", "q_doorway_volley", "q_streamed_route",
+                             "q_route_becomes_unsafe", "q_untargetable_hazard", "q_curved_ground_overlap", "q_sensor_saturation"})
+        if (want(name)) H::ScenarioBenchmark(name);
     if (want("z_moveto_no_clamp"))  H::ScenarioMoveToNoClamp("z_moveto_no_clamp");
     if (scanMode != 0) {
         H::g_tileScanMode = scanMode;

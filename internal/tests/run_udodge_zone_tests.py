@@ -103,3 +103,12 @@ with tempfile.TemporaryDirectory(prefix="input-focus-tests-") as directory:
         "-o", str(binary),
     ], check=True)
     subprocess.run([str(binary)], check=True)
+
+# Benchmark truth must distinguish delayed observations from delayed damage.
+with tempfile.TemporaryDirectory(prefix="benchmark-truth-") as directory:
+    binary = Path(directory) / "truth"
+    subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-Werror",
+                    str(internal / "tests/scenario/test_benchmark_truth.cpp"), "-o", str(binary)], check=True)
+    subprocess.run([str(binary)], check=True)
+subprocess.run(["python3", "-m", "unittest", "discover", "-s", str(internal / "tests/scenario"),
+                "-p", "test_*.py"], check=True)

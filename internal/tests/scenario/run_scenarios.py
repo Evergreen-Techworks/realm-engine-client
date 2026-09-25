@@ -64,6 +64,9 @@ SCENARIOS = [
     "o_pending_map_waypoint", "o_pending_map_blocked",
 ]
 
+BENCHMARK_SCENARIOS = ["q_moving_boss_adds", "q_corner_exit", "q_doorway_volley", "q_streamed_route",
+                       "q_route_becomes_unsafe", "q_untargetable_hazard", "q_curved_ground_overlap", "q_sensor_saturation"]
+
 STAGE2_REGRESSIONS = ["n_rooms_remote_forward", "n_rooms_remote_reverse"]
 
 # Tactician acceptance (docs/superpowers/specs/2026-09-18-tactician-design.md, "Acceptance").
@@ -147,7 +150,7 @@ TELEMETRY_KEYS = ["t", "why", "mode", "rule", "nav", "corridor", "map_pending", 
                   "src", "drive", "clr", "cmd", "radial", "tang", "replan", "reversal", "lanes", "zones",
                   "enemies", "worker_ms", "timed", "reused", "budget_hit", "dropped"]
 TELEMETRY_MAX_LINES_PER_S = 8 + 3 + 1 + 1   # the three change classes' ceilings plus the heartbeat
-ROW_TIMING_FIELDS = {"tick_ms_avg", "tick_ms_max", "nav_ms_avg", "nav_ms_max", "dodge_ms_avg", "dodge_ms_max",
+ROW_TIMING_FIELDS = {"tick_ms_avg", "tick_ms_max", "tick_ms_p99", "nav_ms_avg", "nav_ms_max", "dodge_ms_avg", "dodge_ms_max",
                      "cycle_ms_avg", "cycle_ms_max", "dodge_ms_p95", "cycle_ms_p95",
                      # Item 4 (navigation finish plan): the game-thread phase split (read off
                      # DiagTiming::Game(), which only accumulates while diagnostics are on) plus
@@ -344,8 +347,10 @@ def main():
     scenarios = STAGE2_REGRESSIONS if args.stage2_regressions else SCENARIOS
     if args.tactician_acceptance:
         scenarios = [name for name in SCENARIOS if name in BOSS_SCENARIOS]
-    if args.only and args.only not in scenarios:
+    if args.only and args.only not in scenarios and args.only not in BENCHMARK_SCENARIOS:
         ap.error("--only must name a scenario in the selected suite")
+    if args.only in BENCHMARK_SCENARIOS:
+        scenarios = [args.only]
     internal = Path(args.internal).resolve()
     src = internal / "src"
     ud = src / "features/movement/udodge"

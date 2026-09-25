@@ -229,7 +229,24 @@ export interface DamageRecord {
   dmg: number | null; kill: boolean;
 }
 
+export interface CombatRecord {
+  k: 'combat'; t: number; quest_id: number;
+  px: number; py: number; bx: number; by: number; sample_age_ms: number;
+  range_min: number; range_max: number | null; damageable: boolean | null;
+  level: number | null; speed: number | null; equipment: number[];
+  settings: Record<string, string | number | boolean>;
+  server_requested: string | null;
+}
+
+export const BENCHMARK_SETTINGS = {
+  'auto-dodge': ['dodgeMode', 'capFps60', 'udodgePlanner', 'navNavigator', 'navCollisionRule',
+    'udodgeRouteCommit', 'udodgeEnemyStandoff', 'udodgeFallbackSidestep', 'udodgeFrameBudget'],
+  'auto-nexus': ['ForceAutoNexusHealth', 'PredictiveNexusMode', 'PredictiveNexusForecast',
+    'PredictiveNexusHealth', 'PredictiveNexusWindowMs', 'BurstGuard'],
+} as const;
+
 export type TestlabRecord =
+  | CombatRecord
   | HealthRecord
   | DamageRecord
   | StartRecord
@@ -488,6 +505,14 @@ export class ProjDefTracker {
 
 /** Everything the ENEMYSHOOT / PLAYERHIT branches need that only the plugin can resolve. */
 export interface DispatchContext {
+  benchmarkSettings?: Record<string, unknown>;
+  serverRequested?: string;
+  questId?: number;
+  rangeMax?: number;
+  bossDamageable?: boolean;
+  level?: number;
+  speed?: number;
+  equipment?: number[];
   /** Only for own-player health/DAMAGE extraction. Never written as account identity. */
   selfId?: number;
   effectiveMaxHp?: number;
@@ -536,7 +561,26 @@ export function dispatchPacket(
         const value = num(stat.value);
         if (value !== null) { record[keys[stat.id]] = value; any = true; }
       }
-      return any ? [record] : [];
+      const out: TestlabRecord[] = any ? [record] : [];
+      const boss = Number.isInteger(ctx.questId) && ctx.questId! > 0
+        ? statuses.find((s: any) => s?.objectId === ctx.questId) : null;
+      const coords = [own?.position?.x, own?.position?.y, boss?.position?.x, boss?.position?.y];
+      if (boss && coords.every(v => typeof v === 'number' && Number.isFinite(v))) {
+        const settings: Record<string, string | number | boolean> = {};
+        for (const [plugin, keys] of Object.entries(BENCHMARK_SETTINGS)) {
+          for (const key of keys) {
+            const name = `${plugin}.${key}`, v = ctx.benchmarkSettings?.[name];
+            if (typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v))) settings[name] = v;
+          }
+        }
+        out.push({ k: 'combat', t, quest_id: ctx.questId!, px: coords[0], py: coords[1],
+          bx: coords[2], by: coords[3], sample_age_ms: 0, range_min: 0,
+          range_max: num(ctx.rangeMax), damageable: ctx.bossDamageable ?? null,
+          level: num(ctx.level), speed: num(ctx.speed),
+          equipment: (ctx.equipment ?? []).slice(0, 4).filter(Number.isInteger), settings,
+          server_requested: typeof ctx.serverRequested === 'string' ? ctx.serverRequested : null });
+      }
+      return out;
     }
     case 'DAMAGE':
       if (!Number.isInteger(ctx.selfId) || ctx.selfId! < 0 || data?.targetId !== ctx.selfId) return [];

@@ -19,8 +19,14 @@ from benchmark_navigation import environment
 SCENARIOS = ("c_u_wall", "n_rooms1_fullocc_forward",
              "d_boss_open_rings", "d_boss_open_dense", "d_boss_wall_dense",
              "p_walk_pack_late_crossfire", "f_lava_pressure")
-METRICS = ("tick_ms_avg", "tick_ms_p95", "tick_ms_max", "dodge_ms_avg",
+METRICS = ("tick_ms_avg", "tick_ms_p95", "tick_ms_p99", "tick_ms_max", "dodge_ms_avg",
            "dodge_ms_p95", "cycle_ms_avg", "cycle_ms_p95")
+
+
+def timing_status(hashes, flags):
+    if hashes['baseline'] == hashes['candidate'] and flags:
+        return 'inconclusive_environment_noise'
+    return 'regression_flags' if flags else 'no_detected_regression'
 
 
 def main():
@@ -68,9 +74,9 @@ def main():
                 and r["rule"] == rule and r["revision"] == revision)
                 for metric in METRICS} for revision in binaries}
             comparisons.append(dict(scenario=scenario, rule=rule, **medians))
-            for metric in ("tick_ms_avg", "tick_ms_p95"):
+            for metric in ("tick_ms_avg", "tick_ms_p95", "tick_ms_p99", "tick_ms_max"):
                 old, new = medians["baseline"][metric], medians["candidate"][metric]
-                if new > old + max(0.05, old * 0.10):
+                if new > old + max(0.5 if metric == "tick_ms_max" else 0.05, old * 0.10):
                     regressions.append(dict(scenario=scenario, rule=rule, metric=metric,
                                             baseline=old, candidate=new))
             behavior = ("success", "hits", "path_tiles", "time_s", "final_dist", "refused_moves",
@@ -88,12 +94,15 @@ def main():
             if (old["success"] and not new["success"]) or any(
                     new[k] > old[k] for k in ("hits", "refused_moves", "overspeed_moves")):
                 regressions.append(dict(scenario=scenario, rule=rule, reason="safety regressed"))
-    summary = dict(cpu=cpu, repeats=args.repeats, profile="shipped",
+    hashes = {k:hashlib.sha256(p.read_bytes()).hexdigest() for k,p in binaries.items()}
+    status = timing_status(hashes, regressions)
+    summary = dict(cpu=cpu, repeats=args.repeats, profile="shipped", comparison_status=status,
                    allow_movement_change=args.allow_movement_change,
                    binaries={k: {"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
                              for k, p in binaries.items()},
                    note="Native simulation timing, worker executed inline; not live FPS.",
-                   comparisons=comparisons, regressions=regressions)
+                   comparisons=comparisons, timing_flags=regressions,
+                   regressions=[] if status == 'inconclusive_environment_noise' else regressions)
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))
     return bool(regressions)

@@ -28,6 +28,7 @@ import { readBuildInfoFile } from '../src/util/buildInfo.js';
 import { loggerDirectory } from '../src/util/Logger.js';
 import {
   dispatchPacket,
+  BENCHMARK_SETTINGS,
   ProjDefTracker,
   buildStartRecord,
   buildEndRecord,
@@ -188,8 +189,27 @@ export function register(ctx: PluginContext) {
  * PLAYERSHOOT/ENEMYHIT) fall straight through to `{}`.
  */
 function resolveDispatchContext(ctx: PluginContext, client: ClientConnection, packet: Packet): DispatchContext {
-  if (packet.name === 'NEWTICK' || packet.name === 'UPDATE' || packet.name === 'DAMAGE') {
-    return { selfId: client.objectId, effectiveMaxHp: client.playerData?.effectiveMaxHealth };
+  if (packet.name === 'DAMAGE') return { selfId: client.objectId };
+  if (packet.name === 'NEWTICK' || packet.name === 'UPDATE') {
+    const pd = client.playerData;
+    const questId = pd?.questObjectId;
+    const boss = questId != null ? ctx.getWorldState(client)?.getEntity(questId) : undefined;
+    const effects = boss?.stats?.['29'];
+    const hp = boss?.stats?.['1'];
+    const fresh = boss && Date.now()-boss.lastUpdate <= 500;
+    const projectile = ctx.gameData?.getProjectile(pd?.inventory?.[0] ?? -1, 0);
+    // A linear weapon's nominal reach. Curved/accelerating weapons stay unknown.
+    const rangeMax = projectile && !projectile.boomerang && !projectile.parametric && !projectile.acceleration
+      && !projectile.wavy && !projectile.amplitude
+      ? projectile.speed * projectile.lifetimeMs / 10000 : undefined;
+    const benchmarkSettings: Record<string, unknown> = {};
+    for (const [plugin, keys] of Object.entries(BENCHMARK_SETTINGS))
+      for (const key of keys) benchmarkSettings[`${plugin}.${key}`] = ctx.getOtherPluginSetting(plugin, key);
+    return { selfId: client.objectId, effectiveMaxHp: pd?.effectiveMaxHealth, questId, rangeMax,
+      bossDamageable: fresh && typeof effects === 'number' && typeof hp === 'number'
+        ? hp > 0 && (effects & ((1 << 21) | (1 << 23) | (1 << 24))) === 0 : undefined,
+      level: pd?.level, speed: pd?.speed, equipment: pd?.inventory?.slice(0, 4), benchmarkSettings,
+      serverRequested: ctx.getOtherPluginSetting<string>('server-switch', 'server') };
   }
   if (packet.name === 'ENEMYSHOOT') {
     const worldState = ctx.getWorldState(client);

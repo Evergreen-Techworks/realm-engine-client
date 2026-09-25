@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
+import math
 import subprocess
 import sys
 
@@ -60,6 +61,7 @@ def bullet_cases():
 
 
 def bullet_holdout_cases():
+    """Historical stress regression set; repeatedly used in tuning, NOT a holdout."""
     for profile in ('fixture', 'shipped'):
         for rule in ('legacy', 'game'):
             for delay in (150, 250):
@@ -99,6 +101,15 @@ def environment(case):
     env.update(HARNESS_ROUTE_COMMIT=toggle, HARNESS_ENEMY_STANDOFF=toggle,
                HARNESS_FALLBACK_SIDESTEP='off', HARNESS_FRAME_BUDGET='off',
                HARNESS_NAVIGATOR=case['navigator'])
+    if case['profile'] == 'live':
+        env.update(HARNESS_ROUTE_COMMIT='off', HARNESS_ENEMY_STANDOFF='auto')
+    # Explicit captured settings override a named profile, never ambient env.
+    allowed = {'HARNESS_ROUTE_COMMIT', 'HARNESS_ENEMY_STANDOFF', 'HARNESS_FALLBACK_SIDESTEP',
+               'HARNESS_FRAME_BUDGET', 'HARNESS_NAVIGATOR', 'HARNESS_PLAYER_SPEED'}
+    overrides = case.get('settings', {})
+    if set(overrides)-allowed:
+        raise ValueError('unsupported benchmark setting')
+    env.update({k:str(v) for k,v in overrides.items()})
     if case['speed'] != '':
         env['HARNESS_ROOM_SPEED'] = str(case['speed'])
         env['HARNESS_ROOM_START_SHIFT'] = str(case['start_shift'])
@@ -114,6 +125,17 @@ def environment(case):
     return env
 
 
+def validate_metrics(metrics, scenario):
+    if metrics.get('scenario') != scenario:
+        raise ValueError('Harness emitted a different scenario')
+    for key in METRICS:
+        value = metrics.get(key)
+        if not isinstance(value, (int,float)) or not math.isfinite(value):
+            raise ValueError(f'missing/nonfinite metric: {key}')
+    if metrics.get('benchmark_valid') is not True:
+        raise ValueError('missing fixture validity evidence')
+
+
 def build(internal, binary, output):
     with output.open('w') as log:
         subprocess.run([sys.executable, str(HERE / 'run_scenarios.py'),
@@ -121,6 +143,14 @@ def build(internal, binary, output):
                         '--only', 'z_moveto_no_clamp', '--rule', 'both', '--check',
                         '--binary-out', str(binary)], stdout=log,
                        stderr=subprocess.STDOUT, check=True)
+
+
+def harness_digest():
+    h = hashlib.sha256()
+    for path in sorted(HERE.rglob('*')):
+        if path.is_file() and path.suffix in ('.cpp','.h','.py'):
+            h.update(str(path.relative_to(HERE)).encode()+b'\0'+path.read_bytes())
+    return h.hexdigest()
 
 
 def provenance(internal):
@@ -141,8 +171,7 @@ def run_pair(item, binaries):
                                 env=environment(case), capture_output=True, text=True,
                                 check=True, timeout=300)
         metrics = json.loads(result.stdout.strip().splitlines()[-1])
-        if metrics['scenario'] != case['scenario']:
-            raise RuntimeError('Harness emitted a different scenario')
+        validate_metrics(metrics, case['scenario'])
         pair[revision] = metrics
     return index, case, pair
 
@@ -159,13 +188,16 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     metadata = {'baseline': provenance(args.baseline_internal.resolve()),
                 'candidate': provenance(args.candidate_internal.resolve()),
-                'harness_sha256': hashlib.sha256((HERE / 'udodge_scenario_harness.cpp').read_bytes()).hexdigest(),
+                'harness_sha256': harness_digest(),
+                'holdout_note': 'bullets-holdout is a reused regression set, not independent validation',
                 'policy': 'tactician', 'scan_mode': 3, 'suite': args.suite}
     (out / 'metadata.json').write_text(json.dumps(metadata, indent=2) + '\n')
     binaries = {}
     for label, internal in [('baseline', args.baseline_internal), ('candidate', args.candidate_internal)]:
         binaries[label] = out / (label + '-harness')
         build(internal.resolve(), binaries[label], out / (label + '-build.log'))
+    metadata['binaries'] = {k:hashlib.sha256(p.read_bytes()).hexdigest() for k,p in binaries.items()}
+    (out / 'metadata.json').write_text(json.dumps(metadata,indent=2)+'\n')
     rows = []
     regressions = []
     with (out / 'results.csv').open('w', newline='') as csvfile, (out / 'raw.jsonl').open('w') as raw, ThreadPoolExecutor(max_workers=args.jobs) as pool:
