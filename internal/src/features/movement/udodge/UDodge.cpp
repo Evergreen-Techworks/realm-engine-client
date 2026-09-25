@@ -5,6 +5,7 @@
 #include "UDodgeSolver.h"
 #include "UDodgePathfinder.h"
 #include "UDodgeNavigation.h"
+#include "UDodgePartialRoute.h"
 #include "UDodgeGroupPreference.h"
 #include "features/movement/nav/Runtime.h"
 #include "UDodgeWorker.h"
@@ -187,6 +188,7 @@ bool g_globalAssistance = false;
 uint64_t g_globalCorridorEpoch = 0;
 uint64_t g_globalCorridorGoalId = 0;
 Navigation::Progress g_navProgress;
+Navigation::PartialRouteRecovery g_partialRouteRecovery;
 bool g_navAwaiting = false;
 uint64_t g_navAwaitingSinceMs = 0;
 // Stuck memory (get-unstuck). A stall re-plans, but a re-plan over the same tile
@@ -894,6 +896,7 @@ void OnEnter()
     g_navAwaiting = false;
     g_navAwaitingSinceMs = 0;
     g_navProgress.Reset();
+    g_partialRouteRecovery.Reset();
     g_lockApproach = false;
     g_lockApproachGoalValid = false;
     g_lockApproachId = 0;
@@ -1383,6 +1386,36 @@ void Tick(void* player, float px, float py, float dt)
             g_navCache.valid = false;
             navStep = in.player;
         }
+        // A nearby goal that was temporarily obstructed can reopen while the
+        // cached partial route is still taking us toward a distant frontier.
+        // Probe at most once/second, and only re-run A* after a fully clear
+        // direct corridor is observed. Unknown/blocked goals keep exploring;
+        // combat approaches and global-corridor ownership are unchanged.
+        const bool recoveredGoal = g_partialRouteRecovery.Recheck(nowNav,
+            g_navCache.valid && g_navCache.partial && !navReplan && !navWaiting &&
+                !lockApproach && !g_globalAssistance,
+            in.player, wg, [&] {
+                if ((WorldTAB::GetTileFlags(static_cast<int>(std::floor(wg.x)),
+                        static_cast<int>(std::floor(wg.y))) & Movement::TileOccupancy::kTileKnown) == 0)
+                    return false;
+                Vec2 avoid[kMaxNavAvoid];
+                const int count = ActiveNavAvoid(avoid, nowNav);
+                return Navigation::PaddedPathClear(in, in.player, wg) &&
+                    !Core::EnemyPathBlocked(in, in.player, wg) &&
+                    Core::ZonePathClear(in, in.player, wg) &&
+                    Navigation::EnemyKeepoutPathClear(in, in.player, wg) &&
+                    Navigation::AvoidClear(avoid, count, in.player, wg);
+            });
+        if (recoveredGoal) {
+            navReplan = true;
+            navReplanReason = Telemetry::ReplanReason::Invalidated;
+            // Keep the request alive until the next worker publication; an
+            // isolated one-frame replan could miss the server-tick gate.
+            g_navCache.valid = false;
+            g_navAwaiting = navWaiting = true;
+            navStep = in.player;
+            if (diagOn) DBG_FILE_LOG("[UDodge] partial route: nearby destination corridor reopened");
+        }
         g_wedged.store(!lockApproach && (blocked || stalled || refusedStreak), std::memory_order_relaxed);
         // Plan 89: publish the wedge observation (goal, player, freshness stamp).
         // A locked-target approach is not a commanded walk; it never asks for walls to break.
@@ -1404,6 +1437,7 @@ void Tick(void* player, float px, float py, float dt)
         }
     } else {
         g_navProgress.Reset();
+        g_partialRouteRecovery.Reset();
         g_navAwaiting = false;
         g_navAwaitingSinceMs = 0;
         g_navCache.valid = false;              // walk-to ended → drop the cache
