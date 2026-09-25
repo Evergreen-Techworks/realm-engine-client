@@ -1,0 +1,76 @@
+/** Optional versioned diagnostic transport. Unknown fields never reach disk. */
+export type CaptureDecision = Record<string, number | null>;
+export interface CaptureRecord {
+  type: 'encounterCapture'; version: 1; kind: 'native_scene' | 'native_decision' | 'native_present_interarrival';
+  processId: number; processStartUtcMs: number; anchorMs: number; anchorUtcMs: number; memoryBytes: number;
+  decision?: CaptureDecision;
+  [key: string]: unknown;
+}
+const decisionKeys = ['ms','sequence','generation','trigger','tick','hp','maxHp','lockId','mode','solve','x','y','goalX','goalY','targetX','targetY','speed','range','clearance','standClearance','lockX','lockY','rawGoalX','rawGoalY','move','fromLock','lockApproach','driveAccepted','dropped','suppressed'];
+const scalar = (x: unknown): x is number | null => x === null || (typeof x === 'number' && Number.isFinite(x));
+const uint = (x: unknown): x is number => typeof x === 'number' && Number.isSafeInteger(x) && x >= 0;
+const row = (x: unknown, n: number): x is Array<number | null> => Array.isArray(x) && x.length === n && x.every(scalar);
+export function decodeCapture(value: unknown): CaptureRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (v.type !== 'encounterCapture' || v.version !== 1 || !['native_scene','native_decision','native_present_interarrival'].includes(String(v.kind))) return null;
+  const out: Record<string, unknown> = { type: 'encounterCapture', version: 1, kind: v.kind };
+  for (const key of ['processId','processStartUtcMs','anchorMs','anchorUtcMs','anchorUncertaintyMs','memoryBytes','sceneQueueHighWater','decisionQueueHighWater','terminalQueueHighWater','frameQueueHighWater']) {
+    if (!uint(v[key])) return null; out[key] = v[key];
+  }
+  if ((v.memoryBytes as number) > 4*1024*1024) return null;
+  if (v.kind === 'native_present_interarrival') {
+    if (!uint(v.qpcFrequency) || v.qpcFrequency === 0 || !uint(v.dropped) || !Array.isArray(v.frames) || v.frames.length > 128 || !v.frames.every(a => row(a,5) && a.every(uint))) return null;
+    out.qpcFrequency=v.qpcFrequency;out.dropped=v.dropped;out.frames=v.frames.map(a=>[...a]);return out as CaptureRecord;
+  }
+  if (!v.decision || typeof v.decision !== 'object' || Array.isArray(v.decision)) return null;
+  const d = v.decision as Record<string, unknown>; const decision: CaptureDecision = {};
+  for (const key of decisionKeys) { if (!scalar(d[key])) return null; decision[key] = d[key] as number | null; }
+  for (const key of ['ms','sequence','generation','trigger','tick','dropped','suppressed']) if (!uint(d[key])) return null;
+  out.decision = decision;
+  if (v.kind === 'native_scene') {
+    for (const key of ['candidateTick','terrainTick','flags','enemiesObserved','enemyEntriesVisited','projectilesObserved','zonesObserved','candidatesObserved']) {
+      if (!uint(v[key])) return null; out[key] = v[key];
+    }
+    for (const [key, cap, width] of [['enemies',64,9],['zones',64,4],['candidates',8,6]] as const) {
+      const a = v[key]; if (!Array.isArray(a) || a.length > cap || !a.every(e => row(e,width))) return null;
+      out[key] = a.map(e => [...e]);
+    }
+    if (!Array.isArray(v.projectiles) || v.projectiles.length > 128) return null;
+    const projectiles: unknown[] = [];
+    for (const p of v.projectiles) {
+      if (!Array.isArray(p) || p.length !== 9 || !p.slice(0,8).every(scalar) || !Array.isArray(p[8]) || p[8].length > 8 || !p[8].every((a: unknown) => row(a,3))) return null;
+      projectiles.push([...p.slice(0,8), p[8].map((a: Array<number | null>) => [...a])]);
+    }
+    out.projectiles = projectiles;
+    for (const key of ['cellX','cellY','cellStep']) { if (!scalar(v[key])) return null; out[key] = v[key]; }
+    if (!Array.isArray(v.cells) || v.cells.length !== 289 || !v.cells.every(x => uint(x) && x <= 255)) return null;
+    out.cells = [...v.cells];
+    for (const [array,total] of [['enemies','enemiesObserved'],['projectiles','projectilesObserved'],['zones','zonesObserved'],['candidates','candidatesObserved']]) {
+      if ((out[array] as unknown[]).length > (out[total] as number)) return null;
+    }
+  }
+  return out as CaptureRecord;
+}
+type Slot = { listeners: Set<(record: CaptureRecord) => void>; trigger?: (reason: string) => boolean };
+const globalSlots = globalThis as unknown as Record<string, unknown>;
+const slot = (globalSlots.__realmCaptureBus ??= { listeners: new Set() }) as Slot;
+export function publishCapture(record: CaptureRecord): void {
+  for (const listener of slot.listeners) { try { listener(record); } catch {} }
+}
+export function subscribeCapture(listener: (record: CaptureRecord) => void): () => void {
+  slot.listeners.add(listener); return () => { slot.listeners.delete(listener); };
+}
+
+export function setCaptureTriggerSender(sender: (reason: string) => boolean): void { slot.trigger=sender; }
+export function requestCaptureTrigger(reason: 'death' | 'escape' | 'hit'): boolean {
+  try { return slot.trigger?.(reason) === true; } catch { return false; }
+}
+
+/** Shared recorder wrapper keeps packet-reader identity keys intact. */
+export function captureRecord(record: CaptureRecord, receivedUtcMs: number): Record<string, unknown> {
+ return { ...record, k: record.kind, t: receivedUtcMs, clock: 'windows_monotonic_ms',
+   clockUncertaintyMs: record.anchorUncertaintyMs, runIdentity: 'recorder-file',
+   geometryCoverage: record.kind === 'native_scene' ? 'bounded_observation' : null, alternativeCoverage: record.kind === 'native_scene' ? 'bounded_evaluated' : null,
+   calibrationProvenance: null, enemyRuntimeConditions: null, sourceObservationAgeMs: null };
+}

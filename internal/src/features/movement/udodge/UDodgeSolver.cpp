@@ -654,6 +654,20 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     StandoffSet standoff;
     BuildStandoffSet(in, goal, b, standoff);
     Evaluate(in, standoff, cands, n);
+    const bool captureOn=UDodgeCapture::capture.enabled.load(std::memory_order_relaxed);
+    if(captureOn)out.captureTick=in.tickId;
+    // RAII copies already-evaluated fields on every subsequent return; never reruns
+    // temporal scoring. Early route shortcuts correctly leave alternatives unknown.
+    struct CaptureCandidates {
+        Cand* c; int n; SolveResult& out; bool enabled;
+        ~CaptureCandidates(){if(!enabled)return;out.captureTotal=n;out.captureCount=std::min(n,8);
+            for(unsigned i=0;i<out.captureCount;++i){auto& d=out.captureCandidates[i];
+                d.x=c[i].pos.x;d.y=c[i].pos.y;d.clearance=c[i].clr;if(!(d.flags&128))d.timeToDanger=c[i].timeToDanger;
+                d.flags|=(c[i].stand?1u:0u)|(c[i].occOk?2u:0u)|(c[i].pathOk?4u:0u)|(c[i].safe?8u:0u);
+            }
+        }
+    } captureCandidates{cands,n,out,captureOn};
+
 
     // ── Hold ONLY when the current spot is a DURABLE temporal pocket ─────────
     // The ONE exception: a boss lock drifted OUTSIDE weapon range repositions inward.
@@ -926,12 +940,12 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         // the weave reward makes standing still the winning move.
         // Zone floor first (unchanged order): a candidate the live blast already
         // rejects is dropped before the temporal march, which is the expensive part.
-        if (!instSafe && !Core::ZonePathClear(in, in.player, cands[i].pos)) continue;
+        if (!instSafe && !Core::ZonePathClear(in, in.player, cands[i].pos)) { if(captureOn&&i<8)out.captureCandidates[i].flags|=16; continue; }
         // One march supplies both the mandatory transit/dwell safety answer
         // and the durability score. A spatial pass cannot override a collision.
         const float ttd = Core::Temporal::TimeToDanger(ctx, in.player, in.speed, cands[i].pos);
         cands[i].timeToDanger = ttd;
-        if (!Core::Temporal::DwellClear(in.player, in.speed, cands[i].pos, ttd)) continue;
+        if (!Core::Temporal::DwellClear(in.player, in.speed, cands[i].pos, ttd)) { if(captureOn&&i<8)out.captureCandidates[i].flags|=32; continue; }
         const bool tempSafe = !instSafe; // threading classification for scoring only
         // Durability recorded on the candidate itself (not just the scored copy) so
         // the winner can report it — same basis for the stand and for every step.
@@ -945,6 +959,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         sc.threaded = tempSafe;
         if (tempSafe) sc.clr = std::max(sc.clr, kUDurablePocketMargin);
         const float s = ScoreCand(sc, in.player, goal, flow, prevDir, b);
+        if(captureOn&&i<8){out.captureCandidates[i].score=s;out.captureCandidates[i].flags|=64;}
         // Anti-jitter commitment tiebreak (plan 94): a clearly better SAFE cell is
         // taken outright; two SAFE cells within kSolveReflexHystEps of each other are
         // a near-tie, broken toward the committed heading so the reflex stops toggling
@@ -1004,6 +1019,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             goal.walkTo && !goal.fromLock && !in.map->hasLock);
     };
     const float standTime = fallbackTime(cands[0]);
+    if(captureOn){out.captureCandidates[0].timeToDanger=standTime;out.captureCandidates[0].flags|=128;}
     // A lateral fallback helps point travel escape crossing fire. Applying
     // the same near-tie preference around a combat lock sacrifices safer
     // moves in dense rings; keep combat's latest-danger-time ranking intact.

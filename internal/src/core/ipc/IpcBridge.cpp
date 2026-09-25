@@ -34,6 +34,7 @@
 #include "FeatureRuntime.h"
 #include "FeatureCommandRegistry.h"
 #include "BridgeLatencyDiag.h"
+#include "features/movement/udodge/UDodgeCaptureWire.h"
 
 // Debug logging
 
@@ -199,6 +200,14 @@ static bool HandleControlMessage(char* json, HANDLE hPipe, char* msgBuf, int msg
     if (!IpcJson::GetString(json, "type", typeBuf, sizeof(typeBuf))) return false;
     if (strcmp(typeBuf, "heartbeat") == 0) {
         IpcFraming::WriteMessage(hPipe, msgBuf, IpcMessages::BuildHeartbeatResp(msgBuf, msgBufSize));
+        return true;
+    }
+    if (strcmp(typeBuf, "captureTrigger") == 0) {
+        char reason[24]={};
+        if(UDodgeCapture::capture.enabled.load(std::memory_order_relaxed)&&IpcJson::GetString(json,"reason",reason,sizeof(reason))) {
+            const uint32_t bit=strcmp(reason,"death")==0?UDodgeCapture::Death:strcmp(reason,"escape")==0?UDodgeCapture::ExternalTerminal:strcmp(reason,"hit")==0?UDodgeCapture::HpDrop:0;
+            UDodgeCapture::capture.externalTriggers.fetch_or(bit,std::memory_order_relaxed);
+        }
         return true;
     }
     if (strcmp(typeBuf, "heartbeatResp") == 0) {
@@ -392,6 +401,58 @@ DWORD WINAPI IpcBridgeThread(LPVOID)
                 if (!IpcFraming::WriteMessage(hPipe, status.c_str(), static_cast<int>(status.size()))) {
                     connected = false;
                     break;
+                }
+            }
+            if (!connected) break;
+
+            // Optional private diagnostic capture. Formatting, flag I/O and pipe
+            // writes stay here; the game thread only copies into fixed SPSC rings.
+            {
+                namespace C=UDodgeCapture;
+                static uint64_t nextPoll=0;
+                const uint64_t now=GetTickCount64();
+                if(now>=nextPoll){
+                    nextPoll=now+2000;
+                    char path[MAX_PATH]={};strncpy_s(path,DbgFileLogPath(),_TRUNCATE);
+                    char* slash=std::strrchr(path,'\\');char* forward=std::strrchr(path,'/');
+                    if(forward&&(!slash||forward>slash))slash=forward;
+                    if(slash)slash[1]='\0';else path[0]='\0';
+                    strncat_s(path,"encounter-capture.flag",_TRUNCATE);
+                    const bool sceneEnabled=GetFileAttributesA(path)!=INVALID_FILE_ATTRIBUTES;
+                    C::capture.enabled.store(sceneEnabled,std::memory_order_relaxed);
+                    if(slash)slash[1]='\0';else path[0]='\0';
+                    strncat_s(path,"encounter-present.flag",_TRUNCATE);
+                    C::frames.enabled.store(sceneEnabled||GetFileAttributesA(path)!=INVALID_FILE_ATTRIBUTES,std::memory_order_relaxed);
+                }
+                const uint64_t anchorBefore=GetTickCount64();
+                FILETIME ft;GetSystemTimeAsFileTime(&ft);
+                const uint64_t anchorAfter=GetTickCount64();
+                const uint64_t anchorMs=anchorBefore+(anchorAfter-anchorBefore)/2;
+                const uint64_t uncertainty=16+(anchorAfter-anchorBefore+1)/2;
+                const uint64_t utc=(((uint64_t(ft.dwHighDateTime)<<32)|ft.dwLowDateTime)/10000)-11644473600000ULL;
+                static const uint64_t startUtc=[]()->uint64_t{FILETIME create,exit,kernel,user;if(!GetProcessTimes(GetCurrentProcess(),&create,&exit,&kernel,&user))return uint64_t(0);return (((uint64_t(create.dwHighDateTime)<<32)|create.dwLowDateTime)/10000)-11644473600000ULL;}();
+                static C::Scene scene;
+                C::Decision decision;
+                // Maximum four small decisions and two scene records per pass.
+                for(int i=0;i<4&&connected;++i){
+                    if(!C::capture.terminals.Pop(decision)&&!C::capture.decisions.Pop(decision))break;
+                    const auto json=C::Encode(decision,GetCurrentProcessId(),startUtc,anchorMs,utc,uncertainty);
+                    connected=IpcFraming::WriteMessage(hPipe,json.c_str(),static_cast<int>(json.size()));
+                    if(!connected)C::capture.transportDropped.fetch_add(1,std::memory_order_relaxed);
+                }
+                C::Frame frames[128]; unsigned frameCount=0;
+                while(connected&&frameCount<128&&C::frames.queue.Pop(frames[frameCount]))++frameCount;
+                if(frameCount&&connected){
+                    LARGE_INTEGER frequency;QueryPerformanceFrequency(&frequency);
+                    const auto json=C::EncodeFrames(frames,frameCount,GetCurrentProcessId(),startUtc,anchorMs,utc,uncertainty,frequency.QuadPart,C::frames.dropped.load(std::memory_order_relaxed));
+                    connected=IpcFraming::WriteMessage(hPipe,json.c_str(),static_cast<int>(json.size()));
+                    if(!connected)C::frames.dropped.fetch_add(frameCount,std::memory_order_relaxed);
+                }
+                for(int i=0;i<2&&connected;++i){
+                    if(!C::capture.scenes.Pop(scene))break;
+                    const auto json=C::Encode(scene,GetCurrentProcessId(),startUtc,anchorMs,utc,uncertainty);
+                    connected=IpcFraming::WriteMessage(hPipe,json.c_str(),static_cast<int>(json.size()));
+                    if(!connected)C::capture.transportDropped.fetch_add(1,std::memory_order_relaxed);
                 }
             }
             if (!connected) break;

@@ -42,6 +42,8 @@ export const DllMessageType = {
   Threats: 'threats',
   Aim: 'aim',
   NavStatus: 'navStatus',
+  EncounterCapture: 'encounterCapture',
+  CaptureTrigger: 'captureTrigger',
   SetFeature: 'setFeature',
 } as const;
 export type DllMessageType = typeof DllMessageType[keyof typeof DllMessageType];

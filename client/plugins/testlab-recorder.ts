@@ -20,6 +20,7 @@
  * about *what* a record looks like lives in recorderCore.ts, which is why
  * that module — not this one — carries the "one test per record kind" tests.
  */
+import { subscribeCapture, requestCaptureTrigger, captureRecord } from '../src/bridge/DllCaptureBus.js';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { resolve } from 'path';
@@ -142,9 +143,22 @@ export function register(ctx: PluginContext) {
     );
   }
 
+  const unsubscribeCapture = subscribeCapture((record) => {
+    if (!slot.enabled) return;
+    ensureStarted();
+    writer.writeLine(captureRecord(record, Date.now()));
+  });
+  ctx.registerCleanup(unsubscribeCapture);
+
   ctx.hookAllPackets((client: ClientConnection, packet: Packet) => {
     try {
       const t = Date.now();
+      if (slot.enabled && ['DEATH','ESCAPE','PLAYERHIT','GROUNDDAMAGE'].includes(packet.name)) {
+        const reason = packet.name === 'DEATH' ? 'death' : packet.name === 'ESCAPE' ? 'escape' : 'hit';
+        const delivered = requestCaptureTrigger(reason);
+        ensureStarted();
+        writer.writeLine({k:'capture_trigger',kind:'capture_trigger',t,sourcePacket:packet.name,reason,delivered});
+      }
       const dctx = resolveDispatchContext(ctx, client, packet);
       const records = dispatchPacket(packet.name, t, packet.data, dctx, tracker);
       if (records.length === 0) return;

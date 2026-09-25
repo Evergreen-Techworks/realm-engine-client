@@ -1,5 +1,6 @@
 #include "pch-il2cpp.h"
 #include "UDodge.h"
+#include "UDodgeCapture.h"
 #include "UDodgeTypes.h"
 #include "UDodgeCore.h"
 #include "UDodgeSolver.h"
@@ -885,6 +886,7 @@ void SetGroupPreference(const char* payload)
 
 void OnEnter()
 {
+    UDodgeCapture::capture.NewMap();
     SetGroupPreference("");
     g_previousGroupActive = false;
     g_previousGroupBoss = 0;
@@ -2332,6 +2334,62 @@ void Tick(void* player, float px, float py, float dt)
                                   WorldTAB::IsLiveHazardActive(), T::Name(t.solve), T::Name(t.source),
                                   T::Name(t.objective), t.nowMs, &DbgFileLogWrite);
     }
+
+    if (UDodgeCapture::capture.enabled.load(std::memory_order_relaxed)) {
+        namespace C = UDodgeCapture;
+        C::Decision decision;
+        decision.ms=GetTickCount64(); decision.tick=g_map.tickId;
+        decision.hp=hp; decision.maxHp=maxHp; decision.lockId=g_map.hasLock?g_map.lockId:0;
+        decision.mode=lockApproach?3:goal.fromLock?2:walkActive?1:0;
+        decision.solve=static_cast<int>(g_solve.kind);
+        decision.x=px;decision.y=py;decision.goalX=goal.pos.x;decision.goalY=goal.pos.y;
+        decision.targetX=moveTarget.x;decision.targetY=moveTarget.y;
+        decision.speed=in.speed;decision.range=goal.maxRange;decision.clearance=g_solve.clearance;
+        decision.standClearance=standClr;decision.lockX=g_map.lockPos.x;decision.lockY=g_map.lockPos.y;
+        decision.rawGoalX=g_globalRawGoal.x;decision.rawGoalY=g_globalRawGoal.y;
+        decision.move=g_solve.shouldMove;decision.fromLock=goal.fromLock;decision.lockApproach=lockApproach;
+        decision.driveAccepted=g_solve.shouldMove&&enemyDriveClear&&drivePathClear&&!moveFailed;
+        C::capture.Observe(decision);
+        if(C::capture.Due(decision.ms)) {
+            // Static scratch is owned exclusively by the game-update producer.
+            static C::Scene scene;
+            scene=C::Scene{};scene.decision=decision;
+            scene.candidateTick=g_solve.captureTick;scene.terrainTick=s_snap.tickId;
+            scene.candidateCount=g_solve.captureCount;scene.candidatesObserved=g_solve.captureTotal;
+            for(unsigned i=0;i<scene.candidateCount;++i)scene.candidates[i]=g_solve.captureCandidates[i];
+            scene.flags=(g_map.projectileSourceUnavailable?1u:0u)|(g_map.limited?2u:0u);
+            const auto& enemies=EnemyTracker::GetSnapshot(); // already copied this tick; never dereference ptr
+            scene.enemiesObserved=static_cast<uint32_t>(enemies.size());
+            const size_t visits=std::min<size_t>(enemies.size(),256);
+            scene.enemyEntriesVisited=static_cast<uint32_t>(std::min<size_t>(visits,C::kEnemies));
+            for(size_t i=0;i<visits&&scene.enemyCount<C::kEnemies;++i){
+                const auto&e=enemies[i];auto& out=scene.enemies[scene.enemyCount++];
+                out.id=e.id;out.type=e.objType;out.hp=e.hp;out.maxHp=e.maxHp;out.x=e.x;out.y=e.y;out.vx=e.vx;out.vy=e.vy;
+                out.flags=(e.isInvulnerable?1u:0u)|(e.hasHealthBar?2u:0u)|(e.isScenery?4u:0u)|(e.hasProjectiles?8u:0u);
+            }
+            scene.projectilesObserved=static_cast<uint32_t>(std::max(0,g_map.laneCount));
+            scene.projectileCount=std::min(scene.projectilesObserved,C::kProjectiles);
+            for(unsigned i=0;i<scene.projectileCount;++i){const auto&p=g_map.lanes[i];auto&out=scene.projectiles[i];
+                out.owner=static_cast<int32_t>(p.ownerObjId);out.attacker=p.attackerObjId;out.bullet=p.bulletId;
+                out.half=p.hitHalf;out.life=p.remainingLifeMs;out.damage=p.damageEstimate;
+                out.flags=(p.provisional?1u:0u)|(p.hasLinearMotion?2u:0u)|(p.beam?4u:0u)|(p.tailAtShotEnd?8u:0u);
+                out.totalPoints=p.pointCount;out.count=std::min<unsigned>(std::max(0,p.pointCount),C::kPoints);
+                for(unsigned n=0;n<out.count;++n){out.points[n][0]=p.points[n].x;out.points[n][1]=p.points[n].y;out.points[n][2]=p.pointTimesMs[n];}
+            }
+            scene.zonesObserved=static_cast<uint32_t>(std::max(0,g_map.zoneCount));scene.zoneCount=std::min(scene.zonesObserved,C::kZones);
+            for(unsigned i=0;i<scene.zoneCount;++i){const auto&z=g_map.zones[i];scene.zones[i]={z.pos.x,z.pos.y,z.radius,(z.active?1u:0u)|(z.enemyKeepout?2u:0u)};}
+            scene.cellX=px-4.f;scene.cellY=py-4.f;
+            MapInput terrain;
+            if(g_lastPubSeq){terrain.env.occFlags=s_snap.grid.flags;terrain.env.occCenter=s_snap.grid.center;
+                terrain.env.occSide=kUPathMaxSide;terrain.env.occRadius=kUPathMaxRadCells;terrain.env.occCellTiles=kUPathCellTiles;
+            }else scene.flags|=4;
+            for(unsigned i=0;i<C::kCells;++i){
+                const Vec2 pos{scene.cellX+(i%17)*.5f,scene.cellY+(i/17)*.5f};
+                const auto* cell=OccCellAt(terrain,pos);scene.cells[i]=cell?*cell:255;
+            }
+            C::capture.Sample(scene);
+        }
+    } else UDodgeCapture::capture.Observe(UDodgeCapture::Decision{});
 
     // The per-phase breakdown is emitted every 2 s by the update detour
     // (DangerPlanner.cpp DiagAfterUpdate) together with the whole-frame numbers.

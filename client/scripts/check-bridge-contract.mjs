@@ -99,6 +99,14 @@ if (!/NavStatus:\s*'navStatus'/.test(tsText)
 for (const field of ['goalKind', 'goalId', 'generation', 'state', 'reason']) {
   if (!messageSource.includes(`\\"${field}\\":`)) failures.push(`FAIL: navStatus encoder omits ${field}.`);
 }
+const captureSource = readFileSync(resolve(REPO_ROOT, 'internal/src/features/movement/udodge/UDodgeCaptureWire.h'), 'utf8');
+if (!/EncounterCapture:\s*'encounterCapture'/.test(tsText) || !captureSource.includes('encounterCapture')) {
+  failures.push('FAIL: encounterCapture diagnostic wire type differs from native encoder.');
+}
+const bridgeSource = readFileSync(resolve(REPO_ROOT, 'internal/src/core/ipc/IpcBridge.cpp'), 'utf8');
+if (!/CaptureTrigger:\s*'captureTrigger'/.test(tsText) || !bridgeSource.includes('strcmp(typeBuf, "captureTrigger")')) {
+  failures.push('FAIL: captureTrigger diagnostic type differs from native dispatcher.');
+}
 const report = (header, keys, hint) => {
   if (!keys.length) return;
   failures.push([header, ...keys.map((k) => `  - ${hint(k)}`)].join('\n'));

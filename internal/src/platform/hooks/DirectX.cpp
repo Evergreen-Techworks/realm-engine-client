@@ -1,4 +1,5 @@
 #include "pch-il2cpp.h"
+#include "features/movement/udodge/UDodgeCapture.h"
 #include <cstdio>
 
 #include "DirectX.h"
@@ -143,8 +144,14 @@ LRESULT __stdcall dWndProc(const HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPa
 }
 
 HRESULT __stdcall dPresent(IDXGISwapChain* __this, UINT SyncInterval, UINT Flags) {
+
 	if (g_unloading)
 		return oPresent(__this, SyncInterval, Flags);
+    if(UDodgeCapture::frames.enabled.load(std::memory_order_relaxed)) {
+        LARGE_INTEGER qpc;QueryPerformanceCounter(&qpc);
+        UDodgeCapture::frames.Observe(true,GetTickCount64(),static_cast<uint64_t>(qpc.QuadPart),GetCurrentThreadId());
+    } else UDodgeCapture::frames.Observe(false,0,0,0);
+
 
 	// Register THIS thread with IL2CPP before any Tick below touches managed
 	// state. Present runs on the render thread, which AttachIl2Cpp() (called on

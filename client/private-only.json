@@ -16,6 +16,7 @@
     "src/plugins/__tests__/testlabRunner.test.ts",
     "plugins/testlab-supply.ts",
     "src/testlab/supplyCore.ts",
-    "src/testlab/__tests__/supplyCore.test.ts"
+    "src/testlab/__tests__/supplyCore.test.ts",
+    "src/testlab/__tests__/captureRecorder.test.ts"
   ]
 }

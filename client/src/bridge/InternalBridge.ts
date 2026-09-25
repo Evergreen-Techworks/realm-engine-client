@@ -21,6 +21,7 @@ import { BRIDGE, DllMessageType } from './contract.js';
 import { decodeThreatPayload, publishDllThreats } from './DllThreatBus.js';
 import { decodeAimPayload, publishDllAim } from './DllAimBus.js';
 import { decodeNavigationStatus, publishNavigationStatus } from './DllNavigationBus.js';
+import { decodeCapture, publishCapture, setCaptureTriggerSender } from './DllCaptureBus.js';
 import { DiagGate } from '../util/DiagGate.js';
 import { LatencyAggregator } from '../util/DiagAggregator.js';
 import { RateLimiter } from '../util/DiagRateLimit.js';
@@ -321,6 +322,11 @@ export class InternalBridge extends EventEmitter {
       case DllMessageType.Aim:
         this.handleAim(msg);
         break;
+      case DllMessageType.EncounterCapture: {
+        const record = decodeCapture(msg);
+        if (this.connected && record) publishCapture(record);
+        break;
+      }
       case DllMessageType.NavStatus: {
         const status = decodeNavigationStatus(msg);
         if (this.connected && status) publishNavigationStatus(status);
@@ -343,6 +349,7 @@ export class InternalBridge extends EventEmitter {
     }
 
     this.connected = true;
+    setCaptureTriggerSender((reason) => this.connected && this.send({type: DllMessageType.CaptureTrigger, reason}));
     this.missCount = 0;
     this.awaitingHeartbeat = false;
     Logger.log('InternalBridge', 'DLL connected (plaintext bridge).');

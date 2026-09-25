@@ -1,5 +1,6 @@
 #pragma once
 #include "UDodgeTypes.h"
+#include "UDodgeCapture.h"
 #include "UDodgePathfinder.h"   // Path::PlanResult — the worker's lookahead route
 #include "UDodgeCore.h"         // Core::Temporal::Ctx — SharedCtx below
 
@@ -142,6 +143,9 @@ enum class SolveKind : uint8_t {
 };
 
 struct SolveResult {
+    // Actual evaluated alternatives, copied only while private capture is enabled.
+    UDodgeCapture::Candidate captureCandidates[8]{};
+    uint32_t captureCount=0, captureTotal=0, captureTick=0;
     SolveKind kind = SolveKind::Hold;
     Vec2      target{};        // world position to drive toward this tick
     bool      shouldMove = false;
