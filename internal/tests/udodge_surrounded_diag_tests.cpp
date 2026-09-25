@@ -12,6 +12,17 @@ int main() {
     Solver::SurroundedDiagnosticGate cadence;
     Check(cadence.Ready(0) && !cadence.Ready(1) && !cadence.Ready(1999) && cadence.Ready(2000),
           "failure diagnostic cadence permits at most one snapshot per two seconds");
+    cadence.Reset();
+    Check(!cadence.Ready(34456, false),
+          "uncontained equal-TTD surround does not consume diagnostic budget");
+    Check(cadence.Ready(34892, true),
+          "new exposed surround is captured immediately after harmless surround");
+    Check(!cadence.Ready(35081, true) && !cadence.Ready(35554, true),
+          "repeated exposed hold stays bounded despite repeated hits");
+    Check(!cadence.Ready(36000, false) && !cadence.Ready(36891, true) && cadence.Ready(36892, true),
+          "harmless transitions do not reset exposed cadence or permit log storms");
+    cadence.Reset();
+    Check(cadence.Ready(36893, true), "map reset permits immediate first exposed snapshot");
     // Observed family, not reconstructed live centers: wall west, open terrain
     // east, overlapping containing zones whose outward cones intersect west.
     // It proves the constraint conflict but does not justify crossing a blast.

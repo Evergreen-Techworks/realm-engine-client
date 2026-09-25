@@ -283,7 +283,10 @@ struct SurroundedDiagnosticGate {
     bool sampled = false;
     uint64_t lastMs = 0;
     void Reset() { sampled = false; lastMs = 0; }
-    bool Ready(uint64_t now) {
+    bool Ready(uint64_t now, bool exposed = true) {
+        // Harmless equal-TTD holds must not hide the first exposed failure.
+        // Do not reset on harmless frames: transitions cannot defeat the cap.
+        if (!exposed) return false;
         if (sampled && now >= lastMs && now - lastMs < 2000) return false;
         sampled = true; lastMs = now;
         return true;

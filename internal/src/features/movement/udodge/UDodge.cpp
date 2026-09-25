@@ -1958,16 +1958,24 @@ void Tick(void* player, float px, float py, float dt)
             case Solver::SolveKind::Surrounded: ++gs.surrounded; break;
         }
         // Failure-only polar and goal probes of the current geometry, on the same
-        // two-second cadence as stuck-map diagnostics. Normal decisions do no
-        // extra candidate work; nothing from this explanation feeds movement.
-        if (g_solve.kind == Solver::SolveKind::Surrounded && g_surroundedDiag.Ready(GetTickCount64())) {
+        // two-second cadence as stuck-map diagnostics. Only exposed surrounds
+        // consume this budget; harmless equal-TTD holds previously masked the
+        // first contained failure. Normal decisions do no extra candidate work.
+        // Nothing from this explanation feeds movement.
+        if (g_solve.kind == Solver::SolveKind::Surrounded &&
+            g_surroundedDiag.Ready(GetTickCount64(),
+                g_solve.clearance < 0.f || Core::EnemyBlocked(in, in.player))) {
             const auto d = Solver::ExplainSurrounded(in, b, goal);
             DiagTiming::Logf("[Diag/Surrounded] player=(%.3f,%.3f) budget=%.3f speed=%.4f locked=%d"
                 " candidateSet=polar+goal moving=%d firstVeto{terrainEnd=%d enemy=%d terrainSweep=%d zone=%d} admitted=%d"
-                " temporalVsStand{better=%d equal=%d worse=%d} containing{enemies=%d zones=%d} ids=unavailable",
+                " temporalVsStand{better=%d equal=%d worse=%d} containing{enemies=%d zones=%d} ids=unavailable"
+                " standClr=%.3f goal{active=%d walk=%d fromLock=%d at=(%.3f,%.3f)}"
+                " route{found=%d partial=%d step=(%.3f,%.3f)}",
                 in.player.x, in.player.y, b, in.speed, d.movementLocked ? 1 : 0,
                 d.movingCandidates, d.terrainEndpoint, d.enemyEscape, d.terrainSweep, d.zoneEscape, d.admitted,
-                d.temporalBetter, d.temporalEqual, d.temporalWorse, d.containingEnemies, d.containingZones);
+                d.temporalBetter, d.temporalEqual, d.temporalWorse, d.containingEnemies, d.containingZones,
+                g_solve.clearance, goal.active ? 1 : 0, goal.walkTo ? 1 : 0, goal.fromLock ? 1 : 0, goal.pos.x, goal.pos.y,
+                routeForSolve.found ? 1 : 0, routeForSolve.partial ? 1 : 0, routeForSolve.stepTarget.x, routeForSolve.stepTarget.y);
             for (int i = 0; i < Solver::SurroundedDiagnostics::kMaxDetails; ++i) {
                 const auto& e = d.enemies[i];
                 if (e.index >= 0)
