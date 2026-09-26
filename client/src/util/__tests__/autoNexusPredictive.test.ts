@@ -284,6 +284,17 @@ describe('hit ledger (layer 2)', () => {
 });
 
 describe('short forecast (layer 3)', () => {
+  it('still prices an announced bullet whose shooter dropped from view (2026-09-26 death 175513)', () => {
+    const f = plain();
+    f.hp(300);
+    f.enemyShoot(JELLY_ID, 100, 1, 250);                    // announced: 250 raw
+    f.emit('UPDATE', { drops: [JELLY_ID], newObjs: [] });   // shooter leaves the object list, bullet still flying
+    threats([{ bulletId: 100, tHitMs: 60 }]);               // native tracker still reports it
+    vi.advanceTimersByTime(20);
+    expect(f.escapes()).toBe(1);                            // 300 - 250 = 50 < 100, unmatched counting is OFF
+    expect(f.escapeLog()[0]).toContain('layer=forecast; predicted HP=50/1000');
+  });
+
   it('escapes when fired bullets with packet damage are predicted to hit within the horizon', () => {
     const f = plain();
     f.hp(300);

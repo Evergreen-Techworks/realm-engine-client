@@ -14,6 +14,8 @@ export const SYNTHETIC_RAW_DAMAGE = 9999;
 
 /** A bullet the server announced, with the damage the server stated for it. */
 export interface ShotRecord {
+  /** The shooter left the client's object list while this announced bullet was still in flight (2026-09-26 death 175513). */
+  orphaned?: boolean;
   identity: string;
   ownerIncarnation: number;
   receiptSequence: number;

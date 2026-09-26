@@ -818,6 +818,7 @@ export function register(ctx: PluginContext) {
     const state = stateFor(client);
     activeClient = client;
     let shot = state.shots.get(bulletKey(objectId, bulletId));
+    if (shot?.orphaned) shot = undefined;
     if (!shot) {
       // The game reports a hit from a bullet the server never announced on this
       // connection. Only the explicit unmatched-bullet opt-in may turn the
@@ -888,8 +889,12 @@ export function register(ctx: PluginContext) {
       for (const ownerId of packet.data.drops ?? []) {
         if (!Number.isInteger(ownerId)) continue;
         state.ownerIncarnations.set(ownerId, (state.ownerIncarnations.get(ownerId) ?? 0) + 1);
-        for (const [key, shot] of state.shots) if (shot.ownerId === ownerId) {
-          state.shots.delete(key);
+        // The shooter left the object list, but its announced bullets are still
+        // in flight and the native tracker still reports them (2026-09-26 death
+        // 175513: a 140-damage god shot whose owner had dropped). Keep the
+        // records for the forecast; the ledger treats them as unannounced.
+        for (const shot of state.shots.values()) if (shot.ownerId === ownerId && !shot.orphaned) {
+          shot.orphaned = true;
           state.evidence.noteAmbiguity();
         }
       }
