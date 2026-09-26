@@ -707,10 +707,17 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         // still never penalise the same body twice.
         const bool repositionOffEnemy =
             std::min(cands[0].enemyGap, standoff.lockGap) < kSolveStandoffHoldGap;
+        // udodgeNeverStandLocked (owner hypothesis, 2026-09-26): same shape as
+        // the telegraph/enemy declines above — decline the early Hold while a
+        // boss lock is active so the reflex below runs and can pick a moving
+        // safe candidate. Does NOT force a move by itself: the reflex's
+        // candidate scan (further down) is what actually keeps the stand from
+        // winning when a safe moving alternative exists.
+        const bool repositionNeverStandLocked = in.settings.neverStandLocked && goal.fromLock;
         out.leftTelegraph = repositionOffTelegraph &&
                             !repositionInward && !repositionToward;
         if (!repositionInward && !repositionToward && !repositionOffTelegraph &&
-            !repositionOffEnemy) {
+            !repositionOffEnemy && !repositionNeverStandLocked) {
             out.kind = SolveKind::Hold;
             out.target = in.player;
             // standDurable is PathClear over the FULL horizon, so by definition
@@ -919,6 +926,14 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
     const Vec2 flow = FlowDir(in);
     int best = -1;
     float bestScore = -kHugeClearance;
+    // udodgeNeverStandLocked (owner hypothesis, 2026-09-26): track the best
+    // MOVING candidate separately so it can be preferred over the stand point
+    // below even when the stand scores higher — without this, the reflex
+    // would just re-pick the stand (see doc comment at repositionNeverStandLocked
+    // above) and the early-Hold decline alone would accomplish nothing.
+    const bool neverStandLocked = in.settings.neverStandLocked && goal.fromLock;
+    int bestMoving = -1;
+    float bestMovingScore = -kHugeClearance;
     for (int i = 0; i < n; ++i) {
         // Walls / enemy bodies: hard block, never threaded. SWEPT for the bodies
         // (finding J) — the step itself must not cross a mob, not merely end clear of one.
@@ -974,7 +989,21 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
             best = i;                                         // … break toward the committed heading
             // keep bestScore (the incumbent's) so a later clearly-better cand still wins
         }
+        // Mirror the exact same admission/scoring this candidate just passed,
+        // restricted to non-stand candidates. Cheap (one extra compare+branch
+        // per already-admitted candidate) and only consulted when the flag and
+        // lock are both active, so this cannot regress the default engine.
+        if (!cands[i].stand && (bestMoving < 0 || s > bestMovingScore + kSolveReflexHystEps)) {
+            bestMovingScore = s; bestMoving = i;
+        }
     }
+
+    // udodgeNeverStandLocked: a safe moving candidate exists — take it over
+    // the stand even though the stand may have scored higher. If no safe
+    // moving candidate passed admission this tick, fall through to `best`
+    // unchanged (which may be the stand) — this flag only ever removes the
+    // stand from contention, never forces an unsafe pick.
+    if (neverStandLocked && bestMoving >= 0) best = bestMoving;
 
     if (best >= 0) {
         const Cand& w = cands[best];

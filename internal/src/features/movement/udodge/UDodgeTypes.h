@@ -725,6 +725,23 @@ struct Settings {
     // for a sub-kSolveFallbackMinMoveTiles jitter when a longer-lived candidate
     // exists. false (default) = today's plain max-time/clearance pick, unchanged.
     bool  fallbackSidestep = false;
+    // udodgeNeverStandLocked (owner hypothesis, 2026-09-26). Default OFF —
+    // unproven behaviour ships behind a switch, same discipline as
+    // routeCommit/fallbackSidestep/enemyStandoff above. true: while a boss
+    // lock is active (goal.fromLock) and the current spot is a durable safe
+    // stand, do not accept the stand-still candidate — decline the early Hold
+    // in Solve() and, in the conservative reflex's candidate scan, prefer the
+    // best-scoring MOVING safe candidate over the stand point even when the
+    // stand would otherwise win on score. This never widens the safe set or
+    // picks an unsafe candidate: if no safe moving candidate exists this
+    // tick, the stand is still used (the alternative would be forcing an
+    // unsafe move, which nothing in this file ever does). Hypothesis: a
+    // stationary target is easier for incoming projectiles to lead, and
+    // continued repositioning has option value a stand gives up; see
+    // docs/dodge-loop/progress.md 2026-09-26 for the measurable prediction
+    // this is tested against. false (default) reproduces today's engine
+    // exactly.
+    bool  neverStandLocked = false;
 };
 
 // Keep-out radius around one enemy body: its physical radius plus the player's
