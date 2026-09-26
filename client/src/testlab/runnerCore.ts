@@ -408,6 +408,55 @@ export class ReconnectClassifier {
   }
 }
 
+/** At most this many synthetic RECONNECTs injected in response to a server
+ *  FAILURE, per run — a repeatedly failing server should end the run via the
+ *  existing `CONNECTION_LOST_TIMEOUT_MS` fallback, not loop forever. */
+export const MAX_INJECTED_RECONNECTS_PER_RUN = 3;
+
+/** Minimum spacing between two injected reconnects — guards against a tight
+ *  FAILURE/RECONNECT/FAILURE loop hammering the server. */
+export const MIN_INJECTED_RECONNECT_SPACING_MS = 5000;
+
+export interface KnownNexusTarget {
+  name: string;
+  host: string;
+  port: number;
+}
+
+export type FailureReconnectAction =
+  | { kind: 'inject' }
+  | { kind: 'skip'; reason: string };
+
+/**
+ * Pure decision for whether an observed server FAILURE during an active run
+ * should be answered by injecting a synthetic RECONNECT to the last known
+ * Nexus target, given this run's injection history so far. Never touches the
+ * network or the clock itself — the caller performs the actual packet
+ * cancel/injection and appends `now` to `injectedAtMs` on `inject`.
+ *
+ * `clientConnected` must reflect the socket at the moment the FAILURE was
+ * received, before it would otherwise be forwarded — that is the only
+ * window in which the game's own client socket is still open to receive an
+ * injected RECONNECT instead of reacting to the FAILURE itself.
+ */
+export function decideFailureReconnect(
+  now: number,
+  injectedAtMs: readonly number[],
+  knownNexus: KnownNexusTarget | null,
+  clientConnected: boolean,
+): FailureReconnectAction {
+  if (!clientConnected) return { kind: 'skip', reason: 'client socket already closed' };
+  if (!knownNexus) return { kind: 'skip', reason: 'no known Nexus reconnect target observed yet this run' };
+  if (injectedAtMs.length >= MAX_INJECTED_RECONNECTS_PER_RUN) {
+    return { kind: 'skip', reason: `bound reached (${MAX_INJECTED_RECONNECTS_PER_RUN}/run)` };
+  }
+  const last = injectedAtMs[injectedAtMs.length - 1];
+  if (last != null && now - last < MIN_INJECTED_RECONNECT_SPACING_MS) {
+    return { kind: 'skip', reason: `too soon after previous injection (${now - last}ms < ${MIN_INJECTED_RECONNECT_SPACING_MS}ms)` };
+  }
+  return { kind: 'inject' };
+}
+
 export interface RunResultFile {
   v: 1;
   runId: string;

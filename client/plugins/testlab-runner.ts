@@ -54,6 +54,8 @@ import {
   playerLogEvidenceFileName,
   RunnerStateMachine,
   ReconnectClassifier,
+  decideFailureReconnect,
+  MAX_INJECTED_RECONNECTS_PER_RUN,
   SCRIPT_START_SETTLE_MS,
   NATIVE_BRIDGE_TIMEOUT_MS,
   NO_MOVEMENT_TIMEOUT_MS,
@@ -63,6 +65,7 @@ import {
   type RunResultFile,
   type PluginConfigSnapshot,
   type WorldPosition,
+  type KnownNexusTarget,
 } from '../src/testlab/runnerCore.js';
 
 export { TESTLAB_PRIVATE_ONLY };
@@ -101,6 +104,13 @@ export function register(ctx: PluginContext) {
   let reconnectClassifier: ReconnectClassifier | null = null;
   let currentClient: ClientConnection | null = null;
   let disconnectedSinceMs: number | null = null;
+  // FAILURE -> RECONNECT injection (2026-09-26 infra fix): the last Nexus
+  // target seen in a genuine server RECONNECT this run, and the timestamps of
+  // every synthetic RECONNECT this run has injected in response to a FAILURE.
+  // Both reset at the start of each run in runRequest(); see
+  // decideFailureReconnect() in runnerCore.ts for the bound/spacing policy.
+  let knownNexusTarget: KnownNexusTarget | null = null;
+  let injectedReconnectAtMs: number[] = [];
   let seenFirstConnect = false;
   let stopPolling: (() => void) | null = null;
   let finishing = false;
@@ -184,9 +194,73 @@ export function register(ctx: PluginContext) {
   // teleport) — the server always answers with RECONNECT first. Recording
   // every one here is what lets ReconnectClassifier tell that apart from an
   // abnormal drop (see runnerCore.ts's ReconnectClassifier doc comment).
-  ctx.hookPacket('RECONNECT', () => {
+  ctx.hookPacket('RECONNECT', (_client, packet) => {
     reconnectClassifier?.onReconnectPacket(Date.now());
+    // Remember the last Nexus target (gameId -2 is the Nexus sentinel; a
+    // portal RECONNECT carries gameId 0 and is not a usable FAILURE fallback
+    // target) so a later FAILURE can be answered without waiting on the
+    // server to send another one.
+    if (packet.isDefined && packet.data?.gameId === -2 &&
+        typeof packet.data.host === 'string' && typeof packet.data.port === 'number') {
+      knownNexusTarget = { name: String(packet.data.name ?? 'Nexus'), host: packet.data.host, port: packet.data.port };
+    }
   });
+
+  // Auto-reconnect on server FAILURE (2026-09-26 infra fix): an empty/opaque
+  // FAILURE (errorId=0, errorMessage="") otherwise reaches the game client,
+  // which disconnects and only reconnects on its own after tens of seconds —
+  // CONNECTION_LOST_TIMEOUT_MS's own doc comment records a 102s incident.
+  // Cancel the FAILURE before it reaches the client (the client socket is
+  // still open at this point) and inject a synthetic RECONNECT to the last
+  // known Nexus target instead. `prepend: true` so this runs before
+  // packet-logger.ts's own FAILURE hook logs the (now-cancelled) packet.
+  // Every attempt — injected or skipped — is recorded via the recorder bus so
+  // it is visible in the brief and counts under the existing reconnect gate
+  // (an injected reconnect is real and abnormal; ReconnectClassifier sees it
+  // exactly like any other unannounced reconnect at the next clientConnected,
+  // since onReconnectPacket() above is never called for a synthetic one).
+  ctx.hookPacket('FAILURE', (client, packet) => {
+    const phase = machine?.getPhase();
+    if (phase !== 'running' && phase !== 'waiting-bridge') return;
+    if (!packet.isDefined) return; // unparseable body: leave existing behavior (forward, log raw bytes) alone.
+    const errorId = typeof packet.data.errorId === 'number' ? packet.data.errorId : null;
+    const errorMessage = String(packet.data.errorMessage ?? '');
+    const now = Date.now();
+    const decision = decideFailureReconnect(now, injectedReconnectAtMs, knownNexusTarget, client.connected === true);
+    if (decision.kind === 'skip') {
+      log(`FAILURE errorId=${errorId} errorMessage="${errorMessage}" — not injecting a reconnect (${decision.reason})`);
+      recordAutoReconnect(now, errorId, errorMessage, false, decision.reason);
+      return;
+    }
+    injectedReconnectAtMs.push(now);
+    packet.send = false; // cancel forward -- the injected RECONNECT below replaces it.
+    const target = knownNexusTarget as KnownNexusTarget;
+    const reconnect = ctx.createPacket('RECONNECT');
+    reconnect.data = {
+      name: target.name,
+      host: target.host,
+      port: target.port,
+      gameId: -2,
+      keyTime: -1,
+      key: Buffer.from(client.state?.guid ?? '', 'utf8'),
+    };
+    reconnect.modified = true;
+    client.sendToClient(reconnect);
+    log(`FAILURE errorId=${errorId} errorMessage="${errorMessage}" — injected RECONNECT to ${target.name} (${target.host}:${target.port}), injection ${injectedReconnectAtMs.length}/${MAX_INJECTED_RECONNECTS_PER_RUN}`);
+    recordAutoReconnect(now, errorId, errorMessage, true, null);
+  }, { prepend: true });
+
+  function recordAutoReconnect(t: number, failureErrorId: number | null, failureErrorMessage: string, delivered: boolean, skippedReason: string | null): void {
+    try {
+      const slot = (globalThis as unknown as Record<string, unknown>)[RECORDER_BUS_SLOT_KEY] as
+        | { enabled?: boolean; writer?: { writeLine(record: unknown): void } | null }
+        | undefined;
+      if (!slot?.enabled || !slot.writer) return;
+      slot.writer.writeLine({ k: 'auto_reconnect', t, failureErrorId, failureErrorMessage, delivered, skippedReason });
+    } catch {
+      // Never let a recorder problem affect the run itself.
+    }
+  }
 
   // ── The one-shot startup check. See this file's header. ──
 
@@ -230,6 +304,8 @@ export function register(ctx: PluginContext) {
   async function runRequest(request: RunRequest): Promise<void> {
     machine = new RunnerStateMachine();
     reconnectClassifier = new ReconnectClassifier();
+    knownNexusTarget = null;
+    injectedReconnectAtMs = [];
     machine.begin(Date.now(), request);
     originalConfigId = ctx.hostAccess?.getActivePluginConfigId() ?? null;
 

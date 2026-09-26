@@ -24,6 +24,9 @@ import {
   playerLogEvidenceFileName,
   RunnerStateMachine,
   ReconnectClassifier,
+  decideFailureReconnect,
+  MAX_INJECTED_RECONNECTS_PER_RUN,
+  MIN_INJECTED_RECONNECT_SPACING_MS,
   type RunRequest,
   type PluginConfigSnapshot,
   type WorldPosition,
@@ -810,6 +813,53 @@ describe('ReconnectClassifier', () => {
     // right now, even with a fresh packet, is abnormal because THIS one never loaded.
     c.onReconnectPacket(200);
     expect(c.classify(300)).toBe(true);
+  });
+});
+
+describe('decideFailureReconnect (2026-09-26 auto-reconnect-on-FAILURE infra)', () => {
+  const NEXUS = { name: 'Nexus', host: '54.86.47.176', port: 2050 };
+
+  it('injects when the socket is open, a Nexus target is known, and the run has no prior injections', () => {
+    expect(decideFailureReconnect(1000, [], NEXUS, true)).toEqual({ kind: 'inject' });
+  });
+
+  it('skips when the client socket is already closed — nothing to inject into', () => {
+    expect(decideFailureReconnect(1000, [], NEXUS, false)).toEqual({
+      kind: 'skip',
+      reason: 'client socket already closed',
+    });
+  });
+
+  it('skips when no server RECONNECT to a Nexus target has been observed yet this run', () => {
+    expect(decideFailureReconnect(1000, [], null, true)).toEqual({
+      kind: 'skip',
+      reason: 'no known Nexus reconnect target observed yet this run',
+    });
+  });
+
+  it(`skips once ${MAX_INJECTED_RECONNECTS_PER_RUN} injections have already happened this run`, () => {
+    const priorInjections = [0, 10_000, 20_000];
+    expect(priorInjections).toHaveLength(MAX_INJECTED_RECONNECTS_PER_RUN);
+    expect(decideFailureReconnect(30_000, priorInjections, NEXUS, true)).toEqual({
+      kind: 'skip',
+      reason: `bound reached (${MAX_INJECTED_RECONNECTS_PER_RUN}/run)`,
+    });
+  });
+
+  it(`skips when less than ${MIN_INJECTED_RECONNECT_SPACING_MS}ms elapsed since the previous injection`, () => {
+    const result = decideFailureReconnect(MIN_INJECTED_RECONNECT_SPACING_MS - 1, [0], NEXUS, true);
+    expect(result.kind).toBe('skip');
+    expect(result).toEqual({ kind: 'skip', reason: 'too soon after previous injection (4999ms < 5000ms)' });
+  });
+
+  it('injects again exactly at the spacing boundary', () => {
+    expect(decideFailureReconnect(MIN_INJECTED_RECONNECT_SPACING_MS, [0], NEXUS, true)).toEqual({ kind: 'inject' });
+  });
+
+  it('the bound counts only injections, not skipped attempts (caller must not push on skip)', () => {
+    // Two injections recorded (bound not yet reached at 2/3), spaced apart.
+    const injected = [0, MIN_INJECTED_RECONNECT_SPACING_MS];
+    expect(decideFailureReconnect(2 * MIN_INJECTED_RECONNECT_SPACING_MS, injected, NEXUS, true)).toEqual({ kind: 'inject' });
   });
 });
 
