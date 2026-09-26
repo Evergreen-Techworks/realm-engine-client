@@ -465,21 +465,35 @@ export function install(deps: BridgeDeps): void {
 
   // ─── Pickup ──────────────────────────────────────────────────────────────────
 
+  // Why a pickup returned false, for the script log. Scripts cannot see these
+  // branches; a silent false looked like "stood on the bag and left".
+  const refused = (what: string, bagId: number, slot: number, reason: string): false => {
+    Logger.warn('BridgeLoot', `${what} refused bag#${bagId} slot ${slot}: ${reason}`);
+    return false;
+  };
+  const gateState = (c: any): string => {
+    const g = c[Symbol.for('realm-engine.inventory-actions')]; if (!g) return 'idle';
+    return `busy ${Date.now() - g.at}ms map=${g.map}`;
+  };
+
   loot.pickup = (bag, slotIndex, opts) => {
     const c = deps.clientRef.current;
-    if (!c?.connected || !c.objectId) return false;
+    if (!c?.connected || !c.objectId) return refused('pickup', bag.objectId, slotIndex, 'not connected');
 
     const itemId = getCurrentBagSlotItem(deps, bag.objectId, slotIndex);
-    if (itemId <= 0) return false;
+    if (itemId <= 0) return refused('pickup', bag.objectId, slotIndex, `no item in bag stats (script saw ${bag.items?.[slotIndex]?.objectType ?? 'n/a'})`);
     const pos = deps.worldState.getEntity(bag.objectId)?.pos;
-    if (!pos || Math.hypot(pos.x - c.playerData.pos.x, pos.y - c.playerData.pos.y) > 1) return false;
+    if (!pos) return refused('pickup', bag.objectId, slotIndex, 'bag entity not in world state');
+    const dist = Math.hypot(pos.x - c.playerData.pos.x, pos.y - c.playerData.pos.y);
+    if (dist > 1) return refused('pickup', bag.objectId, slotIndex, `distance ${dist.toFixed(2)} > 1`);
 
     const useBackpack = opts?.useBackpack ?? true;
     const destination = findQuickslotForItem(c, itemId) ?? findFreeSlot(c, useBackpack);
-    if (!destination) return false;
+    if (!destination) return refused('pickup', bag.objectId, slotIndex, `no free destination (useBackpack=${useBackpack})`);
 
     try {
-      return sendInventorySwap(c, deps, bag.objectId, slotIndex, itemId, destination);
+      const sent = sendInventorySwap(c, deps, bag.objectId, slotIndex, itemId, destination);
+      return sent ? true : refused('pickup', bag.objectId, slotIndex, `inventory gate ${gateState(c)}`);
     } catch (err) {
       Logger.warn('BridgeLoot', `pickup failed: ${(err as Error).message}`);
       return false;
