@@ -306,6 +306,7 @@ namespace {
             FH_FLOAT("udodgeServerAnchorY", UDodge::SetServerAnchorY),
             FH_INT_BOOL("udodgeServerAnchorValid", UDodge::SetServerAnchorValid),
             FH_INT_BOOL("udodgeFallbackSidestep", UDodge::SetFallbackSidestep),
+            FH_INT_BOOL("udodgeNeverStandLocked", UDodge::SetNeverStandLocked),
             FH_TEXT("udodgePacketShot", UDodge::Sensors::RecordPacketShot),
             FH_TEXT("udodgeAoePacket", UDodge::Sensors::RecordAoePacket),
             FH_TEXT("navCollisionRule", Movement::Collision::SetRuleText),

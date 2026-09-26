@@ -415,6 +415,14 @@ export function register(ctx: PluginContext) {
   registerModeSetting('unified', 'udodgeFallbackSidestep',
     onOff('[UDodge] Travel fallback sidestep', 'off'),
     (v: string) => sendDllFeature('udodgeFallbackSidestep', v === 'on' ? 1 : 0));
+  // Owner hypothesis, 2026-09-26: while a boss lock is active and the current
+  // spot is a durable safe stand, decline it and pick a safe moving candidate
+  // instead. Off (default) = today's engine (holds at a durable in-range
+  // locked stand). Unproven behaviour ships behind a switch, default off,
+  // same discipline as the other udodge switches on this page.
+  registerModeSetting('unified', 'udodgeNeverStandLocked',
+    onOff('[UDodge] Never stand still while boss-locked', 'off'),
+    (v: string) => sendDllFeature('udodgeNeverStandLocked', v === 'on' ? 1 : 0));
   // Navigation finish plan, item 4: when a Tick has already spent longer than
   // the frame-cost ceiling before the solver phases, degrade the candidate
   // ring for that frame only (never a safety floor, never ReanchorMap, never a
@@ -683,6 +691,8 @@ export function register(ctx: PluginContext) {
     sendDllFeature('navNavigator', ctx.getSetting<string>('navNavigator') === 'dstar' ? 'dstar' : 'legacy');
     sendDllFeature('udodgeFallbackSidestep',
                    ctx.getSetting<string>('udodgeFallbackSidestep') === 'off' ? 0 : 1);
+    sendDllFeature('udodgeNeverStandLocked',
+                   ctx.getSetting<string>('udodgeNeverStandLocked') === 'off' ? 0 : 1);
     sendDllFeature('udodgeFrameBudget',
                    ctx.getSetting<string>('udodgeFrameBudget') === 'off' ? 'off' : 'auto');
     updateMoveEnvelopeArming();

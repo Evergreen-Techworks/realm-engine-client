@@ -117,5 +117,6 @@ void  SetServerAnchorValid(bool valid);
 // ruling 2026-09-19) — see Settings::fallbackSidestep /
 // Solver::SelectFallbackCandidate.
 void  SetFallbackSidestep(bool en);   bool  GetFallbackSidestep();
+void  SetNeverStandLocked(bool en);   bool  GetNeverStandLocked();
 
 } // namespace UDodge
