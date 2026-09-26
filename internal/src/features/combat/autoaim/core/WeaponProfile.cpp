@@ -6,6 +6,7 @@
 #include "core/runtime/MemRead.h"
 #include "game/objects/GameObjects.h"
 #include "ProjectileTracking.h"
+#include "features/movement/udodge/UDodgeCapture.h"
 
 #include <atomic>
 #include <cmath>
@@ -15,6 +16,18 @@ namespace {
 
 static std::atomic<void*> s_projProps{ nullptr };
 static WeaponProfile      s_profile;
+static std::atomic_flag s_provenanceLock=ATOMIC_FLAG_INIT;
+static std::atomic<uint64_t> s_provenanceGeneration{0};
+static WeaponCalibrator::Provenance s_provenance;
+static void RecordProvenance(bool spawn,float speed,float life,float range,float speedMul,float lifeMul,float rangeMul){
+    if(!UDodgeCapture::capture.enabled.load(std::memory_order_relaxed)||s_provenanceLock.test_and_set(std::memory_order_acquire))return;
+    ++s_provenance.sequence;s_provenance.ms=GetTickCount64();s_provenance.generation=s_provenanceGeneration.load(std::memory_order_relaxed);
+    s_provenance.source=spawn?1:2;s_provenance.projId=s_profile.projId;
+    s_provenance.rawSpeed=speed;s_provenance.rawLife=life;s_provenance.range=range;
+    s_provenance.speedMul=speedMul;s_provenance.lifeMul=lifeMul;s_provenance.rangeMul=rangeMul;
+    s_provenanceLock.clear(std::memory_order_release);
+}
+
 
 static bool ReadPlayerTuners(void* local, float& outSpeedMul, float& outLifetimeMul, float& outRangeMul)
 {
@@ -37,7 +50,7 @@ static bool ReadPlayerTuners(void* local, float& outSpeedMul, float& outLifetime
     return true;
 }
 
-static void Recalculate(void* local)
+static void Recalculate(void* local,bool spawn)
 {
     void* pp = s_projProps.load(std::memory_order_relaxed);
     if (!Mem::AddrOk(pp) || !Mem::AddrOk(local))
@@ -67,6 +80,7 @@ static void Recalculate(void* local)
             s_profile.rangeTiles  = rangeTiles;
             s_profile.avgSpeedTps = 200.f;
             s_profile.isResolved  = true;
+            RecordProvenance(spawn,static_cast<float>(rawSpeedI),rawLife,rangeTiles,speedMul,lifetimeMul,rangeMul);
             return;
         }
 
@@ -94,6 +108,7 @@ static void Recalculate(void* local)
         s_profile.rangeTiles  = rangeTiles;
         s_profile.avgSpeedTps = avgSpeedTps;
         s_profile.isResolved  = true;
+            RecordProvenance(spawn,static_cast<float>(rawSpeedI),rawLife,rangeTiles,speedMul,lifetimeMul,rangeMul);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
@@ -101,6 +116,13 @@ static void Recalculate(void* local)
 } // namespace
 
 namespace WeaponCalibrator {
+bool CopyProvenance(Provenance& out){
+    if(s_provenanceLock.test_and_set(std::memory_order_acquire))return false;
+    out=s_provenance;
+    const bool valid=out.sequence && out.generation==s_provenanceGeneration.load(std::memory_order_relaxed);
+    s_provenanceLock.clear(std::memory_order_release);return valid;
+}
+
 
 void OnProjectileSpawn(void* projProps, void* localPlayer)
 {
@@ -117,14 +139,14 @@ void OnProjectileSpawn(void* projProps, void* localPlayer)
 
     // Calibrate immediately — projProps is a managed IL2CPP object that may be
     // collected or reused before the next render tick, so we must read it now.
-    Recalculate(localPlayer);
+    Recalculate(localPlayer,true);
 }
 
 void Tick(void* localPlayer)
 {
     // Re-read player multipliers each frame (speed/lifetime buffs can change).
     // projProps is already cached; only re-runs Recalculate, which is fast.
-    Recalculate(localPlayer);
+    Recalculate(localPlayer,false);
 }
 
 const WeaponProfile& GetProfile()
@@ -134,6 +156,7 @@ const WeaponProfile& GetProfile()
 
 void Reset()
 {
+    s_provenanceGeneration.fetch_add(1,std::memory_order_relaxed);
     s_projProps.store(nullptr, std::memory_order_relaxed);
     s_profile = WeaponProfile{};
 }

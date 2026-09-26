@@ -5,9 +5,22 @@ vi.mock('../../../plugins/api.js', async original => ({
 }));
 import { fixture } from './helpers/autoNexusFixture.js';
 
-afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.clearAllMocks(); });
+afterEach(() => { delete (globalThis as any).__realmengine_scriptEvidence_v1; vi.clearAllTimers(); vi.useRealTimers(); vi.clearAllMocks(); });
 
 describe('AutoNexus uses the process-wide recovery lifecycle', () => {
+  it('witnesses only accepted escape requests and observer failures cannot prevent escape', () => {
+    const state = fixture();
+    const sink=vi.fn(); (globalThis as any).__realmengine_scriptEvidence_v1=sink;
+    const request=vi.spyOn(state.client.recovery,'requestEscape').mockReturnValueOnce(false);
+    state.commands.get('nexus')!(state.client);
+    expect(sink).not.toHaveBeenCalled();
+    request.mockRestore();
+    state.commands.get('nexus')!(state.client);
+    expect(sink).toHaveBeenCalledWith(expect.objectContaining({kind:'auto_nexus_request'}));
+    expect(state.escapes()).toBe(1);
+    sink.mockImplementation(()=>{throw new Error('observer failure');});
+    expect(()=>state.commands.get('nexus')!(state.client)).not.toThrow();
+  });
   it('preserves raw DAMAGE including opaque tail and updates acknowledged observation debt', () => {
     const state = fixture();
     state.hp(800); state.enemyShoot(5001, 7, 0, 100); state.playerHit(7, 5001);

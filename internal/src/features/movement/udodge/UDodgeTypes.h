@@ -854,6 +854,12 @@ struct ZoneThreat {
                            // false = telegraphed, not yet landed (SOFT cost)
     bool  enemyKeepout = false; // an enemy-centred avoidance policy (UDodgeEnemyHazards),
                                 // not an observed blast — hard for walk-to too
+    // Copied observation metadata only; never consulted by safety/scoring.
+    int32_t source=-1,ownerObjId=0;
+    uint64_t capturedMs=0,observationMs=0;
+    float landingInMs=-1.f,expiresInMs=-1.f;
+    uint32_t observationFlags=0;
+
 };
 
 // Enemy keep-out test shared by the walk-to planner (nav A*) and the follower's

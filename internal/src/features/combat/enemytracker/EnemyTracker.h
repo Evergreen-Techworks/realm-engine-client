@@ -17,7 +17,7 @@ struct Entry {
     float   x, y;
     int32_t hp, maxHp;
     float   vx, vy;          // tiles/ms; 0 until first velocity sample
-    bool    isInvulnerable;  // XML <Invincible/> flag
+    bool    isInvulnerable;  // XML invincibility OR successfully read runtime untargetability
     bool    hasHealthBar;    // false for walls/destructibles (noHealthBar)
     bool    isScenery;       // static object with no projectile definitions
     float   shotRangeTiles;  // longest projectile reach of this TYPE (tiles); 0 = none / unreadable
@@ -28,7 +28,10 @@ struct Entry {
     // band) must not collapse into the same 0. Resolved once per type, cached.
     float   shotSpeedTilesPerSec;  // 0 = no projectiles, or unreadable
     bool    hasProjectiles;        // the type declares at least one projectile
+    bool conditionReadOk=false, xmlInvulnerable=false, runtimeUntargetable=false;
     void*   ptr;             // raw entity pointer (for direct field reads)
+    // Copied diagnostic provenance from the existing classification read.
+
 };
 
 // Rebuilds the snapshot from the world dictionary. Self-throttled, so any
@@ -39,6 +42,7 @@ void Tick();
 // All entries as of this thread's last Tick (no filtering). The reference, and
 // pointers into it, stay valid until this thread calls Tick() again.
 const std::vector<Entry>& GetSnapshot();
+uint64_t GetSnapshotObservationMs();
 
 using Callback = void(*)(const Entry&, void* user);
 void Enumerate(Callback cb, void* user);

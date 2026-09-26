@@ -1,4 +1,5 @@
 #include "pch-il2cpp.h"
+#include "features/movement/udodge/UDodgeCapture.h"
 #include "DangerPlanner.h"
 #include "DodgeGeometry.h"
 #include "MovementRuntime.h"
@@ -894,11 +895,17 @@ void __fastcall Detour_AppEngineUpdate(void* __this, void* method)
 {
     DiagTiming::PollFlag();
     const bool diagOn = DiagTiming::On();
-    const double t0 = diagOn ? DiagTiming::NowMs() : 0.0;
+    const bool timingOn=UDodgeCapture::frames.enabled.load(std::memory_order_relaxed);
+    const bool sceneOn=UDodgeCapture::capture.enabled.load(std::memory_order_relaxed);
+    const double t0 = (diagOn||timingOn) ? DiagTiming::NowMs() : 0.0;
     if (s_origUpdate) s_origUpdate(__this, method);
-    const double t1 = diagOn ? DiagTiming::NowMs() : 0.0;
+    const double t1 = (diagOn||timingOn) ? DiagTiming::NowMs() : 0.0;
+    UDodgeCapture::capture.Pulse(GetTickCount64(),reinterpret_cast<uintptr_t>(GameState::GetWorldMgr()));
     DodgeTickGuarded();
-    if (diagOn) DiagAfterUpdate(t0, t1, DiagTiming::NowMs());
+    const double t2=(diagOn||timingOn)?DiagTiming::NowMs():0.0;
+    if(timingOn)UDodgeCapture::updates.Observe(true,GetTickCount64(),t0,t1,t2,GetCurrentThreadId(),sceneOn);
+    else UDodgeCapture::updates.Observe(false,0,0,0,0,0,false);
+    if (diagOn) DiagAfterUpdate(t0, t1, t2);
     // A script's auto-fire, on the thread the game shoots from (AutoFire.h). After
     // the dodge body so the dodge timings above stay the dodge's own.
     AutoFire::GameThreadTick();

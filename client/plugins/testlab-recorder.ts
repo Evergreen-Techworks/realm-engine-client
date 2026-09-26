@@ -1,3 +1,4 @@
+import { DamageCoverage, scriptEvidenceRecord, SCRIPT_EVIDENCE_SLOT } from '../src/testlab/runtimeEvidence.js';
 /**
  * Test Lab Recorder — TESTLAB_PRIVATE_ONLY.
  *
@@ -115,6 +116,7 @@ export function register(ctx: PluginContext) {
   const writer = new BufferedJsonlWriter(filePath);
   const tracker = new ProjDefTracker();
   let wroteStart = false;
+  const coverage = new DamageCoverage();
 
   const slot = getBusSlot();
   slot.writer = writer;
@@ -150,9 +152,38 @@ export function register(ctx: PluginContext) {
   });
   ctx.registerCleanup(unsubscribeCapture);
 
-  ctx.hookAllPackets((client: ClientConnection, packet: Packet) => {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  let logWindow=0, logCount=0;
+  const evidenceSink = (raw: unknown) => {
+    if (!slot.enabled) return;
+    const t=Date.now(); if(t-logWindow>=1000){logWindow=t;logCount=0;}
+    if(raw && typeof raw==='object' && (raw as any).kind==='auto_nexus_request') {
+      const data=raw as any;
+      const delivered=requestCaptureTrigger('escape');
+      ensureStarted();writer.writeLine({k:'capture_trigger',t,reason:'escape',source:'auto_nexus_accepted_request',delivered,acknowledged:false,generation:Number.isInteger(data.generation)?data.generation:null,layer:['hit-ledger','forecast','confirmed-health','manual'].includes(data.layer)?data.layer:null});
+      return;
+    }
+    if (++logCount>16) return; // bounded; missing observations remain missing
+    const record=scriptEvidenceRecord(raw,t);
+    if(record){ensureStarted();writer.writeLine(record);}
+  };
+  globals[SCRIPT_EVIDENCE_SLOT]=evidenceSink;
+  const flushCoverage=() => {
+    writer.flushSync();
+    const record=coverage.flushed(Date.now(),writer.errorCount+contextErrorCount);
+    if(slot.enabled&&record)writer.writeLine(record);
+  };
+  const coverageTimer=setInterval(flushCoverage,1000);coverageTimer.unref?.();
+  ctx.on('clientDisconnected',(client)=>coverage.disconnect(client));
+  ctx.registerCleanup(()=>{clearInterval(coverageTimer);flushCoverage();if(globals[SCRIPT_EVIDENCE_SLOT]===evidenceSink)delete globals[SCRIPT_EVIDENCE_SLOT];});
+
+  ctx.hookAllPackets((client: ClientConnection, packet: Packet, fromClient: boolean) => {
     try {
       const t = Date.now();
+      if (!fromClient) {
+        coverage.packet(client,t,packet.name,packet.isDefined,Number.isInteger(client.objectId)&&client.objectId>=0,writer.errorCount+contextErrorCount);
+        if(packet.name==='MAPINFO') {ensureStarted();writer.writeLine({k:'capture_boundary',t,map_instance_id:coverage.mapId,process_id:process.pid,event:'map'});}
+      }
       if (slot.enabled && ['DEATH','ESCAPE','PLAYERHIT','GROUNDDAMAGE'].includes(packet.name)) {
         const reason = packet.name === 'DEATH' ? 'death' : packet.name === 'ESCAPE' ? 'escape' : 'hit';
         const delivered = requestCaptureTrigger(reason);
@@ -166,11 +197,13 @@ export function register(ctx: PluginContext) {
       for (const rec of records) writer.writeLine(rec);
     } catch {
       contextErrorCount++;
+      coverage.reset();
       ctx.setData('testlabContextErrorCount', contextErrorCount);
     }
   });
 
   ctx.onEnabledChange((enabled) => {
+    if(!enabled){flushCoverage();coverage.reset();}
     slot.enabled = enabled;
     if (!enabled) {
       try {

@@ -26,6 +26,7 @@
 #include "SteerInput.h"
 #include "DangerPlanner.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
+#include "features/combat/autoaim/core/WeaponProfile.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
 #include "features/combat/enemytracker/LockLiveness.h"
 #include "gui/tabs/TestTAB.h"
@@ -886,7 +887,7 @@ void SetGroupPreference(const char* payload)
 
 void OnEnter()
 {
-    UDodgeCapture::capture.NewMap();
+    UDodgeCapture::capture.resetRequested.store(true,std::memory_order_relaxed);
     SetGroupPreference("");
     g_previousGroupActive = false;
     g_previousGroupBoss = 0;
@@ -2338,7 +2339,7 @@ void Tick(void* player, float px, float py, float dt)
     if (UDodgeCapture::capture.enabled.load(std::memory_order_relaxed)) {
         namespace C = UDodgeCapture;
         C::Decision decision;
-        decision.ms=GetTickCount64(); decision.tick=g_map.tickId;
+        decision.ms=GetTickCount64(); decision.observationAgeMs=0; decision.tick=g_map.tickId;
         decision.hp=hp; decision.maxHp=maxHp; decision.lockId=g_map.hasLock?g_map.lockId:0;
         decision.mode=lockApproach?3:goal.fromLock?2:walkActive?1:0;
         decision.solve=static_cast<int>(g_solve.kind);
@@ -2364,8 +2365,9 @@ void Tick(void* player, float px, float py, float dt)
             scene.enemyEntriesVisited=static_cast<uint32_t>(std::min<size_t>(visits,C::kEnemies));
             for(size_t i=0;i<visits&&scene.enemyCount<C::kEnemies;++i){
                 const auto&e=enemies[i];auto& out=scene.enemies[scene.enemyCount++];
+                out.observationMs=EnemyTracker::GetSnapshotObservationMs();
                 out.id=e.id;out.type=e.objType;out.hp=e.hp;out.maxHp=e.maxHp;out.x=e.x;out.y=e.y;out.vx=e.vx;out.vy=e.vy;
-                out.flags=(e.isInvulnerable?1u:0u)|(e.hasHealthBar?2u:0u)|(e.isScenery?4u:0u)|(e.hasProjectiles?8u:0u);
+                out.flags=(e.isInvulnerable?1u:0u)|(e.hasHealthBar?2u:0u)|(e.isScenery?4u:0u)|(e.hasProjectiles?8u:0u)|(e.conditionReadOk?16u:0u)|(e.xmlInvulnerable?32u:0u)|(e.runtimeUntargetable?64u:0u);
             }
             scene.projectilesObserved=static_cast<uint32_t>(std::max(0,g_map.laneCount));
             scene.projectileCount=std::min(scene.projectilesObserved,C::kProjectiles);
@@ -2377,7 +2379,15 @@ void Tick(void* player, float px, float py, float dt)
                 for(unsigned n=0;n<out.count;++n){out.points[n][0]=p.points[n].x;out.points[n][1]=p.points[n].y;out.points[n][2]=p.pointTimesMs[n];}
             }
             scene.zonesObserved=static_cast<uint32_t>(std::max(0,g_map.zoneCount));scene.zoneCount=std::min(scene.zonesObserved,C::kZones);
-            for(unsigned i=0;i<scene.zoneCount;++i){const auto&z=g_map.zones[i];scene.zones[i]={z.pos.x,z.pos.y,z.radius,(z.active?1u:0u)|(z.enemyKeepout?2u:0u)};}
+            for(unsigned i=0;i<scene.zoneCount;++i){const auto&z=g_map.zones[i];auto& dst=scene.zones[i];
+                dst.x=z.pos.x;dst.y=z.pos.y;dst.radius=z.radius;dst.flags=(z.active?1u:0u)|(z.enemyKeepout?2u:0u);
+                dst.source=z.source;dst.owner=z.ownerObjId;dst.capturedMs=z.capturedMs;dst.observationMs=z.observationMs;
+                dst.landingInMs=z.landingInMs;dst.expiresInMs=z.expiresInMs;dst.observationFlags=z.observationFlags;
+            }
+            WeaponCalibrator::Provenance weapon;
+            if(WeaponCalibrator::CopyProvenance(weapon)){
+                scene.weapon={weapon.sequence,weapon.ms,weapon.generation,weapon.source,weapon.projId,weapon.rawSpeed,weapon.rawLife,weapon.range,weapon.speedMul,weapon.lifeMul,weapon.rangeMul,true};
+            }
             scene.cellX=px-4.f;scene.cellY=py-4.f;
             MapInput terrain;
             if(g_lastPubSeq){terrain.env.occFlags=s_snap.grid.flags;terrain.env.occCenter=s_snap.grid.center;

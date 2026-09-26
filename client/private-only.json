@@ -17,6 +17,9 @@
     "plugins/testlab-supply.ts",
     "src/testlab/supplyCore.ts",
     "src/testlab/__tests__/supplyCore.test.ts",
-    "src/testlab/__tests__/captureRecorder.test.ts"
+    "src/testlab/__tests__/captureRecorder.test.ts",
+    "src/testlab/runtimeEvidence.ts",
+    "src/testlab/__tests__/runtimeEvidence.test.ts",
+    "src/testlab/__tests__/scriptDispatchEvidence.test.ts"
   ]
 }

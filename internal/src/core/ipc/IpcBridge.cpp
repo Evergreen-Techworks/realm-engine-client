@@ -448,6 +448,13 @@ DWORD WINAPI IpcBridgeThread(LPVOID)
                     connected=IpcFraming::WriteMessage(hPipe,json.c_str(),static_cast<int>(json.size()));
                     if(!connected)C::frames.dropped.fetch_add(frameCount,std::memory_order_relaxed);
                 }
+                C::UpdateTiming updates[128];unsigned updateCount=0;
+                while(connected&&updateCount<128&&C::updates.queue.Pop(updates[updateCount]))++updateCount;
+                if(updateCount&&connected){
+                    const auto json=C::EncodeUpdates(updates,updateCount,GetCurrentProcessId(),startUtc,anchorMs,utc,uncertainty,C::updates.dropped.load(std::memory_order_relaxed));
+                    connected=IpcFraming::WriteMessage(hPipe,json.c_str(),static_cast<int>(json.size()));
+                    if(!connected)C::updates.dropped.fetch_add(updateCount,std::memory_order_relaxed);
+                }
                 for(int i=0;i<2&&connected;++i){
                     if(!C::capture.scenes.Pop(scene))break;
                     const auto json=C::Encode(scene,GetCurrentProcessId(),startUtc,anchorMs,utc,uncertainty);

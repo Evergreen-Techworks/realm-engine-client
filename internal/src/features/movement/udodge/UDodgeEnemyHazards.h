@@ -133,6 +133,7 @@ inline bool Append(DangerMap& map, int objectType, int hp, Vec2 position, Vec2 p
     zone.radius = radius;
     zone.active = true;
     zone.enemyKeepout = true;
+    zone.source=-2; // policy geometry, not an observed timed blast
     return true;
 }
 

@@ -484,6 +484,11 @@ export function register(ctx: PluginContext) {
     if (!client.connected || !ctx.enabled || state.generation !== client.admission.generation ||
         ['dead', 'disconnected', 'cancelled', 'terminal'].includes(client.admission.phase)) return false;
     if (!client.recovery.requestEscape(state.generation, { retries: retryCount, retryMs })) return false;
+    // Optional private observer: accepted request, not a server/native acknowledgement.
+    try {
+      const sink = (globalThis as any).__realmengine_scriptEvidence_v1;
+      if (typeof sink === 'function') sink({kind:'auto_nexus_request', generation:state.generation, layer});
+    } catch { /* diagnostics must never affect escape */ }
     // item 4b (measurement only): requestEscape() synchronously calls
     // sendEscape() before returning (RecoveryCoordinator.ts), so this point is
     // "escape packet send call returns" per the investigation's design.

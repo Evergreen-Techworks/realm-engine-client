@@ -21,23 +21,26 @@
 template <typename T>
 class SnapshotHandoff {
 public:
-    void Publish(const std::vector<T>& built)
+    void Publish(const std::vector<T>& built, uint64_t observationMs=0)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_published = built;
+        m_observationMs=observationMs;
         ++m_generation;
     }
 
-    void Refresh(std::vector<T>& view, uint64_t& viewGeneration)
+    void Refresh(std::vector<T>& view, uint64_t& viewGeneration, uint64_t* observationMs=nullptr)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (viewGeneration == m_generation) return;
         view = m_published;
         viewGeneration = m_generation;
+        if(observationMs)*observationMs=m_observationMs;
     }
 
 private:
     std::mutex     m_mutex;
     std::vector<T> m_published;
+    uint64_t       m_observationMs=0;
     uint64_t       m_generation = 0;   // 0 = nothing published; views start at 0 too
 };

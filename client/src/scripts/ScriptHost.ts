@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { basename, isAbsolute, join, relative, resolve } from 'path';
@@ -104,6 +105,11 @@ export class ScriptHost {
       }
       this.emitScriptsStateChanged();
     };
+    const emitLog = deps.emitScriptLog;
+    deps.emitScriptLog = (id, line, level) => {
+      this.emitEvidence({kind: 'log', script_id: id, line});
+      emitLog(id, line, level);
+    };
     SDKBridge.install(deps);
     this.bridgeInstalled = true;
   }
@@ -121,6 +127,13 @@ export class ScriptHost {
     } finally {
       this.scriptSession.scriptId = prev;
     }
+  }
+
+  private emitEvidence(event: Record<string, unknown>): void {
+    try {
+      const sink = (globalThis as any).__realmengine_scriptEvidence_v1;
+      if (typeof sink === 'function') sink(event);
+    } catch { /* optional diagnostics cannot affect script execution */ }
   }
 
   private log(id: string, line: string, level: ScriptLogLevel = 'info') {
@@ -279,7 +292,14 @@ export class ScriptHost {
 
     try {
       const fileUrl = pathToFileURL(script.path).href;
+      // Read only when the private recorder subscribed. This witnesses the entry,
+      // not its transitive imports; changed-during-import bytes remain unknown.
+      const evidenceEnabled = typeof (globalThis as any).__realmengine_scriptEvidence_v1 === 'function';
+      const hashEntry = () => createHash('sha256').update(readFileSync(script.path)).digest('hex');
+      let entryHash: string | null = null;
+      if (evidenceEnabled) { try { entryHash = hashEntry(); } catch {} }
       const mod = await import(`${fileUrl}?t=${Date.now()}`);
+      if (entryHash) { try { if (hashEntry() !== entryHash) entryHash = null; } catch { entryHash = null; } }
 
       const ScriptClass = mod.default;
       if (!ScriptClass) {
@@ -303,6 +323,7 @@ export class ScriptHost {
           `DIAG pre-onStart: bag=${!!diagBag} RealmEngine=${!!diagBag?.RealmEngine} ui=${!!diagUi} status=${typeof diagUi?.status} panel.define=${typeof diagUi?.panel?.define}\n  status.src=${diagStatusSrc}`);
       }
 
+      if (entryHash) this.emitEvidence({kind:'dispatch',script_id:id,entry_sha256:entryHash});
       this.withScriptId(id, () => {
         this.log(id, `Starting ${script.name} v${script.version} by ${script.developer}...`);
         instance.onStart();

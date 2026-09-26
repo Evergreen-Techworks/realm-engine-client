@@ -887,6 +887,9 @@ void RebuildZones(DangerMap& out, float playerX, float playerY, const Settings& 
         z.pos = { a.destX, a.destY };
         z.radius = radius;
         z.active = hasLanded || armingSoon;
+        z.source=a.source;z.ownerObjId=a.ownerObjId;z.capturedMs=a.spawnTick;z.observationMs=nowMs;
+        z.landingInMs=std::max(0.f,landingMs);z.expiresInMs=std::max(0.f,lifeMs-elapsedMs);
+        z.observationFlags=(hasLanded?1u:0u)|(armingSoon?2u:0u)|(a.isEnemyChecked?4u:0u)|(a.isEnemy?8u:0u)|(a.isDamaging?16u:0u);
     }
 
     // Keep observed blast capacity ahead of inferred shooter envelopes. Adding

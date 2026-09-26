@@ -121,6 +121,7 @@ struct CandidateOut {
     int32_t id, objType, hp, maxHp;
     float   x, y;
     bool    isInvulnerable, hasHealthBar, isScenery;
+    bool conditionReadOk=false, xmlInvulnerable=false, runtimeUntargetable=false;
     void*   ptr;
     void*   projectiles;       // ObjectProperties.Projectiles (ProjectileProperties[]), may be null
     uintptr_t projectileCount;
@@ -238,6 +239,7 @@ static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t loc
         // combat consumers already filter Entry::isInvulnerable as appropriate.
         void* invPtr = *reinterpret_cast<void**>(op + RuntimeOffsets::OP_InvincibleElem);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         bool isInvuln = invPtr && Mem::AddrOk(invPtr);
+        out.xmlInvulnerable=isInvuln;
 
         f.hp      = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::HP);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
         f.maxHp   = *reinterpret_cast<int32_t*>(ent + RuntimeOffsets::MaxHP);  // raw-access-ok: hot-loop __try field sweep, per-field fallback would defeat the shared-SEH abort (plan 16)
@@ -265,6 +267,8 @@ static bool SehReadCandidate(void* entity, int32_t id, void* local, uint64_t loc
         // shooter model. Mark it invulnerable and let each combat mode decide.
         uint32_t cond0 = 0, cond1 = 0;
         const bool condOk = RuntimeOffsets::TryReadMapObjectConditions(entity, &cond0, &cond1);
+        out.conditionReadOk=condOk;
+        out.runtimeUntargetable=condOk && (cond0|cond1) && RuntimeOffsets::MapObjectConditionsMakeUntargetable(cond0,cond1);
         if (condOk && (cond0 | cond1) && RuntimeOffsets::MapObjectConditionsMakeUntargetable(cond0, cond1))
             isInvuln = true;
 
@@ -294,6 +298,7 @@ static std::vector<EnemyTracker::Entry>      s_building;
 static SnapshotHandoff<EnemyTracker::Entry>  s_handoff;
 static thread_local std::vector<EnemyTracker::Entry> s_snapshot;
 static thread_local uint64_t                 s_snapshotGen = 0;
+static thread_local uint64_t                 s_snapshotObservationMs = 0;
 // Projectile reach per object type. ObjectProperties are shared per type and
 // immutable, so one read per type per session is exact. Builder-owned.
 // One cache entry per object type: everything the standoff and the burst keep-out
@@ -403,6 +408,8 @@ static void BuildLocked(ULONGLONG now, EnemyTracker::WatchVerdict& watch)
         e.hp             = cand.hp;
         e.maxHp          = cand.maxHp;
         e.isInvulnerable = cand.isInvulnerable;
+        e.conditionReadOk=cand.conditionReadOk;
+        e.xmlInvulnerable=cand.xmlInvulnerable;e.runtimeUntargetable=cand.runtimeUntargetable;
         e.hasHealthBar   = cand.hasHealthBar;
         e.isScenery      = cand.isScenery;
         e.ptr            = cand.ptr;
@@ -457,15 +464,16 @@ void Tick()
             WatchVerdict watch{};
             watch.id = s_watchedId.load(std::memory_order_relaxed);
             BuildLocked(now, watch);
-            s_handoff.Publish(s_building);
+            s_handoff.Publish(s_building,now);
             std::lock_guard<std::mutex> lock(s_watchMutex);
             s_watchVerdict = watch;
         }
     }
-    s_handoff.Refresh(s_snapshot, s_snapshotGen);
+    s_handoff.Refresh(s_snapshot, s_snapshotGen, &s_snapshotObservationMs);
 }
 
 const std::vector<Entry>& GetSnapshot() { return s_snapshot; }
+uint64_t GetSnapshotObservationMs() {return s_snapshotObservationMs;}
 
 void Enumerate(Callback cb, void* user)
 {

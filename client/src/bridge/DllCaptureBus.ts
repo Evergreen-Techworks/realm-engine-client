@@ -1,24 +1,30 @@
 /** Optional versioned diagnostic transport. Unknown fields never reach disk. */
 export type CaptureDecision = Record<string, number | null>;
 export interface CaptureRecord {
-  type: 'encounterCapture'; version: 1; kind: 'native_scene' | 'native_decision' | 'native_present_interarrival';
+  type: 'encounterCapture'; version: 1; kind: 'native_scene' | 'native_decision' | 'native_present_interarrival' | 'native_update_timing';
   processId: number; processStartUtcMs: number; anchorMs: number; anchorUtcMs: number; memoryBytes: number;
   decision?: CaptureDecision;
   [key: string]: unknown;
 }
 const decisionKeys = ['ms','sequence','generation','trigger','tick','hp','maxHp','lockId','mode','solve','x','y','goalX','goalY','targetX','targetY','speed','range','clearance','standClearance','lockX','lockY','rawGoalX','rawGoalY','move','fromLock','lockApproach','driveAccepted','dropped','suppressed'];
 const scalar = (x: unknown): x is number | null => x === null || (typeof x === 'number' && Number.isFinite(x));
+const numberNonnegative = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x) && x >= 0;
 const uint = (x: unknown): x is number => typeof x === 'number' && Number.isSafeInteger(x) && x >= 0;
 const row = (x: unknown, n: number): x is Array<number | null> => Array.isArray(x) && x.length === n && x.every(scalar);
 export function decodeCapture(value: unknown): CaptureRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
-  if (v.type !== 'encounterCapture' || v.version !== 1 || !['native_scene','native_decision','native_present_interarrival'].includes(String(v.kind))) return null;
+  if (v.type !== 'encounterCapture' || v.version !== 1 || !['native_scene','native_decision','native_present_interarrival','native_update_timing'].includes(String(v.kind))) return null;
   const out: Record<string, unknown> = { type: 'encounterCapture', version: 1, kind: v.kind };
   for (const key of ['processId','processStartUtcMs','anchorMs','anchorUtcMs','anchorUncertaintyMs','memoryBytes','sceneQueueHighWater','decisionQueueHighWater','terminalQueueHighWater','frameQueueHighWater']) {
     if (!uint(v[key])) return null; out[key] = v[key];
   }
   if ((v.memoryBytes as number) > 4*1024*1024) return null;
+  if (v.updateQueueHighWater !== undefined) {if(!uint(v.updateQueueHighWater))return null;out.updateQueueHighWater=v.updateQueueHighWater;}
+  if (v.kind === 'native_update_timing') {
+    if (!uint(v.dropped) || !Array.isArray(v.updates) || v.updates.length > 128 || !v.updates.every(a => row(a,8) && a.slice(0,4).every(uint) && a.slice(4,7).every(x=>numberNonnegative(x)) && [0,1].includes(a[7] as number))) return null;
+    out.dropped=v.dropped;out.updates=v.updates.map(a=>[...a]);return out as CaptureRecord;
+  }
   if (v.kind === 'native_present_interarrival') {
     if (!uint(v.qpcFrequency) || v.qpcFrequency === 0 || !uint(v.dropped) || !Array.isArray(v.frames) || v.frames.length > 128 || !v.frames.every(a => row(a,5) && a.every(uint))) return null;
     out.qpcFrequency=v.qpcFrequency;out.dropped=v.dropped;out.frames=v.frames.map(a=>[...a]);return out as CaptureRecord;
@@ -27,6 +33,7 @@ export function decodeCapture(value: unknown): CaptureRecord | null {
   const d = v.decision as Record<string, unknown>; const decision: CaptureDecision = {};
   for (const key of decisionKeys) { if (!scalar(d[key])) return null; decision[key] = d[key] as number | null; }
   for (const key of ['ms','sequence','generation','trigger','tick','dropped','suppressed']) if (!uint(d[key])) return null;
+  if(d.observationAgeMs !== undefined){if(!scalar(d.observationAgeMs))return null;decision.observationAgeMs=d.observationAgeMs as number|null;}
   out.decision = decision;
   if (v.kind === 'native_scene') {
     for (const key of ['candidateTick','terrainTick','flags','enemiesObserved','enemyEntriesVisited','projectilesObserved','zonesObserved','candidatesObserved']) {
@@ -43,6 +50,11 @@ export function decodeCapture(value: unknown): CaptureRecord | null {
       projectiles.push([...p.slice(0,8), p[8].map((a: Array<number | null>) => [...a])]);
     }
     out.projectiles = projectiles;
+    for(const [key,parent,width] of [['enemyDetails','enemies',4],['zoneDetails','zones',7]] as const){
+      if(v[key]!==undefined){const a=v[key];if(!Array.isArray(a)||a.length!==(out[parent] as unknown[]).length||!a.every(e=>row(e,width)))return null;out[key]=a.map(e=>[...e]);}
+    }
+    if(v.weaponProfile!==undefined){if(v.weaponProfile!==null&&!row(v.weaponProfile,11))return null;out.weaponProfile=v.weaponProfile===null?null:[...v.weaponProfile as Array<number|null>];}
+
     for (const key of ['cellX','cellY','cellStep']) { if (!scalar(v[key])) return null; out[key] = v[key]; }
     if (!Array.isArray(v.cells) || v.cells.length !== 289 || !v.cells.every(x => uint(x) && x <= 255)) return null;
     out.cells = [...v.cells];
@@ -72,5 +84,5 @@ export function captureRecord(record: CaptureRecord, receivedUtcMs: number): Rec
  return { ...record, k: record.kind, t: receivedUtcMs, clock: 'windows_monotonic_ms',
    clockUncertaintyMs: record.anchorUncertaintyMs, runIdentity: 'recorder-file',
    geometryCoverage: record.kind === 'native_scene' ? 'bounded_observation' : null, alternativeCoverage: record.kind === 'native_scene' ? 'bounded_evaluated' : null,
-   calibrationProvenance: null, enemyRuntimeConditions: null, sourceObservationAgeMs: null };
+   calibrationProvenance: record.weaponProfile ?? null, enemyRuntimeConditions: record.enemyDetails ?? null, sourceObservationAgeMs: null };
 }

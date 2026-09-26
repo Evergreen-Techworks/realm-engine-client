@@ -34,3 +34,34 @@ Trigger bits: 1 HP decrease or recorded hit request, 2 death, 4 lock/mode change
 10Hz scenes, <=3s pre-event history, 2s post-event tail (overlap extension capped at 5s after window start), at most six ordinary windows per minute. Fixed 31-scene history, 128-scene SPSC queue, 16 ordinary exact decisions plus separate 16 terminal decisions. IPC drains up to four decisions, two scenes, and 128 frame samples per pass. All queues fixed capacity; overflow increments drops instead of waiting. Native memory including queues and scene scratch is statically constrained below4MiB. Renderer queue holds2048 timestamps. Queue high-water counters (`sceneQueueHighWater`, `decisionQueueHighWater`, `terminalQueueHighWater`, `frameQueueHighWater`) expose bounded occupancy. Failed pipe writes increment diagnostic drops, reported if a later connection delivers records. `memoryBytes` reports that conservative fixed allocation, not total process memory or formatter heap. IPC JSON formatting allocates outside movement/render hooks. Recorder writer retains existing bounded-by-flush batching.
 
 This does not yet fulfill Stage2 live/overhead acceptance: private build, real captured encounter reconstruction, off/on renderer/native measurements and loss checks remain required. It cannot prove unobserved alternatives, hidden entities, full-room context, or fresh weapon calibration provenance. No movement improvement claim.
+
+### Proxy and script evidence (private producer extension)
+
+The recorder now emits `capture_boundary` with its Node `process_id` and a
+`proxy:<pid>:<connection ordinal>:<map ordinal>` map identity. This is distinct
+from the native process and native world-generation identity. Bind them only
+with actual matching session evidence; `packet_process_id` selects the Node
+producer in prospective comparison bindings.
+
+`capture_span` / `packet_damage` certifies only observed parsed server traffic:
+self object identity must be ready, a parsed MAPINFO must have been seen, no
+inter-packet gap exceeds 2000 ms, and all packet rows in the span must have been
+successfully flushed before the span is queued. Disconnects, map changes,
+unknown/unparsed packets, mapper errors and writer errors cut coverage. Timer
+time does not extend the last observed packet time. This is not proof that the
+network or server produced no additional packets, nor protocol-definition
+correctness. Absence of qualifying spans is unknown, not zero damage.
+
+`script_dispatch` witnesses the stable pre/post-import SHA256 of the entry
+module immediately before the host dispatches onStart. It does not attest
+transitive modules, choose an A/B arm, or assign an attempt. `script_observation`
+is an allowlisted bounded copy of known structured script markers, explicitly
+labelled as a script report requiring an independent join. Claims of native
+branch handling are not copied as truth. Private sink failures cannot prevent
+script execution or dashboard logging.
+
+An accepted AutoNexus recovery request now emits `capture_trigger` with source
+`auto_nexus_accepted_request`. `delivered` means the capture request reached the
+native bridge callback; `acknowledged:false` forbids interpreting that as an
+observed native terminal decision. The subsequent native terminal record is
+still required.

@@ -6,28 +6,34 @@
 #include <cstddef>
 #include <type_traits>
 namespace UDodgeCapture {
+constexpr size_t kCopiedMetadataAllowance=96*1024; // zone fields across existing bounded map/snapshot copies
 constexpr unsigned kHistory=31, kQueue=128, kTerminalQueue=16;
 constexpr unsigned kEnemies=64, kProjectiles=128, kZones=64, kPoints=8, kCells=289;
 enum Trigger : uint32_t { HpDrop=1, Death=2, GoalChange=4, Reversal=8, NoProgress=16, MapEnd=32, ExternalTerminal=64 };
 struct Decision {
     uint64_t ms=0, sequence=0, generation=0;
+    int64_t observationAgeMs=-1;
     uint32_t trigger=0, tick=0;
     int32_t hp=-1,maxHp=-1,lockId=0,mode=0,solve=0;
     float x=0,y=0,goalX=0,goalY=0,targetX=0,targetY=0,speed=0,range=0,clearance=0,standClearance=0,lockX=0,lockY=0,rawGoalX=0,rawGoalY=0;
     bool move=false, fromLock=false, lockApproach=false, driveAccepted=false;
     uint64_t dropped=0,suppressed=0;
 };
-struct Enemy { int32_t id=0,type=0,hp=0,maxHp=0; float x=0,y=0,vx=0,vy=0; uint32_t flags=0; };
+struct Enemy { int32_t id=0,type=0,hp=0,maxHp=0; float x=0,y=0,vx=0,vy=0; uint32_t flags=0; uint64_t observationMs=0; };
 struct Projectile {
     int32_t owner=0,attacker=0,bullet=0,totalPoints=0;
     float half=0,life=0,damage=0;
     uint32_t flags=0,count=0;
     float points[kPoints][3]{};
 };
-struct Zone { float x=0,y=0,radius=0; uint32_t flags=0; };
+struct Zone { float x=0,y=0,radius=0; uint32_t flags=0;
+    int32_t source=-1,owner=0;uint64_t capturedMs=0,observationMs=0;float landingInMs=-1,expiresInMs=-1;uint32_t observationFlags=0;
+};
+struct Weapon {uint64_t sequence=0,ms=0,generation=0;int32_t source=0,projId=0;float speed=0,life=0,range=0,speedMul=1,lifeMul=1,rangeMul=1;bool valid=false;};
 struct Candidate { float x=0,y=0,clearance=0,timeToDanger=-1,score=0; uint32_t flags=0; };
 struct Scene {
     Decision decision{};
+    Weapon weapon{};
     uint32_t enemyCount=0,projectileCount=0,zoneCount=0;
     uint32_t enemiesObserved=0,projectilesObserved=0,zonesObserved=0,enemyEntriesVisited=0;
     uint32_t candidateCount=0,candidatesObserved=0,candidateTick=0,terrainTick=0; Candidate candidates[8]{};
@@ -56,6 +62,7 @@ template<class T,unsigned N> struct Queue {
 struct Capture {
     std::atomic<bool> enabled{false};
     std::atomic<uint32_t> externalTriggers{0};
+    std::atomic<bool> resetRequested{false};
     std::atomic<uint64_t> transportDropped{0};
     Queue<Scene,kQueue> scenes{};
     Queue<Decision,kTerminalQueue> decisions{};
@@ -67,11 +74,24 @@ struct Capture {
     uint64_t dropped=0,suppressed=0,lastProgress=0,lastTrigger=0;
     Decision previous{};
     float progressX=0,progressY=0;
-    bool havePrevious=false,sampled=false;
+    bool havePrevious=false,sampled=false,worldKnown=false;
+    uintptr_t worldToken=0;
     bool Due(uint64_t now) const {return enabled.load(std::memory_order_relaxed)&&(!sampled||now-lastSample>=100);}
-    void NewMap() {
-        if(enabled.load(std::memory_order_relaxed)&&havePrevious){auto d=previous;TriggerEvent(d,MapEnd|externalTriggers.exchange(0,std::memory_order_relaxed));}
+    void NewMap(uint64_t now=0) {
+        if(enabled.load(std::memory_order_relaxed)&&havePrevious){auto d=previous;
+            if(now){d.observationAgeMs=now>=d.ms?static_cast<int64_t>(now-d.ms):-1;d.ms=now;}
+            TriggerEvent(d,MapEnd|externalTriggers.exchange(0,std::memory_order_relaxed));}
         ++generation;count=next=0;sampled=false;windowStart=windowEnd=0;havePrevious=false;reversals=0;lastProgress=0;
+    }
+    // Game-update producer, before dodge's early returns. Token is an already
+    // cached world identity, never dereferenced or serialized. Reuse remains a
+    // limitation: this epoch is not an authoritative server map instance ID.
+    void Pulse(uint64_t now,uintptr_t world){
+        if(!enabled.load(std::memory_order_relaxed)){havePrevious=false;count=next=0;sampled=false;windowEnd=0;worldKnown=false;externalTriggers.exchange(0,std::memory_order_relaxed);return;}
+        const bool reset=resetRequested.exchange(false,std::memory_order_relaxed);
+        if(!worldKnown||worldToken!=world||reset){NewMap(now);worldToken=world;worldKnown=true;}
+        const uint32_t reason=externalTriggers.exchange(0,std::memory_order_relaxed);
+        if(reason){auto d=previous;d.observationAgeMs=havePrevious&&now>=d.ms?static_cast<int64_t>(now-d.ms):-1;d.ms=now;TriggerEvent(d,reason);}
     }
     void Stamp(Decision& d) {d.sequence=++sequence;d.generation=generation;d.dropped=dropped+transportDropped.load(std::memory_order_relaxed);d.suppressed=suppressed;}
     void Enqueue(const Scene& s) {if(!scenes.Push(s))++dropped;}
@@ -134,5 +154,20 @@ struct FrameCapture {
     }
 };
 inline FrameCapture frames{};
-static_assert(sizeof(Capture)+sizeof(FrameCapture)+3*sizeof(Scene)<4*1024*1024,"capture plus scratch and renderer budget");
+struct UpdateTiming { uint64_t ms=0; double entryQpcMs=0,originalMs=0,dodgeMs=0; uint32_t sequence=0,threadId=0,epoch=0; bool sceneEnabled=false; };
+struct UpdateCapture {
+    Queue<UpdateTiming,1024> queue{};
+    std::atomic_flag producing=ATOMIC_FLAG_INIT;
+    std::atomic<uint64_t> dropped{0};
+    uint32_t sequence=0,epoch=0;bool active=false;
+    void Observe(bool enabled,uint64_t ms,double t0,double t1,double t2,uint32_t threadId,bool sceneEnabled){
+        if(producing.test_and_set(std::memory_order_acquire)){dropped.fetch_add(1,std::memory_order_relaxed);return;}
+        if(!enabled){active=false;producing.clear(std::memory_order_release);return;}
+        if(!active){++epoch;active=true;}
+        if(!queue.Push({ms,t0,t1-t0,t2-t1,++sequence,threadId,epoch,sceneEnabled}))dropped.fetch_add(1,std::memory_order_relaxed);
+        producing.clear(std::memory_order_release);
+    }
+};
+inline UpdateCapture updates{};
+static_assert(sizeof(Capture)+sizeof(FrameCapture)+sizeof(UpdateCapture)+3*sizeof(Scene)+kCopiedMetadataAllowance<4*1024*1024,"capture plus scratch and timing budgets");
 } // namespace UDodgeCapture

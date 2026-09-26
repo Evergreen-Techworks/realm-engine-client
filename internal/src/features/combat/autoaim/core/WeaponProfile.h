@@ -15,6 +15,10 @@ struct WeaponProfile {
 };
 
 namespace WeaponCalibrator {
+struct Provenance {uint64_t sequence=0,ms=0,generation=0;int32_t source=0,projId=0;float rawSpeed=0,rawLife=0,range=0,speedMul=1,lifeMul=1,rangeMul=1;};
+// False means unavailable/contended; never block movement for diagnostics.
+bool CopyProvenance(Provenance& out);
+
 
 // Call when the local player fires a non-ability shot.
 // localPlayer must be supplied so calibration can run immediately while projProps
