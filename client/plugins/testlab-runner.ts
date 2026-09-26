@@ -55,6 +55,7 @@ import {
   RunnerStateMachine,
   ReconnectClassifier,
   decideFailureReconnect,
+  nexusTargetFromMapInfo,
   MAX_INJECTED_RECONNECTS_PER_RUN,
   SCRIPT_START_SETTLE_MS,
   NATIVE_BRIDGE_TIMEOUT_MS,
@@ -194,6 +195,15 @@ export function register(ctx: PluginContext) {
   // teleport) — the server always answers with RECONNECT first. Recording
   // every one here is what lets ReconnectClassifier tell that apart from an
   // abnormal drop (see runnerCore.ts's ReconnectClassifier doc comment).
+  // The Nexus target is also learned from the connection that loads the Nexus
+  // map (MAPINFO name), so a FAILURE before any Nexus RECONNECT has a fallback.
+  ctx.hookPacket('MAPINFO', (client, packet) => {
+    if (knownNexusTarget || !packet.isDefined) return;
+    const seeded = nexusTargetFromMapInfo(packet.data?.name, client.state?.gameId,
+      client.state?.conTargetAddress, client.state?.conTargetPort);
+    if (seeded) knownNexusTarget = seeded;
+  });
+
   ctx.hookPacket('RECONNECT', (_client, packet) => {
     reconnectClassifier?.onReconnectPacket(Date.now());
     // Remember the last Nexus target (gameId -2 is the Nexus sentinel; a

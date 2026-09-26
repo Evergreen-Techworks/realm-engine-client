@@ -25,6 +25,7 @@ import {
   RunnerStateMachine,
   ReconnectClassifier,
   decideFailureReconnect,
+  nexusTargetFromMapInfo,
   MAX_INJECTED_RECONNECTS_PER_RUN,
   MIN_INJECTED_RECONNECT_SPACING_MS,
   type RunRequest,
@@ -813,6 +814,20 @@ describe('ReconnectClassifier', () => {
     // right now, even with a fresh packet, is abnormal because THIS one never loaded.
     c.onReconnectPacket(200);
     expect(c.classify(300)).toBe(true);
+  });
+});
+
+describe('nexusTargetFromMapInfo (2026-09-26 run 174712: FAILURE with no Nexus RECONNECT seen)', () => {
+  it('learns the Nexus target from the connection that loaded the Nexus map', () => {
+    expect(nexusTargetFromMapInfo('Nexus', -2, '54.86.47.176', 2050)).toEqual({ name: 'Nexus', host: '54.86.47.176', port: 2050 });
+    expect(nexusTargetFromMapInfo('nexus ', 0, '54.86.47.176', 2050)).toEqual({ name: 'Nexus', host: '54.86.47.176', port: 2050 });
+  });
+  it('ignores realm, portal and dungeon maps and unusable addresses', () => {
+    expect(nexusTargetFromMapInfo('Realm of the Mad God', 0, '100.55.31.58', 2050)).toBeNull();
+    expect(nexusTargetFromMapInfo("Oryx's Castle", 3448, '100.55.31.58', 2050)).toBeNull();
+    expect(nexusTargetFromMapInfo('Nexus', -2, '', 2050)).toBeNull();
+    expect(nexusTargetFromMapInfo('Nexus', -2, '54.86.47.176', 0)).toBeNull();
+    expect(nexusTargetFromMapInfo('Nexus', -2, undefined, undefined)).toBeNull();
   });
 });
 

@@ -439,6 +439,19 @@ export type FailureReconnectAction =
  * window in which the game's own client socket is still open to receive an
  * injected RECONNECT instead of reacting to the FAILURE itself.
  */
+/** The Nexus target a FAILURE fallback may use, learned from the connection that
+ * loaded the Nexus map. Live 2026-09-26 run 174712: a whole session passed with
+ * only portal/dungeon RECONNECTs (gameId 0 / 3448), so waiting for a gameId -2
+ * RECONNECT left the fallback unknown and a FAILURE cost 120 s. The first
+ * connection of every run is the Nexus, and the proxy knows its address. */
+export function nexusTargetFromMapInfo(
+  mapName: unknown, gameId: unknown, address: unknown, port: unknown,
+): KnownNexusTarget | null {
+  const isNexus = gameId === -2 || String(mapName ?? '').trim().toLowerCase() === 'nexus';
+  if (!isNexus || typeof address !== 'string' || address === '' || typeof port !== 'number' || !(port > 0)) return null;
+  return { name: 'Nexus', host: address, port };
+}
+
 export function decideFailureReconnect(
   now: number,
   injectedAtMs: readonly number[],
