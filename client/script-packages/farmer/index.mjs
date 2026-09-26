@@ -12,6 +12,14 @@ const BAG_ARRIVE = 0.7;
 const BAG_SETTLE_MS = 150;   // server-position settle only; the farmer picks up itself, Auto Loot is not waited for
 const LOOT_FINISH_MS = 3000; // once standing on a useful bag, finish it even if a boss fight starts
 const ITEM_ACTION_MS = 1300;
+// Live evidence (2026-09-26): the farmer's own bagIsUseful/isEquipmentUpgrade
+// check has no tier floor, so early gear that was a momentary upgrade (fresh
+// character, nothing equipped) stays in the bag slots forever once real gear
+// replaces it — Auto Loot's own DIAG showed inv_free reaching 0 with items
+// like Robe of the Adept and Plate Mail sitting untouched. There is no config
+// UI for script packages yet, so this is a code-level default rather than a
+// dashboard toggle; flip it off to restore the old "never discard" behaviour.
+const DISCARD_TRASH_ENABLED = true;
 const PORTAL_RANGE = 1.2;
 const PORTAL_RETRY_MS = 3000;
 // Realm portals are straight ahead of the Nexus arrival point. Commit to one
@@ -716,10 +724,46 @@ export default class Farmer {
     return false;
   }
 
+  // "Keep" is: UT/ST (always worth carrying), a stat pot still below cap, an
+  // HP/MP/life/mana potion (may be en route to a quickslot or just not yet
+  // consumed), or gear that is still a strict upgrade over what is equipped
+  // (useInventoryUpgradesAndPots will equip it on a later tick). Everything
+  // else that reached the bag is trash: gear a later find already surpassed,
+  // a now-useless stat pot, or an item nothing above wanted.
+  isTrash(type) {
+    if (!(type > 0)) return false;
+    if (RealmEngine.loot.isUT(type) || RealmEngine.loot.isST(type)) return false;
+    if (RealmEngine.loot.isUsefulStatPot(type)) return false;
+    if (RealmEngine.loot.isHpPot(type) || RealmEngine.loot.isMpPot(type) || RealmEngine.loot.isLifeManaPot(type)) return false;
+    if (RealmEngine.loot.isEquipmentUpgrade(type)) return false;
+    return true;
+  }
+
+  // One discard per gate cycle, same ITEM_ACTION_MS gate as every other
+  // automatic inventory action ("one authoritative inventory action at a
+  // time"). Never touches slots 0-3 (equipped gear) or quickslots — only the
+  // main bag and backpack slots that useInventoryUpgradesAndPots also scans.
+  discardTrash(now) {
+    if (!DISCARD_TRASH_ENABLED) return false;
+    if (now - this.lastItemActionAt < ITEM_ACTION_MS) return false;
+    const items = RealmEngine.inventory.getAll();
+    for (let slot = 4; slot < items.length; slot++) {
+      const type = Number(items[slot]);
+      if (!this.isTrash(type)) continue;
+      if (RealmEngine.loot.dropInventorySlot(slot)) {
+        this.lastItemActionAt = now;
+        RealmEngine.log.info(`Realm Farmer: discarding trash slot ${slot} item ${type}`);
+        return true;
+      }
+    }
+    return false;
+  }
+
   // `whiteOnly`: a boss fight is on. Only a white bag may take movement; other bags and
   // inventory upgrades wait and are picked up again once it is over.
   handleLoot(now, whiteOnly = false) {
     if (!whiteOnly && this.useInventoryUpgradesAndPots(now)) return true;
+    if (!whiteOnly && this.discardTrash(now)) return true;
     const trackedBagId = this.lootBagId;
     // A boss fight defers non-white bags, but not one we are already standing on:
     // finish that pickup within a short bound instead of walking off it.

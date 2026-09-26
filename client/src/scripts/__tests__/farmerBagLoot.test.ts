@@ -156,9 +156,11 @@ function standOnBag(bagType: number, items: number[], playerStats: Stats = {}) {
     farmer.onLoop();
     vi.advanceTimersByTime(800);
     farmer.onLoop();
-    return sent.filter((p) => p.name === 'INVENTORYSWAP' || p.name === 'USEITEM')
+    return sent.filter((p) => p.name === 'INVENTORYSWAP' || p.name === 'USEITEM' || p.name === 'INVDROP')
       .map((p) => p.name === 'USEITEM'
         ? { use: p.data.slotObject.slotId, item: p.data.slotObject.objectType }
+        : p.name === 'INVDROP'
+        ? { drop: p.data.slotObject.slotId, item: p.data.slotObject.objectType }
         : { take: p.data.slotObject1.slotId, item: p.data.slotObject1.objectType, to: p.data.slotObject2.slotId });
   };
   return { farmer, loot };
@@ -216,5 +218,39 @@ describe('Realm Farmer bag loot on the real SDK', () => {
   it('drinks a Potion of Speed while Speed is below cap, even with Attack capped', () => {
     const s = standOnBag(TYPE.LOOT_BAG_5, [TYPE.POT_SPEED], { [StatType.Attack]: 75 });
     expect(s.loot()).toEqual([{ use: 0, item: TYPE.POT_SPEED }]);
+  });
+
+  // Live evidence (2026-09-26): a bag item that was a momentary upgrade when the
+  // farmer took it (fresh character, nothing equipped) has no path back out of
+  // the bag once real gear surpasses it. Auto Loot's own [DIAG] showed inv_free
+  // reaching 0 with items like Robe of the Adept and Plate Mail sitting there.
+  it('discards a bag-slot item that is no longer an upgrade over what is equipped', () => {
+    const s = standOnBag(TYPE.LOOT_BAG_5, [], {
+      // Obsidian Dagger (slotType 2) can never upgrade the equipped Covert Bow
+      // (slotType 3, tier 12) — different slot type, so isEquipmentUpgrade is
+      // false and it is not a UT/ST/pot either: this is exactly "trash".
+      [StatType.Inventory0 + 4]: TYPE.OBSIDIAN_DAGGER,
+    });
+    expect(s.loot()).toEqual([{ drop: 4, item: TYPE.OBSIDIAN_DAGGER }]);
+  });
+
+  it('never discards a UT item sitting in the bag, even when it is not (or no longer) an upgrade', () => {
+    const s = standOnBag(TYPE.LOOT_BAG_5, [], {
+      // An Orb of Conflict already equipped in the ability slot means the one
+      // sitting in the bag is not a further upgrade (equal UT rank) — it must
+      // still never be treated as trash.
+      [StatType.Inventory0 + 1]: TYPE.ORB_OF_CONFLICT,
+      [StatType.Inventory0 + 4]: TYPE.ORB_OF_CONFLICT,
+    });
+    expect(s.loot()).toEqual([]);
+  });
+
+  it('never discards gear that is still a strict upgrade over what is equipped', () => {
+    const s = standOnBag(TYPE.LOOT_BAG_5, [], {
+      [StatType.Inventory0]: TYPE.INNOCENT_BLOOD_BOW,
+      [StatType.Inventory0 + 4]: TYPE.COVERT_BOW,
+    });
+    // The bag-slot bow is equipped, not discarded.
+    expect(s.loot()).toEqual([{ take: 4, item: TYPE.COVERT_BOW, to: 0 }]);
   });
 });

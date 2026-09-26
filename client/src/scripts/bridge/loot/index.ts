@@ -664,4 +664,52 @@ export function install(deps: BridgeDeps): void {
       return false;
     }
   };
+
+  // ─── Discard (trash) ──────────────────────────────────────────────────────────
+
+  // Own-inventory read; unlike getCurrentBagSlotItem this reads the player's own
+  // slots (0-3 gear, 4-11 main bag, 12+ backpack), never a bag entity.
+  const typeAtPlayerSlot = (c: ClientConnection, slotIndex: number): number => {
+    if (!Number.isInteger(slotIndex) || slotIndex < 0) return -1;
+    const raw = slotIndex < 12
+      ? c.playerData.inventory[slotIndex]
+      : c.playerData.backpack[slotIndex - 12];
+    const n = Number(raw);
+    return Number.isFinite(n) ? Math.trunc(n) : -1;
+  };
+
+  // Sends INVDROP for one of the player's own bag/backpack slots (never a gear
+  // slot 0-3 or a quickslot — those are not addressed by ordinary slot indices
+  // here). Callers decide what counts as trash; this only performs the send,
+  // gated the same way as every other automatic inventory action.
+  loot.dropInventorySlot = (slotIndex) => {
+    const c = deps.clientRef.current;
+    if (!c?.connected || !c.objectId) {
+      Logger.warn('BridgeLoot', `dropInventorySlot refused slot ${slotIndex}: not connected`);
+      return false;
+    }
+    if (!Number.isInteger(slotIndex) || slotIndex < 4) {
+      Logger.warn('BridgeLoot', `dropInventorySlot refused slot ${slotIndex}: gear slots are not droppable`);
+      return false;
+    }
+    const itemId = typeAtPlayerSlot(c, slotIndex);
+    if (itemId <= 0) {
+      Logger.warn('BridgeLoot', `dropInventorySlot refused slot ${slotIndex}: empty`);
+      return false;
+    }
+    try {
+      const pkt = deps.proxy.packetFactory.createByName('INVDROP');
+      pkt.data.slotObject = { objectId: c.objectId, slotId: slotIndex, objectType: itemId };
+      pkt.data.unknownByte = 0;
+      pkt.modified = true;
+      const sent = tryInventoryAction(c,
+        () => (typeAtPlayerSlot(c, slotIndex) !== itemId ? 'dropped' : 'pending'),
+        () => c.sendToServer(pkt));
+      if (!sent) Logger.warn('BridgeLoot', `dropInventorySlot refused slot ${slotIndex}: inventory gate ${gateState(c)}`);
+      return sent;
+    } catch (err) {
+      Logger.warn('BridgeLoot', `dropInventorySlot failed: ${(err as Error).message}`);
+      return false;
+    }
+  };
 }

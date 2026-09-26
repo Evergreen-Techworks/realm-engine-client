@@ -121,6 +121,18 @@ export const loot = {
 
   /** Equip an upgrade directly from a nearby bag, swapping the old item back into the bag. */
   equipFromBag(_bag: LootBag, _slotIndex: number): boolean { return false; },
+
+  // ─── Discard ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Send an INVDROP packet to discard the item in the player's own bag/backpack
+   * slot (index 4 and up only — gear slots 0-3 are refused). Use this to shed
+   * items a script decided are no longer worth carrying (e.g. gear surpassed by
+   * a later upgrade). Returns `true` if the packet was sent, `false` if the slot
+   * is a gear slot, empty, not connected, or another automatic inventory action
+   * is still settling.
+   */
+  dropInventorySlot(_slotIndex: number): boolean { return false; },
 };
 
 export type { LootBag, LootItem, LootRarity, LootDropEvent, LootItemEvent, PickupOptions } from './types/loot';
