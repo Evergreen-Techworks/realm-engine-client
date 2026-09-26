@@ -9,7 +9,8 @@ const APPROACH_RADIUS = TARGET_RADIUS - 1;
 const TARGET_RELEASE_RADIUS = 12;
 const LOOT_RADIUS = 24;
 const BAG_ARRIVE = 0.7;
-const BAG_SETTLE_MS = 750;
+const BAG_SETTLE_MS = 150;   // server-position settle only; the farmer picks up itself, Auto Loot is not waited for
+const LOOT_FINISH_MS = 3000; // once standing on a useful bag, finish it even if a boss fight starts
 const ITEM_ACTION_MS = 1300;
 const PORTAL_RANGE = 1.2;
 const PORTAL_RETRY_MS = 3000;
@@ -720,15 +721,21 @@ export default class Farmer {
   handleLoot(now, whiteOnly = false) {
     if (!whiteOnly && this.useInventoryUpgradesAndPots(now)) return true;
     const trackedBagId = this.lootBagId;
+    // A boss fight defers non-white bags, but not one we are already standing on:
+    // finish that pickup within a short bound instead of walking off it.
+    const onTrackedBag = this.lootArrivedAt > 0 && now - this.lootArrivedAt < LOOT_FINISH_MS;
     let bag = this.lootBagId
       ? RealmEngine.loot.getBags().find((b) => b.objectId === this.lootBagId && this.bagIsUseful(b)
-        && (!whiteOnly || b.rarity === 'white'))
+        && (!whiteOnly || b.rarity === 'white' || onTrackedBag))
       : null;
     if (!bag) {
       bag = this.chooseLootBag(whiteOnly);
       if (trackedBagId && bag?.objectId !== trackedBagId) {
         const still = RealmEngine.loot.getBags().find((b) => b.objectId === trackedBagId);
-        RealmEngine.log.info(`Realm Farmer: loot bag #${trackedBagId} dropped — ${still ? `still visible, items=[${still.items.map((i) => i.objectType).join(',')}] no longer useful` : 'no longer visible'}${bag ? `; switching to #${bag.objectId}` : ''}`);
+        const reason = !still ? 'no longer visible'
+          : (whiteOnly && still.rarity !== 'white') ? `deferred: boss fight active, ${still.rarity} bag items=[${still.items.map((i) => i.objectType).join(',')}]`
+          : `still visible, items=[${still.items.map((i) => i.objectType).join(',')}] no longer useful`;
+        RealmEngine.log.info(`Realm Farmer: loot bag #${trackedBagId} dropped — ${reason}${bag ? `; switching to #${bag.objectId}` : ''}`);
       }
       this.lootBagId = bag?.objectId ?? 0;
       this.lootArrivedAt = 0;
@@ -766,6 +773,10 @@ export default class Farmer {
     if (!this.lootArrivedAt) this.lootArrivedAt = now;
     this.setStatus(bag.rarity === 'white' ? 'Collecting white bag' : 'Waiting for Auto Loot');
     if (now - this.lootArrivedAt < BAG_SETTLE_MS || now - this.lastItemActionAt < ITEM_ACTION_MS) return true;
+    if (!this.lootPickupAttemptedAt || this.lootPickupAttemptedAt < this.lootArrivedAt) {
+      this.lootPickupAttemptedAt = now;
+      RealmEngine.log.info(`Realm Farmer: on bag #${bag.objectId} (${bag.rarity}) at ${distance.toFixed(2)} tiles, items=[${bag.items.map((i) => i.objectType).join(',')}]; picking up now`);
+    }
 
     // White bags are rare and may contain items that are not a numerical tier
     // upgrade. Preserve every item instead of applying the ordinary gear filter.
