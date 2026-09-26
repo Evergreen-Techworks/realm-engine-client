@@ -635,10 +635,14 @@ export function register(ctx: PluginContext) {
       if (!Number.isInteger(attacker) || !Number.isInteger(bulletId)) continue;
       const inMs = remainingHitMs(threat.tHitMs, ageMs);
       if (inMs === null || inMs > horizonMs) continue;
-      const key = bulletKey(attacker, bulletId);
+      // A packet bullet id is 16 bits. A larger value is not an identity (a DLL
+      // that predates the threat-identity fix sent the spawn startTime in ms),
+      // and its low 16 bits must never borrow another announced bullet's record.
+      const identified = bulletId >= 0 && bulletId <= 0xffff;
+      const key = identified ? bulletKey(attacker, bulletId) : `${attacker}:unidentified:${bulletId}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const shot = state.shots.get(key);
+      const shot = identified ? state.shots.get(key) : undefined;
       if (shot) {
         // A packet record always wins and is never counted twice. An ambiguous
         // record skips the bullet entirely rather than double-guessing it.

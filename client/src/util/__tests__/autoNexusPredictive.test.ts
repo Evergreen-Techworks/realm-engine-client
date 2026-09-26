@@ -295,6 +295,24 @@ describe('short forecast (layer 3)', () => {
     expect(f.escapeLog()[0]).toContain('layer=forecast; predicted HP=50/1000');
   });
 
+  it('never prices a native threat by the low 16 bits of a clock value (recording 011646-discovery)', () => {
+    // Until the native producer was fixed, a runtime threat's bulletId was the
+    // projectile's spawn startTime in ms (the spawn hook's 7th game argument),
+    // not its bullet id. In 011646-discovery (2026-09-26 01:17Z)
+    // owner 187839 had a native lane with that field = 196716, whose low 16
+    // bits are 108 — the id of a different announced bullet of the same owner.
+    // Such a threat is unidentifiable and must never borrow that record's damage.
+    const f = plain();
+    f.hp(300);
+    f.enemyShoot(JELLY_ID, 108, 1, 250);                    // announced bullet 108: 250 raw
+    threats([{ bulletId: 196716, tHitMs: 60 }]);            // 196716 & 0xffff === 108
+    vi.advanceTimersByTime(200);
+    expect(f.escapes()).toBe(0);                            // unmatched counting is OFF: not priced at all
+    threats([{ bulletId: 108, tHitMs: 60 }]);               // the real identity still prices it
+    vi.advanceTimersByTime(20);
+    expect(f.escapes()).toBe(1);
+  });
+
   it('escapes when fired bullets with packet damage are predicted to hit within the horizon', () => {
     const f = plain();
     f.hp(300);

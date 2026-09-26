@@ -1,6 +1,7 @@
 #include "pch-il2cpp.h"
 #include "AutoNexus.h"
 #include "AutoNexusDodgePolicy.h"
+#include "AutoNexusThreatIdentity.h"
 #include "ProjectileTracking.h"
 #include "AoeTracking.h"
 #include "DodgeHit.h"
@@ -618,9 +619,13 @@ static void RunAutoNexus()
             if (g_debugDraw) CaptureVizPath(proj, alreadyElapsed, tHit >= 0.f);
             if (tHit < 0.f) continue;
 
+            // Publish the game's bullet id, not the spawn startTime the store
+            // keeps in its bulletId field (see AutoNexusThreatIdentity.h).
+            const auto identity = AutoNexusThreatIdentity::FromSpawnFields(
+                proj.attackerObjId, proj.ownerObjId, proj.bulletId);
             Threat th{};
-            th.attackerObjId = proj.attackerObjId;
-            th.bulletId      = proj.bulletId;
+            th.attackerObjId = identity.ownerObjId;
+            th.bulletId      = identity.bulletId;
             th.tHitMs        = tHit;
             th.rawDamage     = proj.damage;
             th.armorPiercing = proj.armorPiercing;
