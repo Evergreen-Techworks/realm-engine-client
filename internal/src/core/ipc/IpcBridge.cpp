@@ -205,6 +205,7 @@ static bool HandleControlMessage(char* json, HANDLE hPipe, char* msgBuf, int msg
     if (strcmp(typeBuf, "captureTrigger") == 0) {
         char reason[24]={};
         if(UDodgeCapture::capture.enabled.load(std::memory_order_relaxed)&&IpcJson::GetString(json,"reason",reason,sizeof(reason))) {
+            if(strcmp(reason,"map")==0){UDodgeCapture::capture.resetRequested.store(true,std::memory_order_relaxed);return true;}
             const uint32_t bit=strcmp(reason,"death")==0?UDodgeCapture::Death:strcmp(reason,"escape")==0?UDodgeCapture::ExternalTerminal:strcmp(reason,"hit")==0?UDodgeCapture::HpDrop:0;
             UDodgeCapture::capture.externalTriggers.fetch_or(bit,std::memory_order_relaxed);
         }

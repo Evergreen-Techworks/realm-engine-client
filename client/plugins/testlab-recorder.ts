@@ -177,12 +177,37 @@ export function register(ctx: PluginContext) {
   ctx.on('clientDisconnected',(client)=>coverage.disconnect(client));
   ctx.registerCleanup(()=>{clearInterval(coverageTimer);flushCoverage();if(globals[SCRIPT_EVIDENCE_SLOT]===evidenceSink)delete globals[SCRIPT_EVIDENCE_SLOT];});
 
+  // Loot diagnostics: what the client asked for and what the server answered.
+  // Bounded allowlisted fields only; item types are game object ids, not accounts.
+  const LOOT_PACKETS=new Set(['INVENTORYSWAP','USEITEM','INVRESULT']);
+  const slotObject=(v: unknown)=>{
+    const o=v as Record<string,unknown>|null|undefined;
+    const num=(x: unknown)=>typeof x==='number'&&Number.isFinite(x)?x:null;
+    return o&&typeof o==='object'?{objectId:num(o.objectId),slotId:num(o.slotId),objectType:num(o.objectType)}:null;
+  };
+  const lootPacketRecord=(name: string,fromClient: boolean,t: number,data: unknown)=>{
+    const d=(data&&typeof data==='object'?data:{}) as Record<string,unknown>;
+    const pos=d.position??d.itemUsePos;const p=pos&&typeof pos==='object'?pos as Record<string,unknown>:null;
+    return {k:'loot_packet',t,packet:name,from_client:fromClient,
+      slot1:slotObject(d.slotObject1??d.slotObject??d.fromSlot),slot2:slotObject(d.slotObject2??d.toSlot),
+      x:typeof p?.x==='number'?p.x:null,y:typeof p?.y==='number'?p.y:null,
+      use_type:typeof d.useType==='number'?d.useType:null,ok:typeof d.unknownBool==='boolean'?d.unknownBool:null};
+  };
   ctx.hookAllPackets((client: ClientConnection, packet: Packet, fromClient: boolean) => {
     try {
       const t = Date.now();
       if (!fromClient) {
         coverage.packet(client,t,packet.name,packet.isDefined,Number.isInteger(client.objectId)&&client.objectId>=0,writer.errorCount+contextErrorCount);
-        if(packet.name==='MAPINFO') {ensureStarted();writer.writeLine({k:'capture_boundary',t,map_instance_id:coverage.mapId,process_id:process.pid,event:'map'});}
+        if(packet.name==='MAPINFO') {
+          ensureStarted();writer.writeLine({k:'capture_boundary',t,map_instance_id:coverage.mapId,process_id:process.pid,event:'map'});
+          // Native cannot see the map change reliably (the world manager is a
+          // singleton); ask it to end the previous map's capture epoch.
+          const delivered=slot.enabled?requestCaptureTrigger('map'):false;
+          writer.writeLine({k:'capture_trigger',kind:'capture_trigger',t,sourcePacket:'MAPINFO',reason:'map',delivered});
+        }
+      }
+      if (slot.enabled && LOOT_PACKETS.has(packet.name)) {
+        ensureStarted();writer.writeLine(lootPacketRecord(packet.name,fromClient,t,packet.data));
       }
       if (slot.enabled && ['DEATH','ESCAPE','PLAYERHIT','GROUNDDAMAGE'].includes(packet.name)) {
         const reason = packet.name === 'DEATH' ? 'death' : packet.name === 'ESCAPE' ? 'escape' : 'hit';

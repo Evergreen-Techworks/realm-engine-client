@@ -89,7 +89,10 @@ struct Capture {
     void Pulse(uint64_t now,uintptr_t world){
         if(!enabled.load(std::memory_order_relaxed)){havePrevious=false;count=next=0;sampled=false;windowEnd=0;worldKnown=false;externalTriggers.exchange(0,std::memory_order_relaxed);return;}
         const bool reset=resetRequested.exchange(false,std::memory_order_relaxed);
-        if(!worldKnown||worldToken!=world||reset){NewMap(now);worldToken=world;worldKnown=true;}
+        // A null token means no world (loading, lobby, between maps): end the
+        // previous map once and stay unknown until a world token reappears.
+        if(!world){if(worldKnown||reset){NewMap(now);worldKnown=false;worldToken=0;}}
+        else if(!worldKnown||worldToken!=world||reset){NewMap(now);worldToken=world;worldKnown=true;}
         const uint32_t reason=externalTriggers.exchange(0,std::memory_order_relaxed);
         if(reason){auto d=previous;d.observationAgeMs=havePrevious&&now>=d.ms?static_cast<int64_t>(now-d.ms):-1;d.ms=now;TriggerEvent(d,reason);}
     }

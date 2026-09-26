@@ -719,12 +719,17 @@ export default class Farmer {
   // inventory upgrades wait and are picked up again once it is over.
   handleLoot(now, whiteOnly = false) {
     if (!whiteOnly && this.useInventoryUpgradesAndPots(now)) return true;
+    const trackedBagId = this.lootBagId;
     let bag = this.lootBagId
       ? RealmEngine.loot.getBags().find((b) => b.objectId === this.lootBagId && this.bagIsUseful(b)
         && (!whiteOnly || b.rarity === 'white'))
       : null;
     if (!bag) {
       bag = this.chooseLootBag(whiteOnly);
+      if (trackedBagId && bag?.objectId !== trackedBagId) {
+        const still = RealmEngine.loot.getBags().find((b) => b.objectId === trackedBagId);
+        RealmEngine.log.info(`Realm Farmer: loot bag #${trackedBagId} dropped — ${still ? `still visible, items=[${still.items.map((i) => i.objectType).join(',')}] no longer useful` : 'no longer visible'}${bag ? `; switching to #${bag.objectId}` : ''}`);
+      }
       this.lootBagId = bag?.objectId ?? 0;
       this.lootArrivedAt = 0;
     }
@@ -767,6 +772,7 @@ export default class Farmer {
     if (bag.rarity === 'white') {
       const sent = RealmEngine.loot.pickupId(bag.objectId, { maxDistance: 1.0, useBackpack: true });
       if (sent > 0) {
+        RealmEngine.log.info(`Realm Farmer: white bag #${bag.objectId} pickup sent at ${distance.toFixed(2)} tiles`);
         this.lastItemActionAt = now;
         return true;
       }
@@ -777,16 +783,19 @@ export default class Farmer {
     for (const item of bag.items) {
       if ((RealmEngine.loot.isUT(item.objectType) || RealmEngine.loot.isST(item.objectType))
           && RealmEngine.loot.pickup(bag, item.slotIndex, { useBackpack: true })) {
+        RealmEngine.log.info(`Realm Farmer: pickup sent bag #${bag.objectId} slot ${item.slotIndex} item ${item.objectType} at ${distance.toFixed(2)} tiles`);
         this.lastItemActionAt = now;
         return true;
       }
       if (RealmEngine.loot.isUsefulStatPot(item.objectType)
           && RealmEngine.loot.useFromBag(bag, item.slotIndex)) {
+        RealmEngine.log.info(`Realm Farmer: drink-from-bag sent bag #${bag.objectId} slot ${item.slotIndex} item ${item.objectType} at ${distance.toFixed(2)} tiles`);
         this.lastItemActionAt = now;
         return true;
       }
       if (RealmEngine.loot.isEquipmentUpgrade(item.objectType)
           && RealmEngine.loot.equipFromBag(bag, item.slotIndex)) {
+        RealmEngine.log.info(`Realm Farmer: equip-from-bag sent bag #${bag.objectId} slot ${item.slotIndex} item ${item.objectType} at ${distance.toFixed(2)} tiles`);
         this.lastItemActionAt = now;
         return true;
       }
@@ -795,6 +804,7 @@ export default class Farmer {
     // standing on the bag through that bounded wait instead of reinstalling a
     // quest waypoint between the first and second item.
     if (now - this.lastItemActionAt < 5000) return true;
+    RealmEngine.log.info(`Realm Farmer: giving up on bag #${bag.objectId} (${bag.rarity}) at ${distance.toFixed(2)} tiles after ${now - this.lootArrivedAt}ms; items=[${bag.items.map((i) => i.objectType).join(',')}]; last item action ${this.lastItemActionAt ? `${now - this.lastItemActionAt}ms ago` : 'never'}`);
     this.lootRetryAfter.set(bag.objectId, now + 30000);
     this.lootBagId = 0;
     return false;

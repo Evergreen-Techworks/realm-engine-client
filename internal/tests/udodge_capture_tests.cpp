@@ -19,6 +19,15 @@ for(int i=0;i<200;++i){s.decision.ms=5200+i*100;c->Sample(s);c->TriggerEvent(s.d
 ck(c->windows<=6,"six ordinary windows per minute cap");
 d.ms=26000;c->TriggerEvent(d,Death);ck(c->terminals.Pop(event)&&event.trigger==Death,"reserved terminal survives scene overflow");
 c->Observe(d);c->NewMap();ck(c->count==0&&c->generation==3,"map reset clears entity history");ck(c->terminals.Pop(event)&&event.generation==2,"pending old map terminal keeps identity");
+{auto p=std::make_unique<Capture>();Decision pd;pd.hp=50;pd.maxHp=100;pd.ms=100;Decision t;
+ p->Pulse(100,0);ck(!p->worldKnown&&p->generation==0,"disabled pulse does nothing");
+ p->enabled=true;p->Pulse(200,0);ck(!p->worldKnown&&!p->terminals.Pop(t),"no world and no history emits nothing");
+ p->Pulse(300,0x10);ck(p->worldKnown&&!p->terminals.Pop(t),"first world token starts a map without a terminal");
+ p->Observe(pd);p->Pulse(400,0x10);ck(!p->terminals.Pop(t),"same token keeps the map");
+ p->Pulse(500,0x20);ck(p->terminals.Pop(t)&&(t.trigger&MapEnd)&&t.ms==500&&t.observationAgeMs==400,"token change ends the previous map at pulse time");
+ pd.ms=600;p->Observe(pd);p->resetRequested=true;p->Pulse(700,0x20);ck(p->terminals.Pop(t)&&(t.trigger&MapEnd),"client map reset request ends the map on the same token");
+ pd.ms=800;p->Observe(pd);p->Pulse(900,0);ck(p->terminals.Pop(t)&&(t.trigger&MapEnd)&&!p->worldKnown,"losing the world ends the map once");
+ p->Pulse(1000,0);ck(!p->terminals.Pop(t),"staying without a world emits nothing more");}
 ck(sizeof(Capture)<4*1024*1024,"total storage under four MiB");
  auto frames=std::make_unique<FrameCapture>();frames->Observe(false,0,0,1);ck(frames->queue.write==0,"disabled frame queue unchanged");
  frames->Observe(true,1,100,1);frames->Observe(true,2,200,1);Frame frame;frames->queue.Pop(frame);const auto epoch=frame.epoch;

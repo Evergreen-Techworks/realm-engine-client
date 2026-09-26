@@ -75,7 +75,7 @@ export function subscribeCapture(listener: (record: CaptureRecord) => void): () 
 }
 
 export function setCaptureTriggerSender(sender: (reason: string) => boolean): void { slot.trigger=sender; }
-export function requestCaptureTrigger(reason: 'death' | 'escape' | 'hit'): boolean {
+export function requestCaptureTrigger(reason: 'death' | 'escape' | 'hit' | 'map'): boolean {
   try { return slot.trigger?.(reason) === true; } catch { return false; }
 }
 

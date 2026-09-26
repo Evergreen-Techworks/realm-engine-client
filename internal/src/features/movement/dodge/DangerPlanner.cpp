@@ -900,7 +900,9 @@ void __fastcall Detour_AppEngineUpdate(void* __this, void* method)
     const double t0 = (diagOn||timingOn) ? DiagTiming::NowMs() : 0.0;
     if (s_origUpdate) s_origUpdate(__this, method);
     const double t1 = (diagOn||timingOn) ? DiagTiming::NowMs() : 0.0;
-    UDodgeCapture::capture.Pulse(GetTickCount64(),reinterpret_cast<uintptr_t>(GameState::GetWorldMgr()));
+    // The world manager is a singleton that survived seven map changes in the
+    // 1.0.56 live run; the local player object is per map (null with no world).
+    UDodgeCapture::capture.Pulse(GetTickCount64(),reinterpret_cast<uintptr_t>(GameState::GetLocalPtr()));
     DodgeTickGuarded();
     const double t2=(diagOn||timingOn)?DiagTiming::NowMs():0.0;
     if(timingOn)UDodgeCapture::updates.Observe(true,GetTickCount64(),t0,t1,t2,GetCurrentThreadId(),sceneOn);
