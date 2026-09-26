@@ -105,6 +105,9 @@ std::atomic<bool>  g_fallbackSidestep{ false };
 // discipline: unproven behaviour ships behind a switch. See
 // UDodgeTypes.h's Settings::neverStandLocked doc comment.
 std::atomic<bool>  g_neverStandLocked{ false };
+// udodgeTangentialBias (owner hypothesis, 2026-09-26). Default OFF, same
+// discipline. See UDodgeTypes.h's Settings::tangentialBias doc comment.
+std::atomic<bool>  g_tangentialBias{ false };
 // udodgeFrameBudget (navigation finish plan, item 4). Default OFF (owner
 // ruling 2026-09-19: unproven behaviour ships behind a switch, default off,
 // after private 1.0.18 dodged worse with this on). AUTO when turned on.
@@ -554,6 +557,7 @@ Settings ReadSettings()
     s.planRadius   = ClampInt(static_cast<int>(std::lround(g_planRadius.load(std::memory_order_relaxed))), 8, 40);
     s.fallbackSidestep = g_fallbackSidestep.load(std::memory_order_relaxed);
     s.neverStandLocked = g_neverStandLocked.load(std::memory_order_relaxed);
+    s.tangentialBias = g_tangentialBias.load(std::memory_order_relaxed);
     return s;
 }
 
@@ -2552,6 +2556,8 @@ void  SetFallbackSidestep(bool en) { g_fallbackSidestep.store(en, std::memory_or
 bool  GetFallbackSidestep() { return g_fallbackSidestep.load(std::memory_order_relaxed); }
 void  SetNeverStandLocked(bool en) { g_neverStandLocked.store(en, std::memory_order_relaxed); }
 bool  GetNeverStandLocked() { return g_neverStandLocked.load(std::memory_order_relaxed); }
+void  SetTangentialBias(bool en) { g_tangentialBias.store(en, std::memory_order_relaxed); }
+bool  GetTangentialBias() { return g_tangentialBias.load(std::memory_order_relaxed); }
 // udodgeFrameBudget: "off" = no ceiling, ever; anything else = auto. The
 // switch itself now BOOTS off (g_frameBudgetAuto's initializer, owner ruling
 // 2026-09-19) — this parser's "anything else" branch only matters once

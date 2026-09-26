@@ -118,5 +118,6 @@ void  SetServerAnchorValid(bool valid);
 // Solver::SelectFallbackCandidate.
 void  SetFallbackSidestep(bool en);   bool  GetFallbackSidestep();
 void  SetNeverStandLocked(bool en);   bool  GetNeverStandLocked();
+void  SetTangentialBias(bool en);     bool  GetTangentialBias();
 
 } // namespace UDodge

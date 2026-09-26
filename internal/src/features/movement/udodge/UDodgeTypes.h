@@ -93,6 +93,12 @@ constexpr float kSolveGoalW        = 0.8f;  // goal/WASD progress (fades near da
 constexpr float kSolveLockGoalW    = 1.0f;
 constexpr float kSolvePerpW        = 1.2f;  // lateral sidestep vs radial flee/charge: strong enough
                                             // that a left/right sidestep beats a backpedal's clearance edge
+// udodgeTangentialBias (owner hypothesis, 2026-09-26): same shape as kSolvePerpW
+// but relative to the PLAYER-TO-BOSS radial (orbit the lock) instead of the
+// incoming bullet flow. Only applied when goal.fromLock and the setting is on
+// (see Settings::tangentialBias); gentler than kSolvePerpW since it competes
+// with, not replaces, the bullet-flow sidestep term above.
+constexpr float kSolveTangentialW  = 0.6f;
 constexpr float kSolveMoveW        = 1.2f;  // minimal-disruption penalty (prefer nearest safe)
 constexpr float kSolveClearW       = 0.25f; // gentle comfort tiebreak, capped
 constexpr float kSolveClearComfort = 0.5f;  // clearance (tiles) above which comfort
@@ -742,6 +748,14 @@ struct Settings {
     // this is tested against. false (default) reproduces today's engine
     // exactly.
     bool  neverStandLocked = false;
+    // udodgeTangentialBias (owner hypothesis, 2026-09-26, queued after
+    // neverStandLocked). Default OFF, same discipline. true: while a boss
+    // lock is active, ScoreCand rewards a candidate step that is
+    // perpendicular to the player-to-boss radial (orbiting) and penalizes one
+    // that is radial (straight toward or away from the boss) — see
+    // kSolveTangentialW. Scored-set only, exactly like every other ScoreCand
+    // term: never widens the safe set, never picks an unsafe candidate.
+    bool  tangentialBias = false;
 };
 
 // Keep-out radius around one enemy body: its physical radius plus the player's

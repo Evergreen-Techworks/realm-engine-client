@@ -228,7 +228,7 @@ float StandoffGap(const StandoffSet& s, Vec2 p)
 // every candidate scored here, so these terms only choose AMONG safe points and
 // can never trade safety away). Baked weights (kSolve*), NO user sliders.
 float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
-                Vec2 flow, Vec2 prevDir, float b)
+                Vec2 flow, Vec2 prevDir, float b, bool tangentialBiasOn)
 {
     float score = 0.f;
 
@@ -262,6 +262,19 @@ float ScoreCand(const Cand& c, Vec2 player, const Goal& goal,
     if (LenSq(flow) > 1e-6f && LenSq(c.dir) > 1e-6f) {
         const float par = Dot(c.dir, flow);
         score += kSolvePerpW * (1.f - 2.f * std::fabs(par));
+    }
+
+    // udodgeTangentialBias (owner hypothesis, 2026-09-26): reward orbiting the
+    // locked boss (a step perpendicular to the player-to-boss radial) over a
+    // radial in/out step, independent of the bullet-flow sidestep term above
+    // (a boss can be locked with no threatening lane at all this tick).
+    if (tangentialBiasOn && goal.fromLock && LenSq(c.dir) > 1e-6f) {
+        const Vec2 toBoss = Sub(goal.lockPos, player);
+        if (LenSq(toBoss) > 1e-6f) {
+            const Vec2 radial = Mul(toBoss, 1.f / Len(toBoss));
+            const float par = Dot(c.dir, radial);
+            score += kSolveTangentialW * (1.f - 2.f * std::fabs(par));
+        }
     }
 
     // Minimal disruption — prefer the nearest safe point.
@@ -838,7 +851,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
                             ttd < routeTtd) continue;
                         candidate.dur = Durability(ttd, tEvidence);
                         candidate.clr = std::max(candidate.clr, kUDurablePocketMargin);
-                        const float score = ScoreCand(candidate, in.player, goal, flow, prevDir, b);
+                        const float score = ScoreCand(candidate, in.player, goal, flow, prevDir, b, in.settings.tangentialBias);
                         if (score > lateralScore) {
                             lateralScore = score; chosen = candidate.pos; lateral = true;
                         }
@@ -973,7 +986,7 @@ void Solve(const MapInput& in, float moveBudgetTiles, const Goal& goal,
         Cand sc = cands[i];
         sc.threaded = tempSafe;
         if (tempSafe) sc.clr = std::max(sc.clr, kUDurablePocketMargin);
-        const float s = ScoreCand(sc, in.player, goal, flow, prevDir, b);
+        const float s = ScoreCand(sc, in.player, goal, flow, prevDir, b, in.settings.tangentialBias);
         if(captureOn&&i<8){out.captureCandidates[i].score=s;out.captureCandidates[i].flags|=64;}
         // Anti-jitter commitment tiebreak (plan 94): a clearly better SAFE cell is
         // taken outright; two SAFE cells within kSolveReflexHystEps of each other are
