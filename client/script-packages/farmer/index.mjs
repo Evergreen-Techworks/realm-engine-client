@@ -859,6 +859,9 @@ export default class Farmer {
     // standing on the bag through that bounded wait instead of reinstalling a
     // quest waypoint between the first and second item.
     if (now - this.lastItemActionAt < 5000) return true;
+    // A refused pickup (busy inventory gate, bag stats not yet arrived) is not a
+    // reason to leave: keep trying for a bounded time after arrival first.
+    if (now - this.lootArrivedAt < LOOT_FINISH_MS) return true;
     RealmEngine.log.info(`Realm Farmer: giving up on bag #${bag.objectId} (${bag.rarity}) at ${distance.toFixed(2)} tiles after ${now - this.lootArrivedAt}ms; items=[${bag.items.map((i) => i.objectType).join(',')}]; last item action ${this.lastItemActionAt ? `${now - this.lastItemActionAt}ms ago` : 'never'}`);
     this.lootRetryAfter.set(bag.objectId, now + 30000);
     this.lootBagId = 0;
