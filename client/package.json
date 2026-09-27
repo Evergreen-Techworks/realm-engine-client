@@ -15,6 +15,8 @@
     "build:prod": "npm run build:sdk && node scripts/build-prod.mjs",
     "build:admin": "npm run build:sdk && node scripts/build-prod.mjs --admin",
     "download-game-xml": "tsx scripts/download-rotmg-xml-cli.ts",
+    "food": "node scripts/food-order.mjs",
+    "test:food": "node scripts/food-order.test.mjs",
     "gen:packets": "node scripts/gen-packet-artifacts.mjs",
     "check:packets": "node scripts/check-packet-drift.mjs",
     "stamp-build-info": "node scripts/stamp-build-info.mjs",

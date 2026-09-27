@@ -86,6 +86,12 @@
   npm run build
   ```
 
+  **Food delivery from the CLI:**
+
+  From `client/`, run `npm run food -- doordash pizza`, `npm run food -- ubereats sushi`, `npm run food -- instacart milk`, or `npm run food -- gopuff snacks`. The command opens the provider's site in your browser. DoorDash, Uber Eats, and Instacart searches are passed to their sites; Gopuff opens its search page and prints your query for entry there. Use `--no-open` to print the link only.
+
+  With an Instacart Developer Platform key, `npm run food -- instacart-list milk eggs bread` creates a shoppable list and opens it. Set `INSTACART_API_KEY` in your environment first; add `--dev` for a development key. The CLI never stores the key. Review items, delivery address, fees, and payment on the provider site. The CLI never submits or pays for an order.
+
   ---
 
   ## ❓ FAQ
