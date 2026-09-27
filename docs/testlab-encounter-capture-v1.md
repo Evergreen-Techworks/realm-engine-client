@@ -65,3 +65,25 @@ An accepted AutoNexus recovery request now emits `capture_trigger` with source
 native bridge callback; `acknowledged:false` forbids interpreting that as an
 observed native terminal decision. The subsequent native terminal record is
 still required.
+
+### AutoNexus scan diagnostic (`native_autonexus_scan`, private, strippable)
+
+Tagged `AUTONEXUS-SCAN-DIAG` in source. Gated on the same `encounter-capture.flag`
+(`UDodgeCapture::capture.enabled`); with the flag absent the native AutoNexus scan
+does no extra work. When the flag is present and the published threat set's
+estimated damage (raw minus defense, floor raw/10, piercing ignores defense; no
+conditions) is at least 50% of the HP the DLL reads, the game thread copies one
+fixed-size `Scan` into a 32-entry SPSC ring (`AutoNexusScanCapture::channel`);
+overflow increments `dropped`. The IPC thread drains up to four per pass.
+
+- `scan`: `ms` (GetTickCount64, same clock as `decision.ms`), `sequence`, `hp`, `maxHp`,
+  `defense`, `totalApplied`, `branch` (1 = UDodge committed move, 0 = observed /
+  conservative velocity), track origin `x,y` and velocity `vx,vy` (tiles/s),
+  `targetValid,targetX,targetY,targetDist` (UDodge solver target this tick; distance
+  < 0 = holding), `horizonMs`, `hitPad`, `threatsObserved`, `threatCount`.
+- `threats` (<= 16, earliest impact first): `[owner, bullet, raw, applied, flags(1 = piercing),
+  bx, by, bvx, bvy (tiles/s), tHitMs, trackClosest, trackClosestMs, holdClosest, holdClosestMs]`.
+  Closest approach is Chebyshev centre distance over the horizon (5 ms steps) along
+  the projected track and along a stationary hold at the scan position; a hit needs
+  distance < hitHalf + 0.2139 + hitPad (0.754 for the usual 0.5 half).
+- Envelope adds `scanQueueHighWater`, `channelBytes`, `dropped`.

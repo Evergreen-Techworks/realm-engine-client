@@ -35,6 +35,7 @@
 #include "FeatureCommandRegistry.h"
 #include "BridgeLatencyDiag.h"
 #include "features/movement/udodge/UDodgeCaptureWire.h"
+#include "features/combat/autonexus/AutoNexusScanWire.h"   // AUTONEXUS-SCAN-DIAG
 
 // Debug logging
 
@@ -456,6 +457,18 @@ DWORD WINAPI IpcBridgeThread(LPVOID)
                     connected=IpcFraming::WriteMessage(hPipe,json.c_str(),static_cast<int>(json.size()));
                     if(!connected)C::updates.dropped.fetch_add(updateCount,std::memory_order_relaxed);
                 }
+                // AUTONEXUS-SCAN-DIAG begin — at most four scan records per pass.
+                {
+                    namespace S=AutoNexusScanCapture;
+                    static S::Scan scanRecord;
+                    for(int i=0;i<4&&connected;++i){
+                        if(!S::channel.queue.Pop(scanRecord))break;
+                        const auto json=S::EncodeScan(scanRecord,GetCurrentProcessId(),startUtc,anchorMs,utc,uncertainty,S::channel.dropped.load(std::memory_order_relaxed));
+                        connected=IpcFraming::WriteMessage(hPipe,json.c_str(),static_cast<int>(json.size()));
+                        if(!connected)S::channel.dropped.fetch_add(1,std::memory_order_relaxed);
+                    }
+                }
+                // AUTONEXUS-SCAN-DIAG end
                 for(int i=0;i<2&&connected;++i){
                     if(!C::capture.scenes.Pop(scene))break;
                     const auto json=C::Encode(scene,GetCurrentProcessId(),startUtc,anchorMs,utc,uncertainty);

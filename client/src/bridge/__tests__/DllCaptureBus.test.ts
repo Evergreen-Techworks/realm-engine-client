@@ -16,3 +16,15 @@ describe('bounded native capture contract',()=>{
  it('copies input arrays and preserves explicit unknown scalars',()=>{const v=base();const result=decodeCapture(v)!;v.cells[0]=0;expect((result.cells as number[])[0]).toBe(255);expect(decodeCapture({...v,decision:{...v.decision,clearance:null}})?.decision?.clearance).toBeNull();});
  it('bounds listener lifetime and isolates errors',()=>{let count=0;const off1=subscribeCapture(()=>{throw Error('ignored');});const off2=subscribeCapture(()=>count++);publishCapture(decodeCapture(base())!);off1();off2();publishCapture(decodeCapture(base())!);expect(count).toBe(1);});
 });
+
+// AUTONEXUS-SCAN-DIAG begin — private scan diagnostic record (strip with DllCaptureBus.ts's tagged block).
+describe('AutoNexus scan diagnostic record',()=>{
+ const scan=()=>JSON.parse('{"type":"encounterCapture","version":1,"kind":"native_autonexus_scan","processId":3,"processStartUtcMs":11,"anchorMs":1000,"anchorUtcMs":1790000000000,"sceneQueueHighWater":0,"decisionQueueHighWater":0,"terminalQueueHighWater":0,"frameQueueHighWater":0,"updateQueueHighWater":0,"anchorUncertaintyMs":16,"memoryBytes":4153728,"scanQueueHighWater":0,"channelBytes":31520,"dropped":2,"scan":{"ms":1000,"sequence":7,"hp":-1,"maxHp":-1,"defense":0,"totalApplied":0,"branch":1,"x":0,"y":0,"vx":0,"vy":0,"targetValid":1,"targetX":0,"targetY":0,"targetDist":0.119999997,"horizonMs":0,"hitPad":0,"threatsObserved":40,"threatCount":2},"threats":[[0,0,0,0,0,0,0,0,0,-1,-1,-1,-1,-1],[0,1,0,0,0,0,0,0,0,-1,-1,-1,-1,-1]]}');
+ it('accepts native-generated scan wire when supplied by the host runner',()=>{if(process.env.SCAN_WIRE_FIXTURE)expect(decodeCapture(JSON.parse(readFileSync(process.env.SCAN_WIRE_FIXTURE,'utf8')))).not.toBeNull();});
+ it('accepts the scan record shape',()=>{const r=decodeCapture(scan());expect(r).not.toBeNull();expect(r!.kind).toBe('native_autonexus_scan');expect((r!.threats as unknown[]).length).toBe(2);expect((r!.scan as Record<string,unknown>).branch).toBe(1);});
+ it('strips unallowlisted keys from the scan',()=>{const v=scan();v.token='secret';v.scan.secret='hidden';expect(JSON.stringify(decodeCapture(v))).not.toMatch(/secret|hidden|token/);});
+ it('rejects more than sixteen threat rows or a wrong row width',()=>{const v=scan();v.threats=Array(17).fill(v.threats[0]);expect(decodeCapture(v)).toBeNull();const w=scan();w.threats=[w.threats[0].slice(0,13)];expect(decodeCapture(w)).toBeNull();});
+ it('rejects missing scan fields and nonfinite geometry',()=>{const v=scan();delete v.scan.branch;expect(decodeCapture(v)).toBeNull();const w=scan();w.scan.x=Infinity;expect(decodeCapture(w)).toBeNull();});
+ it('rejects more rows than the scan says it holds',()=>{const v=scan();v.scan.threatCount=1;expect(decodeCapture(v)).toBeNull();});
+});
+// AUTONEXUS-SCAN-DIAG end

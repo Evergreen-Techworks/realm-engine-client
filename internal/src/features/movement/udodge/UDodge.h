@@ -31,6 +31,8 @@ struct SafetyState {
     float    moveVy         = 0.f;     // 0 = holding. AutoNexus predicts the player along this.
     bool     serverAnchorValid = false;
     float    serverX = 0.f, serverY = 0.f; // last position emitted in outbound MOVE
+    float    targetX = 0.f, targetY = 0.f; // solver target this tick (diagnostics)
+    float    targetDist = -1.f;            // distance to it; < 0 = holding (diagnostics)
 };
 SafetyState GetSafetyState();
 // Raw Solver::SolveKind of the last solve (0=Hold,1=Safe,2=Fallback,3=Surrounded),

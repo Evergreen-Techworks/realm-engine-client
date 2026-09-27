@@ -2,6 +2,7 @@
 #include "AutoNexus.h"
 #include "AutoNexusDodgePolicy.h"
 #include "AutoNexusThreatIdentity.h"
+#include "AutoNexusScanCapture.h"   // AUTONEXUS-SCAN-DIAG
 #include "ProjectileTracking.h"
 #include "AoeTracking.h"
 #include "DodgeHit.h"
@@ -174,6 +175,7 @@ struct Threat {
     float   tHitMs        = 0.f;
     int32_t rawDamage     = 0;
     bool    armorPiercing = false;
+    int32_t projIndex     = -1;   // AUTONEXUS-SCAN-DIAG: index into this scan's projectile copy
 };
 
 // ── Debug path capture ───────────────────────────────────────────────────
@@ -459,6 +461,59 @@ static GroundThreat PredictGroundDamage(void* lp, const PlayerMotion& pm, float 
     return out;
 }
 
+// AUTONEXUS-SCAN-DIAG begin — see AutoNexusScanCapture.h for the strip list.
+static void CaptureScan(const std::vector<Threat>& threats, const std::vector<WorldProjectile>& projs,
+                        int32_t hp, int32_t maxHp, int32_t defense, ULONGLONG nowMs, float horizon,
+                        bool committed, const PlayerMotion& track, const UDodge::SafetyState& ud)
+{
+    namespace S = AutoNexusScanCapture;
+    int32_t total = 0;
+    for (const auto& t : threats) total += S::Applied(t.rawDamage, t.armorPiercing, defense);
+    if (!S::Wanted(true, total, hp)) return;
+
+    static S::Scan scan;   // game-thread scratch; the ring copies it
+    scan = S::Scan{};
+    scan.ms = nowMs; scan.hp = hp; scan.maxHp = maxHp; scan.defense = defense; scan.totalApplied = total;
+    scan.branch = committed ? 1u : 0u;
+    scan.x = track.x; scan.y = track.y; scan.vx = track.vx * 1000.f; scan.vy = track.vy * 1000.f;
+    scan.targetValid = ud.enabled && ud.targetDist >= 0.f;
+    scan.targetX = ud.targetX; scan.targetY = ud.targetY; scan.targetDist = ud.targetDist;
+    scan.horizonMs = horizon; scan.hitPad = kNexusHitPadTiles;
+
+    const S::Track moving{ track.x, track.y, track.vx, track.vy };
+    const S::Track hold{ track.x, track.y, 0.f, 0.f };
+    for (const auto& t : threats) {
+        S::ThreatRow row{};
+        row.owner = t.attackerObjId; row.bullet = t.bulletId; row.rawDamage = t.rawDamage;
+        row.applied = S::Applied(t.rawDamage, t.armorPiercing, defense);
+        row.flags = t.armorPiercing ? 1u : 0u; row.tHitMs = t.tHitMs;
+        if (scan.threatCount < S::kThreats && t.projIndex >= 0 && t.projIndex < static_cast<int32_t>(projs.size())) {
+            const WorldProjectile& proj = projs[static_cast<size_t>(t.projIndex)];
+            const float elapsed = static_cast<float>(static_cast<int64_t>(nowMs) - static_cast<int64_t>(proj.spawnTick));
+            float x0 = proj.x, y0 = proj.y, x1 = proj.x, y1 = proj.y;
+            if (!proj.laser) {
+                ProjectileTracking::ComputePosAtSafe(proj, elapsed, x0, y0);
+                x1 = x0; y1 = y0;
+                ProjectileTracking::ComputePosAtSafe(proj, elapsed + 16.f, x1, y1);
+            }
+            row.bx = x0; row.by = y0;
+            row.bvx = (x1 - x0) * (1000.f / 16.f); row.bvy = (y1 - y0) * (1000.f / 16.f);
+            auto bulletAt = [&](float tMs, float& bx, float& by) {
+                bx = proj.x; by = proj.y;
+                if (!proj.laser) ProjectileTracking::ComputePosAtSafe(proj, elapsed + tMs, bx, by);
+                return std::isfinite(bx) && std::isfinite(by);
+            };
+            const S::Approach a = S::ClosestApproach(bulletAt, moving, horizon, 5.f);
+            const S::Approach b = S::ClosestApproach(bulletAt, hold, horizon, 5.f);
+            row.trackClosest = a.distance; row.trackClosestMs = a.atMs;
+            row.holdClosest = b.distance; row.holdClosestMs = b.atMs;
+        }
+        S::AddThreat(scan, row);
+    }
+    S::channel.Offer(scan);
+}
+// AUTONEXUS-SCAN-DIAG end
+
 static void PublishThreats(const std::vector<Threat>& threats, const GroundThreat& ground)
 {
     IpcThreat out[kIpcMaxThreats];
@@ -577,6 +632,7 @@ static void RunAutoNexus()
         s_havePrevScan = true;
 
         for (const auto& proj : projs) {
+            const int32_t projIndex = static_cast<int32_t>(&proj - projs.data());   // AUTONEXUS-SCAN-DIAG
             if (!proj.valid) continue;
             if (localId != 0 && proj.attackerObjId == localId) continue;
             if (localId != 0 && static_cast<int32_t>(proj.ownerObjId) == localId) continue;
@@ -634,11 +690,20 @@ static void RunAutoNexus()
             th.tHitMs        = tHit;
             th.rawDamage     = proj.damage;
             th.armorPiercing = proj.armorPiercing;
+            th.projIndex     = projIndex;   // AUTONEXUS-SCAN-DIAG
             threats.push_back(th);
         }
 
         // One row per announced bullet (earliest impact), sorted by impact time.
         AutoNexusThreatIdentity::DedupeThreats(threats);
+
+        // AUTONEXUS-SCAN-DIAG begin — private diagnostic, OFF unless
+        // encounter-capture.flag exists. Copies scalars into a fixed ring only.
+        if (UDodgeCapture::capture.enabled.load(std::memory_order_relaxed) && !threats.empty())
+            CaptureScan(threats, projs, hp, maxHp, defense, nowMs, horizon,
+                        dodgeDecision.mode == AutoNexusDodgePolicy::ScanMode::Committed,
+                        projectilePm, udSafety);
+        // AUTONEXUS-SCAN-DIAG end
     }
 
     // Visual AoE tracking supplies geometry/timing but no measured damage.

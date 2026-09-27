@@ -1,7 +1,7 @@
 /** Optional versioned diagnostic transport. Unknown fields never reach disk. */
 export type CaptureDecision = Record<string, number | null>;
 export interface CaptureRecord {
-  type: 'encounterCapture'; version: 1; kind: 'native_scene' | 'native_decision' | 'native_present_interarrival' | 'native_update_timing';
+  type: 'encounterCapture'; version: 1; kind: 'native_scene' | 'native_decision' | 'native_present_interarrival' | 'native_update_timing' | 'native_autonexus_scan';
   processId: number; processStartUtcMs: number; anchorMs: number; anchorUtcMs: number; memoryBytes: number;
   decision?: CaptureDecision;
   [key: string]: unknown;
@@ -14,13 +14,16 @@ const row = (x: unknown, n: number): x is Array<number | null> => Array.isArray(
 export function decodeCapture(value: unknown): CaptureRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
-  if (v.type !== 'encounterCapture' || v.version !== 1 || !['native_scene','native_decision','native_present_interarrival','native_update_timing'].includes(String(v.kind))) return null;
+  if (v.type !== 'encounterCapture' || v.version !== 1 || !['native_scene','native_decision','native_present_interarrival','native_update_timing','native_autonexus_scan'].includes(String(v.kind))) return null;
   const out: Record<string, unknown> = { type: 'encounterCapture', version: 1, kind: v.kind };
   for (const key of ['processId','processStartUtcMs','anchorMs','anchorUtcMs','anchorUncertaintyMs','memoryBytes','sceneQueueHighWater','decisionQueueHighWater','terminalQueueHighWater','frameQueueHighWater']) {
     if (!uint(v[key])) return null; out[key] = v[key];
   }
   if ((v.memoryBytes as number) > 4*1024*1024) return null;
   if (v.updateQueueHighWater !== undefined) {if(!uint(v.updateQueueHighWater))return null;out.updateQueueHighWater=v.updateQueueHighWater;}
+  // AUTONEXUS-SCAN-DIAG begin — private AutoNexus scan record (native AutoNexusScanWire.h).
+  if (v.kind === 'native_autonexus_scan') return decodeScan(v, out);
+  // AUTONEXUS-SCAN-DIAG end
   if (v.kind === 'native_update_timing') {
     if (!uint(v.dropped) || !Array.isArray(v.updates) || v.updates.length > 128 || !v.updates.every(a => row(a,8) && a.slice(0,4).every(uint) && a.slice(4,7).every(x=>numberNonnegative(x)) && [0,1].includes(a[7] as number))) return null;
     out.dropped=v.dropped;out.updates=v.updates.map(a=>[...a]);return out as CaptureRecord;
@@ -64,6 +67,21 @@ export function decodeCapture(value: unknown): CaptureRecord | null {
   }
   return out as CaptureRecord;
 }
+// AUTONEXUS-SCAN-DIAG begin
+const scanKeys = ['ms','sequence','hp','maxHp','defense','totalApplied','branch','x','y','vx','vy','targetValid','targetX','targetY','targetDist','horizonMs','hitPad','threatsObserved','threatCount'];
+/** Rows: owner, bullet, raw, applied, flags, bx, by, bvx, bvy, tHitMs, trackClosest, trackClosestMs, holdClosest, holdClosestMs. */
+function decodeScan(v: Record<string, unknown>, out: Record<string, unknown>): CaptureRecord | null {
+  for (const key of ['scanQueueHighWater','channelBytes','dropped']) { if (!uint(v[key])) return null; out[key] = v[key]; }
+  if (!v.scan || typeof v.scan !== 'object' || Array.isArray(v.scan)) return null;
+  const s = v.scan as Record<string, unknown>; const scan: Record<string, number | null> = {};
+  for (const key of scanKeys) { if (typeof s[key] !== 'number' || !Number.isFinite(s[key])) return null; scan[key] = s[key] as number; }
+  for (const key of ['ms','sequence','branch','targetValid','threatsObserved','threatCount']) if (!uint(s[key])) return null;
+  if (!Array.isArray(v.threats) || v.threats.length > 16 || v.threats.length !== scan.threatCount
+    || (scan.threatCount as number) > (scan.threatsObserved as number) || !v.threats.every(a => row(a, 14))) return null;
+  out.scan = scan; out.threats = v.threats.map(a => [...(a as Array<number | null>)]);
+  return out as CaptureRecord;
+}
+// AUTONEXUS-SCAN-DIAG end
 type Slot = { listeners: Set<(record: CaptureRecord) => void>; trigger?: (reason: string) => boolean };
 const globalSlots = globalThis as unknown as Record<string, unknown>;
 const slot = (globalSlots.__realmCaptureBus ??= { listeners: new Set() }) as Slot;

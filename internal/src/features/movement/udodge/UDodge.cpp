@@ -129,6 +129,11 @@ std::atomic<uint32_t> g_udSafetyTick{ 0 };
 // nexus on shots udodge dodges) nor a frozen stand (misses the backstop). 0 = hold.
 std::atomic<float>    g_udMoveVx{ 0.f };
 std::atomic<float>    g_udMoveVy{ 0.f };
+// The solver target those velocities point at, and its distance (< 0 = holding).
+// Published for the AutoNexus scan diagnostic; nothing decides on it.
+std::atomic<float>    g_udTargetX{ 0.f };
+std::atomic<float>    g_udTargetY{ 0.f };
+std::atomic<float>    g_udTargetDist{ -1.f };
 // Raw Solver::SolveKind of the last solve, published unconditionally (same
 // reason as the AutoNexus signal above: a diagnostic/test consumer must not
 // depend on the debug overlay flag). Navigation finish plan item 2 acceptance
@@ -850,6 +855,7 @@ void SetEnabled(bool enabled)
         g_udStandClr.store(1e9f, std::memory_order_relaxed);
         g_udMoveVx.store(0.f, std::memory_order_relaxed);
         g_udMoveVy.store(0.f, std::memory_order_relaxed);
+        g_udTargetDist.store(-1.f, std::memory_order_relaxed);
         g_udSolveKind.store(0, std::memory_order_relaxed);
         g_serverAnchorValid.store(false, std::memory_order_release);
         PublishDebug(DebugSnapshot{});
@@ -870,6 +876,9 @@ SafetyState GetSafetyState()
     s.serverAnchorValid = g_serverAnchorValid.load(std::memory_order_acquire);
     s.serverX        = g_serverAnchorX.load(std::memory_order_relaxed);
     s.serverY        = g_serverAnchorY.load(std::memory_order_relaxed);
+    s.targetX        = g_udTargetX.load(std::memory_order_relaxed);
+    s.targetY        = g_udTargetY.load(std::memory_order_relaxed);
+    s.targetDist     = g_udTargetDist.load(std::memory_order_relaxed);
     return s;
 }
 
@@ -2208,15 +2217,19 @@ void Tick(void* player, float px, float py, float dt)
     // Committed move velocity (tiles/ms) = unit(target − player) × speed, or 0 when
     // holding. AutoNexus predicts the player along this so it only fires when the
     // dodge udodge is taking STILL leads to a hit (a genuine failure).
-    float udMvx = 0.f, udMvy = 0.f;
+    float udMvx = 0.f, udMvy = 0.f, udTargetDist = -1.f;
     if (g_solve.shouldMove) {
         const float dx = g_solve.target.x - in.player.x;
         const float dy = g_solve.target.y - in.player.y;
         const float d  = std::sqrt(dx * dx + dy * dy);
         if (d > 1e-4f) { udMvx = (dx / d) * in.speed; udMvy = (dy / d) * in.speed; }
+        udTargetDist = d;
     }
     g_udMoveVx.store(udMvx, std::memory_order_relaxed);
     g_udMoveVy.store(udMvy, std::memory_order_relaxed);
+    g_udTargetX.store(g_solve.target.x, std::memory_order_relaxed);
+    g_udTargetY.store(g_solve.target.y, std::memory_order_relaxed);
+    g_udTargetDist.store(udTargetDist, std::memory_order_relaxed);
     g_udSafetyTick.fetch_add(1, std::memory_order_relaxed);
 
     // ── Decision telemetry (UDodgeTelemetry.h) ───────────────────────────────
