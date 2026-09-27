@@ -526,16 +526,17 @@ static void RunAutoNexus()
     if (hasServerAnchor) {
         serverPm.x = udSafety.serverX;
         serverPm.y = udSafety.serverY;
-        // The last emitted MOVE point is an authoritative collision anchor.
-        // Do not invent sub-tick velocity beyond it; scanning both this anchor
-        // and the live local trajectory is conservative in both directions.
+        // Ground only: the last emitted MOVE point, held still. Projectiles are
+        // no longer scanned here (a stale anchor reported bullets crossing the
+        // player's past track as hits; run 004614 00:53:02Z false escape).
         serverPm.vx = 0.f;
         serverPm.vy = 0.f;
     }
-    PlayerMotion projectileServerPm = serverPm;
-    projectileServerPm.vx = selected.anchorVx;
-    projectileServerPm.vy = selected.anchorVy;
     const float horizon = std::max(0.f, std::min(kMaxHorizonMs, g_predTimeMs));
+    // Projectiles are scanned on the live local track only (AutoNexusDodgePolicy.h);
+    // the MOVE anchor still drives the ground prediction below.
+    const auto scanTracks = AutoNexusDodgePolicy::ProjectileTracks(
+        { projectilePm.x, projectilePm.y, projectilePm.vx, projectilePm.vy });
 
     const float fieldVx = pm.vx, fieldVy = pm.vy;
     ObserveVelocity(pm.x, pm.y, pm.vx, pm.vy);
@@ -597,11 +598,12 @@ static void RunAutoNexus()
                 const float spd = (proj.speed / 10000.f) * (proj.speedMul > 0.f ? proj.speedMul : 1.f);
                 if (std::isfinite(spd) && spd > 1e-5f) {
                     const float maxReach = spd * horizon + 4.0f + (proj.laser ? proj.laserDistance : 0.f);
-                    const float pdx = proj.x - projectilePm.x, pdy = proj.y - projectilePm.y;
-                    const float sdx = proj.x - projectileServerPm.x, sdy = proj.y - projectileServerPm.y;
-                    if (pdx * pdx + pdy * pdy > maxReach * maxReach &&
-                        (!hasServerAnchor || sdx * sdx + sdy * sdy > maxReach * maxReach))
-                        continue;
+                    bool reachable = false;
+                    for (int ti = 0; ti < scanTracks.count; ++ti) {
+                        const float pdx = proj.x - scanTracks.tracks[ti].x, pdy = proj.y - scanTracks.tracks[ti].y;
+                        if (pdx * pdx + pdy * pdy <= maxReach * maxReach) { reachable = true; break; }
+                    }
+                    if (!reachable) continue;
                 }
             }
 
@@ -611,18 +613,21 @@ static void RunAutoNexus()
                 continue;
             }
 
-            float tHit = FindHitMsUntil(proj, alreadyElapsed, projectilePm, horizon);
-            if (hasServerAnchor) {
-                const float serverHit = FindHitMsUntil(proj, alreadyElapsed, projectileServerPm, horizon);
-                if (serverHit >= 0.f && (tHit < 0.f || serverHit < tHit)) tHit = serverHit;
+            float tHit = -1.f;
+            for (int ti = 0; ti < scanTracks.count; ++ti) {
+                const auto& tr = scanTracks.tracks[ti];
+                PlayerMotion trackPm{};
+                trackPm.x = tr.x; trackPm.y = tr.y; trackPm.vx = tr.vx; trackPm.vy = tr.vy;
+                const float hit = FindHitMsUntil(proj, alreadyElapsed, trackPm, horizon);
+                if (hit >= 0.f && (tHit < 0.f || hit < tHit)) tHit = hit;
             }
             if (g_debugDraw) CaptureVizPath(proj, alreadyElapsed, tHit >= 0.f);
             if (tHit < 0.f) continue;
 
-            // Publish the game's bullet id, not the spawn startTime the store
-            // keeps in its bulletId field (see AutoNexusThreatIdentity.h).
-            const auto identity = AutoNexusThreatIdentity::FromSpawnFields(
-                proj.attackerObjId, proj.ownerObjId, proj.bulletId);
+            // The store holds the corrected spawn identity (shooter, game bullet
+            // id); see ProjectileSpawnIdentity.h / AutoNexusThreatIdentity.h.
+            const auto identity = AutoNexusThreatIdentity::FromStoreFields(
+                proj.attackerObjId, proj.bulletId);
             Threat th{};
             th.attackerObjId = identity.ownerObjId;
             th.bulletId      = identity.bulletId;
@@ -632,8 +637,8 @@ static void RunAutoNexus()
             threats.push_back(th);
         }
 
-        std::sort(threats.begin(), threats.end(),
-                  [](const Threat& a, const Threat& b) { return a.tHitMs < b.tHitMs; });
+        // One row per announced bullet (earliest impact), sorted by impact time.
+        AutoNexusThreatIdentity::DedupeThreats(threats);
     }
 
     // Visual AoE tracking supplies geometry/timing but no measured damage.

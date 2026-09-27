@@ -1,6 +1,7 @@
 #include "pch-il2cpp.h"
 
 #include "ProjectileTracking.h"
+#include "features/projectiles/ProjectileSpawnIdentity.h"
 #include "ProjectileCatalog.h"
 #include "../../projectiles/ProjectileRuntimeReader.h"
 #include "../../projectiles/ProjectileStore.h"
@@ -178,10 +179,15 @@ void* __fastcall SpawnProjectileDetour(
 {
     RuntimeOffsets::EnsureAll();
 
+    // The game's arguments are (ownerId, bulletId, angle, startTime); this
+    // detour's parameter names are shifted (see ProjectileSpawnIdentity.h).
+    const ProjectileSpawnIdentity::Identity spawnId =
+        ProjectileSpawnIdentity::FromSpawnArgs(attackerObjId, ownerObjId, bulletId);
+
     float spawnX = startX;
     float spawnY = startY;
     const int32_t dk = g_LocalDictKey.load(std::memory_order_relaxed);
-    const bool isLocalShot = dk != 0 && (attackerObjId == dk || static_cast<int32_t>(ownerObjId) == dk);
+    const bool isLocalShot = ProjectileSpawnIdentity::IsLocalShot(spawnId, dk);
 
     ShotOrigin::Request req;
     req.isLocalShot = isLocalShot;
@@ -191,7 +197,7 @@ void* __fastcall SpawnProjectileDetour(
     req.muzzleTiles = g_localMuzzleOffsetTiles.load(std::memory_order_relaxed);
     if (isLocalShot) {
         float ex = 0.f, ey = 0.f;
-        LookupShooterOrigin(attackerObjId, ownerObjId, ex, ey);
+        LookupShooterOrigin(spawnId.ownerObjId, static_cast<uint32_t>(spawnId.ownerObjId), ex, ey);
         req.haveShooter = (fabsf(ex) > 0.5f || fabsf(ey) > 0.5f);
         req.shooterX = ex;
         req.shooterY = ey;
@@ -199,7 +205,8 @@ void* __fastcall SpawnProjectileDetour(
     const ShotOrigin::Source src = ShotOrigin::Resolve(req, spawnX, spawnY);
     WitnessShotOrigin(src);
 
-    AutoAim::OnLocalPlayerProjectileSpawn(projProps, isAbility, attackerObjId, ownerObjId);
+    AutoAim::OnLocalPlayerProjectileSpawn(projProps, isAbility, spawnId.ownerObjId,
+                                          static_cast<uint32_t>(spawnId.ownerObjId));
 
     // Capture spawn timestamp BEFORE the original spawn runs. The IL2CPP method does
     // allocations / virtual dispatch and can take 0.2-2 ms; if we capture spawnTick
@@ -258,7 +265,7 @@ void* __fastcall SpawnProjectileDetour(
         return ret;
 
     float entityX = 0.f, entityY = 0.f;
-    LookupShooterOrigin(attackerObjId, ownerObjId, entityX, entityY);
+    LookupShooterOrigin(spawnId.ownerObjId, static_cast<uint32_t>(spawnId.ownerObjId), entityX, entityY);
 
     float sx, sy;
     if (fabsf(entityX) > 0.5f || fabsf(entityY) > 0.5f) {
@@ -285,9 +292,12 @@ void* __fastcall SpawnProjectileDetour(
     p.valid = true;
     p.canHitPlayer = canHitPlayer;
     p.ptr = ret;
-    p.bulletId = bulletId;
-    p.attackerObjId = attackerObjId;
-    p.ownerObjId = ownerObjId;
+    // Store the corrected identity: shooter in both owner fields, the game's
+    // bullet id in bulletId (it used to hold the startTime clock, so packet
+    // lanes were never superseded and AutoNexus threats never matched a shot).
+    p.bulletId = spawnId.bulletId;
+    p.attackerObjId = spawnId.ownerObjId;
+    p.ownerObjId = static_cast<uint32_t>(spawnId.ownerObjId);
     p.speed = 5000.f;
     p.lifetime = 2000.f;
     p.minDamage = 100;

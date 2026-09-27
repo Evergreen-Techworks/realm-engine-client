@@ -92,4 +92,30 @@ inline SelectedVelocities SelectVelocities(const Decision& decision,
     return out;
 }
 
+// Player tracks the projectile forecast scans. Only the live local track: the
+// game client detects bullet collisions at its own position and reports them
+// (PLAYERHIT). The last outbound MOVE point lags that position by up to a
+// server tick; scanning it reported bullets crossing where the player had
+// already been. Run 004614, 00:53:02Z: the MOVE point was 125 ms / 0.86 tiles
+// behind, five Maze Minotaur bullets were "hitting" it in 14-114 ms, none hit
+// and HP rose 558 -> 560 (recorded false escape at 91% HP).
+struct Track {
+    float x = 0.f, y = 0.f;
+    float vx = 0.f, vy = 0.f;   // tiles per millisecond
+};
+
+struct ProjectileTrackSet {
+    Track tracks[1];
+    int   count = 0;
+};
+
+inline ProjectileTrackSet ProjectileTracks(const Track& local)
+{
+    ProjectileTrackSet out;
+    out.tracks[0] = local;
+    out.count = 1;
+    return out;
+}
+
 } // namespace AutoNexusDodgePolicy
+

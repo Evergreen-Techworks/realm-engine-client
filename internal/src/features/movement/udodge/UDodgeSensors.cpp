@@ -1,4 +1,5 @@
 #include "pch-il2cpp.h"
+#include "features/projectiles/ProjectileSpawnIdentity.h"
 #include "UDodgeSensors.h"
 #include "UDodgeEnemyHazards.h"
 #include "UDodgeTrajectoryPhase.h"
@@ -324,8 +325,8 @@ int s_packetCount = 0;
 bool RuntimeHasShot(const PacketShot& s)
 {
     for (const WorldProjectile& p : s_projs) {
-        if (!p.valid || static_cast<int32_t>(p.bulletId) != s.bullet) continue;
-        if (p.attackerObjId == s.owner || static_cast<int32_t>(p.ownerObjId) == s.owner)
+        if (!p.valid) continue;
+        if (ProjectileSpawnIdentity::IsSameShot(p.attackerObjId, p.bulletId, s.owner, s.bullet))
             return true;
     }
     return false;
