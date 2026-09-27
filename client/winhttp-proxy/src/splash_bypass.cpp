@@ -263,11 +263,16 @@ void __cdecl HookedUpdate(void* self, void* method)
             if (*reinterpret_cast<void* const*>(self) == g_splashClass) {
                 // The trace established that +28 is the live fade countdown
                 // (0.976 -> 0.622 over ~2.6 s) left untouched by timeForLogo.
-                // Collapse it every frame until the controller advances.
+                // Collapse it only until the controller advances (g_done):
+                // forcing it to 0.0 on every frame forever pins it at exactly
+                // zero and never lets it cross below zero, so the scene's
+                // own zero-crossing transition check never fires and the
+                // splash/zoom never ends. Once the bypass has done its job
+                // (or given up), stop touching this field.
                 auto* anchor = static_cast<unsigned char*>(self) +
                                g_timeForLogoOffset;
-                *reinterpret_cast<float*>(anchor + 28) = 0.0f;
                 if (!g_done) {
+                    *reinterpret_cast<float*>(anchor + 28) = 0.0f;
                     auto* list = *reinterpret_cast<void**>(
                         static_cast<unsigned char*>(self) + g_timeForLogoOffset);
                     const std::int32_t zeroed =
