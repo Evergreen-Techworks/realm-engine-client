@@ -125,7 +125,6 @@ namespace {
             FH_FLOAT("killauraRangeTiles",     KillAura::SetRangeTiles),
             FH_FLOAT("killauraStandoffTiles",  KillAura::SetStandoffTiles),
             FH_BOOL ("killauraOverlayEnabled", KillAura::SetOverlayEnabled),
-            FH_BOOL ("killauraDriveAimEnabled", KillAura::SetDriveAimAngle),
             // Scripts only (combat.setAutoFire); the in-game checkbox calls
             // AutoFire::SetEnabled. Fires by itself at Auto Aim's real target.
             FH_BOOL("autoFireEnabled", AutoFire::SetScriptArmed),

@@ -14,12 +14,8 @@ enum class Source : uint8_t {
     Vanilla  = 0,  // no override — pass the game's own startX/startY through
     Muzzle   = 1,  // manual muzzle-offset slider
     Magnet   = 2,  // MagnetAim visual offset
-    // DEAD. Resolve() never returns this, and killaura no longer moves the local
-    // bullet at all (the ShotOriginHook that did is deleted — see the
-    // measured-result block at the top of KillAura.cpp). The enumerator is kept
-    // only so the two readout switches over Source stay exhaustive; nothing
-    // produces it.
-    KillAura = 3,
+    // Killaura is not a source here: it edits the projectile after creation, at
+    // the map add (features/combat/autoaim/shoot/ShotTransaction.h).
 };
 
 struct Request {

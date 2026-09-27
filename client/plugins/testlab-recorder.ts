@@ -61,7 +61,7 @@ const ROOT = process.env.REALM_ENGINE_ROOT
  * `mark` directly) — so module-scoped `let` state would not be shared
  * between the instance PluginManager is actively hooking packets through and
  * the instance a caller of `mark()` holds. A globalThis-keyed slot is the
- * same fix DllAimBus.ts / DllThreatBus.ts use for the identical problem.
+ * same fix DllThreatBus.ts uses for the identical problem.
  */
 const BUS_SLOT_KEY = '__realmengine_testlabRecorderBus_v1';
 interface RecorderBusSlot {

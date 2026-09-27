@@ -31,10 +31,9 @@ struct Config {
     //
     // It USED to REPLACE the weapon-derived range, and killaura pinned it at a
     // flat 16 tiles. That let killaura lock targets the player could not
-    // actually reach, and the hit claims for those shots were refused — the
-    // server validates a hit against ITS OWN position for us, so no amount of
-    // shot-packet spoofing extends reach. See the measured-results comment at
-    // the top of KillAura.cpp.
+    // actually reach. Killaura's shot edit (ShotTransaction.h) now checks each
+    // projectile's own range from its moved origin, at most 2 tiles from the
+    // player.
     float          maxRangeCapTiles     = 0.f;
 };
 

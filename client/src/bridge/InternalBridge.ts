@@ -19,7 +19,6 @@ import { Logger } from '../util/Logger.js';
 import { EventEmitter } from 'events';
 import { BRIDGE, DllMessageType } from './contract.js';
 import { decodeThreatPayload, publishDllThreats } from './DllThreatBus.js';
-import { decodeAimPayload, publishDllAim } from './DllAimBus.js';
 import { decodeNavigationStatus, publishNavigationStatus } from './DllNavigationBus.js';
 import { decodeCapture, publishCapture, setCaptureTriggerSender } from './DllCaptureBus.js';
 import { DiagGate } from '../util/DiagGate.js';
@@ -319,9 +318,6 @@ export class InternalBridge extends EventEmitter {
       case DllMessageType.Threats:
         this.handleThreats(msg);
         break;
-      case DllMessageType.Aim:
-        this.handleAim(msg);
-        break;
       case DllMessageType.EncounterCapture: {
         const record = decodeCapture(msg);
         if (this.connected && record) publishCapture(record);
@@ -396,11 +392,6 @@ export class InternalBridge extends EventEmitter {
     const payload = typeof msg.threats === 'string' ? msg.threats : '';
     const parsed = decodeThreatPayload(payload);
     publishDllThreats(parsed.threats, parsed.ground, parsed.truncated);
-  }
-
-  private handleAim(msg: DllMessage): void {
-    const payload = typeof msg.aim === 'string' ? msg.aim : '';
-    publishDllAim(decodeAimPayload(payload));
   }
 
   private handleUnresolvedClasses(msg: DllMessage): void {

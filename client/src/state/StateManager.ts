@@ -339,11 +339,17 @@ export class StateManager {
       client.relativeTime = (packet.data.time ?? 0) - Date.now();
     }
 
-    // Infer player position from projectile origin
-    // Projectile spawns 0.3 units from player center
+    // The packet carries the shooter's own position. Killaura's native shot
+    // edit can start the projectile up to 2 tiles from the player, so the
+    // projectile origin is no longer a stand-in for where the player is; it is
+    // used only when playerPosition is missing (projectile spawns 0.3 tiles
+    // from the player centre on a natural shot).
+    const playerPos = packet.data.playerPosition;
     const projPos = packet.data.projectilePosition;
     const angle = packet.data.angle ?? 0;
-    if (projPos) {
+    if (playerPos && Number.isFinite(playerPos.x) && Number.isFinite(playerPos.y)) {
+      client.playerData.pos = { x: playerPos.x, y: playerPos.y };
+    } else if (projPos) {
       client.playerData.pos = {
         x: projPos.x - Math.cos(angle) * 0.3,
         y: projPos.y - Math.sin(angle) * 0.3,

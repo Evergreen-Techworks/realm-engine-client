@@ -47,6 +47,7 @@ constexpr FeatureNeeds kFeatures[] = {
     { "ProjectileTracking", "Bullet dodging",        { "HBEAKBIHANL", "KJMONHENJEN" },               2 },
     { "AoeTracking",        "AoE / ground dodging",  { "GJJCEFJMNMK", "FHOHCELBPDO" },               2 },
     { "AutoFire",           "Auto-fire / hold-to-shoot", { "FKALGHJIADI", "LKHPPBEGNOM" },           2 },
+    { "KillAuraShot",       "Killaura shot edit",    { "FKALGHJIADI", "HBEAKBIHANL", "KJMONHENJEN", "HJMBOMEHGDJ" }, 4 },
 };
 constexpr int kFeatureCount = static_cast<int>(sizeof(kFeatures) / sizeof(kFeatures[0]));
 

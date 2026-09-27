@@ -25,9 +25,9 @@ static std::atomic<uint8_t> s_lastSource{ static_cast<uint8_t>(ShotOrigin::Sourc
 // so a steady state is one compare and a genuine change — including "stopped
 // overriding" — logs once.
 //
-// KillAura is deliberately NOT one of the sources here, and no longer moves the
-// local bullet by any route — see the measured-result block at the top of
-// KillAura.cpp.
+// KillAura is deliberately NOT one of the sources here: it moves the projectile
+// after creation, at the map add (ShotTransaction.h), where the game has already
+// written the natural spawn position.
 //
 //   GREP THE TRACE LOG FOR:  [ShotOrigin]
 static void Witness(ShotOrigin::Source src, const ShotOrigin::Request& req, float rx, float ry)
@@ -60,13 +60,8 @@ Source Resolve(const Request& req, float& outX, float& outY)
     outY = req.startY;
     Source src = Source::Vanilla;
 
-    // Rule 1 — KillAura USED TO LIVE HERE, and it never worked: rewriting the
-    // shooter-relative startX/startY the spawn method takes is overwritten a
-    // moment later by KJMONHENJEN::BDEBGEHBPCJ, the entity setter that writes
-    // the projectile's actual position. The follow-up that hooked THAT setter is
-    // also gone now (it bought no reach and made the hit claims less plausible —
-    // see KillAura.cpp), so this function is purely about the game's own spawn
-    // offset and killaura is not one of its rules.
+    // Rule 1 — KillAura USED TO LIVE HERE. It is now ShotTransaction, which edits
+    // the projectile at the map add instead (see ShotTransaction.h).
 
     if (req.isLocalShot && CombatTAB::FeatMagnetAim::IsEnabled()) {
         // Rule 2 — Magnet: verbatim the MagnetAim branch that used to live in

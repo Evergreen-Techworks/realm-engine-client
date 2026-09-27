@@ -8,6 +8,7 @@
 #include "../../projectiles/ProjectileTrajectory.h"
 #include "features/projectiles/ShotOrigin.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
+#include "features/combat/autoaim/shoot/ShotTransaction.h"
 #include "gui/tabs/WorldTAB.h"
 #include "BootGate.h"
 #include "Il2CppResolver.h"
@@ -150,7 +151,6 @@ static void WitnessShotOrigin(ShotOrigin::Source src)
         case ShotOrigin::Source::Vanilla:  name = "VANILLA";  break;
         case ShotOrigin::Source::Muzzle:   name = "MUZZLE";   break;
         case ShotOrigin::Source::Magnet:   name = "MAGNET";   break;
-        case ShotOrigin::Source::KillAura: name = "KILLAURA"; break;
     }
     DBG_FILE_LOG("[ProjectileTracking] local shot origin -> " << name);
 }
@@ -228,15 +228,18 @@ void* __fastcall SpawnProjectileDetour(
     if (!Mem::AddrOk(ret))
         return ret;
 
-    // KillAura used to arm a ONE-SHOT override here that teleported the LOCAL
-    // bullet next to the target (ShotOriginHook, a detour on
-    // KJMONHENJEN::BDEBGEHBPCJ). That hook is DELETED: measured, it bought no
-    // extra reach and is very likely why the at-range hit claims were refused —
-    // the local bullet arrived almost instantly while the server's simulation
-    // still had it in flight from the player's real position. See the
-    // measured-result block at the top of KillAura.cpp. The DLL still SOLVES the
-    // origin and publishes it for the outbound PLAYERSHOOT rewrite; nothing on
-    // this path touches the local bullet any more.
+    // Killaura's shot transaction records the exact projectile here (creation
+    // step of ShotTransaction.h). It only does anything inside a local shot
+    // scope opened by its Player.LGJPEFJKHHP detour, and only for the local
+    // player's own projectiles; everything else costs one thread-local read.
+    // The game's two trailing float arguments, named startX/startY in this
+    // detour, are the player's LIFETIME and SPEED multipliers (disassembly of
+    // KOBMINBDOBD on 86ad651b: the first is multiplied into
+    // ProjectileProperties.Lifetime, the second is stored as KDAJOMOFMJB). The
+    // values actually passed to the original are forwarded.
+    if (ShotTransaction::ScopeOpen())
+        ShotTransaction::OnProjectileCreated(ret, spawnId.ownerObjId, spawnId.bulletId, angle,
+                                             objProps, projProps, spawnX, spawnY);
 
     bool ownerIsEnemy = false;
     const bool ownerClassified = TryReadObjectPropertiesIsEnemy(objProps, ownerIsEnemy);

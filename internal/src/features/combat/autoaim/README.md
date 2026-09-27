@@ -66,10 +66,11 @@ modes/AutoFire.cpp:113,155,162    → ShootRuntime::EnsureResolved /
 modes/AutoAim.cpp:67,103,115      → AimHooks::SetTarget / AimHooks::Install
 ```
 
-`movement/dodge/ProjectileTracking.cpp` used to call
-`KillAura::GetAuthoritativeInput(...)` to arm the local-bullet displacement. That
-hook is deleted and the call with it, so the origin now leaves the DLL only over
-the `aim` IPC payload — see the measured-result block atop `modes/KillAura.cpp`.
+`movement/dodge/ProjectileTracking.cpp` calls
+`ShotTransaction::OnProjectileCreated(...)` from its spawn detour: that is the
+creation step of killaura's native shot edit (`shoot/ShotTransaction.h`), which
+reads the target through `KillAura::GetShotTarget(...)`. Nothing about the shot
+leaves the DLL over IPC any more — see the design block atop `modes/KillAura.cpp`.
 
 ## Entry points
 
@@ -79,7 +80,7 @@ the `aim` IPC payload — see the measured-result block atop `modes/KillAura.cpp
 | `FeatAutoAim` / `FeatMagnetAim` / `KillAura` / `AutoFire` / `AutoBreakWalls` ticks | `gui/tabs/CombatTab/CombatTAB.cpp:25-29` |
 | `AutoFire::GameThreadTick()` — script-armed trigger, game-update thread | `movement/dodge/DangerPlanner.cpp` `Detour_AppEngineUpdate` |
 | IPC feature keys (`autoAimEnabled`, `killaura*`, `autoFire*`, `autoBreakWalls*`, `projectileNoclipEnabled`) | `features/control/FeatureCommandRegistry.cpp:104-123` |
-| Hook teardown (`ProjNoclip::Uninstall`, `AutoAim::Uninstall`) | `platform/hooks/InitHooks.cpp:94,96` |
+| Hook teardown (`ProjNoclip::Uninstall`, `ShotTransaction::Uninstall`, `AutoAim::Uninstall`) | `platform/hooks/InitHooks.cpp` |
 
 ## Include rule
 
