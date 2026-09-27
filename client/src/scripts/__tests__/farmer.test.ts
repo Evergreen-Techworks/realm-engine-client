@@ -79,13 +79,15 @@ it('does not repeatedly reacquire a bag whose item actions failed', () => {
   sdk.loot.useFromBag.mockReturnValue(false);
   expect(farmer.handleLoot(10000)).toBe(true);
   vi.setSystemTime(11000);
-  expect(farmer.handleLoot(11000)).toBe(false);
-  for (let now = 11200; now < 20000; now += 200) {
+  expect(farmer.handleLoot(11000)).toBe(true);   // still retrying within LOOT_FINISH_MS (43e8a42)
+  vi.setSystemTime(13100);
+  expect(farmer.handleLoot(13100)).toBe(false);  // gives up once the bounded retry has elapsed
+  for (let now = 13300; now < 20000; now += 200) {
     vi.setSystemTime(now);
     expect(farmer.handleLoot(now)).toBe(false);
   }
-  vi.setSystemTime(42000);
-  expect(farmer.handleLoot(42000)).toBe(true);
+  vi.setSystemTime(43200);
+  expect(farmer.handleLoot(43200)).toBe(true);   // 30 s retry window after the give-up
 });
 it('defers a damaging loot approach that makes no progress, without immediately reacquiring it', () => {
   vi.useFakeTimers(); vi.setSystemTime(10000);
