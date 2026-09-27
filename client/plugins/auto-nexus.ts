@@ -853,7 +853,11 @@ export function register(ctx: PluginContext) {
 
   // ── Server health ────────────────────────────────────────────────────────
   function syncMaxHp(client: ClientConnection, state: NexusState): void {
-    const max = client.playerData.effectiveMaxHealth;
+    // Stat 3 (MaxHP) is the real maximum: in 33 recorded runs HP never exceeded
+    // it and reached it at full health, while `effectiveMaxHealth` (stat 3 plus
+    // the stat-46 boost again) read 775 for a 675-HP character and 325 for a
+    // 350-HP one. Thresholds are percentages of this value.
+    const max = client.playerData.maxHealth;
     if (Number.isFinite(max) && max > 0) state.maxHp = max;
   }
   function statusHealth(client: ClientConnection, packet: Packet, statuses: any[]): void {

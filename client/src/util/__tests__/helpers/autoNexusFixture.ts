@@ -56,7 +56,7 @@ export function fixture(testHooks?: { allowActivePredictionForTests?: boolean })
   const entityTypes = new Map<number, number>();
   const objects = new Map<number, { id: string; displayId: string; isEnemy: boolean; projectiles: Map<number, ProjectileFixture> }>();
   const client: any = { connected: true, objectId: 1, sendToServer: vi.fn(),
-    playerData: { effectiveMaxHealth: 1000, health: 800, mapName: 'Realm', defense: 0, effects: [0, 0] } };
+    playerData: { maxHealth: 1000, effectiveMaxHealth: 1000, health: 800, mapName: 'Realm', defense: 0, effects: [0, 0] } };
   client.recovery = new RecoveryCoordinator({
     isConnected: () => client.connected,
     sendEscape: () => client.sendToServer({ name: 'ESCAPE', modified: true }),
