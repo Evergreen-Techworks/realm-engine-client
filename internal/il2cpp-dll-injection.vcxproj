@@ -92,6 +92,7 @@
     <ClCompile Include="src\features\combat\autoaim\core\WeaponProfile.cpp" />
     <ClCompile Include="src\features\combat\autoaim\core\TargetSelector.cpp" />
     <ClCompile Include="src\features\combat\autoaim\shoot\AimHooks.cpp" />
+    <ClCompile Include="src\features\combat\autoaim\shoot\ShotTransaction.cpp" />
     <ClCompile Include="src\features\combat\autoaim\shoot\ShootRuntime.cpp" />
     <ClCompile Include="src\features\combat\autoaim\modes\KillAura.cpp" />
     <ClCompile Include="src\features\combat\autoaim\modes\AutoFire.cpp" />
@@ -224,6 +225,7 @@
     <ClInclude Include="src\features\combat\autoaim\core\WeaponProfile.h" />
     <ClInclude Include="src\features\combat\autoaim\core\TargetSelector.h" />
     <ClInclude Include="src\features\combat\autoaim\shoot\AimHooks.h" />
+    <ClInclude Include="src\features\combat\autoaim\shoot\ShotTransaction.h" />
     <ClInclude Include="src\features\combat\autoaim\shoot\ShootRuntime.h" />
     <ClInclude Include="src\features\combat\autoaim\modes\KillAura.h" />
     <ClInclude Include="src\features\combat\autoaim\modes\AutoFire.h" />

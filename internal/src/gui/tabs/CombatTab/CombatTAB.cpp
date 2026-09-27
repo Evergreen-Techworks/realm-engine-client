@@ -83,8 +83,7 @@ void Render()
     ImGui::EndDisabled();
     if (magnetAimOn)
         ImGui::TextDisabled("Manual spawn offset is overridden while Magnet Aim is enabled.");
-    ImGui::TextDisabled("Killaura no longer touches the local bullet — it drives the aim");
-    ImGui::TextDisabled("angle and the outbound shot origin only.");
+    ImGui::TextDisabled("Killaura moves its shots separately, after this offset (see below).");
     ImGui::TextDisabled("Vanilla ~0.3; at 0.3 the hook skips retargeting (no extra trig).");
 
     const char* originName = "?";
@@ -92,14 +91,11 @@ void Render()
         case ShotOrigin::Source::Vanilla:  originName = "VANILLA";  break;
         case ShotOrigin::Source::Muzzle:   originName = "MUZZLE";   break;
         case ShotOrigin::Source::Magnet:   originName = "MAGNET";   break;
-        case ShotOrigin::Source::KillAura: originName = "KILLAURA"; break;
     }
     ImGui::TextDisabled("Local spawn origin: %s", originName);
 
-    // The killaura local-bullet origin hook USED to report its arms/rewrites/
-    // drops counters here. It is gone (see the measured-result block at the top
-    // of KillAura.cpp): killaura's remaining counters are the ENEMYHIT / rewrite
-    // tallies on the client side, in the proxy log's `[Killaura] diag` line.
+    // Killaura's shot-edit counters are in its own section (KillAura::RenderSettings)
+    // and in the trace log's `[KillAura] alive` line.
     ImGui::Checkbox("Debug: weapon range ring + last spawn dot##muzzleDbg", &g_muzzleWeaponRangeDebug);
     ImGui::TextDisabled("Uses AutoAim range + last local SpawnProjectile world position.");
 

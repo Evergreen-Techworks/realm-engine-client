@@ -267,13 +267,7 @@ void SetLockTarget(int32_t enemyId) {
     s_aimModeInt.store(static_cast<int>(TargetSelector::Mode::Locked), std::memory_order_relaxed);
 }
 
-// Pure forwarder — precedence lives in AimHooks (see the note in AutoAim.h).
-// It routes through here rather than KillAura reaching into shoot/ directly so
-// the hook state keeps exactly one owner.
-void SetKillAuraAimOverride(bool active, float x, float y, int32_t enemyId) {
-    AimHooks::SetKillAuraOverride(active, x, y, enemyId);
-}
-
+// Pure forwarder to AimHooks, so the hook state keeps exactly one owner.
 float ShotAngleTo(float px, float py, float tx, float ty) {
     return AimHooks::ShotAngleTo(px, py, tx, ty);
 }

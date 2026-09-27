@@ -33,7 +33,6 @@ export type {
   CosmeticTexture,
 } from '../src/game-data/CosmeticCatalog.js';
 export type { DllThreat, DllGround } from '../src/bridge/DllThreatBus.js';
-export type { DllAim } from '../src/bridge/DllAimBus.js';
 
 // ── Values (core infra) ──────────────────────────────────────────────
 export { sendDllFeature } from '../src/bridge/DllFeatureBus.js'; // typed via plan 12
@@ -42,7 +41,6 @@ export { ConditionEffect } from '../src/constants/ConditionEffect.js';
 export { ClassId } from '../src/constants/ClassId.js';
 export { RuntimeScheduler } from '../src/util/RuntimeScheduler.js';
 export { getDllThreats, getDllGround, getDllThreatsAgeMs, getDllThreatsTruncated } from '../src/bridge/DllThreatBus.js';
-export { getDllAim, getDllAimAgeMs } from '../src/bridge/DllAimBus.js';
 
 export { tryInventoryAction, resolveInventoryAction } from '../src/util/InventoryActions.js';
 export { tomatoDamageWithDefense } from '../src/damage-sniffer/tomatoProjectileDamage.js';

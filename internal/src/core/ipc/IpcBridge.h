@@ -50,33 +50,6 @@ constexpr int kIpcMaxThreats = 32;
 // payload's trailing flag by EncodeThreats.
 void IpcBridge_PublishThreats(const IpcThreat* threats, int count, const IpcGround& ground, bool truncated);
 
-// ── Killaura aim state ───────────────────────────────────────────────────
-// Wire schema v2 (encoder: IpcMessages::EncodeAim, decoder: client
-// src/bridge/DllAimBus.ts). Keep the two in lockstep.
-//
-// v2 carries the SHOT ORIGIN ITSELF plus the generation that produced it, so the
-// outbound rewrite forwards the DLL's one authoritative value instead of
-// re-deriving a second one from tx/ty/standoff. See KillAura.h.
-constexpr int AIM_SCHEMA_VERSION = 2;
-
-struct IpcAim {
-    uint8_t  armed    = 0;    // 0/1
-    uint8_t  mode     = 0;    // 0 = at-target, 1 = at-mouse
-    int32_t  targetId = 0;
-    float    tx = 0.f, ty = 0.f;
-    float    px = 0.f, py = 0.f;
-    float    standoffTiles  = 0.f;
-    float    maxOffsetTiles = 0.f;
-    uint32_t stampMs = 0;
-    // v2. `originValid == 0` means the refresh refused an origin (the caps in
-    // KillAura::SolveShotOrigin) — consumers must NOT rewrite.
-    uint8_t  originValid = 0;
-    float    ox = 0.f, oy = 0.f;   // ABSOLUTE world tiles
-    uint32_t generation  = 0;      // KillAura refresh counter
-};
-
-void IpcBridge_PublishAim(const IpcAim& aim);
-
 // Auth/session state.
 const char* IpcBridge_GetUserId();
 bool        IpcBridge_IsAuthenticated();

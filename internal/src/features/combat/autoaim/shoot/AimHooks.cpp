@@ -34,14 +34,6 @@ static std::atomic<bool>  s_reverseCultStaff{ true };
 static std::atomic<bool>  s_offsetColossus{ false };
 static std::atomic<bool>  s_enabled{ false };
 
-// ── KillAura override slot (see the precedence note in AimHooks.h) ────────────
-// Deliberately independent of s_enabled: killaura drives the angle whether or
-// not AutoAim's master toggle is on.
-static std::atomic<bool>    s_kaActive{ false };
-static std::atomic<float>   s_kaX{ 0.f };
-static std::atomic<float>   s_kaY{ 0.f };
-static std::atomic<int32_t> s_kaTargetId{ 0 };
-
 // ── Hook function-pointer types ───────────────────────────────────────────────
 using ShootWithAngleFn    = void(__fastcall*)(void*, float, void*);
 using SendShotPacketFn    = void(__fastcall*)(void*, void*, int32_t, void*);
@@ -62,15 +54,9 @@ static float ApplyWeaponTweaks(float angle)
     return angle;
 }
 
-// Resolves the aim-source precedence documented in AimHooks.h. False when
-// nothing is driving the angle.
+// AutoAim's target, when it has one. False when nothing is driving the angle.
 static bool CurrentAim(float& tx, float& ty)
 {
-    if (s_kaActive.load(std::memory_order_relaxed)) {
-        tx = s_kaX.load(std::memory_order_relaxed);
-        ty = s_kaY.load(std::memory_order_relaxed);
-        return true;
-    }
     if (s_enabled.load(std::memory_order_relaxed) &&
         s_hasTarget.load(std::memory_order_relaxed)) {
         tx = s_targetX.load(std::memory_order_relaxed);
@@ -105,10 +91,9 @@ static bool RedirectAngle(float px, float py, float& outAngle)
 //
 //   GREP THE TRACE LOG FOR:  [AimHooks] aim source
 //
-// Transition-only. The setters below are called at tick rate (KillAura::Tick
-// refreshes at up to ~125 Hz), so this logs ONLY when the source actually
-// changes — which is exactly the question the log has to answer: is the angle
-// currently being driven by killaura, by AutoAim's own target, or by neither?
+// Transition-only. SetTarget is called at tick rate, so this logs ONLY when the
+// source actually changes — which is exactly the question the log has to
+// answer: is the angle currently being driven by AutoAim's own target, or not?
 // std::atomic exchange rather than a plain static: SetTarget is reachable from
 // the IPC thread via AutoAim::SetEnabled, and a lost race here would cost at
 // most one duplicate line.
@@ -116,16 +101,12 @@ static std::atomic<int> s_lastLoggedSrc{ -1 };
 
 static void NoteAimSource()
 {
-    const bool ka  = s_kaActive.load(std::memory_order_relaxed);
     const bool aim = s_enabled.load(std::memory_order_relaxed) &&
                      s_hasTarget.load(std::memory_order_relaxed);
-    const int src = ka ? 2 : (aim ? 1 : 0);
+    const int src = aim ? 1 : 0;
     if (s_lastLoggedSrc.exchange(src, std::memory_order_relaxed) == src) return;
 
-    if (src == 2) {
-        DBG_FILE_LOG("[AimHooks] aim source -> KILLAURA (shot angle points at killaura's pick, targetId="
-                     << s_kaTargetId.load(std::memory_order_relaxed) << ")");
-    } else if (src == 1) {
+    if (src == 1) {
         DBG_FILE_LOG("[AimHooks] aim source -> AUTOAIM (shot angle points at AutoAim's own target)");
     } else {
         DBG_FILE_LOG("[AimHooks] aim source -> NONE (no redirect; the game's own shot angle stands)");
@@ -215,7 +196,6 @@ void Uninstall()
 {
     if (!s_installed) return;
     s_enabled.store(false, std::memory_order_release);
-    s_kaActive.store(false, std::memory_order_release);
     NoteAimSource();
     Il2CppHook::UninstallMinHook(g_swaTarget, "AutoAim.SWA");
     Il2CppHook::UninstallMinHook(g_sspTarget, "AutoAim.SSP");
@@ -232,17 +212,6 @@ void SetTarget(bool hasTarget, float x, float y)
     s_targetX.store(x, std::memory_order_relaxed);
     s_targetY.store(y, std::memory_order_relaxed);
     s_enabled.store(true, std::memory_order_relaxed);
-    NoteAimSource();
-}
-
-void SetKillAuraOverride(bool active, float x, float y, int32_t enemyId)
-{
-    s_kaX.store(x, std::memory_order_relaxed);
-    s_kaY.store(y, std::memory_order_relaxed);
-    s_kaTargetId.store(active ? enemyId : 0, std::memory_order_relaxed);
-    // Store the coordinates BEFORE arming so the detours can never read a live
-    // flag against a stale point.
-    s_kaActive.store(active, std::memory_order_relaxed);
     NoteAimSource();
 }
 

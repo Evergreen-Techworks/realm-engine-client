@@ -127,17 +127,6 @@ void IpcBridge_PublishThreats(const IpcThreat* threats, int count, const IpcGrou
     s_threatsPending  = true;
 }
 
-static std::mutex s_aimMutex;
-static IpcAim     s_aim;
-static bool       s_aimPending = false;
-
-void IpcBridge_PublishAim(const IpcAim& aim)
-{
-    std::lock_guard<std::mutex> lk(s_aimMutex);
-    s_aim        = aim;
-    s_aimPending = true;
-}
-
 // Room for the compact versioned payload (see IpcMessages::EncodeThreats):
 // "<version>;<ground>;<threats>;<T>" — +4 over the raw segments for the leading
 // "1;" and trailing ";<T>" tokens.
@@ -165,24 +154,6 @@ static bool WriteThreats(HANDLE hPipe, char* msgBuf, int msgBufSize)
     if (IpcMessages::EncodeThreats(payload, sizeof(payload), local, n, localGround, truncated) < 0)
         return true;   // encode failure — skip this tick
     const int len = IpcMessages::BuildThreats(msgBuf, msgBufSize, payload);
-    return IpcFraming::WriteMessage(hPipe, msgBuf, len);
-}
-
-static bool WriteAim(HANDLE hPipe, char* msgBuf, int msgBufSize)
-{
-    IpcAim local{};
-    {
-        std::lock_guard<std::mutex> lk(s_aimMutex);
-        if (!s_aimPending) return true;   // nothing new
-        s_aimPending = false;
-        local = s_aim;
-    }
-
-    // Ample for the fixed 15-token layout (see IpcMessages::EncodeAim).
-    char payload[256] = {};
-    if (IpcMessages::EncodeAim(payload, sizeof(payload), local) < 0)
-        return true;   // encode failure — skip this tick
-    const int len = IpcMessages::BuildAim(msgBuf, msgBufSize, payload);
     return IpcFraming::WriteMessage(hPipe, msgBuf, len);
 }
 
@@ -479,11 +450,6 @@ DWORD WINAPI IpcBridgeThread(LPVOID)
             if (!connected) break;
 
             if (!WriteThreats(hPipe, msgBuf, sizeof(msgBuf))) {
-                connected = false;
-                break;
-            }
-
-            if (!WriteAim(hPipe, msgBuf, sizeof(msgBuf))) {
                 connected = false;
                 break;
             }

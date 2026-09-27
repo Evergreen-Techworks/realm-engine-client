@@ -9,6 +9,7 @@
 #include "Dx11.h"
 #include "ProjectileTracking.h"
 #include "features/combat/autoaim/modes/AutoAim.h"
+#include "features/combat/autoaim/shoot/ShotTransaction.h"
 #include "AoeTracking.h"
 #include "SpeedHack.h"
 #include "features/combat/autoaim/shoot/ProjNoclip.h"
@@ -93,6 +94,7 @@ void DetourUninitialization()
         DangerPlanner::Uninstall();
         ProjNoclip::Uninstall();
         AoeTracking::Uninstall();
+        ShotTransaction::Uninstall();   // its creation step lives in ProjectileTracking's detour
         AutoAim::Uninstall();
         ProjectileTracking::Uninstall();
 

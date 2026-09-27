@@ -1,13 +1,13 @@
 #include "pch-il2cpp.h"
 
 #include "features/combat/autoaim/modes/KillAura.h"
-#include "features/combat/autoaim/modes/AutoAim.h"
+#include "features/combat/autoaim/shoot/ShotTransaction.h"
 #include "features/combat/enemytracker/EnemyTracker.h"
 #include "features/combat/autoaim/core/TargetSelector.h"
 #include "features/combat/autoaim/core/WeaponProfile.h"
+#include "ProjectileTracking.h"
 #include "GameState.h"
 #include "game/objects/GameObjects.h"
-#include "core/ipc/IpcBridge.h"
 #include "gui/tabs/TestTAB.h"
 #include "game/math/W2S.h"
 #include "DbgFileLog.h"
@@ -20,46 +20,34 @@
 #include <cstdio>
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MEASURED RESULT — 2026-08-25. READ THIS BEFORE RE-ADDING ORIGIN DISPLACEMENT.
+// DESIGN — native shot transaction (owner decision, 2026-09-26)
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// 1. The disconnects are FIXED, and the fix must stay. Rewriting BOTH
-//    PLAYERSHOOT.projectilePosition AND playerPosition into a self-consistent
-//    frame ("I am standing at B and my bullet started at B + muzzle") was
-//    measured at 81/81 rewrites ACCEPTED, zero FAILURE, zero drops. The old
-//    projectilePosition-only shape disconnected 4/4. That is what
-//    `spoofPlayerPosition` (default ON, client/plugins/killaura.ts) buys.
+// This file chooses WHAT to shoot at. ShotTransaction (shoot/ShotTransaction.*)
+// edits HOW each local shot leaves, inside the game's own attack call, so the
+// game keeps ownership of cooldowns, bullet ids, projectile counts, bursts,
+// sub-attacks, spread and spawn offsets:
 //
-// 2. But enemies STILL do not die at range — and they DO die when the player is
-//    adjacent to them. That pattern is the whole finding. The server validates
-//    an ENEMYHIT against ITS OWN position for the player, maintained from the
-//    MOVE stream, NOT against the position claimed in the shot packet. Our
-//    claimed playerPosition is accepted-but-not-authoritative.
+//   * Per projectile, at the map add, the origin moves from the player toward
+//     the aim point — at most 2 tiles from the player, stopping `standoff` short
+//     of the aim point — and the angle points from that origin at the aim point
+//     with the game's own spread offset kept.
+//   * The aim point is this file's target (lead-predicted from the moved origin
+//     with the projectile's own speed) when that target is within the
+//     projectile's range of the moved origin; otherwise the mouse point, under
+//     the same range rule; otherwise the shot is left natural.
+//   * The outgoing PlayerShoot borrows the same origin and angle while it is
+//     serialized, and the projectile keeps its edit only if the message was
+//     really written with those values in the same session. Nothing else moves:
+//     playerPosition stays the player's real position.
 //
-// 3. THEREFORE: origin displacement cannot extend effective range, at ANY
-//    offset. Reach would require lying in the MOVE stream too — out of scope
-//    and a well-known ban heuristic (a per-shot teleport out and back).
+// History: the earlier proxy-side PLAYERSHOOT rewrite and a local-only bullet
+// move (2026-08) displaced the origin by up to the whole selection radius and
+// never kept the local projectile and the packet in step; both are removed.
 //
-// 4. THEREFORE: the LOCAL bullet displacement (the old ShotOriginHook, a detour
-//    on KJMONHENJEN::BDEBGEHBPCJ) was pure downside and is very likely WHY the
-//    at-range hit claims were refused: it made the local bullet arrive at the
-//    enemy almost instantly while the server's simulation still had it in
-//    flight from the player's real position, so the hit claim was implausible.
-//    Close range worked precisely because the displacement was small there.
-//    That hook and its files are DELETED. The DLL-side origin SOLVE and its
-//    publication over the `aim` IPC stay — the outbound rewrite consumes them
-//    and that path now works.
-//
-// 5. THEREFORE: killaura aims inside the range the player ACTUALLY has. It used
-//    to pin TargetSelector's range override at a flat 16 tiles, which REPLACED
-//    the weapon-derived radius; it locked targets out of reach and ~70% of the
-//    resulting shots were refused downstream by the origin cap
-//    (staleSkips=291 vs rewrites=81). The user slider is now a shrink-only CAP
-//    over the weapon's own resolved range, defaulting to 0 = auto.
-//
-// If you are about to re-add displacement: the numbers above are the reason not
-// to. Nothing changes until the MOVE stream changes, and that is a different
-// (and far riskier) feature.
+// Tick publishes a ShotTarget (target position/velocity, mouse point, standoff)
+// every refresh; the game thread reads it per projectile. Target selection,
+// retention and stickiness below are unchanged.
 // ═══════════════════════════════════════════════════════════════════════════
 
 namespace {
@@ -69,19 +57,17 @@ static std::atomic<bool>    s_enabled{ false };
 static std::atomic<int>     s_modeInt{ 0 };
 // 0 = AUTO (the default): the selection radius is the WEAPON's own resolved
 // range, derived by TargetSelector from the calibrated projectile properties. A
-// non-zero value is a shrink-only CAP over that radius — see SetRangeTiles and
-// point 5 of the measured-result block above. The previous flat 16 REPLACED the
-// weapon range and is exactly what this default undoes.
+// non-zero value is a shrink-only CAP over that radius — see SetRangeTiles. A
+// previous flat 16 REPLACED the weapon range and locked targets out of reach;
+// this default undoes that.
 static std::atomic<float>   s_rangeTiles{ 0.f };
 static std::atomic<float>   s_standoffTiles{ 0.35f };
 // The radius the last armed tick actually selected on (weapon range under the
-// cap). Published so the overlay, the retention drop radius and the origin cap
-// all read the SAME number the selector filtered on. 0 until the first armed
-// tick.
+// cap). Published so the overlay and the retention drop radius read the SAME
+// number the selector filtered on. 0 until the first armed tick.
 static std::atomic<float>   s_effRangeTiles{ 0.f };
 static std::atomic<int32_t> s_forcedTargetId{ 0 };
 static std::atomic<bool>    s_overlayEnabled{ true };   // default ON — see KillAura.h
-static std::atomic<bool>    s_driveAimAngle{ true };   // default ON — see KillAura.h
 
 // ── Target-retention hysteresis ──────────────────────────────────────────────
 // Tick() refreshes at up to ~125 Hz. A SINGLE refresh where the selector comes
@@ -108,21 +94,6 @@ static constexpr ULONGLONG kKaRetainMs = 250ULL;
 // point: an enemy sitting exactly on the selection radius — routine while the
 // dodge is walking the player around — cannot flap in and out of the lock.
 static constexpr float kKaRetainRangeMarginTiles = 2.0f;
-
-// ── Origin hard cap (derived, no longer a user slider) ───────────────────────
-// The solved origin sits at (target - standoff along the shot angle), so it can
-// never be further from the player than the SELECTION radius plus a hair. This
-// margin absorbs the player moving between the solve and the shot, and the
-// standoff itself.
-//
-// It USED to be a user slider (`killauraMaxOffsetTiles`, default 12) while the
-// selection radius was pinned at 16. Those two numbers disagreed, so the cap
-// refused every origin for a target between 12 and 16 tiles out — measured at
-// staleSkips=291 against rewrites=81. A cap derived from the radius it is meant
-// to bound cannot drift from it. The value is still PUBLISHED on the aim payload
-// so the client's independent re-check (against the packet's own player
-// position) uses the identical bound.
-static constexpr float kKaOriginCapMarginTiles = 2.0f;
 
 // ── Selection stickiness (incumbent bias) ────────────────────────────────────
 // Retention above only bridges selector MISSES. It does nothing about the other
@@ -155,7 +126,7 @@ static constexpr float kKaSwitchMarginTiles = 1.5f;
 static constexpr ULONGLONG kKaSuppressLogEveryMs = 1000ULL;
 static constexpr ULONGLONG kKaSuppressLogFloorMs = 250ULL;
 
-// ── Published state (read lock-free from the projectile-spawn detour) ────────
+// ── Published state (render thread writes; overlay/GUI read) ─────────────────
 static std::atomic<bool>     s_armed{ false };
 static std::atomic<int32_t>  s_targetId{ 0 };
 static std::atomic<float>    s_tx{ 0.f };
@@ -164,43 +135,31 @@ static std::atomic<float>    s_px{ 0.f };
 static std::atomic<float>    s_py{ 0.f };
 static std::atomic<uint32_t> s_stampMs{ 0 };
 
-// ── The ONE authoritative input (see KillAura.h) ─────────────────────────────
-// Written on the render thread from ApplyState; read on the game thread from
-// the projectile-spawn detour. The GENERATION doubles as the sequence number of
-// a seqlock: it is stored LAST (release) and re-read by the consumer after the
-// payload, so a refresh landing mid-read is DETECTED and refused rather than
-// handing back a half-old, half-new origin. GetState()'s "plain value copy of
-// atomics" is fine for a UI readout; it is not fine for the one value two
-// separate rewrites have to agree on.
-//
-// s_inGen counts REFRESHES, not accepted origins: every ApplyState bumps it, so
-// a disarm invalidates any in-flight read the same way a re-arm does. Starts at
-// 0, which the consumer treats as "nothing published yet".
-static std::atomic<uint32_t> s_inGen{ 0 };
-static std::atomic<bool>     s_inValid{ false };   // did THIS refresh accept an origin?
-static std::atomic<float>    s_inOx{ 0.f };
-static std::atomic<float>    s_inOy{ 0.f };
-static std::atomic<float>    s_inAngle{ 0.f };
-static std::atomic<int32_t>  s_inTargetId{ 0 };
-static std::atomic<uint32_t> s_inStampMs{ 0 };
+// ── The shot target slot (render thread writes, game thread reads) ───────────
+// A struct copy behind a one-word spin flag. The writer holds it for a copy of
+// ~50 bytes; a reader that finds it held retries a few times and otherwise
+// reports "no input", which leaves that one shot natural. Never blocks either
+// thread for longer than that.
+static std::atomic_flag       s_slotBusy = ATOMIC_FLAG_INIT;
+static KillAura::ShotTarget   s_slot;
+static bool                   s_slotValid = false;
+static uint32_t               s_slotGen   = 0;
 
-// Freshness window for GetAuthoritativeInput. Tick self-throttles to 8 ms
-// (~125 Hz), so a live publisher is never more than ~2 refreshes behind; 50 ms
-// is ~6 refreshes of slack — wide enough to ride a frame hitch, narrow enough
-// that a stalled render thread stops arming rewrites almost immediately.
-// GetTickCount64 is 10-16 ms coarse, so the effective window is ~34-66 ms.
-static constexpr uint32_t kKaInputMaxAgeMs = 50u;
+static void WriteSlot(bool valid, const KillAura::ShotTarget& t)
+{
+    while (s_slotBusy.test_and_set(std::memory_order_acquire)) { /* reader copy is short */ }
+    s_slot = t;
+    s_slot.generation = ++s_slotGen;
+    s_slotValid = valid;
+    s_slotBusy.clear(std::memory_order_release);
+}
 
 // ── Render-thread-only bookkeeping ───────────────────────────────────────────
 static ULONGLONG s_lastThrottleMs      = 0;
-static ULONGLONG s_lastIdlePublishMs   = 0;
 static ULONGLONG s_lastAliveLogMs      = 0;
-static ULONGLONG s_armedSinceMs        = 0;
-static uint64_t  s_publishCount        = 0;
 static int       s_lastArmed           = -1;   // -1 = no edge observed yet
 static int32_t   s_lastTargetId        = 0;
 static bool      s_loggedFirstSelect   = false;
-static unsigned  s_noListenerLogN      = 0;
 static int32_t   s_heldTargetId        = 0;   // current lock (0 = none), retention subject
 static ULONGLONG s_retainSinceMs       = 0;   // wall clock of the first miss in this run
 static unsigned  s_retainMisses        = 0;   // consecutive selector misses bridged so far
@@ -216,93 +175,51 @@ static float ClampF(float v, float lo, float hi, float fallback)
     return v;
 }
 
-// The ONE shot-origin formula:
-//   origin = target - (cos(shotAngle), sin(shotAngle)) * standoff
-// UNCHANGED from the ComputeShotOrigin this replaces — same formula, same caps,
-// same fail-closed contract. All that moved is WHERE it runs: once per refresh
-// inside ApplyState, instead of once per consumer.
-//
-// False (ox/oy untouched) when an input is not finite or when the result would
-// sit further than maxOff from the local player. maxOff is DERIVED from the
-// selection radius (see kKaOriginCapMarginTiles), so it can no longer refuse an
-// origin for a target the selector itself just accepted.
-static bool SolveShotOrigin(float shotAngleRad,
-                            float tx, float ty, float px, float py,
-                            float standoff, float maxOff,
-                            float& ox, float& oy)
+// Live position and velocity of `id` from the current EnemyTracker snapshot.
+static bool SnapshotEntry(int32_t id, float& x, float& y, float& vx, float& vy)
 {
-    if (!std::isfinite(shotAngleRad)) return false;
-    if (!std::isfinite(tx) || !std::isfinite(ty) ||
-        !std::isfinite(px) || !std::isfinite(py) ||
-        !std::isfinite(standoff) || !std::isfinite(maxOff))
-        return false;
-
-    const float nx = tx - std::cos(shotAngleRad) * standoff;
-    const float ny = ty - std::sin(shotAngleRad) * standoff;
-    if (!std::isfinite(nx) || !std::isfinite(ny)) return false;
-
-    // Hard cap — never move the origin further than maxOffset from the player.
-    const float dx = nx - px, dy = ny - py;
-    if (dx * dx + dy * dy > maxOff * maxOff) return false;
-
-    ox = nx;
-    oy = ny;
-    return true;
+    if (id == 0) return false;
+    for (const EnemyTracker::Entry& e : EnemyTracker::GetSnapshot()) {
+        if (e.id != id) continue;
+        if (!std::isfinite(e.x) || !std::isfinite(e.y)) return false;
+        x = e.x; y = e.y;
+        vx = std::isfinite(e.vx) ? e.vx : 0.f;
+        vy = std::isfinite(e.vy) ? e.vy : 0.f;
+        return true;
+    }
+    return false;
 }
 
-// Commits one refresh of the authoritative input. Called from ApplyState ONLY —
-// this is the single writer. `valid == false` still bumps the generation, so a
-// disarm is a refresh like any other and no consumer can keep reading a sample
-// the lock no longer backs.
-static void CommitInput(bool valid, float ox, float oy, float angle,
-                        int32_t targetId, uint32_t stamp)
+// Publishes what the shot edit reads: the committed target (its live position
+// and velocity; the game thread does its own lead from the moved origin), the
+// mouse point, and the standoff. Called from ApplyState, i.e. every refresh
+// while enabled. When the target is not in the snapshot (a bridged retention
+// miss) the last committed aim point stands in, without velocity.
+static void PublishShotTarget(bool armed, int32_t targetId, float tx, float ty, uint32_t stamp)
 {
-    s_inValid.store(false, std::memory_order_release);   // fields are in flux
-    s_inOx.store(ox, std::memory_order_relaxed);
-    s_inOy.store(oy, std::memory_order_relaxed);
-    s_inAngle.store(angle, std::memory_order_relaxed);
-    s_inTargetId.store(targetId, std::memory_order_relaxed);
-    s_inStampMs.store(stamp, std::memory_order_relaxed);
-    s_inValid.store(valid, std::memory_order_release);
-    // Generation LAST: the consumer reads it first and last and refuses a
-    // mismatch, so this store is what makes the payload above visible-or-refused.
-    s_inGen.fetch_add(1, std::memory_order_release);
+    KillAura::ShotTarget t;
+    if (armed && targetId != 0) {
+        float x = tx, y = ty, vx = 0.f, vy = 0.f;
+        if (!SnapshotEntry(targetId, x, y, vx, vy)) { x = tx; y = ty; vx = 0.f; vy = 0.f; }
+        if (std::isfinite(x) && std::isfinite(y)) {
+            t.hasTarget = true;
+            t.targetId  = targetId;
+            t.ex = x; t.ey = y; t.vx = vx; t.vy = vy;
+        }
+    }
+    const float mx = TestTAB::GetMouseWorldX();
+    const float my = TestTAB::GetMouseWorldY();
+    if ((mx != 0.f || my != 0.f) && std::isfinite(mx) && std::isfinite(my)) {
+        t.hasMouse = true;
+        t.mx = mx; t.my = my;
+    }
+    t.standoffTiles = s_standoffTiles.load(std::memory_order_relaxed);
+    t.stampMs = stamp;
+    WriteSlot(true, t);
 }
 
-static void PublishNow(bool armed, int32_t targetId,
-                       float tx, float ty, float px, float py, uint32_t stamp,
-                       bool originValid, float ox, float oy, uint32_t generation)
-{
-    IpcAim a{};
-    a.armed           = armed ? 1 : 0;
-    a.mode            = static_cast<uint8_t>(s_modeInt.load(std::memory_order_relaxed) == 1 ? 1 : 0);
-    a.targetId        = targetId;
-    a.tx              = tx;
-    a.ty              = ty;
-    a.px              = px;
-    a.py              = py;
-    a.standoffTiles   = s_standoffTiles.load(std::memory_order_relaxed);
-    // Derived from the radius the selector filtered on — see
-    // kKaOriginCapMarginTiles. The client re-checks the origin against this same
-    // bound using the PACKET'S own player position, so publishing the derived
-    // value (rather than a separate user slider) is what keeps the two nets
-    // measuring the same thing.
-    a.maxOffsetTiles  = s_effRangeTiles.load(std::memory_order_relaxed)
-                      + kKaOriginCapMarginTiles;
-    a.stampMs         = stamp;
-    // The solved origin itself, carried with the generation that produced it —
-    // not a recipe for the client to re-derive one from. This payload is now the
-    // ONLY route the origin takes out of the DLL.
-    a.originValid     = originValid ? 1 : 0;
-    a.ox              = ox;
-    a.oy              = oy;
-    a.generation      = generation;
-    IpcBridge_PublishAim(a);
-    ++s_publishCount;
-}
-
-// Stores the tick result, logs the ARMED/disarmed EDGE only, and publishes:
-// every tick while armed, plus exactly one more publish on the disarm edge.
+// Stores the tick result, logs the ARMED/disarmed EDGE only, and publishes the
+// shot target.
 static void ApplyState(bool armed, int32_t targetId,
                        float tx, float ty, float px, float py,
                        const char* disarmReason)
@@ -321,7 +238,6 @@ static void ApplyState(bool armed, int32_t targetId,
     const bool edge     = (s_lastArmed != nowArmed);
     if (edge) {
         if (armed) {
-            s_armedSinceMs = GetTickCount64();
             DBG_FILE_LOG("[KillAura] ARMED targetId=" << targetId
                          << " mode=" << s_modeInt.load(std::memory_order_relaxed));
         } else {
@@ -335,63 +251,10 @@ static void ApplyState(bool armed, int32_t targetId,
     // ApplyState(false, ...) may leave a stale target behind for retention.
     if (!armed) { s_heldTargetId = 0; s_retainMisses = 0; }
 
-    // ── Aim-angle handoff ────────────────────────────────────────────────────
-    // Push the committed pick at the shot-angle redirect, so the bullet is
-    // AIMED at the target instead of only being spawned next to it. This is the
-    // single commit point for the lock, so it is also the single place the
-    // override is armed and cleared — no route out of Tick() can leave a stale
-    // target driving the angle. Precedence vs AutoAim's own target is documented
-    // on AutoAim::SetKillAuraAimOverride.
-    //
-    // The setting is re-read every call, so turning it off releases the angle
-    // back to AutoAim on the very next tick even while killaura stays armed.
-    if (s_driveAimAngle.load(std::memory_order_relaxed))
-        AutoAim::SetKillAuraAimOverride(armed, tx, ty, armed ? targetId : 0);
-    else
-        AutoAim::SetKillAuraAimOverride(false, 0.f, 0.f, 0);
-
-    // ── The ONE shot-origin computation ──────────────────────────────────────
-    // Right here, once, from the values THIS call is committing — the same
-    // (tx, ty) the aim-angle handoff above just pushed and the same (px, py)
-    // the tick read. Both rewrites downstream read the result; neither solves
-    // its own. See KillAura.h for why that duplication was the bug.
-    //
-    // The angle is atan2(target - player), which is exactly the formula the shot
-    // will be redirected to (AimHooks::RedirectAngle, same expression from the
-    // player's real position) evaluated at most one refresh (~8 ms) earlier.
-    // Two knowingly-accepted approximations, neither of which moves the origin
-    // more than 2*standoff (~0.7 tiles) off the target:
-    //   * "Drive aim angle" OFF leaves the player's own angle driving the shot,
-    //     so the origin is placed on killaura's side of the target rather than
-    //     the player's.
-    //   * AimHooks::ApplyWeaponTweaks (the reverse-cult-staff +pi) is not
-    //     mirrored here.
-    // Both are far cheaper than reintroducing a second, independent solve.
-    float ox = 0.f, oy = 0.f, originAngle = 0.f;
-    bool  originValid = false;
-    if (armed) {
-        originAngle = std::atan2(ty - py, tx - px);
-        originValid = SolveShotOrigin(originAngle, tx, ty, px, py,
-                                      s_standoffTiles.load(std::memory_order_relaxed),
-                                      s_effRangeTiles.load(std::memory_order_relaxed)
-                                          + kKaOriginCapMarginTiles,
-                                      ox, oy);
-    }
-    CommitInput(originValid, ox, oy, originAngle, armed ? targetId : 0, stamp);
-    const uint32_t gen = s_inGen.load(std::memory_order_relaxed);
-
-    if (armed || edge)
-        PublishNow(armed, armed ? targetId : 0, tx, ty, px, py, stamp,
-                   originValid, ox, oy, gen);
-
-    // "Client not listening": armed for > 2 s while the bridge is down means
-    // nothing is draining the aim publisher. Rate-limited so it stays readable.
-    if (armed && !IpcBridge_IsAuthenticated()
-        && GetTickCount64() - s_armedSinceMs > 2000ULL
-        && (s_noListenerLogN++ % 240) == 0) {
-        DBG_FILE_LOG("[KillAura] armed but bridge not connected — aim payloads are not being drained"
-                     << " pub=" << s_publishCount);
-    }
+    // Disabled publishes nothing (the slot is cleared in Tick); enabled-but-
+    // disarmed still publishes the mouse point for the fallback.
+    if (s_enabled.load(std::memory_order_relaxed))
+        PublishShotTarget(armed, targetId, tx, ty, stamp);
 }
 
 // Selection reference point — mirrors TargetSelector::Select(): the player, or
@@ -567,14 +430,27 @@ static bool SnapshotPos(int32_t id, float& x, float& y)
     return false;
 }
 
+
+// 30 s heartbeat with the shot-edit counters, so a trace log says whether shots
+// were being edited, kept, undone or skipped (and why) without a debugger.
 static void LogAlive()
 {
     const ULONGLONG now = GetTickCount64();
     if (now - s_lastAliveLogMs < 30000ULL) return;
     s_lastAliveLogMs = now;
+    const ShotTransaction::Stats st = ShotTransaction::GetStats();
     DBG_FILE_LOG("[KillAura] alive armed=" << (s_armed.load(std::memory_order_relaxed) ? 1 : 0)
                  << " id=" << s_targetId.load(std::memory_order_relaxed)
-                 << " pub=" << s_publishCount);
+                 << " txn=" << ShotTransaction::InstallStatus()
+                 << " scopes=" << st.scopes << " staged=" << st.staged
+                 << " edited=" << st.edited << " committed=" << st.committed
+                 << " (target " << st.targetShots << ", mouse " << st.mouseShots << ")"
+                 << " restored=" << st.restored << " skipped=" << st.skipped
+                 << " mismatch=" << st.packetMismatch << " notSerialized=" << st.notSerialized
+                 << " sessionChanged=" << st.sessionChanged
+                 << " containerDisagree=" << st.containerDisagree
+                 << " lastSkip=" << ShotTransaction::LastSkipReason()
+                 << " lastRestore=" << ShotTransaction::LastRestoreReason());
 }
 
 } // namespace
@@ -584,25 +460,11 @@ namespace KillAura {
 void Tick()
 {
     if (!s_enabled.load(std::memory_order_relaxed)) {
-        // Disabled: hold the disarm edge, then re-assert armed=0 at most every
-        // 250 ms so a client that connects later still learns the state.
-        const bool wasArmed = s_armed.load(std::memory_order_relaxed);
-        const ULONGLONG now = GetTickCount64();
-        if (wasArmed || s_lastArmed != 0) {
+        // Disabled: hold the disarm edge once and withdraw the shot target, so
+        // the game thread stops editing on the very next shot.
+        if (s_armed.load(std::memory_order_relaxed) || s_lastArmed != 0) {
             ApplyState(false, 0, 0.f, 0.f, 0.f, 0.f, "disabled");
-            s_lastIdlePublishMs = now;
-            return;
-        }
-        if (now - s_lastIdlePublishMs >= 250ULL) {
-            s_lastIdlePublishMs = now;
-            // Idle re-assert: disarmed, so there is no origin to carry. The
-            // generation is NOT bumped — nothing was refreshed — it is echoed
-            // so the client can see it is the same stale-but-honest disarm.
-            PublishNow(false, 0, 0.f, 0.f,
-                       s_px.load(std::memory_order_relaxed),
-                       s_py.load(std::memory_order_relaxed),
-                       static_cast<uint32_t>(now),
-                       false, 0.f, 0.f, s_inGen.load(std::memory_order_relaxed));
+            WriteSlot(false, KillAura::ShotTarget{});
         }
         return;
     }
@@ -610,6 +472,11 @@ void Tick()
     const ULONGLONG wall = GetTickCount64();
     if (wall - s_lastThrottleMs < 8ULL) return;
     s_lastThrottleMs = wall;
+
+    // Both self-guard and retry on their own schedule; the shot edit needs the
+    // projectile spawn hook for its creation step.
+    ProjectileTracking::Install();
+    ShotTransaction::Install();
 
     LogAlive();
 
@@ -649,8 +516,8 @@ void Tick()
     const int32_t forced   = s_forcedTargetId.load(std::memory_order_relaxed);
     const bool    atMouse  = (s_modeInt.load(std::memory_order_relaxed) == 1);
     // The user's setting is a SHRINK-ONLY cap (0 = auto); the radius that
-    // actually applies comes from the selector so retention, the overlay rings
-    // and the origin cap below cannot disagree with what Select() filtered on.
+    // actually applies comes from the selector so retention and the overlay
+    // rings cannot disagree with what Select() filtered on.
     // SelectKillAura takes the CAP and derives the radius itself — handing it
     // the already-derived radius would shrink it a second time.
     const float   rangeCap = s_rangeTiles.load(std::memory_order_relaxed);
@@ -798,11 +665,6 @@ float GetStandoffTiles()          { return s_standoffTiles.load(std::memory_orde
 void SetOverlayEnabled(bool on) { s_overlayEnabled.store(on, std::memory_order_relaxed); }
 bool IsOverlayEnabled()         { return s_overlayEnabled.load(std::memory_order_relaxed); }
 
-// Only stores the flag: the handoff itself is re-evaluated in ApplyState on the
-// next tick, so this is safe to call from the IPC thread.
-void SetDriveAimAngle(bool on)  { s_driveAimAngle.store(on, std::memory_order_relaxed); }
-bool IsDriveAimAngle()          { return s_driveAimAngle.load(std::memory_order_relaxed); }
-
 void    SetForcedTargetId(int32_t id) { s_forcedTargetId.store(id, std::memory_order_relaxed); }
 int32_t GetForcedTargetId()           { return s_forcedTargetId.load(std::memory_order_relaxed); }
 
@@ -819,37 +681,23 @@ State GetState()
     return s;
 }
 
-// NO CALLER as of the local-displacement removal — see the note on this function
-// in KillAura.h. Kept, not deleted, because the seqlock behind it is the only
-// torn-free way to hand the origin to an in-process consumer.
-bool GetAuthoritativeInput(Input& out)
+// Any thread; see KillAura.h. The reader copies under the same spin flag the
+// render-thread writer holds for one struct copy.
+bool GetShotTarget(ShotTarget& out)
 {
-    // Generation first and last — see CommitInput. Anything but an exact match
-    // means a refresh landed while we were reading, and a torn origin is the
-    // precise failure this whole mechanism exists to prevent, so refuse it.
-    const uint32_t g0 = s_inGen.load(std::memory_order_acquire);
-    if (g0 == 0) return false;                                   // nothing published yet
-    if (!s_inValid.load(std::memory_order_acquire)) return false; // refresh accepted no origin
-
-    Input v;
-    v.ox         = s_inOx.load(std::memory_order_relaxed);
-    v.oy         = s_inOy.load(std::memory_order_relaxed);
-    v.angleRad   = s_inAngle.load(std::memory_order_relaxed);
-    v.targetId   = s_inTargetId.load(std::memory_order_relaxed);
-    v.stampMs    = s_inStampMs.load(std::memory_order_relaxed);
-    v.generation = g0;
-
-    if (s_inGen.load(std::memory_order_acquire) != g0) return false;   // torn
-
-    // Freshness. Unsigned wrap is intentional and correct across the 49.7-day
-    // GetTickCount64 low-word rollover: the difference stays small.
-    const uint32_t now = static_cast<uint32_t>(GetTickCount64());
-    if (now - v.stampMs > kKaInputMaxAgeMs) return false;
-
-    if (!std::isfinite(v.ox) || !std::isfinite(v.oy)) return false;
-
-    out = v;
-    return true;
+    if (!s_enabled.load(std::memory_order_relaxed)) return false;
+    for (int attempt = 0; attempt < 64; ++attempt) {
+        if (!s_slotBusy.test_and_set(std::memory_order_acquire)) {
+            const bool valid = s_slotValid;
+            const ShotTarget copy = s_slot;
+            s_slotBusy.clear(std::memory_order_release);
+            if (!valid) return false;
+            out = copy;
+            return true;
+        }
+        YieldProcessor();
+    }
+    return false;
 }
 
 void RenderSettings()
@@ -862,7 +710,10 @@ void RenderSettings()
         SetEnabled(on);
     ImGui::SameLine(); ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Redirects where an already-fired shot originates so it lands on the\nchosen target. It never pulls the trigger.");
+        ImGui::SetTooltip("Edits each of your shots as the game fires it: the projectile starts up to\n"
+                          "2 tiles from you toward the target (or the mouse when there is no\n"
+                          "reachable target) and flies at it, and the shot packet says the same.\n"
+                          "It never pulls the trigger.");
 
     ImGui::Spacing();
     ImGui::TextDisabled("Target mode");
@@ -881,31 +732,19 @@ void RenderSettings()
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("0 = AUTO: select inside the range your WEAPON actually has\n"
                           "(derived from the calibrated projectile properties).\n\n"
-                          "A non-zero value can only SHRINK that radius, never extend it:\n"
-                          "the server validates hits against its own position for you, so\n"
-                          "no amount of shot-packet spoofing gives you extra reach — it\n"
-                          "only produces locks whose hit claims get refused.");
+                          "A non-zero value can only SHRINK that radius. Each shot is\n"
+                          "still checked on its own: it is edited only when the target\n"
+                          "is within that projectile's range of the moved origin.");
 
     float standoff = GetStandoffTiles();
     if (ImGui::SliderFloat("Standoff (tiles)##kaStandoff", &standoff, 0.05f, 1.5f, "%.2f"))
         SetStandoffTiles(standoff);
     ImGui::SameLine(); ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Tiles the shot origin is backed off the target, along the shot angle.");
+        ImGui::SetTooltip("How far short of the aim point the moved shot origin stops.\n"
+                          "The origin never moves more than 2 tiles from you.");
 
     ImGui::PopItemWidth();
-
-    bool driveAim = IsDriveAimAngle();
-    if (ImGui::Checkbox("Drive aim angle##kaDriveAim", &driveAim))
-        SetDriveAimAngle(driveAim);
-    ImGui::SameLine(); ImGui::TextDisabled("(?)");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Points the SHOT ANGLE at the locked target. The bullet still\n"
-                          "leaves your real position, so the server's own simulation of\n"
-                          "the shot agrees it hit — this is the half of killaura that\n"
-                          "actually works.\n\n"
-                          "While killaura is armed this overrides auto-aim's own target.\n"
-                          "Off = killaura is origin-only, as it was before.");
 
     bool overlay = IsOverlayEnabled();
     if (ImGui::Checkbox("Lock overlay##kaOverlay", &overlay))
@@ -930,8 +769,8 @@ void RenderSettings()
         ImGui::TextDisabled("disarmed");
     }
 
-    // The uncalibrated case is a REFUSAL, not a bug — say so out loud rather
-    // than leaving "disarmed" to look like a broken feature.
+    // The uncalibrated case is a REFUSAL to select, not a bug — say so out loud
+    // rather than leaving "disarmed" to look like a broken feature.
     const WeaponProfile& wp = WeaponCalibrator::GetProfile();
     if (!wp.isResolved) {
         ImGui::TextColored(ImVec4(1.f, 0.75f, 0.35f, 1.f),
@@ -942,6 +781,18 @@ void RenderSettings()
             static_cast<double>(wp.rangeTiles),
             GetRangeTiles() > 0.f ? ", capped" : "");
     }
+
+    // Shot edit counters (cumulative this session).
+    const ShotTransaction::Stats tx = ShotTransaction::GetStats();
+    ImGui::TextDisabled("shot edit: %s", ShotTransaction::InstallStatus());
+    ImGui::TextDisabled("kept %llu (target %llu, mouse %llu)  undone %llu  natural %llu",
+        static_cast<unsigned long long>(tx.committed),
+        static_cast<unsigned long long>(tx.targetShots),
+        static_cast<unsigned long long>(tx.mouseShots),
+        static_cast<unsigned long long>(tx.restored),
+        static_cast<unsigned long long>(tx.skipped));
+    ImGui::TextDisabled("last natural: %s   last undone: %s",
+        ShotTransaction::LastSkipReason(), ShotTransaction::LastRestoreReason());
 }
 
 void RenderOverlay(float camX, float camY, float angle, float zoom, float cx, float cy)

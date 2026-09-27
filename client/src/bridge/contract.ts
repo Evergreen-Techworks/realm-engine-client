@@ -28,7 +28,7 @@ export const BRIDGE = {
 /**
  * Message `type` strings exchanged with the DLL — all plaintext, no `seq`/`mac`.
  * Incoming (DLL→client): Hello, Heartbeat, HeartbeatResp, Player, HotkeyEvent,
- * UnresolvedClasses, Threats, Aim.
+ * UnresolvedClasses, Threats.
  * Outgoing (client→DLL): SetFeature (plus Heartbeat/HeartbeatResp).
  * Each must match a builder in IpcMessages.cpp.
  */
@@ -40,7 +40,6 @@ export const DllMessageType = {
   HotkeyEvent: 'hotkeyEvent',
   UnresolvedClasses: 'unresolvedClasses',
   Threats: 'threats',
-  Aim: 'aim',
   NavStatus: 'navStatus',
   EncounterCapture: 'encounterCapture',
   CaptureTrigger: 'captureTrigger',
@@ -132,7 +131,7 @@ export const DLL_ONLY_FEATURE_KEYS = [
   'autoDodgeHitboxPadding', 'autoDodgeHorizonMs', 'autoDodgeWallAvoid',
   'autoFireHotkey',
   'dodgeHitAversion', 'dodgeIdleMinGain', 'dodgeReplanOnSpawn', 'dodgeStickiness',
-  'killauraDriveAimEnabled', 'killauraOverlayEnabled',
+  'killauraOverlayEnabled',
   'dodgeStrategicBias', 'dodgeStrategicNearWaypoint', 'dodgeTightLeash',
   'dodgeWasdLookahead',
   'overlayEnabled', 'pluginToggleHotkeys',
