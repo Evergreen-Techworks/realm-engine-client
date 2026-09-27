@@ -214,7 +214,10 @@ export function install(deps: BridgeDeps): void {
       pkt.data.slotObject1 = { objectId: c.objectId, slotId: slotA, objectType: a };
       pkt.data.slotObject2 = { objectId: c.objectId, slotId: slotB, objectType: b };
       pkt.modified = true;
-      tryInventoryAction(c, () => `${typeIdAtSlot(c.playerData, slotA)}:${typeIdAtSlot(c.playerData, slotB)}`, () => c.sendToServer(pkt));
+      tryInventoryAction(c,
+        () => `${typeIdAtSlot(c.playerData, slotA)}:${typeIdAtSlot(c.playerData, slotB)}`,
+        () => c.sendToServer(pkt),
+        { fromSlot: { objectId: c.objectId, slotId: slotA }, toSlot: { objectId: c.objectId, slotId: slotB } });
     } catch {
       // Void API: ignore stale-slot/disconnect races.
     }

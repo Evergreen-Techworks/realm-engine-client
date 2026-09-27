@@ -44,7 +44,7 @@ export { RuntimeScheduler } from '../src/util/RuntimeScheduler.js';
 export { getDllThreats, getDllGround, getDllThreatsAgeMs, getDllThreatsTruncated } from '../src/bridge/DllThreatBus.js';
 export { getDllAim, getDllAimAgeMs } from '../src/bridge/DllAimBus.js';
 
-export { tryInventoryAction } from '../src/util/InventoryActions.js';
+export { tryInventoryAction, resolveInventoryAction } from '../src/util/InventoryActions.js';
 export { tomatoDamageWithDefense } from '../src/damage-sniffer/tomatoProjectileDamage.js';
 export { connectionGameTime } from '../src/util/connectionGameTime.js';
 export { observeAbilityMana, reserveAbilityMana, abilityCooldownMs, abilityCooldownReady, reserveAbilityCooldown } from '../src/util/AbilityMana.js';

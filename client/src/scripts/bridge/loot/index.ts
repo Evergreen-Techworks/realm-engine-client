@@ -1,4 +1,4 @@
-import { tryInventoryAction } from '../../../util/InventoryActions.js';
+import { tryInventoryAction, resolveInventoryAction } from '../../../util/InventoryActions.js';
 import { connectionGameTime } from '../../../util/connectionGameTime.js';
 import { loot } from '@realmengine/sdk';
 import type { LootBag, LootItem, LootRarity, PickupOptions } from '@realmengine/sdk';
@@ -338,7 +338,8 @@ function sendInventorySwap(
   return tryInventoryAction(c,
     () => getCurrentBagSlotItem(deps, bagObjectId, bagSlot) !== itemId
       && readDestination() !== beforeDestination ? 'settled' : 'pending',
-    () => c.sendToServer(pkt));
+    () => c.sendToServer(pkt),
+    { fromSlot: { objectId: bagObjectId, slotId: bagSlot }, toSlot: { objectId: c.objectId, slotId: dest.packetSlotId } });
 }
 
 // ─── shouldPickup logic ───────────────────────────────────────────────────────
@@ -412,6 +413,25 @@ export function install(deps: BridgeDeps): void {
 
     deps.proxy.hookPacket('MAPINFO', () => {
       activeBags.clear();
+    });
+
+    // The server's authoritative answer to an INVENTORYSWAP (success or
+    // rejection) — release the shared inventory-action gate the moment we hear
+    // it, instead of waiting on the read()/timeout fallback in
+    // tryInventoryAction. See resolveInventoryAction's doc for why a rejection
+    // otherwise held the gate for its full 5000ms bound.
+    deps.proxy.hookPacket('INVRESULT', (client, packet) => {
+      try {
+        if (!packet.isDefined) return;
+        const fromSlot = packet.data.fromSlot as { objectId?: number; slotId?: number } | undefined;
+        const toSlot = packet.data.toSlot as { objectId?: number; slotId?: number } | undefined;
+        if (!fromSlot || !toSlot) return;
+        resolveInventoryAction(client,
+          { objectId: Number(fromSlot.objectId ?? -1), slotId: Number(fromSlot.slotId ?? -1) },
+          { objectId: Number(toSlot.objectId ?? -1), slotId: Number(toSlot.slotId ?? -1) });
+      } catch (err) {
+        Logger.warn('BridgeLoot', `INVRESULT hook error: ${(err as Error).message}`);
+      }
     });
   }
 

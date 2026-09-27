@@ -234,5 +234,6 @@ export function sendLootSwap(
   return tryInventoryAction(client,
     () => Number(ctx.worldState?.getEntity(bag.objectId)?.stats?.[String(StatType.Inventory0 + bagSlot)] ?? -1) !== itemId
       && readDestination() !== beforeDestination ? 'settled' : 'pending',
-    () => client.sendToServer(packet));
+    () => client.sendToServer(packet),
+    { fromSlot: { objectId: bag.objectId, slotId: bagSlot }, toSlot: { objectId: client.objectId, slotId: destination.packetSlotId } });
 }
