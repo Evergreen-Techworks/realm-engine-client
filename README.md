@@ -1,138 +1,147 @@
-  # Realm Engine — Free Open-Source RotMG Hacks, Client & SDK
+# Realm Engine — Open-Source RotMG Automation
 
-  [![Website](https://img.shields.io/badge/site-realmengine.org-14b8a6)](https://realmengine.org)
-  [![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/uEKPPWz9k4)
-  [![License](https://img.shields.io/badge/license-Open%20Source-14b8a6)](LICENSE)
-  [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Wine%2FProton-0d9488)](https://realmengine.org/download)
-  [![Stars](https://img.shields.io/github/stars/Evergreen-Techworks/realm-engine-client?style=social)](https://github.com/Evergreen-Techworks/realm-engine-client/stargazers)
-  [![Buy Me A Coffee](https://img.shields.io/badge/buy_me_a_coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://www.buymeacoffee.com/egtw)
+[![Website](https://img.shields.io/badge/site-realmengine.org-14b8a6)](https://realmengine.org)
+[![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/uEKPPWz9k4)
+[![License: MIT](https://img.shields.io/badge/license-MIT-14b8a6)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Wine%2FProton-0d9488)](https://realmengine.org/download)
+[![Stars](https://img.shields.io/github/stars/Evergreen-Techworks/realm-engine-client?style=social)](https://github.com/Evergreen-Techworks/realm-engine-client/stargazers)
 
-  **Realm Engine** is the free, open-source hacking platform for **Realm of the Mad God (RotMG / Exalt)**. Autonexus, WASD autododge, cursor autoaim, autoloot, advanced pathfinding, tile spoofing, hack builder — every line on GitHub. No subscription, no gem grind, no paywall.
+**Build it yourself, or let us do it for $2.**
 
-  > **TL;DR:** A full RotMG hack stack — Electron client, IL2CPP DLL injector, and TypeScript SDK — published free and open source. Clone it, fork it, sell your own builds.
+Realm Engine is an open-source automation platform for **Realm of the Mad God (RotMG / Exalt)**. This repository holds the full desktop client, the native engine, the TypeScript SDK, and the hack library. Build everything yourself for free, or skip the setup and grab the ready-to-run Windows build for $2.
 
-  🌐 **Site:** [realmengine.org](https://realmengine.org)  ·  💬 **Discord:** [discord.gg/uEKPPWz9k4](https://discord.gg/uEKPPWz9k4)  ·  ⬇️ **Download:** [realmengine.org/download](https://realmengine.org/download)
+No subscription. Full source available.
 
-  ---
+🌐 **Site:** [realmengine.org](https://realmengine.org)  ·  💬 **Discord:** [discord.gg/uEKPPWz9k4](https://discord.gg/uEKPPWz9k4)  ·  ⬇️ **Ready-to-run build:** [realmengine.org/download](https://realmengine.org/download)
 
-  ## ✨ Features
+---
 
-  ### Combat
-  - **Autonexus** — pulls you out the instant a fight turns lethal
-  - **WASD Autododge** — movement-aware dodge logic for cleaner projectile avoidance
-  - **Cursor Autoaim** — locks aim on target while you move
-  - **Damage Sniffer** — live damage readout for you and nearby players on bosses
+## Two ways to run it
 
-  ### Movement
-  - **Advanced Pathfinding** — smooth, reliable routing
-  - **Tile Spoofing** — stops push tiles from yanking you off course
-  - **Auto Kill Gods** — clear godlands for steady fame and loot
-  - **Quick Travel** — get where you're going without the busywork
+|  | **Build from source** | **Ready-to-run build** |
+|---|---|---|
+| Price | $0 | $2 per download |
+| What you get | Everything in this repo | The latest approved Windows build, compiled and packaged |
+| Setup | Node, Visual Studio 2022, a game dump (see [Quick start](#-quick-start)) | None: download and run |
+| Features | Everything | Everything, same project |
+| Delivery | `git clone` | Privately through the [Discord](https://discord.gg/uEKPPWz9k4) bot |
+| Best for | Developers and tinkerers | People who just want to play |
 
-  ### Hacks & Tools
-  - **Hack Builder + Behavior Tab** — visual triggers, conditions, and actions, no code required
-  - **Autoloot** — rules for tiers, gear categories, and consumables
-  - **TypeScript SDK** — write your own hacks against a typed API
+**You're paying for convenience, not access to the source.** No feature is held back from the source build.
 
-  ---
+> ⚠️ Third-party tools can lead to game-account bans and lost progress. Use Realm Engine at your own risk. Read the [purchase and game-risk notice](https://realmengine.org/purchase-notice) before buying.
 
-  ## 🧱 Repository layout
+---
 
-  ### [`client/`](./client) — Electron desktop client (`realm-engine`)
-  RotMG Exalt MITM proxy + automation dashboard. Windows-targeted Electron app that talks to the game, runs the hacks, and hosts the UI. Built with `electron-builder` (`npm run dist`, `dist:installer`, `dist:portable`) and includes a native module step (`npm run build:native`).
+## ✨ Features
 
-  ### [`internal/`](./internal) — C++ IL2CPP DLL injection
-  Native side. Visual Studio 2022 solution (`il2cpp-dll-injection.sln`) that produces `version.dll` — a Windows DLL that hijacks the real `version.dll` for auto-load at game launch, hooks IL2CPP methods, and detours `IDXGISwapChain::Present` for the in-game overlay. Output goes
-  to `x64/Release/`.
+Realm Engine is a modular platform with tools for combat, movement, loot, scripting, and behavior, not just a collection of toggles.
 
-  ### [`sdk/`](./sdk) — TypeScript script-development kit (`@realmengine/sdk`)
-  The typed surface that hack authors write against. `npm run build` produces the package; consume it from your own script project, then drop the compiled output into the client's plugin folder.
+### Combat
+- **Autonexus**: pulls you out the instant a fight turns lethal
+- **WASD Autododge**: movement-aware dodge logic for cleaner projectile avoidance
+- **Cursor Autoaim**: keeps your aim locked on target while you move
+- **Damage Sniffer**: live damage readout for you and nearby players on bosses
 
-  ---
+### Movement
+- **Advanced Pathfinding**: smooth, reliable routing
+- **Quick Travel**: get where you're going without the busywork
+- **Tile Spoofing**: stops push tiles from yanking you off course
+- **Auto Kill Gods**: clear godlands for steady fame and loot
 
-  ## 🚀 Quick Start
+### Build your own
+- **Hack Builder**: compose movement, combat, and loot logic into your own hack
+- **Visual Behavior Editor**: triggers, conditions, and actions, no code required
+- **Autoloot**: rules for tiers, gear categories, and consumables
+- **TypeScript SDK**: write your own scripts and plugins against a typed API
 
-  **Run the desktop client (no build required):**
-  👉 [realmengine.org/download](https://realmengine.org/download)
+---
 
-  **Build the client from source (Windows):**
-  ```bash
-  git clone https://github.com/Evergreen-Techworks/realm-engine-client.git
-  cd realm-engine-client/client
-  npm install
-  npm run dev       # dev mode
-  npm run dist      # production installer build
-  ```
+## 🧱 Repository layout
 
-  **Linux / Steam Deck (experimental, through Wine or Proton):**
-  Run the Windows Realm Engine build in the same Wine/Proton environment used
-  for RotMG Exalt. The client discovers standard Steam, Flatpak Steam, Proton,
-  and Steam Deck game locations through Wine's `Z:` mapping. For a custom game
-  location, set `ROTMG_PATH` to the Exalt `Production` directory. A Linux source
-  build can reuse the prebuilt `client/assets/realm-engine.dll`; MSBuild is not
-  required for bundling the Electron client.
+### [`client/`](./client): Electron desktop client
+RotMG Exalt proxy and automation dashboard. A Windows-targeted Electron app that talks to the game, runs the hacks, and hosts the UI. Built with `electron-builder` (`npm run dist`, `dist:installer`, `dist:portable`).
 
-  **Build the native DLL (Visual Studio 2022, toolset v145):**
-  ```bash
-  cd internal
-  msbuild il2cpp-dll-injection.sln /p:Configuration=Release /p:Platform=x64
-  # output: x64/Release/version.dll
-  ```
+### [`internal/`](./internal): native engine (C++)
+Visual Studio 2022 solution (`il2cpp-dll-injection.sln`) that builds `realm-engine.dll`, which hooks IL2CPP methods and draws the in-game overlay. Output goes straight to `client/assets/`.
 
-  **Build the SDK:**
-  ```bash
-  cd sdk
-  npm install
-  npm run build
-  ```
+### [`client/packages/sdk`](./client/packages/sdk): TypeScript SDK (`@realmengine/sdk`)
+The typed surface that hack authors write against. See [`sdk/README.md`](./sdk/README.md) for how to write your first plugin.
 
-  ---
+---
 
-  ## ❓ FAQ
+## 🚀 Quick start
 
-  **Wait — it's actually free?**
-  Yes. Engine, client, every hack. No subscription, no gem economy, no trial that turns into a bill.
+**Just want to play?** Get the ready-to-run build: 👉 [realmengine.org/download](https://realmengine.org/download)
 
-  **Why is Realm Engine open source?**
-  The RotMG hacking scene gets better when the tools aren't held hostage. Raising the floor beats hoarding a moat.
+**Building from source (Windows):**
 
-  **Can I sell hacks I build on top of this?**
-  Yes. Fork it, build on it, charge for your own work. Just don't claim you wrote the parts you didn't.
+Some large files are generated from your own game install instead of being committed: the IL2CPP headers (they change with every RotMG update) and the game XML. Follow [SETUP.md](SETUP.md) to regenerate them first. You need RotMG Exalt installed, Node.js, and Visual Studio 2022.
 
-  **What OS is supported?**
-  Windows x64 is fully supported. Linux and Steam Deck are supported
-  experimentally through Wine/Proton. The injection layer remains a Win32 DLL,
-  so this is compatibility-layer support rather than a native Linux injection
-  backend. macOS is not supported.
+```bash
+git clone https://github.com/Evergreen-Techworks/realm-engine-client.git
+cd realm-engine-client
 
-  **How do I report a bug or request a feature?**
-  Open an issue here or hop into the [Discord](https://discord.gg/uEKPPWz9k4) — bug reports and feature requests are triaged there.
+# After the SETUP.md steps, build the native binaries into client/assets/
+build-all.bat
 
-  ---
+cd client
+npm install
+npm run dev            # dev mode
+npm run dist:portable  # portable Windows EXE
+```
 
-  ## 🤝 Contributing
+**Build the SDK on its own:**
+```bash
+cd client/packages/sdk
+npm install
+npm run build
+```
 
-  PRs welcome. Pick an open issue, ship a hack, or rewrite something better.
+**Linux / Steam Deck (experimental, through Wine or Proton):**
+Run the Windows build in the same Wine/Proton environment you use for RotMG Exalt. The client finds standard Steam, Flatpak Steam, Proton, and Steam Deck game locations through Wine's `Z:` mapping. For a custom game location, set `ROTMG_PATH` to the Exalt `Production` directory.
 
-  ---
+---
 
-  ## 🔗 Related
+## ❓ FAQ
 
-  - **Website & web app:** [realmengine.org](https://realmengine.org)
-  - **Discord community:** [discord.gg/uEKPPWz9k4](https://discord.gg/uEKPPWz9k4)
-  - **Lore / origin story:** [realmengine.org/lore](https://realmengine.org/lore)
+**Is Realm Engine free?**
+Yes. Realm Engine is open source and can be built from this repo for free. If you'd rather skip the development environment and build process, a prepared Windows build is available for $2 per download.
 
-  ---
+**Why does the prepared build cost $2?**
+You're paying for the convenience of having the current version compiled, packaged, and ready to run. You're always free to compile the same project yourself.
 
-  ## 📄 License
+**Is there a subscription?**
+No.
 
-  Open source. See [LICENSE](LICENSE) for details.
+**Do I get fewer features if I build it myself?**
+No. There's no feature tiering. The source build is the same project.
 
-  ---
+**Can I modify Realm Engine?**
+Yes. It's MIT-licensed. Fork it, change it, build on the SDK, and create your own tools.
 
-  <details>
-  <summary><strong>Keywords (for search indexing)</strong></summary>
+**What OS is supported?**
+Windows x64 is fully supported. Linux and Steam Deck work experimentally through Wine/Proton. The native layer is still a Win32 DLL, so this is compatibility-layer support, not a native Linux backend. macOS is not supported.
 
-  realm engine, realm engine rotmg, rotmg hacks, rotmg cheats, rotmg mods, rotmg hack client, rotmg mod client, realm of the mad god hacks, realm of the mad god mods, open source rotmg, rotmg autonexus, rotmg autododge, rotmg autoloot, rotmg pathfinding, rotmg hack builder, exalt
-   hacks, exalt mods, IL2CPP injection, RotMG, RotMG Exalt, mcp, rotmg mcp, realm of the mad god mcp, realm engine mcp, model context protocol, mcp server, rotmg mcp server, claude mcp, rotmg diagnostics, il2cpp mcp, game mcp server
-  </details>
+**How do I report a bug or request a feature?**
+Open an issue here or join the [Discord](https://discord.gg/uEKPPWz9k4), where bug reports and feature requests are triaged.
+
+---
+
+## 🤝 Contributing
+
+Pull requests are welcome. Pick an open issue, ship a hack, or improve something that's already here. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## 📄 License
+
+MIT. See [LICENSE](LICENSE).
+
+---
+
+<details>
+<summary><strong>Keywords (for search indexing)</strong></summary>
+
+realm engine, realm engine rotmg, rotmg hacks, rotmg cheats, rotmg mods, rotmg hack client, rotmg mod client, realm of the mad god hacks, realm of the mad god mods, open source rotmg, rotmg automation, rotmg autonexus, rotmg autododge, rotmg autoloot, rotmg pathfinding, rotmg hack builder, exalt hacks, exalt mods, IL2CPP injection, RotMG, RotMG Exalt, mcp, rotmg mcp, realm of the mad god mcp, realm engine mcp, model context protocol, mcp server, rotmg mcp server, claude mcp, rotmg diagnostics, il2cpp mcp, game mcp server
+</details>
