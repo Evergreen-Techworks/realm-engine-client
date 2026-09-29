@@ -39,14 +39,14 @@ Realm Engine is a modular platform with tools for combat, movement, loot, script
 
 ### Combat
 - **Autonexus**: pulls you out the instant a fight turns lethal
-- **WASD Autododge**: movement-aware dodge logic for cleaner projectile avoidance
-- **Cursor Autoaim**: keeps your aim locked on target while you move
+- **Autododge**: movement-aware dodge logic for cleaner projectile avoidance
+- **Autoaim**: keeps your aim locked on target while you move
 - **Damage Sniffer**: live damage readout for you and nearby players on bosses
 
 ### Movement
 - **Advanced Pathfinding**: smooth, reliable routing
 - **Quick Travel**: get where you're going without the busywork
-- **Tile Spoofing**: stops push tiles from yanking you off course
+- **Player Spoofer**: change how your character looks to other players
 - **Auto Kill Gods**: clear godlands for steady fame and loot
 
 ### Build your own
