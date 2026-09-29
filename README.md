@@ -35,7 +35,7 @@ No subscription. Full source available.
 
 ## ✨ Features
 
-Realm Engine is a modular platform with tools for combat, movement, loot, scripting, and behavior, not just a collection of toggles.
+Realm Engine is a modular platform with tools for combat, movement, loot, and scripting, not just a collection of toggles.
 
 ### Combat
 - **Autonexus**: pulls you out the instant a fight turns lethal
@@ -50,8 +50,8 @@ Realm Engine is a modular platform with tools for combat, movement, loot, script
 - **Auto Kill Gods**: clear godlands for steady fame and loot
 
 ### Build your own
-- **Hack Builder**: compose movement, combat, and loot logic into your own hack
-- **Visual Behavior Editor**: triggers, conditions, and actions, no code required
+- **Script Editor**: build automation scripts from flow steps and triggers, no code required
+- **Plugins**: turn features on and off, or add plugins from the community
 - **Autoloot**: rules for tiers, gear categories, and consumables
 - **TypeScript SDK**: write your own scripts and plugins against a typed API
 
@@ -143,5 +143,5 @@ MIT. See [LICENSE](LICENSE).
 <details>
 <summary><strong>Keywords (for search indexing)</strong></summary>
 
-realm engine, realm engine rotmg, rotmg hacks, rotmg cheats, rotmg mods, rotmg hack client, rotmg mod client, realm of the mad god hacks, realm of the mad god mods, open source rotmg, rotmg automation, rotmg autonexus, rotmg autododge, rotmg autoloot, rotmg pathfinding, rotmg hack builder, exalt hacks, exalt mods, IL2CPP injection, RotMG, RotMG Exalt, mcp, rotmg mcp, realm of the mad god mcp, realm engine mcp, model context protocol, mcp server, rotmg mcp server, claude mcp, rotmg diagnostics, il2cpp mcp, game mcp server
+realm engine, realm engine rotmg, rotmg hacks, rotmg cheats, rotmg mods, rotmg hack client, rotmg mod client, realm of the mad god hacks, realm of the mad god mods, open source rotmg, rotmg automation, rotmg autonexus, rotmg autododge, rotmg autoloot, rotmg pathfinding, rotmg scripts, rotmg script editor, exalt hacks, exalt mods, IL2CPP injection, RotMG, RotMG Exalt, mcp, rotmg mcp, realm of the mad god mcp, realm engine mcp, model context protocol, mcp server, rotmg mcp server, claude mcp, rotmg diagnostics, il2cpp mcp, game mcp server
 </details>
