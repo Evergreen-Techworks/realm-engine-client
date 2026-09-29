@@ -42,3 +42,51 @@ Task 13: actual-coordinator fixture exposes three ownership failures before the 
 **Task 14 current-game evidence is pending.** No sanitized current-pin observation captures are available, so no captured-replay test, invented fixture or skipped acceptance test is supplied. Needed cases: ordinary hits, combined volleys, heals interleaved with damage, condition changes, ground/AoE, server-anchor disagreement, and deliberate harness stalls. Capture expectations must be independently reviewed, including false predictive escapes, missed threats, double charges, ambiguity and actual request/reconnect/map timings. Lethal scenarios belong in deterministic replay, never deliberate danger to the owner's character.
 
 No active-policy formula or default is approved. A later activation patch requires real evidence, an explicit owner decision, tests and default/migration review. Native 16 ms polling is not end-to-end escape latency; no survival guarantee, gameplay fix or measured latency improvement is claimed. No Windows mirror, linked native build, portable build, push or deployment occurred.
+
+## Activation — owner decision 2026-09-22
+
+The owner activated prediction by default and widened the forecast's damage
+sources, ending the observation-only era. This section is the explicit owner
+decision the paragraph above required; the Task 14 capture gate remains
+unmet and the owner's live sessions are the acceptance path.
+
+- `PredictiveNexusMode` (Off/Observe/Active, default **Active**) replaces
+  `PredictionMode`. The observe-era key is retired like the pre-09-06
+  settings — saved values are ignored by config replay, so a stale
+  `PredictionMode: 'observe'` cannot keep prediction off. An invalid value
+  still never activates. The test-permission hook is removed; production and
+  tests drive the same setting.
+- Global evidence ambiguity no longer vetoes a prediction-origin escape.
+  It was sticky for a whole map once any enemy with live shots died, which
+  would have kept active prediction dead in exactly the fights that kill.
+  Per-shot ambiguity still refuses that shot; the escape log names
+  `evidence=ambiguous`.
+- The forecast counts bullets without a packet record at the DLL's fallback
+  damage, else the assumed damage (175, piercing — MultiTool Class89's value,
+  `PredictiveNexusAssumedDamage`). `PredictiveNexusUnknownDamage` (default
+  on) switches it off. A packet record always wins; the synthetic 9999
+  marker, ground/AoE geometry and XML-only damage still never charge.
+- `escape()` reports whether a request went out, so a latched recovery keeps
+  observing the rest of the volley instead of truncating the observation.
+
+### Option C — full #52 coverage (same day, owner decision)
+
+- **Ground**: `PredictiveNexusGround` (default on) arms the native tile
+  predictor (`autoNexusTilePredict`) and charges its ground forecasts — the
+  soonest event within the horizon, in full (piercing; tile damage has no
+  projectile defense rules here). The wire GROUNDDAMAGE/AOEACK packets carry
+  no damage, so the native channel is the only ground source.
+- **AoE**: `PredictiveNexusAoe` (default on) tracks server AOE packets —
+  which carry their own position, radius, damage and armorPierce — for their
+  duration (seconds/ms per AoeCapturePolicy) and charges every zone the
+  player stands inside, at the packet's own numbers.
+- **Regen**: the method_29 model (2*(1+0.12*VIT)/s, +20 Healing, none Sick,
+  −20 Bleeding, halved in combat) accrues as credit between explicit server
+  HPs and lifts `predictedHp`, capped at max HP; any explicit HP restarts it.
+  It is a prediction like any other — it can only delay, never veto.
+- **Unknown PLAYERHIT**: a hit the game reports for a bullet the server never
+  announced charges the assumed damage as a real shot record, so the forecast
+  cannot double-count it and a server DAMAGE reconciles it like any charge.
+  Follows `PredictiveNexusUnknownDamage`.
+- Still never: packet holding/dropping/modification, native ESCAPE, the debug
+  overlay, XML-only damage as a bullet source.

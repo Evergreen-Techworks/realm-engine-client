@@ -9,19 +9,20 @@ vi.mock('../../../plugins/api.js', async (importOriginal) => ({
 import { sendDllFeature, getDllGround } from '../../../plugins/api.js';
 import { fixture } from './helpers/autoNexusFixture.js';
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.clearAllMocks(); });
-it('ignores guessed client hits, ground/AoE warnings and damage-less forecasts, including legacy configuration', () => {
+it('ignores guessed client hits, malformed ground and damage-less forecasts, including legacy configuration', () => {
   const f = fixture(); f.hp(800);
   for (const name of ['PLAYERHIT','GROUNDDAMAGE','AOE','AOEACK','MOVE'])
     expect(f.emit(name, { damage: 29000, objectId: 2, bulletId: 3 }).send).toBe(true);
   vi.advanceTimersByTime(10000);
   expect(f.client.sendToServer).not.toHaveBeenCalled();
-  expect(getDllGround).not.toHaveBeenCalled();
+  // Ground is consulted now (option C, 2026-09-22) but this mock carries no
+  // rawDamage/tHitMs events, so nothing is chargeable from it.
+  expect(getDllGround).toHaveBeenCalled();
   for (const key of ['PredictedAutoNexusHealth','PredictedAutoNexusTime','PredictedUsesForceThreshold','IncludeGroundTicks',
     'UnattributedMargin','HoldLethalPlayerHit','LethalHoldTime','LethalCushionHealth','DrawOverlay'])
     expect(f.settings.has(key)).toBe(false);
-  for (const key of ['autoNexusTilePredict','autoNexusDebugDraw'])
-    expect(sendDllFeature).toHaveBeenCalledWith(key, false);
-  expect(sendDllFeature).not.toHaveBeenCalledWith('autoNexusTilePredict', true);
+  expect(sendDllFeature).toHaveBeenCalledWith('autoNexusTilePredict', true);   // ground counting default on
+  expect(sendDllFeature).not.toHaveBeenCalledWith('autoNexusDebugDraw', true);
 });
 it('uses the current server HP packet and preserves its delivery', () => {
   const f = fixture(); f.hp(800);
