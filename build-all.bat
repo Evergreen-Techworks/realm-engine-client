@@ -4,12 +4,21 @@ REM  build-all.bat  -  full Realm Engine build, end to end.
 REM  This Batch File was AI generated. 
 REM
 REM      HUMAN WRITTEN - READ THIS!
-REM  Requirements: 
-REM                Visual Studio 2022 or newer with the C++ x64 tools (the
-REM                installed platform toolset is auto-detected), Node.js/npm,
-REM                .NET 10 runtime,
-REM                tools/Il2CppInspector.exe (build Il2CppInspectorPro **CLI**),
-REM                tools/global-metadata.decrypted.dat (https://builds.him.is/latest/game_files/global-metadata.decrypted.dat)
+REM  Requirements (all six are verified by the [0/6] preflight, which prints
+REM  every missing one before giving up - see the :check_* subroutines):
+REM                1. Visual Studio 2022+ with the C++ x64 workload
+REM                   (Build Tools alone are enough; toolset auto-detected)
+REM                2. .NET 10 runtime (tools\Il2CppInspector.exe is a
+REM                   framework-dependent .NET 10 app and will not start
+REM                   without it)
+REM                3. Node.js 20.12+ / npm
+REM                4. RotMG Exalt installed (auto-located; or set ROTMG_PATH)
+REM                5. Internet - builds.him.is serves the game metadata
+REM                   (already having tools\global-metadata.decrypted.dat
+REM                   satisfies this without a network probe)
+REM                6. Windows x64 with ~4 GB free on this drive
+REM                tools\Il2CppInspector.exe SHIPS in this repo - do NOT
+REM                build Il2CppInspectorPro yourself.
 REM       The rest is AI slop feel free to ignore.
 REM
 REM  Produces a packaged client (installer + portable, or just portable) with
@@ -35,10 +44,35 @@ echo ==================== Realm Engine : full build ====================
 
 REM --- [0/6] Preflight --------------------------------------------------------
 echo [0/6] Preflight checks...
+REM Every check prints [ERROR] lines and KEEPS GOING, so one run surfaces all
+REM missing prerequisites at once instead of only the first. PREREQ_FAIL gates
+REM the build after the last check. Keep this list in sync with the header
+REM comment above, SETUP.md, and the GameAssembly probe order in
+REM tools/gen-il2cpp-headers.ps1.
+set "PREREQ_FAIL=0"
+if not defined LOCALAPPDATA set "LOCALAPPDATA=%USERPROFILE%\AppData\Local"
+
 if not exist "%ROOT%tools\Il2CppInspector.exe" (
-  echo   [ERROR] tools\Il2CppInspector.exe missing. Build the CLI first.
+  echo   [ERROR] tools\Il2CppInspector.exe missing. It is committed to this
+  echo          repo, so your clone is incomplete - re-clone and retry.
+  set "PREREQ_FAIL=1"
+) else (
+  echo   [OK]   Il2CppInspector CLI present ^(committed^)
+)
+
+call :check_vs
+call :check_dotnet
+call :check_node
+call :check_game
+call :check_net
+call :check_disk
+
+if "%PREREQ_FAIL%"=="1" (
+  echo.
+  echo   Prerequisites failed - fix every [ERROR] above, then re-run.
   goto :fail
 )
+
 if not exist "%ROOT%tools\global-metadata.decrypted.dat" (
   echo   tools\global-metadata.decrypted.dat missing - downloading...
   curl -fSL -o "%ROOT%tools\global-metadata.decrypted.dat" "https://builds.him.is/latest/game_files/global-metadata.decrypted.dat"
@@ -50,14 +84,7 @@ if not exist "%ROOT%tools\global-metadata.decrypted.dat" (
   if not exist "%ROOT%tools\global-metadata.decrypted.dat" ( echo   [ERROR] metadata download produced no file. & goto :fail )
   echo   Downloaded -^> tools\global-metadata.decrypted.dat
 )
-where npm >nul 2>nul || ( echo   [ERROR] npm not on PATH. Install Node.js. & goto :fail )
 
-set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
-if not exist "%VSWHERE%" ( echo   [ERROR] Visual Studio Installer not found. Install VS 2022 or newer. & goto :fail )
-set "VSINSTALL="
-for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%i"
-if not defined VSINSTALL ( echo   [ERROR] VS C++ x64 tools not installed. & goto :fail )
-echo   Using Visual Studio: %VSINSTALL%
 call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat" >nul || ( echo   [ERROR] vcvars64 setup failed. & goto :fail )
 echo   VS x64 environment ready (cl.exe + MSBuild).
 
@@ -177,5 +204,141 @@ endlocal & exit /b 0
 :fail
 echo.
 echo ==================== BUILD FAILED ====================
-echo See the first error above.
+echo See the [ERROR] lines above.
 endlocal & exit /b 1
+
+REM ===========================================================================
+REM Preflight subroutines (one per prerequisite). Each prints [OK] or [ERROR]
+REM and sets PREREQ_FAIL=1 on failure; none aborts on its own so a single run
+REM reports every missing prerequisite. Subroutines read variables set by
+REM earlier statements - never set and read the same var inside one
+REM parenthesized block.
+REM ===========================================================================
+
+:check_vs
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+set "VSINSTALL="
+if exist "%VSWHERE%" for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%i"
+if defined VSINSTALL (
+  echo   [OK]   1/6 Visual Studio C++ x64: %VSINSTALL%
+  goto :eof
+)
+echo   [ERROR] 1/6 Visual Studio 2022+ with the C++ x64 workload not found.
+echo          Install "Visual Studio Build Tools 2022" + "Desktop development
+echo          with C++" (Build Tools alone are enough):
+echo          https://visualstudio.microsoft.com/downloads/
+set "PREREQ_FAIL=1"
+goto :eof
+
+:check_dotnet
+where dotnet >nul 2>nul
+if errorlevel 1 (
+  echo   [ERROR] 2/6 .NET 10 runtime required - dotnet not on PATH.
+  echo          tools\Il2CppInspector.exe is a .NET 10 app and will not run
+echo          without it. Install x64 .NET 10 Desktop Runtime:
+  echo          https://dotnet.microsoft.com/download/dotnet/10.0
+  set "PREREQ_FAIL=1"
+  goto :eof
+)
+dotnet --list-runtimes 2>nul | findstr /C:"Microsoft.NETCore.App 10." >nul
+if errorlevel 1 (
+  echo   [ERROR] 2/6 .NET 10 runtime required. Installed .NET runtimes:
+  dotnet --list-runtimes 2>nul | findstr /C:"Microsoft.NETCore.App"
+  echo          Install x64 .NET 10 Desktop Runtime:
+  echo          https://dotnet.microsoft.com/download/dotnet/10.0
+  set "PREREQ_FAIL=1"
+  goto :eof
+)
+echo   [OK]   2/6 .NET 10 runtime
+goto :eof
+
+:check_node
+where npm >nul 2>nul
+if errorlevel 1 (
+  echo   [ERROR] 3/6 Node.js/npm not on PATH.
+  echo          Install the current LTS ^(20.12 or newer^): https://nodejs.org
+  set "PREREQ_FAIL=1"
+  goto :eof
+)
+set "NODE_MAJOR="
+set "NODE_MINOR="
+for /f "tokens=1-2 delims=." %%a in ('node -p process.versions.node 2^>nul') do (
+  set "NODE_MAJOR=%%a"
+  set "NODE_MINOR=%%b"
+)
+if not defined NODE_MAJOR (
+  echo   [ERROR] 3/6 npm found but node would not run.
+  echo          Reinstall Node.js LTS: https://nodejs.org
+  set "PREREQ_FAIL=1"
+  goto :eof
+)
+REM strip leading zeros from the minor so "if LSS" never sees an octal "09"
+for /f "tokens=* delims=0" %%z in ("%NODE_MINOR%") do set "NODE_MINOR=%%z"
+if not defined NODE_MINOR set "NODE_MINOR=0"
+set "NODE_BAD="
+if %NODE_MAJOR% LSS 20 set "NODE_BAD=1"
+if %NODE_MAJOR% EQU 20 if %NODE_MINOR% LSS 12 set "NODE_BAD=1"
+if defined NODE_BAD (
+  echo   [ERROR] 3/6 Node 20.12+ required, found %NODE_MAJOR%.%NODE_MINOR%.x.
+  echo          Update Node.js: https://nodejs.org
+  set "PREREQ_FAIL=1"
+  goto :eof
+)
+echo   [OK]   3/6 Node %NODE_MAJOR%.%NODE_MINOR% + npm
+goto :eof
+
+:check_game
+REM Same probe order as tools/gen-il2cpp-headers.ps1 (ExaltFinder) - keep the
+REM two lists in sync.
+set "GAME_DIR="
+if defined ROTMG_PATH (
+  if exist "%ROTMG_PATH%\GameAssembly.dll" if exist "%ROTMG_PATH%\RotMG Exalt.exe" set "GAME_DIR=%ROTMG_PATH%"
+)
+if not defined GAME_DIR for %%D in ("%LOCALAPPDATA%\RealmOfTheMadGod\Production" "%USERPROFILE%\Documents\RealmOfTheMadGod\Production" "C:\Program Files (x86)\Steam\steamapps\common\RotMG Exalt" "C:\Program Files\Steam\steamapps\common\RotMG Exalt" "D:\Steam\steamapps\common\RotMG Exalt" "D:\SteamLibrary\steamapps\common\RotMG Exalt" "E:\Steam\steamapps\common\RotMG Exalt" "E:\SteamLibrary\steamapps\common\RotMG Exalt") do (
+  if exist "%%~D\GameAssembly.dll" if exist "%%~D\RotMG Exalt.exe" set "GAME_DIR=%%~D"
+)
+if defined GAME_DIR (
+  echo   [OK]   4/6 RotMG Exalt: %GAME_DIR%
+  goto :eof
+)
+echo   [ERROR] 4/6 RotMG Exalt install not found (GameAssembly.dll).
+echo          Install the game, or set ROTMG_PATH to the folder that contains
+echo          GameAssembly.dll (custom Steam library drives are not probed).
+set "PREREQ_FAIL=1"
+goto :eof
+
+:check_net
+if exist "%ROOT%tools\global-metadata.decrypted.dat" (
+  echo   [OK]   5/6 game metadata cached locally ^(no download needed^)
+  goto :eof
+)
+curl -fsI --max-time 15 -o nul "https://builds.him.is/latest/game_files/global-metadata.decrypted.dat"
+if errorlevel 1 (
+  echo   [ERROR] 5/6 cannot reach builds.him.is - the game metadata has to
+  echo          be downloaded from there. Check your connection/firewall.
+  set "PREREQ_FAIL=1"
+  goto :eof
+)
+echo   [OK]   5/6 builds.him.is reachable
+goto :eof
+
+:check_disk
+if /i not "%PROCESSOR_ARCHITECTURE%"=="AMD64" (
+  echo   [ERROR] 6/6 Windows x64 required - this machine reports %PROCESSOR_ARCHITECTURE%.
+  set "PREREQ_FAIL=1"
+  goto :eof
+)
+set "FREE_GB="
+for /f "usebackq delims=" %%f in (`powershell -NoProfile -Command "[int]((Get-PSDrive -Name '%ROOT:~0,1%').Free / 1GB)"`) do set "FREE_GB=%%f"
+if not defined FREE_GB (
+  echo   [WARN] 6/6 could not determine free disk space - continuing anyway
+  goto :eof
+)
+if %FREE_GB% LSS 4 (
+  echo   [ERROR] 6/6 only %FREE_GB% GB free on %ROOT:~0,1%: - the build needs
+  echo          ~4 GB ^(node_modules + Electron cache + two ~160 MB packages^).
+  set "PREREQ_FAIL=1"
+  goto :eof
+)
+echo   [OK]   6/6 %FREE_GB% GB free on %ROOT:~0,1%: ^(x64 Windows^)
+goto :eof

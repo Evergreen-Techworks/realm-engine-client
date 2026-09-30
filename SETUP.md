@@ -22,6 +22,25 @@ You need the **RotMG Exalt** game installed (you need it to inject anyway).
 
 ---
 
+## 0. Prerequisites
+
+`build-all.bat` verifies all six of these before building and prints every
+missing one in one run. None of them are optional:
+
+| # | Requirement | If missing |
+|---|---|---|
+| 1 | Visual Studio 2022+ with the C++ x64 workload (Build Tools alone are enough) | [visualstudio.microsoft.com/downloads](https://visualstudio.microsoft.com/downloads/) — "Build Tools for Visual Studio 2022" |
+| 2 | .NET 10 runtime (the committed `tools\Il2CppInspector.exe` is a .NET 10 app) | [dotnet.microsoft.com/download/dotnet/10.0](https://dotnet.microsoft.com/download/dotnet/10.0) — x64 Desktop Runtime |
+| 3 | Node.js 20.12+ / npm | [nodejs.org](https://nodejs.org) — current LTS |
+| 4 | RotMG Exalt installed | Auto-located (Deca launcher + common Steam paths). Custom Steam library drive? Set `ROTMG_PATH` to the folder containing `GameAssembly.dll` |
+| 5 | Internet access to `builds.him.is` | Serves the decrypted game metadata. Skip the probe entirely by placing `tools/global-metadata.decrypted.dat` yourself |
+| 6 | Windows x64 with ~4 GB free | node_modules + Electron cache + two ~160 MB packages |
+
+`tools\Il2CppInspector.exe` ships in this repo — you do **not** need to build
+Il2CppInspectorPro yourself.
+
+---
+
 ## 1. Dump the il2cpp headers
 
 The C++ DLL (`internal/`) `#include`s generated headers that describe the
