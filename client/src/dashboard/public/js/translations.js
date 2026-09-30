@@ -175,7 +175,7 @@ export const TRANSLATIONS = {
       'comingSoon.scripts': 'Scripting is in active development and will be available in a future update.',
       'comingSoon.multibox': 'Multiboxing is in active development and will be available in a future update.',
       'settings.advancedPlugins': 'Advanced plugin settings',
-      'settings.advancedPluginsDesc': 'Show every tuning knob on each plugin. Off (default) shows only the essential settings.',
+      'settings.advancedPluginsDesc': 'Show every tuning knob on each plugin. On by default; turn off to show only the essential settings.',
       'settings.tab.admin': 'Admin', 'settings.appearance': 'Appearance',
       'settings.theme': 'Theme', 'settings.themeDesc': 'Choose the dashboard color theme.',
       'settings.language': 'Language', 'settings.languageDesc': 'Choose the dashboard display language.',
