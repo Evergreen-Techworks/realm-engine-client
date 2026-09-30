@@ -7,6 +7,10 @@ const { InstanceManager } = require('./services/instance-manager.cjs');
 const { acquireInstanceLock, allowSetForegroundWindow, machineInstancePipePath } = require('./services/single-instance.cjs');
 const { IPC } = require('./ipc-channels.cjs');
 const { PROXY_EXIT_QUIT_APP } = require('./proxyExitCodes.cjs');
+// Must run before the single-instance lock below: in a portable build it
+// repoints userData at RE_ASSETS next to the EXE, which is what scopes the
+// lock to this copy's own data folder (see the comment on the lock).
+require('./services/portable-paths.cjs').configurePortablePaths(app);
 const { performance } = require('node:perf_hooks');
 const { randomUUID } = require('node:crypto');
 const startupLaunchId = randomUUID();

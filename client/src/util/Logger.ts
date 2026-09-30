@@ -3,7 +3,9 @@ import { dirname, join } from 'path';
 import { tmpdir } from 'os';
 import { DebugManager, DebugChannel } from './DebugManager';
 
-const LOG_FILE = join(tmpdir(), 'realm-engine-proxy.log');
+// In a portable build the proxy process inherits RE_ASSETS from the main
+// process (portable-paths.cjs), keeping the log beside the EXE.
+const LOG_FILE = join(process.env.RE_ASSETS || tmpdir(), 'realm-engine-proxy.log');
 /**
  * The directory `LOG_FILE` actually lives in, resolved once, here, at import
  * time. Anything that wants to sit "beside the proxy log" (e.g. the Test Lab

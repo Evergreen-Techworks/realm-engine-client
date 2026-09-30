@@ -1129,7 +1129,7 @@ import { NOISY_PACKETS, MAX_ROWS, MAX_PLUGIN_LOGS, CLASS_NAMES, CLASS_COLORS, SK
 
   var pluginsAdvancedToggle = document.getElementById('setting-plugins-advanced');
   {
-    var paOn = localStorage.getItem('pluginsAdvanced') === '1';
+    var paOn = localStorage.getItem('pluginsAdvanced') !== '0';
     document.body.classList.toggle('plugins-advanced', paOn);
     if (pluginsAdvancedToggle) {
       pluginsAdvancedToggle.checked = paOn;

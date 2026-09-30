@@ -60,6 +60,7 @@
   },
   "portable": {
     "splashImage": "build-tools/portable-splash.bmp",
-    "unpackDirName": "RealmEngine"
+    "unpackDirName": "RealmEngine",
+    "artifactName": "${productName} ${version} portable.${ext}"
   }
 }
